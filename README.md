@@ -136,7 +136,7 @@ Join our community on [Discord](https://discord.gg/FjHhvBHSGj).
 | deadass    | const        | ✅           |
 | sigma rule | case         | ✅           |
 | based      | default      | ✅           |
-| mewing     | do           | ❌           |
+| mewing     | do           | ✅           |
 | gyatt      | enum         | ❌           |
 | whopper    | extern       | ❌           |
 | cringe     | goto         | ❌           |

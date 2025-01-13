@@ -13,7 +13,7 @@ A Meme-Fueled Journey into Compiler Design, Internet Slang, and Skibidi Toilets
 7. **Language Reference**
    - 7.1. Keywords
    - 7.2. Operators
-   - 7.3. Control Flow (if, for, while, switch)
+   - 7.3. Control Flow (if, for, while, do-while, switch)
    - 7.4. Declarations and Variables (`rizz`)
    - 7.5. Return Statements (`bussin`)
    - 7.6. Built-In Functions
@@ -48,6 +48,7 @@ Brainrot might not be the language you _asked_ for, but it might just be the lan
 - `flex` for `for`
 - `bussin` for `return`
 - `goon` for `while`
+- `mewing` for 'do'
 - and so on...
 
 What’s the result? A language that looks thoroughly bizarre yet compiles into something resembling real (albeit comedic) logic. It’s a testament to how robust compiler design is—once you set up the grammar, your code can say practically anything it wants, so long as it follows syntactic rules.
@@ -222,13 +223,19 @@ Brainrot supports common arithmetic and logical operators:
        // loop body
    }
    ```
-3. **For**
+3. **Do-While**
+   ```c
+   mewing {
+       // loop body
+   } goon (i < 5);
+   ```
+4. **For**
    ```c
    flex (init_expr; condition; increment) {
        // loop body
    }
    ```
-4. **Switch**
+5. **Switch**
    ```c
    ohio (expression) {
        sigma rule value:

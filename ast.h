@@ -101,6 +101,7 @@ typedef enum
     NODE_UNARY_OPERATION,
     NODE_FOR_STATEMENT,
     NODE_WHILE_STATEMENT,
+    NODE_DO_WHILE_STATEMENT,
     NODE_PRINT_STATEMENT,
     NODE_ERROR_STATEMENT,
     NODE_STATEMENT_LIST,
@@ -223,6 +224,7 @@ ASTNode *create_operation_node(OperatorType op, ASTNode *left, ASTNode *right);
 ASTNode *create_unary_operation_node(OperatorType op, ASTNode *operand);
 ASTNode *create_for_statement_node(ASTNode *init, ASTNode *cond, ASTNode *incr, ASTNode *body);
 ASTNode *create_while_statement_node(ASTNode *cond, ASTNode *body);
+ASTNode *create_do_while_statement_node(ASTNode *cond, ASTNode *body);
 ASTNode *create_function_call_node(char *func_name, ArgumentList *args);
 ArgumentList *create_argument_list(ASTNode *expr, ArgumentList *existing_list);
 ASTNode *create_print_statement_node(ASTNode *expr);
@@ -253,6 +255,8 @@ void execute_statements(ASTNode *node);
 void execute_assignment(ASTNode *node);
 void execute_for_statement(ASTNode *node);
 void execute_while_statement(ASTNode *node);
+void execute_do_while_statement(ASTNode *node);
+void execute_if_statement(ASTNode *node);
 void execute_yapping_call(ArgumentList *args);
 void execute_yappin_call(ArgumentList *args);
 void execute_baka_call(ArgumentList *args);

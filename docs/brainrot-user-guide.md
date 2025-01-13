@@ -136,6 +136,16 @@ flex (rizz j = 0; j < 3; j = j + 1) {
 }
 ```
 
+## 6.3. `mewing-goon` (Do While Loop)
+
+Use **`mewing { ... } goon (condition)`** as a do-while loop:
+
+```c
+mewing {
+    yapping("Inside while loop");
+} goon (L)
+```
+
 - **`init_expr`**: A declaration or expression to initialize loop variables (e.g., `rizz j = 0`).
 - **`condition`**: Checked each iteration (e.g., `j < 3`).
 - **`increment`**: Executed at the end of each iteration (e.g., `j = j + 1`).

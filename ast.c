@@ -299,6 +299,13 @@ ASTNode *create_while_statement_node(ASTNode *cond, ASTNode *body)
     return node;
 }
 
+ASTNode *create_do_while_statement_node(ASTNode *cond, ASTNode *body)
+{
+    ASTNode *node = create_node(NODE_DO_WHILE_STATEMENT, NONE, current_modifiers);
+    SET_DATA_WHILE(node, cond, body);
+    return node;
+}
+
 ASTNode *create_function_call_node(char *func_name, ArgumentList *args)
 {
     ASTNode *node = create_node(NODE_FUNC_CALL, NONE, current_modifiers);
@@ -1650,6 +1657,9 @@ void execute_statement(ASTNode *node)
     case NODE_WHILE_STATEMENT:
         execute_while_statement(node);
         break;
+    case NODE_DO_WHILE_STATEMENT:
+        execute_do_while_statement(node);
+        break;
     case NODE_PRINT_STATEMENT:
     {
         ASTNode *expr = node->data.op.left;
@@ -1767,6 +1777,14 @@ void execute_while_statement(ASTNode *node)
             execute_statement(node->data.while_stmt.body);
         }
     }
+}
+
+void execute_do_while_statement(ASTNode *node)
+{
+    do
+    {
+        execute_statement(node->data.while_stmt.body);
+    } while (evaluate_expression(node->data.while_stmt.cond));
 }
 
 ASTNode *create_if_statement_node(ASTNode *condition, ASTNode *then_branch, ASTNode *else_branch)

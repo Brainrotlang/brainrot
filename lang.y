@@ -71,7 +71,7 @@ ASTNode *root = NULL;
 %token LT GT LE GE EQ NE EQUALS AND OR DEC INC
 %token BREAK CASE DEADASS CONTINUE DEFAULT DO DOUBLE ELSE ENUM
 %token EXTERN CHAD GIGACHAD FOR GOTO IF LONG SMOL SIGNED
-%token SIZEOF STATIC STRUCT SWITCH TYPEDEF UNION UNSIGNED VOID VOLATILE GOON
+%token SIZEOF STATIC STRUCT SWITCH TYPEDEF UNION UNSIGNED VOID VOLATILE GOON 
 %token <strval> IDENTIFIER
 %token <ival> INT_LITERAL
 %token <sval> SHORT_LITERAL
@@ -88,6 +88,7 @@ ASTNode *root = NULL;
 %type <node> expression
 %type <node> for_statement
 %type <node> while_statement
+%type <node> do_while_statement
 %type <node> function_call
 %type <args> arg_list argument_list
 %type <node> error_statement
@@ -137,6 +138,8 @@ statement:
     | for_statement
         { $$ = $1; }
     | while_statement
+        { $$ = $1; }
+    | do_while_statement
         { $$ = $1; }
     | function_call SEMICOLON
         { $$ = $1; }
@@ -283,6 +286,12 @@ while_statement:
             $$ = create_while_statement_node($3, $6);
         }
     ;
+
+do_while_statement:
+    DO LBRACE statements RBRACE GOON LPAREN expression RPAREN SEMICOLON
+        {
+            $$ = create_do_while_statement_node($7, $3);
+        }
 
 
 init_expr:

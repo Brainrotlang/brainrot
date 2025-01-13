@@ -1,0 +1,12 @@
+skibidi main {
+    rizz a = 0;
+    rizz b = 1;
+
+    mewing {
+        yapping("%d",a);
+        rizz temp = a + b;
+        a = b;
+        b = temp;
+    } goon (a < 10);
+    bussin 0;
+}
