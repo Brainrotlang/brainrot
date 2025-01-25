@@ -16,7 +16,35 @@ on:
       - "Makefile"
 
 jobs:
+  static-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install analysis tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install cppcheck clang-tidy clang-format flawfinder splint -y
+      
+      - name: Run cppcheck
+        run: cppcheck --enable=all --inconclusive --error-exitcode=1 .
+      
+      - name: Run clang-tidy
+        run: |
+          find . -name '*.c' -o -name '*.h' | xargs clang-tidy -checks=*,-clang-analyzer-security.insecureAPI.* --
+
+      - name: Check formatting
+        run: |
+          find . -name '*.c' -o -name '*.h' | xargs clang-format --dry-run -Werror
+      
+      - name: Run flawfinder
+        run: flawfinder --minlevel=1 .
+        
+      - name: Run splint
+        run: find . -name '*.c' -o -name '*.h' | xargs splint
+
   build:
+    needs: static-analysis
     runs-on: ubuntu-latest
 
     steps:
@@ -32,7 +60,7 @@ jobs:
         run: |
           bison -d -Wcounterexamples lang.y -o lang.tab.c
           flex lang.l
-          gcc -o brainrot lib/hm.c lib/mem.c lang.tab.c lex.yy.c ast.c -lfl -lm
+          gcc -Wall -Wextra -Werror -Wpedantic -o brainrot lib/hm.c lib/mem.c lang.tab.c lex.yy.c ast.c -lfl -lm
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
