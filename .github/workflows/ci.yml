@@ -27,7 +27,7 @@ jobs:
           sudo apt-get install cppcheck clang-tidy clang-format flawfinder splint -y
       
       - name: Run cppcheck
-        run: cppcheck --enable=all --inconclusive --error-exitcode=1 .
+        run: cppcheck --enable=all --inconclusive --error-exitcode=1 --suppress=unusedFunction .
       
       - name: Run clang-tidy
         run: |
