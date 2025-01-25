@@ -1,0 +1,6 @@
+skibidi main {
+      smol num;
+      slorp(num);
+      yapping("You typed: %d", num);
+      bussin 0;
+}

@@ -1,0 +1,6 @@
+skibidi main {
+      yap chr;
+      slorp(chr);
+      yapping("You typed: %c", chr);
+      bussin 0;
+}

@@ -30,9 +30,7 @@ jobs:
 
       - name: Build Brainrot
         run: |
-          bison -d -Wcounterexamples lang.y -o lang.tab.c
-          flex lang.l
-          gcc -o brainrot lib/hm.c lib/mem.c lang.tab.c lex.yy.c ast.c -lfl -lm
+          make
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -75,7 +73,7 @@ jobs:
         run: |
           for f in test_cases/*.brainrot; do
             echo "Running Valgrind on $f..."
-            valgrind --leak-check=full --error-exitcode=1 ./brainrot < "$f"
+            valgrind --leak-check=full --error-exitcode=1 ./brainrot "$f"
             echo
           done
         working-directory: .

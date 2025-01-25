@@ -2,6 +2,7 @@
 %{
 #include "ast.h"
 #include "lib/mem.h"
+#include "lib/input.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,13 +17,19 @@ void ragequit(int exit_code);
 void yapping(const char* format, ...);
 void yappin(const char* format, ...);
 void baka(const char* format, ...);
+char slorp_char(char chr);
+char *slorp_string(char *string);
+int slorp_int(int val);
+short slorp_short(short val);
+float slorp_float(float var);
+double slorp_double(double var);
 void cleanup();
 TypeModifiers get_variable_modifiers(const char* name);
 extern TypeModifiers current_modifiers;
 extern VarType current_var_type;
 
-
 extern int yylineno;
+extern FILE *yyin;
 
 /* Root of the AST */
 ASTNode *root = NULL;
@@ -59,6 +66,7 @@ ASTNode *root = NULL;
 %token <ival> BOOLEAN
 %token <fval> FLOAT_LITERAL
 %token <dval> DOUBLE_LITERAL
+%token SLORP
 
 /* Declare types for non-terminals */
 %type <ival> type
@@ -84,7 +92,7 @@ ASTNode *root = NULL;
 %type <expr_list> array_init initializer_list
 %type <node> function_def
 %type <node> function_def_list
-%type <param> param_list parameter params
+%type <param> param_list params
 
 %start program
 
@@ -336,11 +344,15 @@ increment:
     ;
 
 function_call:
-    IDENTIFIER LPAREN arg_list RPAREN
-      { 
-          $$ = create_function_call_node($1, $3);
-          SAFE_FREE($1);
-      }
+    SLORP LPAREN identifier RPAREN
+        { 
+            $$ = create_function_call_node("slorp", create_argument_list($3, NULL)); 
+        }
+    | IDENTIFIER LPAREN arg_list RPAREN
+        { 
+            $$ = create_function_call_node($1, $3);
+            SAFE_FREE($1);
+        }
     ;
 
 arg_list
@@ -485,16 +497,29 @@ array_access:
 
 %%
 
-int main(void) {
+int main(int argc, char *argv[]) {
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s <sourcefile>\n", argv[0]);
+        return 1;
+    }
+
+    FILE *source = fopen(argv[1], "r");
+    if (!source) {
+        perror("Cannot open source file");
+        return 1;
+    }
+
+    yyin = source;
     current_scope = create_scope(NULL);
+
     if (yyparse() == 0) {
         execute_statement(root);
     }
+
+    fclose(source);
     free_ast(root);
     free_function_table();
     free_scope(current_scope);
-    
-    // Clean up flex's internal state
     yylex_destroy();
     
     return 0;
@@ -534,6 +559,146 @@ void baka(const char* format, ...) {
     va_start(args, format);
     vfprintf(stderr, format, args);
     va_end(args);
+}
+
+char slorp_char(char chr) {
+    size_t chars_read;
+    input_status status;
+
+    status = input_char(&chr);
+    if (status == INPUT_SUCCESS)
+    {
+        return chr;
+    }
+    else if (status == INPUT_INVALID_LENGTH)
+    {
+        fprintf(stderr, "Error: Invalid input length.\n");
+        exit(EXIT_FAILURE);
+    }
+    else
+    {
+        fprintf(stderr, "Error reading char: %d\n", status);
+        exit(EXIT_FAILURE);
+    }
+}
+
+char *slorp_string(char *string) {
+    size_t chars_read;
+    input_status status;
+
+    status = input_string(string, sizeof(string), &chars_read);
+    if (status == INPUT_SUCCESS)
+    {
+        return string;
+    }
+    else if (status == INPUT_BUFFER_OVERFLOW)
+    {
+        fprintf(stderr, "Error: Input exceeded buffer size.\n");
+        exit(EXIT_FAILURE);
+    }
+    else
+    {
+        fprintf(stderr, "Error reading string: %d\n", status);
+        exit(EXIT_FAILURE);
+    }
+}
+
+int slorp_int(int val) {
+    input_status status;
+
+    status = input_int(&val);
+    if (status == INPUT_SUCCESS)
+    {
+        return val;
+    }
+    else if (status == INPUT_INTEGER_OVERFLOW)
+    {
+        fprintf(stderr, "Error: Integer value out of range.\n");
+    }
+    else if (status == INPUT_CONVERSION_ERROR)
+    {
+        fprintf(stderr, "Error: Invalid integer format.\n");
+        exit(EXIT_FAILURE);
+    }
+    else
+    {
+        fprintf(stderr, "Error reading integer: %d\n", status);
+        exit(EXIT_FAILURE);
+    }
+}
+
+short slorp_short(short val) {
+    input_status status;
+
+    status = input_short(&val);
+    if (status == INPUT_SUCCESS)
+    {
+        return val;
+    }
+    else if (status == INPUT_SHORT_OVERFLOW)
+    {
+        fprintf(stderr, "Error: short value out of range.\n");
+    }
+    else if (status == INPUT_CONVERSION_ERROR)
+    {
+        fprintf(stderr, "Error: short integer format.\n");
+        exit(EXIT_FAILURE);
+    }
+    else
+    {
+        fprintf(stderr, "Error reading short: %d\n", status);
+        exit(EXIT_FAILURE);
+    }
+}
+
+float slorp_float(float var) {
+    input_status status;
+
+    status = input_float(&var);
+    if (status == INPUT_SUCCESS)
+    {
+        return var;
+    }
+    else if (status == INPUT_FLOAT_OVERFLOW)
+    {
+        fprintf(stderr, "Error: Double value out of range.\n");
+        exit(EXIT_FAILURE);
+    }
+    else if (status == INPUT_CONVERSION_ERROR)
+    {
+        fprintf(stderr, "Error: Invalid float format.\n");
+        exit(EXIT_FAILURE);
+    }
+    else
+    {
+        fprintf(stderr, "Error reading float: %d\n", status);
+        exit(EXIT_FAILURE);
+    }
+}
+
+double slorp_double(double var) {
+    input_status status;
+
+    status = input_double(&var);
+    if (status == INPUT_SUCCESS)
+    {
+        return var;
+    }
+    else if (status == INPUT_DOUBLE_OVERFLOW)
+    {
+        fprintf(stderr, "Error: Double value out of range.\n");
+        exit(EXIT_FAILURE);
+    }
+    else if (status == INPUT_CONVERSION_ERROR)
+    {
+        fprintf(stderr, "Error: Invalid double format.\n");
+        exit(EXIT_FAILURE);
+    }
+    else
+    {
+        fprintf(stderr, "Error reading double: %d\n", status);
+        exit(EXIT_FAILURE);
+    }
 }
 
 void cleanup() {

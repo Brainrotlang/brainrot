@@ -42,5 +42,11 @@
     "add_two_numbers": "3",
     "mul_two_numbers": "11.400000",
     "max_gigachad": "5.000000",
-    "is_prime": "W"
+    "is_prime": "W",
+    "slorp_int": "You typed: 42",
+    "slorp_short": "You typed: 69",
+    "slorp_float": "You typed: 3.140000",
+    "slorp_double": "You typed: 3.141592",
+    "slorp_char": "You typed: c",
+    "slorp_string": "You typed: skibidi bop bop yes yes"
 }
