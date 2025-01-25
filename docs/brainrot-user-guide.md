@@ -70,6 +70,7 @@ count = 42;
 A **statement** often ends with a **semicolon** `;` unless it is a compound statement (like `{ ... }`).
 
 ### Increment and Decrement Operators (`++`, `--`)
+
 In addition to basic arithmetic and logical expressions, you can also use **increment** (`++`) and **decrement** (`--`) operators in Brainrot.
 
 - **Pre-Increment (`++i`)**: Increments the value of `i` by 1 before it is used in an expression.
@@ -78,7 +79,6 @@ In addition to basic arithmetic and logical expressions, you can also use **incr
 - **Post-Decrement (`i--`)**: Uses the current value of `i`, then decrements it by 1.
 
 You can use these operators in expressions to simplify code and make it more concise.
-
 
 Examples of valid statements:
 
@@ -135,6 +135,7 @@ flex (rizz j = 0; j < 3; j = j + 1) {
     yapping("j = %d", j);
 }
 ```
+
 - **`init_expr`**: A declaration or expression to initialize loop variables (e.g., `rizz j = 0`).
 - **`condition`**: Checked each iteration (e.g., `j < 3`).
 - **`increment`**: Executed at the end of each iteration (e.g., `j = j + 1`).
@@ -201,6 +202,8 @@ Brainrot includes some built-in functions for convenience:
 | **yappin**   | `stdout`    | No           | Precise control over spacing/newlines                                 |
 | **baka**     | `stderr`    | No           | Log errors or warnings, typically no extra newline                    |
 | **ragequit** | -           | -            | Terminates program execution immediately with the provided exit code. |
+| **chill**    | -           | -            | Sleeps for an integer number of seconds.                              |
+| **slorp**    | `stdin`     | -            | Reads user input.                                                     |
 
 ## 9.1. yapping
 
@@ -320,6 +323,30 @@ skibidi main {
 }
 ```
 
+## 9.6. slorp
+
+**Prototype**
+
+```c
+void slorp(var_type var_name);
+```
+
+**Key Points**
+
+- Reads user input (similar to C's `scanf` but safer)
+
+### Example
+
+```c
+skibidi main {
+    rizz num;
+    yapping("Enter a number:");
+	slorp(num);
+    yapping("You typed: %d", num);
+	bussin 0;
+}
+```
+
 ---
 
 # 10. Example Program
@@ -376,15 +403,3 @@ skibidi main {
 - **Syntax** is otherwise quite C-like: `;` to end statements, braces `{ }` to define blocks, parentheses `( )` around conditions.
 - **Expressions** accept typical operators (`+`,`++`, `-`,`--`, `*`, `/`, `%`, relational, logical) plus the assignment operator `=`, matching standard precedence rules.
 - **Escapes in strings** (`"\n"`, `"\t"`, etc.) may require an unescape function in your lexer, so check that it’s converting them into real newlines or tabs at runtime.
-
----
-
-# Final Thoughts
-
-This language—often called **Brainrot**—provides a playful wrapper around standard C-like structures, with unique keywords and easy built-in printing:
-
-- **`yapping`** for automatic line-based output.
-- **`yappin`** for precise printing without automatic newlines.
-- **`baka`** for error messages or logs to `stderr`.
-
-Use them together with the custom control-flow keywords (`goon`, `flex`, etc.) and custom variable type (`rizz`) to write concise, whimsical, yet powerful scripts. Enjoy experimenting with your new language!

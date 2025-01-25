@@ -17,7 +17,7 @@ with open(file_path, "r") as file:
 def test_brainrot_examples(example, expected_output):
     brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
     example_file_path = os.path.abspath(os.path.join(script_dir, f"../test_cases/{example}.brainrot"))
-    command = f"{brainrot_path} < {example_file_path}"
+    command = f"{brainrot_path} {example_file_path}"
     
     result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True)
     

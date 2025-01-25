@@ -174,6 +174,12 @@ extern void chill(unsigned int seconds);
 extern void yapping(const char *format, ...);
 extern void yappin(const char *format, ...);
 extern void baka(const char *format, ...);
+extern char slorp_char(char chr);
+extern char *slorp_string(char *string);
+extern int slorp_int(int val);
+extern short slorp_short(short val);
+extern float slorp_float(float var);
+extern double slorp_double(double var);
 extern TypeModifiers get_variable_modifiers(const char *name);
 extern int yylineno;
 
@@ -263,7 +269,6 @@ ASTNode *create_int_node(int value)
     SET_DATA_INT(node, value);
     return node;
 }
-
 
 ASTNode *create_array_declaration_node(char *name, int length, VarType var_type)
 {
@@ -641,7 +646,6 @@ void *handle_binary_operation(ASTNode *node, int result_type)
         *(short *)left_value = evaluate_expression_short(node->data.op.left);
         *(short *)right_value = evaluate_expression_short(node->data.op.right);
         break;
-
 
     default:
         yyerror("Unsupported type promotion");
@@ -1073,7 +1077,6 @@ void *handle_unary_expression(ASTNode *node, void *operand_value, int operand_ty
     }
 }
 
-
 float evaluate_expression_float(ASTNode *node)
 {
     if (!node)
@@ -1268,7 +1271,6 @@ double evaluate_expression_double(ASTNode *node)
             return result;
         }
         return 0.0L;
-
     }
     default:
         yyerror("Invalid double expression");
@@ -1613,7 +1615,7 @@ int evaluate_expression_int(ASTNode *node)
     }
     case NODE_FUNC_CALL:
     {
-        int *res  = (int *)handle_function_call(node);
+        int *res = (int *)handle_function_call(node);
         if (res != NULL)
         {
             int return_val = *res;
@@ -1628,12 +1630,12 @@ int evaluate_expression_int(ASTNode *node)
     }
 }
 
-void *handle_function_call(ASTNode* node)
+void *handle_function_call(ASTNode *node)
 {
     execute_function_call(
         node->data.func_call.function_name,
         node->data.func_call.arguments);
-    void* return_value = NULL;
+    void *return_value = NULL;
     if (current_return_value.has_value)
     {
         switch (current_return_value.type)
@@ -1668,7 +1670,6 @@ void *handle_function_call(ASTNode* node)
     }
     return return_value;
 }
-
 
 bool evaluate_expression_bool(ASTNode *node)
 {
@@ -1935,7 +1936,7 @@ bool is_short_expression(ASTNode *node)
     }
 }
 
-Function* get_function(const char *name)
+Function *get_function(const char *name)
 {
     Function *func = function_table;
     while (func != NULL)
@@ -2335,6 +2336,10 @@ void execute_statement(ASTNode *node)
         {
             execute_chill_call(node->data.func_call.arguments);
         }
+        else if (strcmp(node->data.func_call.function_name, "slorp") == 0)
+        {
+            execute_slorp_call(node->data.func_call.arguments);
+        }
         break;
     case NODE_FOR_STATEMENT:
         execute_for_statement(node);
@@ -2419,7 +2424,6 @@ void execute_statement(ASTNode *node)
         break;
     }
 }
-
 
 void execute_statements(ASTNode *node)
 {
@@ -2954,6 +2958,64 @@ void execute_chill_call(ArgumentList *args)
     }
 
     chill(formatNode->data.ivalue);
+}
+
+void execute_slorp_call(ArgumentList *args)
+{
+    if (!args || args->expr->type != NODE_IDENTIFIER)
+    {
+        yyerror("slurp requires a variable identifier");
+        return;
+    }
+
+    char *name = args->expr->data.name;
+    Variable *var = get_variable(name);
+    if (!var)
+    {
+        yyerror("Undefined variable");
+        return;
+    }
+
+    switch (var->var_type)
+    {
+    case VAR_INT:
+    {
+        int val = 0;
+        val = slorp_int(val);
+        set_int_variable(name, val, var->modifiers);
+        break;
+    }
+    case VAR_FLOAT:
+    {
+        float val = 0.0f;
+        val = slorp_float(val);
+        set_float_variable(name, val, var->modifiers);
+        break;
+    }
+    case VAR_DOUBLE:
+    {
+        double val = 0.0;
+        val = slorp_double(val);
+        set_double_variable(name, val, var->modifiers);
+        break;
+    }
+    case VAR_SHORT:
+    {
+        short val = 0;
+        val = slorp_short(val);
+        set_short_variable(name, val, var->modifiers);
+        break;
+    }
+    case VAR_CHAR:
+    {
+        char val = 0;
+        val = slorp_char(val);
+        set_int_variable(name, val, var->modifiers);
+        break;
+    }
+    default:
+        yyerror("Unsupported type for slorp");
+    }
 }
 
 void bruh()
@@ -3573,7 +3635,7 @@ void handle_return_statement(ASTNode *expr)
         }
     }
     // skibidi main function do not have jump buffer
-    if(CURRENT_JUMP_BUFFER() != NULL)
+    if (CURRENT_JUMP_BUFFER() != NULL)
         LONGJMP();
 }
 
@@ -3644,4 +3706,3 @@ void free_function_table(void)
     }
     function_table = NULL;
 }
-

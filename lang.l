@@ -78,6 +78,7 @@ extern int yylineno;
 "schizo"         { return VOLATILE; }
 "goon"           { return GOON; }
 "baka"           { return BAKA; }
+"slorp"          { return SLORP; }
 "cap"            { current_var_type = VAR_BOOL; return CAP; }
 
 "=="             { return EQ; }

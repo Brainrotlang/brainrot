@@ -301,7 +301,7 @@ void enter_scope();
 void free_scope(Scope *scope);
 void add_variable_to_scope(const char *name, Variable *var);
 Variable *variable_new(char *name);
-Function* get_function(const char *name);
+Function *get_function(const char *name);
 VarType get_function_return_type(const char *name);
 
 /* Node creation functions */
@@ -366,6 +366,7 @@ void execute_yappin_call(ArgumentList *args);
 void execute_baka_call(ArgumentList *args);
 void execute_ragequit_call(ArgumentList *args);
 void execute_chill_call(ArgumentList *args);
+void execute_slorp_call(ArgumentList *args);
 void free_ast(ASTNode *node);
 void reset_modifiers(void);
 bool check_and_mark_identifier(ASTNode *node, const char *contextErrorMessage);
@@ -373,7 +374,7 @@ void bruh();
 size_t count_expression_list(ExpressionList *list);
 size_t handle_sizeof(ASTNode *node);
 size_t get_type_size(char *name);
-void *handle_function_call(ASTNode* node);
+void *handle_function_call(ASTNode *node);
 
 /* User-defined functions */
 Function *create_function(char *name, VarType return_type, Parameter *params, ASTNode *body);
