@@ -31,7 +31,7 @@ HashMap *hm_new();
 void hm_resize(HashMap *hm);
 void dump(HashMap *hm);
 void *hm_get(HashMap *hm, const void *key, size_t key_size);
-void hm_put(HashMap *hm, void *key, size_t key_size, void *value, size_t value_size);
+void hm_put(HashMap *hm, const void *key, size_t key_size, const void *value, size_t value_size);
 void hm_free(HashMap *hm);
 
 #endif

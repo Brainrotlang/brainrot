@@ -78,14 +78,14 @@ void hm_resize(HashMap *hm)
         if (hm->nodes[i]) // Check if slot is occupied
         {
             HashMapNode *node = hm->nodes[i];
-            size_t index = fnv1a_hash(node->key, node->key_size) % new_capacity;
+            size_t idx = fnv1a_hash(node->key, node->key_size) % new_capacity;
 
             // Find next empty slot
-            while (new_nodes[index] != NULL)
+            while (new_nodes[idx] != NULL)
             {
-                index = (index + 1) % new_capacity;
+                idx = (idx + 1) % new_capacity;
             }
-            new_nodes[index] = node;
+            new_nodes[idx] = node;
         }
     }
 
@@ -128,11 +128,11 @@ void dump(HashMap *hm)
 void *hm_get(HashMap *hm, const void *key, size_t key_size)
 {
     size_t start_index = fnv1a_hash(key, key_size) % hm->capacity;
-    size_t index = start_index;
+    size_t idx = start_index;
 
     do
     {
-        HashMapNode *node = hm->nodes[index];
+        HashMapNode *node = hm->nodes[idx];
         if (!node)
             return NULL; // Empty slot means key not found
 
@@ -141,8 +141,8 @@ void *hm_get(HashMap *hm, const void *key, size_t key_size)
             return node->value;
         }
 
-        index = (index + 1) % hm->capacity;
-    } while (index != start_index); // Stop if we've checked every slot
+        idx = (idx + 1) % hm->capacity;
+    } while (idx != start_index); // Stop if we've checked every slot
 
     return NULL;
 }
@@ -160,19 +160,19 @@ void *hm_get(HashMap *hm, const void *key, size_t key_size)
  * Resizes hashmap if load factor threshold would be exceeded.
  * Uses linear probing to handle collisions.
  */
-void hm_put(HashMap *hm, void *key, size_t key_size, void *value, size_t value_size)
+void hm_put(HashMap *hm, const void *key, size_t key_size, const void *value, size_t value_size)
 {
     if (hm->size >= hm->capacity * LOAD_FACTOR)
     {
         hm_resize(hm);
     }
 
-    size_t index = fnv1a_hash(key, key_size) % hm->capacity;
+    size_t idx = fnv1a_hash(key, key_size) % hm->capacity;
 
     // Find slot or existing key
-    while (hm->nodes[index])
+    while (hm->nodes[idx])
     {
-        HashMapNode *node = hm->nodes[index];
+        HashMapNode *node = hm->nodes[idx];
         if (key_equal(node->key, key, key_size))
         {
             // Update existing value
@@ -186,7 +186,7 @@ void hm_put(HashMap *hm, void *key, size_t key_size, void *value, size_t value_s
             node->value_size = value_size;
             return;
         }
-        index = (index + 1) % hm->capacity;
+        idx = (idx + 1) % hm->capacity;
     }
 
     // Create new entry
@@ -215,7 +215,7 @@ void hm_put(HashMap *hm, void *key, size_t key_size, void *value, size_t value_s
     memcpy(node->value, value, value_size);
     node->value_size = value_size;
 
-    hm->nodes[index] = node;
+    hm->nodes[idx] = node;
     hm->size++;
 }
 

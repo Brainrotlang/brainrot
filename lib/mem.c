@@ -219,7 +219,7 @@ int is_safe_malloc_ptr(const void *ptr)
 {
     if (!ptr)
         return 0;
-    mem_block_t *block = get_block_ptr(ptr);
+    const mem_block_t *block = get_block_ptr(ptr);
     return block->guard == MEMORY_GUARD;
 }
 
@@ -311,7 +311,7 @@ void *safe_memcpy(void *dest, const void *src, size_t n)
         return NULL;
     }
 
-    mem_block_t *block = get_block_ptr(dest);
+    const mem_block_t *block = get_block_ptr(dest);
     if (block->size < n)
     {
         errno = ERANGE;
