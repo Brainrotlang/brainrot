@@ -103,27 +103,27 @@ bool set_array_variable(const char *name, int length, TypeModifiers mods, VarTyp
         {
         case VAR_INT:
             var->value.iarray = SAFE_MALLOC_ARRAY(int, length);
-            memset(var->value.iarray, 0, length * sizeof(int));
+            if(length) memset(var->value.iarray, 0, length * sizeof(int));
             break;
         case VAR_SHORT:
             var->value.sarray = SAFE_MALLOC_ARRAY(short, length);
-            memset(var->value.sarray, 0, length * sizeof(short));
+            if(length) memset(var->value.sarray, 0, length * sizeof(short));
             break;
         case VAR_FLOAT:
             var->value.farray = SAFE_MALLOC_ARRAY(float, length);
-            memset(var->value.farray, 0, length * sizeof(float));
+            if(length) memset(var->value.farray, 0, length * sizeof(float));
             break;
         case VAR_DOUBLE:
             var->value.darray = SAFE_MALLOC_ARRAY(double, length);
-            memset(var->value.darray, 0, length * sizeof(double));
+            if(length) memset(var->value.darray, 0, length * sizeof(double));
             break;
         case VAR_BOOL:
             var->value.barray = SAFE_MALLOC_ARRAY(bool, length);
-            memset(var->value.barray, 0, length * sizeof(bool));
+            if(length) memset(var->value.barray, 0, length * sizeof(bool));
             break;
         case VAR_CHAR:
             var->value.carray = SAFE_MALLOC_ARRAY(char, length);
-            memset(var->value.carray, 0, length * sizeof(char));
+            if(length) memset(var->value.carray, 0, length * sizeof(char));
             break;
         default:
             break;
@@ -3691,9 +3691,9 @@ void handle_return_statement(ASTNode *expr)
         }
     }
     // skibidi main function do not have jump buffer
-    if (CURRENT_JUMP_BUFFER() != NULL) {
+
+    if (jump_buffer && CURRENT_JUMP_BUFFER() != NULL)
         LONGJMP();
-}
 }
 
 Parameter *create_parameter(const char *name, VarType type, Parameter *next)

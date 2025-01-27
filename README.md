@@ -125,6 +125,7 @@ Check out the [examples](examples/README.md):
 - [Fizz Buzz](examples/fizz_buzz.brainrot)
 - [Bubble Sort](examples/bubble_sort.brainrot)
 - [One-dimensional Heat Equation Solver](examples/heat_equation_1d.brainrot)
+- [Fibonacci Sequence](examples/fibonacci.brainrot)
 
 ## 🗪 Community
 

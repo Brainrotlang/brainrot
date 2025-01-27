@@ -259,4 +259,38 @@ skibidi main {
     - Conditional checking with `edgy`/`amogus`.
 
 
+## Fibonacci Sequence
+**File name:** `fibonacci.brainrot`
+
+```
+skibidi main{
+    rizz first = 0;
+    rizz second = 1;
+    rizz next;  
+    rizz count = 0;  
+    rizz limit = 10;  
+
+    yapping("%d", first);    
+    yapping("%d", second);    
+    count = count + 2;
+
+    goon(count < limit){
+        next = first + second;
+        yapping("%d", next);
+
+        first = second;
+        second = next;
+        
+        count = count + 1;
+    }
+
+    bussin 0;
+}
+```
+### What it does
+- Prints the first 10 numbers of fibonacci sequence (`limit` variable).
+- Initializes `first` and `second` terms with 0 and 1.
+- Using a `goon` loop to find the next numbers, until limit.
+
+
 Feel free to explore and modify each example to learn more about how this language’s syntax and features work!

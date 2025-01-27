@@ -1,4 +1,5 @@
 #include "mem.h"
+#include <stdint.h>
 
 /**
  * @brief Retrieves the memory block header from a user pointer
@@ -319,8 +320,8 @@ void *safe_memcpy(void *dest, const void *src, size_t n)
     }
 
     // Check for buffer overlap
-    if ((src < dest && (const char *)src + n > dest) ||
-        (dest < src && (char *)dest + n > src))
+    if ((src < dest && (uintptr_t)src + n > (uintptr_t)dest) ||
+        (dest < src && (uintptr_t)dest + n > (uintptr_t)src))
     {
         errno = EINVAL;
         return NULL;

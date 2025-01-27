@@ -526,7 +526,6 @@ int main(int argc, char *argv[]) {
 }
 
 void yyerror(const char *s) {
-    extern char *yytext;
     fprintf(stderr, "Error: %s at line %d\n", s, yylineno - 1);
 }
 
@@ -562,7 +561,6 @@ void baka(const char* format, ...) {
 }
 
 char slorp_char(char chr) {
-    size_t chars_read;
     input_status status;
 
     status = input_char(&chr);
