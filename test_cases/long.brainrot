@@ -1,0 +1,5 @@
+skibidi main {
+    giga num = 2137141069;
+    yappin("%ld\n", num);
+    bussin 0;
+}
