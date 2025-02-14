@@ -29,6 +29,7 @@ typedef struct
     bool is_unsigned;
     bool is_sizeof;
     bool is_const;
+    bool is_long;
 } TypeModifiers;
 
 typedef struct JumpBuffer
@@ -47,9 +48,11 @@ typedef struct ExpressionList
 typedef enum
 {
     VAR_INT,
+    VAR_LONG,
     VAR_SHORT,
     VAR_FLOAT,
     VAR_DOUBLE,
+    VAR_LONG_DOUBLE,
     VAR_BOOL,
     VAR_CHAR,
     NONE,
@@ -81,6 +84,8 @@ typedef struct
         double dvalue;
         bool bvalue;
         short svalue;
+        long lvalue;
+        long double ldvalue;
     } value;
     VarType type;
 } ReturnValue;
@@ -96,6 +101,8 @@ typedef struct
         bool bvalue;
         float fvalue;
         double dvalue;
+        long lvalue;
+        long double ldvalue;
         void *array_data;
     } value;
     TypeModifiers modifiers;
@@ -114,6 +121,8 @@ typedef union
         bool bvalue;
         float fvalue;
         double dvalue;
+        long lvalue;
+        long double ldvalue;
     };
 } Value;
 
@@ -145,9 +154,11 @@ typedef enum
 typedef enum
 {
     NODE_INT,
+    NODE_LONG,
     NODE_SHORT,
     NODE_FLOAT,
     NODE_DOUBLE,
+    NODE_LONG_DOUBLE,
     NODE_CHAR,
     NODE_BOOLEAN,
     NODE_IDENTIFIER,
@@ -218,6 +229,8 @@ struct ASTNode
         int ivalue;
         float fvalue;
         double dvalue;
+        long lvalue;
+        long double ldvalue;
         char *name;
         struct
         {
@@ -347,8 +360,11 @@ void free_ast(void);
 
 /* Evaluation and execution functions */
 void *evaluate_array_access(ASTNode *node);
+Value retrieve_array_access_value(ASTNode *node, Value default_return_value);
+long double evaluate_expression_long_double(ASTNode *node);
 double evaluate_expression_double(ASTNode *node);
 float evaluate_expression_float(ASTNode *node);
+long evaluate_expression_long(ASTNode *node);
 int evaluate_expression_int(ASTNode *node);
 short evaluate_expression_short(ASTNode *node);
 bool evaluate_expression_bool(ASTNode *node);
@@ -396,9 +412,11 @@ extern Arena arena;
 
 /* Macros for assigning specific fields to a node */
 #define SET_DATA_INT(node, value) ((node)->data.ivalue = (value))
+#define SET_DATA_LONG(node, value) ((node)->data.lvalue = (value))
 #define SET_DATA_SHORT(node, value) ((node)->data.svalue = (value))
 #define SET_DATA_FLOAT(node, value) ((node)->data.fvalue = (value))
 #define SET_DATA_DOUBLE(node, value) ((node)->data.dvalue = (value))
+#define SET_DATA_LONG_DOUBLE(node, value) ((node)->data.ldvalue = (value))
 #define SET_DATA_BOOL(node, value) ((node)->data.bvalue = (value) ? 1 : 0)
 #define SET_DATA_NAME(node, n) ((node)->data.name = ARENA_STRDUP(n))
 #define SET_SIZEOF(node, n) ((node)->data.sizeof_stmt.expr = (n))

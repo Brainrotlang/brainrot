@@ -1,5 +1,4 @@
 skibidi main {
-    giga num = 2137141069;
-    yappin("%ld\n", num);
-    bussin 0;
+    giga gigachad num1 = 0.3333333333333333333333333333333333L;
+    yapping("%Lf", num1);
 }

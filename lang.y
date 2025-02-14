@@ -212,12 +212,15 @@ if_statement:
     ;
 
 type:
-    RIZZ        { $$ = VAR_INT; }
-    | CHAD      { $$ = VAR_FLOAT; }
-    | GIGACHAD  { $$ = VAR_DOUBLE; }
-    | SMOL      { $$ = VAR_SHORT; }
-    | YAP       { $$ = VAR_CHAR; }
-    | CAP       { $$ = VAR_BOOL; }
+    LONG RIZZ         { $$ = VAR_LONG; }
+    | LONG GIGACHAD   { $$ = VAR_LONG_DOUBLE; }
+    | LONG            { $$ = VAR_LONG; }
+    | RIZZ            { $$ = VAR_INT; }
+    | CHAD            { $$ = VAR_FLOAT; }
+    | GIGACHAD        { $$ = VAR_DOUBLE; }
+    | SMOL            { $$ = VAR_SHORT; }
+    | YAP             { $$ = VAR_CHAR; }
+    | CAP             { $$ = VAR_BOOL; }
     ;
 
 declaration:
@@ -299,6 +302,8 @@ modifier:
         { current_modifiers.is_unsigned = true; }
     | DEADASS
         { current_modifiers.is_const = true; }
+    | LONG
+        { current_modifiers.is_long = true; }
     | CAP
         { current_var_type = VAR_BOOL; } 
     ;
@@ -711,7 +716,7 @@ void cleanup() {
 }
 
 TypeModifiers get_variable_modifiers(const char* name) {
-    TypeModifiers mods = {false, false, false, false, false};  // Default modifiers
+    TypeModifiers mods = {false, false, false, false, false, false};  // Default modifiers
     Variable *var = get_variable(name); 
     if (var != NULL) {
         return var->modifiers;
