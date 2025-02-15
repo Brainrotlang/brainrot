@@ -8,6 +8,7 @@
 #include "lang.tab.h"
 
 VarType current_var_type = NONE;
+bool giga_modifier_set = false;
 
 char *unescape_string(const char *src) {
     // Allocate a buffer big enough for the worst case
@@ -67,7 +68,7 @@ extern int yylineno;
 "cringe"         { return GOTO; }
 "edgy"           { return IF; }
 "amogus"         { return ELSE; }
-"giga"           { return LONG; }
+"giga"           { giga_modifier_set = true; return LONG; }
 "smol"           { current_var_type = VAR_SHORT; return SMOL; }
 "nut"            { return SIGNED; }
 "maxxing"        { return SIZEOF; }
@@ -113,30 +114,58 @@ extern int yylineno;
 "🚽"[^\n]*      ; /* Ignore single line comments */
 "W"              { yylval.ival = 1; return BOOLEAN; }
 "L"              { yylval.ival = 0; return BOOLEAN; }
+
 [0-9]+\.[0-9]+([eE][+-]?[0-9]+)?[LlFf]? {
-    char *endptr;
-    if (strchr(yytext, 'f') || strchr(yytext, 'F')) {
+    // handle giga modifer
+    bool is_long = false;
+    if (giga_modifier_set)
+    {
+        is_long = true;
+        // giga modifer has been used.
+        giga_modifier_set = false;
+    }
+
+    char *endptr;  /* Ensure endptr is declared as a pointer */
+    int len = yyleng;
+    if (len > 0 && (yytext[len-1] == 'f' || yytext[len-1] == 'F')) {
         yylval.fval = strtof(yytext, &endptr);
         return FLOAT_LITERAL;
-    } else if (strchr(yytext, 'L') || strchr(yytext, 'l')) {
-        yylval.dval = strtod(yytext, &endptr);
-        return DOUBLE_LITERAL;
+    } else if (len > 0 && (yytext[len-1] == 'l' || yytext[len-1] == 'L' || is_long)) {
+        /* Remove the trailing suffix if it is present */
+        yytext[len-1] = '\0';
+        yylval.ldval = strtold(yytext, &endptr);
+        return LONG_DOUBLE_LITERAL;
     } else {
         yylval.dval = strtod(yytext, &endptr);
         return DOUBLE_LITERAL;
     }
 }
-[0-9]+ {
-    int next_char = input();    // Peek at the next character
-    unput(next_char);           // Put it back into the input stream
 
+[0-9]+([lL])? {
+    // handle giga modifer
+    bool is_long = false;
+    if (giga_modifier_set)
+    {
+        is_long = true;
+        // giga modifer has been used.
+        giga_modifier_set = false;
+    }
+
+    int len = yyleng;
+    if (len > 0 && (yytext[len-1] == 'l' || yytext[len-1] == 'L' || is_long)) {
+        /* Remove the suffix before converting */
+        yytext[len-1] = '\0';
+        yylval.lval = strtol(yytext, NULL, 10);
+        return LONG_LITERAL;
+    }
+    /* Peek at the next character */
+    int next_char = input();
+    /* Put it back into the input stream */
+    unput(next_char);
     if (next_char == ']') {
-        // If the next character is ']', treat this numeric literal as an integer.
         yylval.ival = atoi(yytext);
         return INT_LITERAL;
     }
-
-    // Otherwise, follow the existing type-based logic.
     if (current_var_type == VAR_SHORT) {
         yylval.sval = (short)atoi(yytext);
         return SHORT_LITERAL;
@@ -144,7 +173,6 @@ extern int yylineno;
         yylval.ival = atoi(yytext);
         return INT_LITERAL;
     } else {
-        // Default behavior for unexpected types
         yylval.ival = atoi(yytext);
         return INT_LITERAL;
     }

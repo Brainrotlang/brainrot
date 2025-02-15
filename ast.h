@@ -111,7 +111,7 @@ typedef struct
     int array_length;
 } Variable;
 
-typedef union
+typedef struct Value
 {
     VarType type;
     union
@@ -322,11 +322,13 @@ VarType get_function_return_type(const char *name);
 
 /* Node creation functions */
 ASTNode *create_int_node(int value);
+ASTNode *create_long_node(long value);
 ASTNode *create_array_declaration_node(char *name, int length, VarType type);
 ASTNode *create_array_access_node(char *name, ASTNode *index);
 ASTNode *create_short_node(short value);
 ASTNode *create_float_node(float value);
 ASTNode *create_double_node(double value);
+ASTNode *create_long_double_node(long double value);
 ASTNode *create_char_node(char value);
 ASTNode *create_boolean_node(bool value);
 ASTNode *create_identifier_node(char *name);

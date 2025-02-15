@@ -40,6 +40,8 @@ ASTNode *root = NULL;
     short sval;
     float fval;
     double dval;
+    long double ldval;
+    long lval;
     char cval;
     char *strval;
     ASTNode *node;
@@ -64,8 +66,10 @@ ASTNode *root = NULL;
 %token <strval> STRING_LITERAL
 %token <cval> CHAR
 %token <ival> BOOLEAN
+%token <lval> LONG_LITERAL
 %token <fval> FLOAT_LITERAL
 %token <dval> DOUBLE_LITERAL
+%token <ldval> LONG_DOUBLE_LITERAL
 %token SLORP
 
 /* Declare types for non-terminals */
@@ -212,15 +216,13 @@ if_statement:
     ;
 
 type:
-    LONG RIZZ         { $$ = VAR_LONG; }
-    | LONG GIGACHAD   { $$ = VAR_LONG_DOUBLE; }
-    | LONG            { $$ = VAR_LONG; }
-    | RIZZ            { $$ = VAR_INT; }
+    RIZZ              { $$ = VAR_INT; }
     | CHAD            { $$ = VAR_FLOAT; }
     | GIGACHAD        { $$ = VAR_DOUBLE; }
     | SMOL            { $$ = VAR_SHORT; }
     | YAP             { $$ = VAR_CHAR; }
     | CAP             { $$ = VAR_BOOL; }
+    | LONG            { $$ = VAR_LONG; }
     ;
 
 declaration:
@@ -413,13 +415,15 @@ sizeof_expression:
         SIZEOF LPAREN expression RPAREN{ $$ = create_sizeof_node($3); }
     ;
 literal:
-      INT_LITERAL        { $$ = create_int_node($1); }
-    | FLOAT_LITERAL      { $$ = create_float_node($1); }
-    | DOUBLE_LITERAL     { $$ = create_double_node($1); }
-    | CHAR               { $$ = create_char_node($1); }
-    | SHORT_LITERAL      { $$ = create_short_node($1); }
-    | BOOLEAN            { $$ = create_boolean_node($1); }
-    | STRING_LITERAL     { $$ = create_string_literal_node($1); free($1);}
+      INT_LITERAL         { $$ = create_int_node($1); }
+    | FLOAT_LITERAL       { $$ = create_float_node($1); }
+    | LONG_LITERAL        { $$ = create_long_node($1); }
+    | DOUBLE_LITERAL      { $$ = create_double_node($1); }
+    | LONG_DOUBLE_LITERAL { $$ = create_long_double_node($1); }
+    | CHAR                { $$ = create_char_node($1); }
+    | SHORT_LITERAL       { $$ = create_short_node($1); }
+    | BOOLEAN             { $$ = create_boolean_node($1); }
+    | STRING_LITERAL      { $$ = create_string_literal_node($1); free($1);}
     ;
 
 identifier:

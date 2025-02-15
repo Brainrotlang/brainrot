@@ -1,4 +1,11 @@
 skibidi main {
-    giga gigachad num1 = 0.3333333333333333333333333333333333L;
-    yapping("%Lf", num1);
+    🚽
+    giga gigachad num1 = 0.3333333333333333333333333333333333;
+    yapping("num1 = %Lf", num1);
+
+    giga rizz num2 = 69;
+    yapping("num2 = %Ld", num2);
+
+    rizz num3 = 2147483647;
+    yapping("num3 = %d", num3);
 }

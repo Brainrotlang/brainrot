@@ -281,7 +281,7 @@ ASTNode *create_int_node(int value)
 
 ASTNode *create_long_node(long value)
 {
-    ASTNode *node = create_node(NODE_INT, VAR_LONG, current_modifiers);
+    ASTNode *node = create_node(NODE_LONG, VAR_LONG, current_modifiers);
     SET_DATA_LONG(node, value);
     return node;
 }
@@ -424,9 +424,9 @@ ASTNode *create_double_node(double value)
     return node;
 }
 
-ASTNode *create_long_double_node(double value)
+ASTNode *create_long_double_node(long double value)
 {
-    ASTNode *node = create_node(NODE_DOUBLE, VAR_LONG_DOUBLE, current_modifiers);
+    ASTNode *node = create_node(NODE_LONG_DOUBLE, VAR_LONG_DOUBLE, current_modifiers);
     SET_DATA_LONG_DOUBLE(node, value);
     return node;
 }
@@ -1154,7 +1154,7 @@ Value retrieve_array_access_value(ASTNode *node, Value default_return_value)
         case VAR_BOOL:
             return (Value){.type=VAR_BOOL, .bvalue=((bool *)var->value.array_data)[idx]};
         case VAR_CHAR:
-            return (Value){.type=VAR_CHAR, .svalue=((char *)var->value.array_data)[idx]};
+            return (Value){.type=VAR_CHAR, .ivalue=((char *)var->value.array_data)[idx]};
         default:
             yyerror("Unsupported array type");
             return default_return_value;
@@ -1182,6 +1182,7 @@ float evaluate_expression_float(ASTNode *node)
             return (float)array_value.dvalue;
         case VAR_LONG_DOUBLE:
             return (float)array_value.ldvalue;
+        case VAR_CHAR:
         case VAR_INT:
             return (float)array_value.ivalue;
         case VAR_LONG:
@@ -1189,7 +1190,6 @@ float evaluate_expression_float(ASTNode *node)
         case VAR_BOOL:
             return (float)array_value.bvalue;
         case VAR_SHORT:
-        case VAR_CHAR:
             return (float)array_value.svalue;
         default:
             return 0.0f;
@@ -1199,6 +1199,7 @@ float evaluate_expression_float(ASTNode *node)
         return node->data.fvalue;
     case NODE_DOUBLE:
         return (float)node->data.dvalue;
+    case NODE_CHAR:
     case NODE_INT:
         return (float)node->data.ivalue;
     case NODE_IDENTIFIER:
@@ -1265,6 +1266,7 @@ double evaluate_expression_double(ASTNode *node)
             return array_value.dvalue;
         case VAR_LONG_DOUBLE:
             return (double)array_value.ldvalue;
+        case VAR_CHAR:
         case VAR_INT:
             return (double)array_value.ivalue;
         case VAR_LONG:
@@ -1272,7 +1274,6 @@ double evaluate_expression_double(ASTNode *node)
         case VAR_BOOL:
             return (double)array_value.bvalue;
         case VAR_SHORT:
-        case VAR_CHAR:
             return (double)array_value.svalue;
         default:
             return 0.0L;
@@ -1284,8 +1285,11 @@ double evaluate_expression_double(ASTNode *node)
         return (double)node->data.ldvalue;
     case NODE_FLOAT:
         return (double)node->data.fvalue;
+    case NODE_CHAR:
     case NODE_INT:
         return (double)node->data.ivalue;
+    case NODE_SHORT:
+        return (double)node->data.svalue;
     case NODE_LONG:
         return (double)node->data.lvalue;
     case NODE_IDENTIFIER:
@@ -1352,6 +1356,7 @@ long double evaluate_expression_long_double(ASTNode *node)
             return (long double)array_value.dvalue;
         case VAR_LONG_DOUBLE:
             return array_value.ldvalue;
+        case VAR_CHAR:
         case VAR_INT:
             return (long double)array_value.ivalue;
         case VAR_LONG:
@@ -1359,7 +1364,6 @@ long double evaluate_expression_long_double(ASTNode *node)
         case VAR_BOOL:
             return (long double)array_value.bvalue;
         case VAR_SHORT:
-        case VAR_CHAR:
             return (long double)array_value.svalue;
         default:
             return 0.0L;
@@ -1371,6 +1375,9 @@ long double evaluate_expression_long_double(ASTNode *node)
         return (long double)node->data.fvalue;
     case NODE_DOUBLE:
         return (long double)node->data.dvalue;
+    case NODE_SHORT:
+        return (long double)node->data.svalue;
+    case VAR_CHAR:
     case NODE_INT:
         return (long double)node->data.ivalue;
     case NODE_IDENTIFIER:
@@ -1437,6 +1444,7 @@ long evaluate_expression_long(ASTNode *node)
             return (long)array_value.dvalue;
         case VAR_LONG_DOUBLE:
             return (long)array_value.ldvalue;
+        case VAR_CHAR:
         case VAR_INT:
             return (long)array_value.ivalue;
         case VAR_LONG:
@@ -1444,7 +1452,6 @@ long evaluate_expression_long(ASTNode *node)
         case VAR_BOOL:
             return (long)array_value.bvalue;
         case VAR_SHORT:
-        case VAR_CHAR:
             return (long)array_value.svalue;
         default:
             return 0L;
@@ -1458,6 +1465,9 @@ long evaluate_expression_long(ASTNode *node)
         return (long)node->data.fvalue;
     case NODE_DOUBLE:
         return (long)node->data.dvalue;
+    case NODE_SHORT:
+        return (long)node->data.svalue;
+    case NODE_CHAR:
     case NODE_INT:
         return (long)node->data.ivalue;
     case NODE_IDENTIFIER:
@@ -1688,6 +1698,7 @@ short evaluate_expression_short(ASTNode *node)
             return (short)array_value.dvalue;
         case VAR_LONG_DOUBLE:
             return (short)array_value.ldvalue;
+        case VAR_CHAR:
         case VAR_INT:
             return (short)array_value.ivalue;
         case VAR_LONG:
@@ -1695,7 +1706,6 @@ short evaluate_expression_short(ASTNode *node)
         case VAR_BOOL:
             return (short)array_value.bvalue;
         case VAR_SHORT:
-        case VAR_CHAR:
             return array_value.svalue;
         default:
             return 0;
@@ -1802,6 +1812,7 @@ int evaluate_expression_int(ASTNode *node)
             return (int)array_value.dvalue;
         case VAR_LONG_DOUBLE:
             return (int)array_value.ldvalue;
+        case VAR_CHAR:
         case VAR_INT:
             return array_value.ivalue;
         case VAR_LONG:
@@ -1809,7 +1820,6 @@ int evaluate_expression_int(ASTNode *node)
         case VAR_BOOL:
             return (int)array_value.bvalue;
         case VAR_SHORT:
-        case VAR_CHAR:
             return (int)array_value.svalue;
         default:
             return 0;
@@ -1958,6 +1968,7 @@ bool evaluate_expression_bool(ASTNode *node)
             return (bool)array_value.dvalue;
         case VAR_LONG_DOUBLE:
             return (bool)array_value.ldvalue;
+        case VAR_CHAR:
         case VAR_INT:
             return (bool)array_value.ivalue;
         case VAR_LONG:
@@ -1965,7 +1976,6 @@ bool evaluate_expression_bool(ASTNode *node)
         case VAR_BOOL:
             return array_value.bvalue;
         case VAR_SHORT:
-        case VAR_CHAR:
             return (bool)array_value.svalue;
         default:
             return 0;
