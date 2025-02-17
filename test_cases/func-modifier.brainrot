@@ -1,0 +1,9 @@
+rizz modifier_test(deadass rizz a) {
+    a = 3;
+    bussin a;
+}
+
+skibidi main {
+    modifier_test(6);
+    bussin 0;
+}

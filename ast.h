@@ -62,6 +62,7 @@ typedef struct Parameter
 {
     char *name;
     VarType type;
+    TypeModifiers modifiers;
     struct Parameter *next;
 } Parameter;
 
@@ -299,7 +300,7 @@ extern TypeModifiers current_modifiers;
 extern Scope *current_scope;
 extern Function *function_table;
 extern ReturnValue current_return_value;
-extern jmp_buf return_jump_buf;
+extern JumpBuffer *jump_buffer;
 /* Function prototypes */
 bool set_int_variable(const char *name, int value, TypeModifiers mods);
 bool set_array_variable(char *name, int length, TypeModifiers mods, VarType type);
@@ -398,7 +399,7 @@ void *handle_function_call(ASTNode *node);
 
 /* User-defined functions */
 Function *create_function(char *name, VarType return_type, Parameter *params, ASTNode *body);
-Parameter *create_parameter(char *name, VarType type, Parameter *next);
+Parameter *create_parameter(char *name, VarType type, Parameter *next, TypeModifiers mods);
 void execute_function_call(const char *name, ArgumentList *args);
 ASTNode *create_function_def_node(char *name, VarType return_type, Parameter *params, ASTNode *body);
 void handle_return_statement(ASTNode *expr);
@@ -492,5 +493,14 @@ extern Arena arena;
     } while (0)
 
 #define CURRENT_JUMP_BUFFER() (jump_buffer->data)
+
+#define CLEAN_JUMP_BUFFER() \
+    do                      \
+    {                       \
+        while (jump_buffer) \
+        {                    \
+            POP_JUMP_BUFFER(); \
+        }                    \
+    } while (0)
 
 #endif /* AST_H */

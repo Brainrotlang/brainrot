@@ -140,10 +140,10 @@ params
     ;
 
 param_list
-    : type IDENTIFIER
-        { $$ = create_parameter($2, $1, NULL); SAFE_FREE($2); }
-    | param_list COMMA type IDENTIFIER 
-        { $$ = create_parameter($4, $3, $1); SAFE_FREE($4); }
+    : optional_modifiers type IDENTIFIER
+        { $$ = create_parameter($3, $2, NULL, get_current_modifiers()); SAFE_FREE($3); }
+    | param_list COMMA optional_modifiers type IDENTIFIER 
+        { $$ = create_parameter($5, $4, $1, get_current_modifiers()); SAFE_FREE($5); }
     ;
 
 
@@ -714,6 +714,10 @@ void cleanup() {
     
     // Free the scope
     free_scope(current_scope);
+
+    free_function_table();
+
+    CLEAN_JUMP_BUFFER();
     
     // Clean up flex's internal state
     yylex_destroy();

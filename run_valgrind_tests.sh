@@ -3,24 +3,30 @@
 for f in test_cases/*.brainrot; do
     echo "Running Valgrind on $f..."
     base=$(basename "$f" .brainrot)
-    if [[ "$base" == slorp_int ]]; then
-        echo 42 | valgrind --leak-check=full --error-exitcode=1 ./brainrot "$f"
-    elif [[ "$base" == slorp_short ]]; then
-        echo 69 | valgrind --leak-check=full --error-exitcode=1 ./brainrot "$f"
-    elif [[ "$base" == slorp_float ]]; then
-        echo "3.14" | valgrind --leak-check=full --error-exitcode=1 ./brainrot "$f"
-    elif [[ "$base" == slorp_double ]]; then
-        echo "3.141592" | valgrind --leak-check=full --error-exitcode=1 ./brainrot "$f"
-    elif [[ "$base" == slorp_char ]]; then
-        echo "c" | valgrind --leak-check=full --error-exitcode=1 ./brainrot "$f"
-    elif [[ "$base" == slorp_string ]]; then
-        echo "skibidi bop bop yes yes" | valgrind --leak-check=full --error-exitcode=1 ./brainrot "$f"
+
+    case "$base" in
+        slorp_int)    input="42" ;;
+        slorp_short)  input="69" ;;
+        slorp_float)  input="3.14" ;;
+        slorp_double) input="3.141592" ;;
+        slorp_char)   input="c" ;;
+        slorp_string) input="skibidi bop bop yes yes" ;;
+        *)            input="" ;;
+    esac
+
+    if [[ -n "$input" ]]; then
+        echo "$input" | valgrind --leak-check=full --error-exitcode=100 ./brainrot "$f"
     else
-        valgrind --leak-check=full --error-exitcode=1 ./brainrot "$f"
+        valgrind --leak-check=full --error-exitcode=100 ./brainrot "$f"
     fi
-    if [[ $? -ne 0 ]]; then
-        echo "Valgrind failed on $f"
+
+    valgrind_exit_code=$?  # Capture only valgrind’s exit code
+
+    if [[ $valgrind_exit_code -eq 100 ]]; then
+        echo "Valgrind detected memory issues in $f"
         exit 1
     fi
+
     echo
 done
+
