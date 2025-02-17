@@ -51,6 +51,6 @@
     "slorp_string": "You typed: skibidi bop bop yes yes",
     "fib": "55",
     "func_scope": "from inner 10\nfrom outer 4\n",
-    "long": "0.3333333333333333333333333333333333\n",
+    "long": "num1 = 0.33333333333333333333\nnum2 = 0.33333333333333331483\n",
     "func-modifier": "Error: Cannot modify const variable at line 7\n"
 }

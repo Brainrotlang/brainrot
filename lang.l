@@ -116,23 +116,24 @@ extern int yylineno;
 "L"              { yylval.ival = 0; return BOOLEAN; }
 
 [0-9]+\.[0-9]+([eE][+-]?[0-9]+)?[LlFf]? {
-    // handle giga modifer
+
+    // Handle giga_modifier_set
     bool is_long = false;
     if (giga_modifier_set)
     {
         is_long = true;
-        // giga modifer has been used.
-        giga_modifier_set = false;
     }
+    giga_modifier_set = false;
 
-    char *endptr;  /* Ensure endptr is declared as a pointer */
+    char *endptr;  // Ensure endptr is declared as a pointer
     int len = yyleng;
     if (len > 0 && (yytext[len-1] == 'f' || yytext[len-1] == 'F')) {
         yylval.fval = strtof(yytext, &endptr);
         return FLOAT_LITERAL;
     } else if (len > 0 && (yytext[len-1] == 'l' || yytext[len-1] == 'L' || is_long)) {
-        /* Remove the trailing suffix if it is present */
-        yytext[len-1] = '\0';
+        // Remove the trailing suffix if it is present 
+        if (yytext[len-1] == 'l' || yytext[len-1] == 'L')
+            yytext[len-1] = '\0';
         yylval.ldval = strtold(yytext, &endptr);
         return LONG_DOUBLE_LITERAL;
     } else {
@@ -142,25 +143,27 @@ extern int yylineno;
 }
 
 [0-9]+([lL])? {
-    // handle giga modifer
+
+    // Handle giga_modifier_set
     bool is_long = false;
     if (giga_modifier_set)
     {
         is_long = true;
-        // giga modifer has been used.
-        giga_modifier_set = false;
     }
+    giga_modifier_set = false;
 
     int len = yyleng;
     if (len > 0 && (yytext[len-1] == 'l' || yytext[len-1] == 'L' || is_long)) {
-        /* Remove the suffix before converting */
-        yytext[len-1] = '\0';
+        // Remove the suffix before converting
+        if (yytext[len-1] == 'l' || yytext[len-1] == 'L')
+            yytext[len-1] = '\0';
+
         yylval.lval = strtol(yytext, NULL, 10);
         return LONG_LITERAL;
     }
-    /* Peek at the next character */
+    // Peek at the next character
     int next_char = input();
-    /* Put it back into the input stream */
+    // Put it back into the input stream 
     unput(next_char);
     if (next_char == ']') {
         yylval.ival = atoi(yytext);
@@ -218,7 +221,11 @@ extern int yylineno;
     return YAP; 
 }
 
-[ \t\n]+         ; /* Ignore whitespace */
+[ \t]+         ; /* Ignore whitespace */
+[\n]+ {
+    // Newlines clear the giga modifier.
+    giga_modifier_set = false;
+}
 .                { /* Ignore unrecognized characters */ }
 
 %%

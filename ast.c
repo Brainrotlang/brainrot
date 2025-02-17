@@ -442,7 +442,7 @@ ASTNode *create_sizeof_node(ASTNode *expr)
     return node;
 }
 
-// @param promotion: 0 for no promotion, 1 for promotion to double 2 for promotion to float
+// @param promotion: 0 for no promotion, 1 for promotion to double, 2 for promotion to float, 3 for promotion to long, 4 for promotion to long double
 void *handle_identifier(ASTNode *node, const char *contextErrorMessage, int promote)
 {
     if (!check_and_mark_identifier(node, contextErrorMessage))
@@ -472,7 +472,7 @@ void *handle_identifier(ASTNode *node, const char *contextErrorMessage, int prom
                 promoted_value.dvalue = (double)var->value.ivalue;
                 return &promoted_value;
             default:
-                yyerror("Unsupported variable type");
+                yyerror("Unsupported variable type for type 1 promote");
                 return NULL;
             }
         }
@@ -489,12 +489,15 @@ void *handle_identifier(ASTNode *node, const char *contextErrorMessage, int prom
             case VAR_CHAR:
             case VAR_SHORT:
                 promoted_value.fvalue = (float)var->value.svalue;
-                return &promoted_value.svalue;
+                return &promoted_value.fvalue;
             case VAR_BOOL:
                 promoted_value.fvalue = (float)var->value.ivalue;
                 return &promoted_value.fvalue;
+            case VAR_LONG_DOUBLE:
+                promoted_value.fvalue = (float)var->value.ldvalue;
+                return &promoted_value.fvalue;
             default:
-                yyerror("Unsupported variable type");
+                yyerror("Unsupported variable type for type 2 promote");
                 return NULL;
             }
         }
@@ -512,13 +515,17 @@ void *handle_identifier(ASTNode *node, const char *contextErrorMessage, int prom
                 return &var->value.svalue;
             case VAR_BOOL:
                 return &var->value.ivalue;
+            case VAR_LONG:
+                return &var->value.lvalue;
+            case VAR_LONG_DOUBLE:
+                return &var->value.ldvalue;
             default:
-                yyerror("Unsupported variable type");
+                yyerror("Unsupported variable type for default promote");
                 return NULL;
             }
         }
     }
-    yyerror("Undefined variable");
+    yyerror("Undefined variable in handle_identifier function call");
     return NULL;
 }
 
@@ -1386,24 +1393,32 @@ long double evaluate_expression_long_double(ASTNode *node)
         return (long double)node->data.ivalue;
     case NODE_IDENTIFIER:
     {
-        return *(long double *)handle_identifier(node, "Undefined variable", 2);
+        return *(long double *)handle_identifier(node, "Undefined variable", 4);
     }
     case NODE_OPERATION:
     {
         int result_type = get_expression_type(node);
         void *result = handle_binary_operation(node);
         long double result_long_double = 0.0L;
-        result_long_double = (result_type == VAR_INT)
-                           ? (long double)(*(int *)result)
-                       : (result_type == VAR_FLOAT)
-                           ? *(long double *)result
-                           : (long double)(*(double *)result);
+        switch (result_type) {
+            case VAR_INT:
+                result_long_double = (long double)(*(int *)result);
+                break;
+            case VAR_FLOAT:
+                result_long_double = (long double)(*(float *)result);
+                break;
+            case VAR_LONG_DOUBLE:
+                result_long_double = (*(long double *)result);
+                break;
+            default:
+                break;
+        }
         SAFE_FREE(result);
         return result_long_double;
     }
     case NODE_UNARY_OPERATION:
     {
-        long double operand = evaluate_expression_float(node->data.unary.operand);
+        long double operand = evaluate_expression_long_double(node->data.unary.operand);
         long double *result = (long double *)handle_unary_expression(node, &operand, VAR_LONG_DOUBLE);
         long double return_val = *result;
         SAFE_FREE(result);
@@ -2434,6 +2449,22 @@ void execute_assignment(ASTNode *node)
             yyerror("Failed to set double variable");
         }
     }
+    else if (is_long_double_expression(value_node))
+    {
+        long double value = evaluate_expression_long_double(value_node);
+        if (!set_long_double_variable(name, value, mods))
+        {
+            yyerror("Failed to set long double variable");
+        }
+    }
+    else if (is_long_expression(value_node))
+    {
+        long value = evaluate_expression_long(value_node);
+        if (!set_long_variable(name, value, mods))
+        {
+            yyerror("Failed to set long variable");
+        }
+    }
     else if (is_short_expression(value_node))
     {
         short value = evaluate_expression_short(value_node);
@@ -2456,6 +2487,11 @@ void execute_statement(ASTNode *node)
 {
     if (!node)
         return;
+
+    // Fix long double nodes assigned as double nodes
+    if (node->var_type == VAR_DOUBLE && node->modifiers.is_long)
+        node->var_type = VAR_LONG_DOUBLE;
+
     switch (node->type)
     {
     case NODE_DECLARATION:
@@ -2501,8 +2537,14 @@ void execute_statement(ASTNode *node)
                 case VAR_DOUBLE:
                     ((double *)var->value.array_data)[idx] = evaluate_expression_double(node->data.op.right);
                     break;
+                case VAR_LONG_DOUBLE:
+                    ((long double *)var->value.array_data)[idx] = evaluate_expression_long_double(node->data.op.right);
+                    break;
                 case VAR_INT:
                     ((int *)var->value.array_data)[idx] = evaluate_expression_int(node->data.op.right);
+                    break;
+                case VAR_LONG:
+                    ((long *)var->value.array_data)[idx] = evaluate_expression_long(node->data.op.right);
                     break;
                 case VAR_SHORT:
                     ((short *)var->value.array_data)[idx] = evaluate_expression_short(node->data.op.right);
@@ -2574,7 +2616,7 @@ void execute_statement(ASTNode *node)
         }
         else if (node->var_type == VAR_LONG_DOUBLE || is_long_double_expression(value_node))
         {
-            long value = evaluate_expression_long_double(value_node);
+            long double value = evaluate_expression_long_double(value_node);
             if (!set_long_double_variable(name, value, mods))
             {
                 yyerror("Failed to set long double variable");
@@ -3422,7 +3464,7 @@ void *evaluate_array_access(ASTNode *node)
         }
 
         // Allocate and return value based on type
-        void *result = ARENA_ALLOC(double); // Use largest possible type
+        void *result = ARENA_ALLOC(long double); // Use largest possible type
         switch (var->var_type)
         {
         case VAR_FLOAT:
@@ -3431,8 +3473,14 @@ void *evaluate_array_access(ASTNode *node)
         case VAR_DOUBLE:
             ((double *)var->value.array_data)[idx] = evaluate_expression_double(node->data.op.right);
             break;
+        case VAR_LONG_DOUBLE:
+            ((long double *)var->value.array_data)[idx] = evaluate_expression_long_double(node->data.op.right);
+            break;
         case VAR_INT:
             ((int *)var->value.array_data)[idx] = evaluate_expression_int(node->data.op.right);
+            break;
+        case VAR_LONG:
+            ((long *)var->value.array_data)[idx] = evaluate_expression_long(node->data.op.right);
             break;
         case VAR_SHORT:
             ((short *)var->value.array_data)[idx] = evaluate_expression_short(node->data.op.right);
@@ -3545,11 +3593,17 @@ void populate_array_variable(char *name, ExpressionList *list)
             case VAR_INT:
                 ((int *)var->value.array_data)[index] = evaluate_expression_int(current->expr);
                 break;
+            case VAR_LONG:
+                ((long *)var->value.array_data)[index] = evaluate_expression_long(current->expr);
+                break;
             case VAR_FLOAT:
                 ((float *)var->value.array_data)[index] = evaluate_expression_float(current->expr);
                 break;
             case VAR_DOUBLE:
                 ((double *)var->value.array_data)[index] = evaluate_expression_double(current->expr);
+                break;
+            case VAR_LONG_DOUBLE:
+                ((long double *)var->value.array_data)[index] = evaluate_expression_long_double(current->expr);
                 break;
             case VAR_SHORT:
                 ((short *)var->value.array_data)[index] = evaluate_expression_short(current->expr);
@@ -3752,14 +3806,21 @@ void handle_return_statement(ASTNode *expr)
     {
         switch (current_return_value.type)
         {
+        case VAR_CHAR:
         case VAR_INT:
             current_return_value.value.ivalue = evaluate_expression_int(expr);
+            break;
+        case VAR_LONG:
+            current_return_value.value.lvalue = evaluate_expression_long(expr);
             break;
         case VAR_FLOAT:
             current_return_value.value.fvalue = evaluate_expression_float(expr);
             break;
         case VAR_DOUBLE:
             current_return_value.value.dvalue = evaluate_expression_double(expr);
+            break;
+        case VAR_LONG_DOUBLE:
+            current_return_value.value.ldvalue = evaluate_expression_long_double(expr);
             break;
         case VAR_BOOL:
             current_return_value.value.bvalue = evaluate_expression_bool(expr);

@@ -1,11 +1,7 @@
 skibidi main {
-    🚽
-    giga gigachad num1 = 0.3333333333333333333333333333333333;
-    yapping("num1 = %Lf", num1);
-
-    giga rizz num2 = 69;
-    yapping("num2 = %Ld", num2);
-
-    rizz num3 = 2147483647;
-    yapping("num3 = %d", num3);
+    🚽 A giga gigachad has this precision, but just a gigachad doesn't.
+    giga gigachad num1 = 0.3333333333333333333333333333333333L;
+    gigachad num2 = 0.3333333333333333333333333333333333;
+    yapping("num1 = %.20Lf", num1);
+    yapping("num2 = %.20f", num2);
 }
