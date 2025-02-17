@@ -1,7 +1,7 @@
 skibidi main {
-    🚽 A giga gigachad has this precision, but just a gigachad doesn't.
-    giga gigachad num1 = 0.3333333333333333333333333333333333L;
-    gigachad num2 = 0.3333333333333333333333333333333333;
-    yapping("num1 = %.20Lf", num1);
-    yapping("num2 = %.20f", num2);
+    🚽 A giga rizz should have a bigger sizeof than just a rizz.
+    giga rizz num1 = 4294967295;
+    rizz num2 = 4294967295;
+    yapping("maxxing(num1) = %d", maxxing(num1));
+    yapping("maxxing(num2) = %d", maxxing(num2));
 }

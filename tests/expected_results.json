@@ -51,6 +51,7 @@
     "slorp_string": "You typed: skibidi bop bop yes yes",
     "fib": "55",
     "func_scope": "from inner 10\nfrom outer 4\n",
-    "long": "num1 = 0.33333333333333333333\nnum2 = 0.33333333333333331483\n",
+    "double": "maxxing(num1) = 8\nmaxxing(num2) = 4\n",
+    "long_double": "num1 = 0.33333333333333333333\nnum2 = 0.33333333333333331483\nmaxxing(num1) = 16\nmaxxing(num2) = 8\n",
     "func-modifier": "Error: Cannot modify const variable at line 7\n"
 }
