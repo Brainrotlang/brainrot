@@ -259,6 +259,49 @@ skibidi main {
     - Conditional checking with `edgy`/`amogus`.
 
 
+## 6. Sieve of Eratosthenes
+**File Name:** `sieve_of_eras.brainrot`
+```c
+skibidi main {
+    rizz i;
+    rizz p;
+    cap prime[105];
+
+    🚽 Initialize all numbers as prime (W = true)
+    flex(i = 1; i <= 100; i = i + 1) {
+        prime[i] = W;
+    }
+
+    🚽 Implement Sieve of Eratosthenes
+    flex(p = 2; p * p <= 100; p = p + 1) {
+        edgy(prime[p] == W) {
+            flex(i = p * p; i <= 100; i = i + p) {
+                prime[i] = L; 🚽 Mark multiples as not prime (L = false)
+            }
+        }
+    }
+
+    🚽 Print all prime numbers
+    yapping("Prime numbers up to 100: ");
+    flex(p = 2; p <= 100; p = p + 1) {
+        edgy(prime[p]) { 
+            yapping("%d ", p); 
+        }
+    }
+
+    bussin 0;
+}
+```
+- Declare the prime[105] array to mark prime numbers.
+- Initialize all numbers as W (true/prime).
+- Main loop of the Sieve of Eratosthenes to mark multiples of prime numbers as L (false/not prime).
+- Print prime numbers from 2 to 100 using yapping.
+- Showcases:
+    - fill all prime array with true using `W`.
+    - Using a two-pointer approach to solve the problem efficiently.
+    - Conditional checking with `edgy`.
+
+
 ## Fibonacci Sequence
 **File name:** `fibonacci.brainrot`
 

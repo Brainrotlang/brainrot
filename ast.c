@@ -3840,7 +3840,7 @@ void handle_return_statement(ASTNode *expr)
     }
 
     // skibidi main function do not have jump buffer
-    if (CURRENT_JUMP_BUFFER()){
+    if (jump_buffer){
         exit_scope(); // exit current function scope
         LONGJMP();
     }

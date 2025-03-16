@@ -34,7 +34,7 @@ skibidi main {
     edgy ( left < right){
         yappin("the two numbers are: %d and %d\n", result[0], result[1]);
     } amogus {
-        yappign("No solution found\n");
+        yappin("No solution found\n");
     }
 
     bussin 0;
