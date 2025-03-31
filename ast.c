@@ -339,6 +339,7 @@ ASTNode *create_short_node(short value)
 
 ASTNode *create_float_node(float value)
 {
+    printf("creatin float node");
     ASTNode *node = create_node(NODE_FLOAT, VAR_FLOAT, current_modifiers);
     SET_DATA_FLOAT(node, value);
     return node;
@@ -462,15 +463,21 @@ void *handle_identifier(ASTNode *node, const char *contextErrorMessage, int prom
                 return &var->value.dvalue;
             case VAR_FLOAT:
                 promoted_value.dvalue = (double)var->value.fvalue;
-                return &promoted_value;
+                return &promoted_value.dvalue;
+            case VAR_LONG:
+                promoted_value.dvalue = (double)var->value.lvalue;
+                return &promoted_value.dvalue;
+            case VAR_LONG_DOUBLE:
+                promoted_value.dvalue = (double)var->value.ldvalue;
+                return &promoted_value.dvalue;
             case VAR_INT:
             case VAR_CHAR:
             case VAR_SHORT:
                 promoted_value.dvalue = (double)var->value.svalue;
-                return &promoted_value;
+                return &promoted_value.dvalue;
             case VAR_BOOL:
                 promoted_value.dvalue = (double)var->value.ivalue;
-                return &promoted_value;
+                return &promoted_value.dvalue;
             default:
                 yyerror("Unsupported variable type for type 1 promote");
                 return NULL;
@@ -485,6 +492,9 @@ void *handle_identifier(ASTNode *node, const char *contextErrorMessage, int prom
                 return &promoted_value.fvalue;
             case VAR_FLOAT:
                 return &var->value.fvalue;
+            case VAR_LONG:
+                promoted_value.fvalue = (float)var->value.lvalue;
+                return &promoted_value.fvalue;
             case VAR_INT:
             case VAR_CHAR:
             case VAR_SHORT:
@@ -498,6 +508,60 @@ void *handle_identifier(ASTNode *node, const char *contextErrorMessage, int prom
                 return &promoted_value.fvalue;
             default:
                 yyerror("Unsupported variable type for type 2 promote");
+                return NULL;
+            }
+        }
+        else if (promote == 3) {
+            switch (var->var_type)
+            {
+            case VAR_DOUBLE:
+                promoted_value.lvalue = (long)var->value.dvalue;
+                return &promoted_value.lvalue;
+            case VAR_FLOAT:
+                promoted_value.lvalue = (long)var->value.fvalue;
+                return &promoted_value.lvalue;
+            case VAR_LONG:
+                return &var->value.lvalue;
+            case VAR_INT:
+            case VAR_CHAR:
+            case VAR_SHORT:
+                promoted_value.lvalue = (long)var->value.svalue;
+                return &promoted_value.lvalue;
+            case VAR_BOOL:
+                promoted_value.lvalue = (long)var->value.ivalue;
+                return &promoted_value.lvalue;
+            case VAR_LONG_DOUBLE:
+                promoted_value.lvalue = (long)var->value.ldvalue;
+                return &promoted_value.lvalue;
+            default:
+                yyerror("Unsupported variable type for type 3 promote");
+                return NULL;
+            }
+        }
+        else if (promote == 4) {
+            switch (var->var_type)
+            {
+            case VAR_DOUBLE:
+                promoted_value.ldvalue = (long double)var->value.dvalue;
+                return &promoted_value.ldvalue;
+            case VAR_FLOAT:
+                promoted_value.ldvalue = (long double)var->value.fvalue;
+                return &promoted_value.ldvalue;
+            case VAR_LONG_DOUBLE:
+                return &var->value.ldvalue;
+            case VAR_INT:
+            case VAR_CHAR:
+            case VAR_SHORT:
+                promoted_value.ldvalue = (long double)var->value.svalue;
+                return &promoted_value.ldvalue;
+            case VAR_BOOL:
+                promoted_value.ldvalue = (long double)var->value.ivalue;
+                return &promoted_value.ldvalue;
+            case VAR_LONG:
+                promoted_value.ldvalue = (long double)var->value.lvalue;
+                return &promoted_value.ldvalue;
+            default:
+                yyerror("Unsupported variable type for type 4 promote");
                 return NULL;
             }
         }
