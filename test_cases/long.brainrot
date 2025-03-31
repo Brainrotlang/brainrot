@@ -1,0 +1,7 @@
+skibidi main {
+    🚽 A giga rizz should have a bigger sizeof than just a rizz.
+    giga rizz num1 = 4294967295;
+    rizz num2 = 4294967295;
+    yapping("maxxing(num1) = %d", maxxing(num1));
+    yapping("maxxing(num2) = %d", maxxing(num2));
+}
