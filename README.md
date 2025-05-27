@@ -90,6 +90,8 @@ flex -o lang.lex.c lang.l
 make
 ```
 
+NOTE: The gcc version we use to test is v13 if you get any warnings remove `-Werror` flag from the Makefile
+
 ## Installation
 
 ```bash
