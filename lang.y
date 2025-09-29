@@ -355,6 +355,8 @@ row_list:
                     acc = append_expression_list(acc, cur->expr);
                     cur = cur->next;
                 } while (cur != start);
+                /* Free the temporary 'start' list nodes now that we've copied exprs */
+                free_expression_list(start);
             }
             $$ = acc;
         }
