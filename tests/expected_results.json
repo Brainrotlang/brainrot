@@ -25,7 +25,7 @@
     "while_loop": "AAAAAH A GOONIN LOOP\n1\nAAAAAH A GOONIN LOOP\n2\nAAAAAH A GOONIN LOOP\n3\nAAAAAH A GOONIN LOOP\n4\n",
     "while_loop_break": "AAAAAH A GOONIN LOOP\n1\nahhhhh exitinggggg\n",
     "int": "10\n5\n3\n-3\n20\n-20\n2\n1\n2\n-2",
-	"uint": "10\n9931737\n3\n647238965\n20\n245413032\n2\n1\n2\n1",
+    "uint": "10\n9931737\n3\n647238965\n20\n245413032\n2\n1\n2\n1",
     "inc-dec": "0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n9\n8\n7\n6\n5\n4\n3\n2\n1\n",
     "double_vs_float": "0.0 1.0\n",
     "const": "1\n1\n",
@@ -52,5 +52,10 @@
     "fib": "55",
     "func_scope": "from inner 10\nfrom outer 4\n",
     "func-modifier": "Error: Cannot modify const variable at line 7\n",
-    "multi_array": "1\n2\n3\n4\n"
+    "multi_array": "1\n2\n3\n4\n",
+    "unsized_array_complex": "5\n15\n1\n5\n5\n4\n3\n2\n1\n",
+    "unsized_array_init": "1\n2\n",
+    "matrix_init_simple": "1\n9\n6\n",
+    "grid_bfs": "8",
+    "grid_bfs_1d": "8"
 }

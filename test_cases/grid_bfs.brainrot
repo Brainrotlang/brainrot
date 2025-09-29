@@ -1,0 +1,64 @@
+skibidi main {
+    🚽 0 = open, 1 = wall
+    rizz grid[][5] = {
+        {0,0,0,1,0},
+        {1,1,0,1,0},
+        {0,0,0,0,0},
+        {0,1,1,1,0},
+        {0,0,0,1,0}
+    };
+
+    rizz rows = 5;
+    rizz cols = 5;
+
+    🚽 BFS from (0,0) to (4,4)
+    rizz qx[] = {0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0};
+    rizz qy[] = {0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0};
+    rizz head = 0;
+    rizz tail = 0;
+
+    rizz dist[][5] = {
+        { -1,-1,-1,-1,-1 },
+        { -1,-1,-1,-1,-1 },
+        { -1,-1,-1,-1,-1 },
+        { -1,-1,-1,-1,-1 },
+        { -1,-1,-1,-1,-1 }
+    };
+
+    rizz sx = 0; rizz sy = 0;
+    rizz tx = 4; rizz ty = 4;
+
+    edgy (grid[sx][sy] == 1) { yapping("%d", -1); bussin 0; }
+
+    dist[sx][sy] = 0;
+    qx[tail] = sx; qy[tail] = sy; tail = tail + 1;
+
+    goon (head < tail) {
+        rizz x = qx[head]; rizz y = qy[head]; head = head + 1;
+        edgy (x == tx && y == ty) { bruh; }
+
+        rizz nx; rizz ny;
+
+        nx = x + 1; ny = y;
+        edgy (nx >= 0 && nx < rows && ny >= 0 && ny < cols && grid[nx][ny] == 0 && dist[nx][ny] == -1) {
+            dist[nx][ny] = dist[x][y] + 1; qx[tail] = nx; qy[tail] = ny; tail = tail + 1;
+        }
+
+        nx = x - 1; ny = y;
+        edgy (nx >= 0 && nx < rows && ny >= 0 && ny < cols && grid[nx][ny] == 0 && dist[nx][ny] == -1) {
+            dist[nx][ny] = dist[x][y] + 1; qx[tail] = nx; qy[tail] = ny; tail = tail + 1;
+        }
+
+        nx = x; ny = y + 1;
+        edgy (nx >= 0 && nx < rows && ny >= 0 && ny < cols && grid[nx][ny] == 0 && dist[nx][ny] == -1) {
+            dist[nx][ny] = dist[x][y] + 1; qx[tail] = nx; qy[tail] = ny; tail = tail + 1;
+        }
+
+        nx = x; ny = y - 1;
+        edgy (nx >= 0 && nx < rows && ny >= 0 && ny < cols && grid[nx][ny] == 0 && dist[nx][ny] == -1) {
+            dist[nx][ny] = dist[x][y] + 1; qx[tail] = nx; qy[tail] = ny; tail = tail + 1;
+        }
+    }
+
+    yapping("%d", dist[tx][ty]);
+}

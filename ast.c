@@ -1624,20 +1624,19 @@ int evaluate_expression_int(ASTNode *node)
     case NODE_OPERATION:
     {
         // Special handling for logical operations
-        if (node->data.op.op == OP_AND || node->data.op.op == OP_OR)
+        if (node->data.op.op == OP_AND)
         {
             int left = evaluate_expression_int(node->data.op.left);
+            if (!left) return 0;
             int right = evaluate_expression_int(node->data.op.right);
-
-            switch (node->data.op.op)
-            {
-            case OP_AND:
-                return left && right;
-            case OP_OR:
-                return left || right;
-            default:
-                break;
-            }
+            return left && right;
+        }
+        if (node->data.op.op == OP_OR)
+        {
+            int left = evaluate_expression_int(node->data.op.left);
+            if (left) return 1;
+            int right = evaluate_expression_int(node->data.op.right);
+            return left || right;
         }
 
         // Regular integer operations
@@ -1748,20 +1747,19 @@ bool evaluate_expression_bool(ASTNode *node)
     case NODE_OPERATION:
     {
         // Special handling for logical operations
-        if (node->data.op.op == OP_AND || node->data.op.op == OP_OR)
+        if (node->data.op.op == OP_AND)
         {
             bool left = evaluate_expression_bool(node->data.op.left);
+            if (!left) return false;
             bool right = evaluate_expression_bool(node->data.op.right);
-
-            switch (node->data.op.op)
-            {
-            case OP_AND:
-                return left && right;
-            case OP_OR:
-                return left || right;
-            default:
-                break;
-            }
+            return left && right;
+        }
+        if (node->data.op.op == OP_OR)
+        {
+            bool left = evaluate_expression_bool(node->data.op.left);
+            if (left) return true;
+            bool right = evaluate_expression_bool(node->data.op.right);
+            return left || right;
         }
 
         // Regular integer operations
