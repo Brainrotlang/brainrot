@@ -1928,7 +1928,7 @@ bool is_short_expression(ASTNode *node)
         return false;
     case NODE_ARRAY_ACCESS:
     {
-        Variable *var = get_variable(node->data.name);
+        Variable *var = get_variable(node->data.array.name);
         if (var != NULL)
         {
             return var->var_type == VAR_SHORT;
@@ -2003,6 +2003,15 @@ bool is_float_expression(ASTNode *node)
     case NODE_DOUBLE:
         return false;
     case NODE_ARRAY_ACCESS:
+    {
+        Variable *var = get_variable(node->data.array.name);
+        if (var != NULL)
+        {
+            return var->var_type == VAR_FLOAT;
+        }
+        yyerror("Undefined variable in type check");
+        return false;
+    }
     case NODE_IDENTIFIER:
     {
         if (!check_and_mark_identifier(node, "Undefined variable in type check"))
@@ -2044,6 +2053,15 @@ bool is_double_expression(ASTNode *node)
     case NODE_INT:
         return false;
     case NODE_ARRAY_ACCESS:
+    {
+        Variable *var = get_variable(node->data.array.name);
+        if (var != NULL)
+        {
+            return var->var_type == VAR_DOUBLE;
+        }
+        yyerror("Undefined variable in type check");
+        return false;
+    }
     case NODE_IDENTIFIER:
     {
         if (!check_and_mark_identifier(node, "Undefined variable in type check"))
@@ -2225,7 +2243,7 @@ void execute_statement(ASTNode *node)
         if (node->data.op.left->type == NODE_ARRAY_ACCESS)
         {
             ASTNode *array_node = node->data.op.left;
-            Variable *var = get_variable(array_node->data.name);
+            Variable *var = get_variable(array_node->data.array.name);
             void *element = evaluate_multi_array_access(array_node);
             switch (var->var_type)
             {
