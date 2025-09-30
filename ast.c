@@ -3360,32 +3360,30 @@ Function *create_function(char *name, VarType return_type, Parameter *params, AS
 
 void execute_function_call(const char *name, ArgumentList *args)
 {
-    // Find function in function table
-    Function *func = function_table;
-    while (func)
+    Function *func = NULL;
+
+    for (func = function_table; func != NULL; func = func->next)
     {
         if (strcmp(func->name, name) == 0)
-        {
-            // Create new scope for function
-            enter_function_scope(func, args);
-            current_return_value.type = func->return_type;
-
-
-            // Set up return handling
-            current_return_value.has_value = false;
-            PUSH_JUMP_BUFFER();
-            if (setjmp(CURRENT_JUMP_BUFFER()) == 0)
-            {
-                execute_statement(func->body);
-            }
-
-            POP_JUMP_BUFFER();
-            return;
-        }
-        func = func->next;
+            break;
     }
 
-    yyerror("Undefined function");
+    if (!func)
+    {
+        yyerror("Undefined function");
+        return;
+    }
+
+    enter_function_scope(func, args);
+    current_return_value.type = func->return_type;
+    current_return_value.has_value = false;
+
+    PUSH_JUMP_BUFFER();
+    if (setjmp(CURRENT_JUMP_BUFFER()) == 0)
+    {
+        execute_statement(func->body);
+    }
+    POP_JUMP_BUFFER();
 }
 
 void handle_return_statement(ASTNode *expr)
