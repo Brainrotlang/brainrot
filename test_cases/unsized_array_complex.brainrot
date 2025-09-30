@@ -1,0 +1,30 @@
+🚽 Complex 1D ops: sum/min/max and reverse using unsized array
+skibidi main {
+    rizz arr[] = {1, 2, 3, 4, 5};
+    rizz n = maxxing(arr) / maxxing(arr[0]);
+
+    🚽 compute sum, min, max; reverse into another array; then print
+    rizz sum = 0;
+    rizz min = 2147483647;
+    rizz max = -2147483648;
+
+    flex (rizz i = 0; i < n; i = i + 1) {
+        sum = sum + arr[i];
+        edgy (arr[i] < min) { min = arr[i]; }
+        edgy (arr[i] > max) { max = arr[i]; }
+    }
+
+    rizz rev[] = {0, 0, 0, 0, 0};
+    flex (rizz i = 0; i < n; i = i + 1) {
+        rev[i] = arr[n - 1 - i];
+    }
+
+    yapping("%d", n);
+    yapping("%d", sum);
+    yapping("%d", min);
+    yapping("%d", max);
+
+    flex (rizz i = 0; i < n; i = i + 1) {
+        yapping("%d", rev[i]);
+    }
+}

@@ -1,0 +1,72 @@
+🚽 Breadth-First Search (BFS) on the same 5x5 grid but flattened to 1D.
+🚽 Avoids multi-dimensional indexing by mapping (x,y) to idx = x*cols + y.
+🚽 Prints the shortest path distance from startIdx (0,0) to goal (4,4).
+skibidi main {
+    🚽 0 = open, 1 = wall
+    rizz rows = 5; rizz cols = 5;
+    rizz grid1d[] = {
+        0,0,0,1,0,
+        1,1,0,1,0,
+        0,0,0,0,0,
+        0,1,1,1,0,
+        0,0,0,1,0
+    };
+
+    rizz dist1d[] = {
+        -1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1
+    };
+
+    rizz q[] = {0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0};
+    rizz head = 0; rizz tail = 0;
+
+    rizz sx = 0; rizz sy = 0; rizz tx = 4; rizz ty = 4;
+    rizz startIdx = sx * cols + sy;
+    rizz goal = tx * cols + ty;
+
+    edgy (grid1d[startIdx] == 1) { yapping("%d", -1); bussin 0; }
+
+    dist1d[startIdx] = 0;
+    q[tail] = startIdx; tail = tail + 1;
+
+    goon (head < tail) {
+        rizz cur = q[head]; head = head + 1;
+        edgy (cur == goal) { bruh; }
+        rizz x = cur / cols; rizz y = cur % cols;
+        rizz nx; rizz ny; rizz nxt;
+
+        nx = x + 1; ny = y;
+        edgy (nx >= 0 && nx < rows && ny >= 0 && ny < cols) {
+            nxt = nx * cols + ny;
+            edgy (grid1d[nxt] == 0 && dist1d[nxt] == -1) {
+                dist1d[nxt] = dist1d[cur] + 1; q[tail] = nxt; tail = tail + 1;
+            }
+        }
+        nx = x - 1; ny = y;
+        edgy (nx >= 0 && nx < rows && ny >= 0 && ny < cols) {
+            nxt = nx * cols + ny;
+            edgy (grid1d[nxt] == 0 && dist1d[nxt] == -1) {
+                dist1d[nxt] = dist1d[cur] + 1; q[tail] = nxt; tail = tail + 1;
+            }
+        }
+        nx = x; ny = y + 1;
+        edgy (nx >= 0 && nx < rows && ny >= 0 && ny < cols) {
+            nxt = nx * cols + ny;
+            edgy (grid1d[nxt] == 0 && dist1d[nxt] == -1) {
+                dist1d[nxt] = dist1d[cur] + 1; q[tail] = nxt; tail = tail + 1;
+            }
+        }
+        nx = x; ny = y - 1;
+        edgy (nx >= 0 && nx < rows && ny >= 0 && ny < cols) {
+            nxt = nx * cols + ny;
+            edgy (grid1d[nxt] == 0 && dist1d[nxt] == -1) {
+                dist1d[nxt] = dist1d[cur] + 1; q[tail] = nxt; tail = tail + 1;
+            }
+        }
+    }
+
+    yapping("%d", dist1d[goal]);
+}

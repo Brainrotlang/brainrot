@@ -92,10 +92,12 @@ ASTNode *root = NULL;
 %type <node> assignment
 %type <node> literal identifier sizeof_expression
 %type <expr_list> array_init initializer_list
+%type <expr_list> row_list row
 %type <node> function_def
 %type <node> function_def_list
 %type <param> param_list params
 %type <array_dims> dimensions
+%type <array_dims> dimensions_or_unsized
 %type <array> multi_dimension_access
 
 %start program
@@ -260,10 +262,41 @@ declaration:
             SAFE_FREE(var);
             free_expression_list($6);
         }
+    | optional_modifiers type IDENTIFIER dimensions_or_unsized EQUALS array_init
+        {
+            Variable *var = variable_new($3);
+            add_variable_to_scope($3, var);
+            ArrayDimensions dims = $4;
+            if (dims.num_dimensions == 0) {
+                size_t n = count_expression_list($6);
+                if (n <= 0 || n > MAX_DIMENSIONS ? 0 : 0) { /* keep structure, no-op */ }
+                dims.dimensions[0] = (int)n;
+                dims.num_dimensions = 1;
+            } else if (dims.dimensions[0] == 0 && dims.num_dimensions >= 2) {
+                /* Partially unsized: infer first dimension by dividing total inits by product of trailing dims */
+                size_t total_inits = count_expression_list($6);
+                size_t trailing = 1;
+                for (int i = 1; i < dims.num_dimensions; i++) trailing *= (size_t)dims.dimensions[i];
+                if (trailing == 0) { yyerror("Invalid array dimensions"); YYABORT; }
+                if (total_inits % trailing != 0) { yyerror("Initializer count does not match array dimensions"); YYABORT; }
+                size_t first = total_inits / trailing;
+                dims.dimensions[0] = (int)first;
+            }
+            int tmp_dims[MAX_DIMENSIONS];
+            for (int i = 0; i < dims.num_dimensions; i++) tmp_dims[i] = dims.dimensions[i];
+            set_multi_array_variable($3, tmp_dims, dims.num_dimensions, get_current_modifiers(), $2);
+            populate_multi_array_variable($3, $6, tmp_dims, dims.num_dimensions);
+            $$ = create_multi_array_declaration_node($3, tmp_dims, dims.num_dimensions, $2);
+            SAFE_FREE($3);
+            SAFE_FREE(var);
+            free_expression_list($6);
+        }
     ;
 
 array_init:
     LBRACE initializer_list RBRACE
+        { $$ = $2; }
+    | LBRACE row_list RBRACE
         { $$ = $2; }
     ;
 
@@ -284,11 +317,54 @@ dimensions:
         }
     ;
 
+dimensions_or_unsized:
+    LBRACKET RBRACKET
+        {
+            $$.num_dimensions = 0; /* marker for unsized 1D array to infer */
+        }
+    | LBRACKET RBRACKET dimensions
+        {
+            /* Partially unsized: infer first dimension later */
+            $$.dimensions[0] = 0;
+            for (int i = 0; i < $3.num_dimensions; i++) {
+                $$.dimensions[i + 1] = $3.dimensions[i];
+            }
+            $$.num_dimensions = $3.num_dimensions + 1;
+        }
+    | dimensions
+        { $$ = $1; }
+    ;
+
 initializer_list:
     expression
         { $$ = create_expression_list($1); }
     | initializer_list COMMA expression
         { $$ = append_expression_list($1, $3); }
+    ;
+
+row_list:
+    row
+        { $$ = $1; }
+    | row_list COMMA row
+        {
+            ExpressionList *acc = $1;
+            ExpressionList *start = $3;
+            if (start) {
+                ExpressionList *cur = start;
+                do {
+                    acc = append_expression_list(acc, cur->expr);
+                    cur = cur->next;
+                } while (cur != start);
+                /* Free the temporary 'start' list nodes now that we've copied exprs */
+                free_expression_list(start);
+            }
+            $$ = acc;
+        }
+    ;
+
+row:
+    LBRACE initializer_list RBRACE
+        { $$ = $2; }
     ;
 
 optional_modifiers:

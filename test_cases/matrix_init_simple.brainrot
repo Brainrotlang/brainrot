@@ -1,0 +1,18 @@
+🚽 Tests 2D array initializers: fixed and partially-unsized first dimension
+skibidi main {
+    rizz a[3][3] = {
+        {1, 2, 3},
+        {4, 5, 6},
+        {7, 8, 9}
+    };
+
+    rizz b[][3] = {
+        {1, 2, 3},
+        {4, 5, 6},
+        {7, 8, 9}
+    };
+
+    yapping("%d", a[0][0]);
+    yapping("%d", a[2][2]);
+    yapping("%d", b[1][2]);
+}

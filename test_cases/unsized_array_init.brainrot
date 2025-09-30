@@ -1,0 +1,11 @@
+🚽 Tests unsized 1D array: infer length from initializer and print elements
+skibidi main {
+    rizz arr[] = {
+       1,
+       2
+    };
+    rizz n = maxxing(arr) / maxxing(arr[0]);
+    flex (rizz i = 0; i < n; i = i + 1) {
+        yapping("%d", arr[i]);
+    }
+}
