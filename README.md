@@ -176,7 +176,7 @@ Join our community on:
 | W          | true         | ✅           |
 | L          | false        | ✅           |
 | thicc      | long long    | ❌           |
-| rant       | string type  | ❌           |
+| rant       | string type  | ✅           |
 | lit        | typedef      | ❌           |
 
 ### Builtin functions

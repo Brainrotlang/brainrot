@@ -1,0 +1,5 @@
+skibidi main {
+    rant s = "hello, world!";
+    yapping("%s", s);
+    bussin 0;
+}

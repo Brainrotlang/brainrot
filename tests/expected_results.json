@@ -57,5 +57,6 @@
     "unsized_array_init": "1\n2\n",
     "matrix_init_simple": "1\n9\n6\n",
     "grid_bfs": "8",
-    "grid_bfs_1d": "8"
+    "grid_bfs_1d": "8",
+    "rant":"hello, world!"
 }

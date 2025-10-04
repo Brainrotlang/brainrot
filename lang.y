@@ -35,6 +35,7 @@ extern FILE *yyin;
 ASTNode *root = NULL;
 %}
 
+
 %union {
     int ival;
     short sval;
@@ -52,7 +53,7 @@ ASTNode *root = NULL;
 }
 
 /* Define token types */
-%token SKIBIDI RIZZ YAP BAKA MAIN BUSSIN FLEX CAP
+%token SKIBIDI RIZZ YAP BAKA MAIN BUSSIN FLEX CAP RANT
 %token PLUS MINUS TIMES DIVIDE MOD SEMICOLON COLON COMMA
 %token LPAREN RPAREN LBRACE RBRACE
 %token LT GT LE GE EQ NE EQUALS AND OR DEC INC
@@ -224,6 +225,7 @@ type:
     | SMOL      { $$ = VAR_SHORT; }
     | YAP       { $$ = VAR_CHAR; }
     | CAP       { $$ = VAR_BOOL; }
+    | RANT      { $$ = VAR_STRING; }
     ;
 
 declaration:
@@ -331,8 +333,6 @@ dimensions_or_unsized:
             }
             $$.num_dimensions = $3.num_dimensions + 1;
         }
-    | dimensions
-        { $$ = $1; }
     ;
 
 initializer_list:

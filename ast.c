@@ -8,6 +8,7 @@
 #include <float.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 JumpBuffer *jump_buffer = {0};
 
@@ -65,6 +66,9 @@ bool set_variable(const char *name, void *value, VarType type, TypeModifiers mod
             break;
         case VAR_CHAR:
             var->value.ivalue = *(char *)value;
+            break;
+        case VAR_STRING:
+            var->value.strvalue = ARENA_STRDUP((char *)value);
             break;
         case NONE:
             break;
@@ -205,24 +209,26 @@ size_t calculate_array_offset(Variable *var, int indices[], int num_indices) {
     
     // Calculate the offset using row-major order
     size_t offset = 0;
-    size_t multiplier = 1;
     
-    // Start from the rightmost dimension
-    for (int i = num_indices - 1; i >= 0; i--) {
+    // For row-major order: offset = i0 * (d1 * d2 * ... * dn-1) + i1 * (d2 * ... * dn-1) + ... + in-1
+    for (int i = 0; i < num_indices; i++) {
         // Check if the index is within bounds
         if (indices[i] < 0 || indices[i] >= var->array_dimensions.dimensions[i]) {
             char error_msg[100];
-            sprintf(error_msg, "Array index out of bounds: dimension %d", i + 1);
+            sprintf(error_msg, "Array index out of bounds: dimension %d (index=%d, size=%d)", 
+                    i + 1, indices[i], var->array_dimensions.dimensions[i]);
             yyerror(error_msg);
             exit(EXIT_FAILURE);
         }
         
-        offset += indices[i] * multiplier;
-        
-        // Update multiplier for the next dimension
-        if (i > 0) {
-            multiplier *= var->array_dimensions.dimensions[i];
+        // Calculate the multiplier for this dimension
+        // Multiply by all dimensions to the right
+        size_t multiplier = 1;
+        for (int j = i + 1; j < num_indices; j++) {
+            multiplier *= var->array_dimensions.dimensions[j];
         }
+        
+        offset += indices[i] * multiplier;
     }
     
     return offset;
@@ -339,6 +345,11 @@ bool set_array_variable(char *name, int length, TypeModifiers mods, VarType type
 bool set_short_variable(const char *name, short value, TypeModifiers mods)
 {
     return set_variable(name, &value, VAR_SHORT, mods);
+}
+
+bool set_string_variable(const char *name, const char *value, TypeModifiers mods)
+{
+    return set_variable(name, (void *)value, VAR_STRING, mods);
 }
 
 bool set_float_variable(const char *name, float value, TypeModifiers mods)
@@ -625,6 +636,8 @@ void *handle_identifier(ASTNode *node, const char *contextErrorMessage, int prom
                 promoted_value.dvalue = (double)var->value.fvalue;
                 return &promoted_value;
             case VAR_INT:
+                promoted_value.dvalue = (double)var->value.ivalue;
+                return &promoted_value;
             case VAR_CHAR:
             case VAR_SHORT:
                 promoted_value.dvalue = (double)var->value.svalue;
@@ -632,6 +645,8 @@ void *handle_identifier(ASTNode *node, const char *contextErrorMessage, int prom
             case VAR_BOOL:
                 promoted_value.dvalue = (double)var->value.ivalue;
                 return &promoted_value;
+            case VAR_STRING:
+                return &var->value.strvalue;
             default:
                 yyerror("Unsupported variable type");
                 return NULL;
@@ -647,13 +662,17 @@ void *handle_identifier(ASTNode *node, const char *contextErrorMessage, int prom
             case VAR_FLOAT:
                 return &var->value.fvalue;
             case VAR_INT:
+                promoted_value.fvalue = (float)var->value.ivalue;
+                return &promoted_value.fvalue;
             case VAR_CHAR:
             case VAR_SHORT:
                 promoted_value.fvalue = (float)var->value.svalue;
-                return &promoted_value.svalue;
+                return &promoted_value.fvalue;
             case VAR_BOOL:
                 promoted_value.fvalue = (float)var->value.ivalue;
                 return &promoted_value.fvalue;
+            case VAR_STRING:
+                return &var->value.strvalue;
             default:
                 yyerror("Unsupported variable type");
                 return NULL;
@@ -668,11 +687,14 @@ void *handle_identifier(ASTNode *node, const char *contextErrorMessage, int prom
             case VAR_FLOAT:
                 return &var->value.fvalue;
             case VAR_INT:
+                return &var->value.ivalue;
             case VAR_CHAR:
             case VAR_SHORT:
                 return &var->value.svalue;
             case VAR_BOOL:
                 return &var->value.ivalue;
+            case VAR_STRING:
+                return &var->value.strvalue;
             default:
                 yyerror("Unsupported variable type");
                 return NULL;
@@ -683,7 +705,7 @@ void *handle_identifier(ASTNode *node, const char *contextErrorMessage, int prom
     return NULL;
 }
 
-int get_expression_type(ASTNode *node)
+VarType get_expression_type(ASTNode *node)
 {
     if (!node)
     {
@@ -920,45 +942,11 @@ void *handle_binary_operation(ASTNode *node)
         }
         else if (promoted_type == VAR_FLOAT)
         {
-            float right = *(float *)right_value;
-            float left = *(float *)left_value;
-
-            if (fabsf(right) < __FLT_MIN__)
-            {
-                if (fabsf(left) < __FLT_MIN__)
-                {
-                    *(float *)result = 0.0f / 0.0f; // NaN
-                }
-                else
-                {
-                    *(float *)result = left > 0 ? __FLT_MAX__ : -__FLT_MAX__;
-                }
-            }
-            else
-            {
-                *(float *)result = left / right;
-            }
+            *(float *)result = *(float *)left_value / *(float *)right_value;
         }
         else if (promoted_type == VAR_DOUBLE)
         {
-            double right = *(double *)right_value;
-            double left = *(double *)left_value;
-
-            if (fabs(right) < __DBL_MIN__)
-            {
-                if (fabs(left) < __DBL_MIN__)
-                {
-                    *(double *)result = 0.0 / 0.0; // NaN
-                }
-                else
-                {
-                    *(double *)result = left > 0 ? __DBL_MAX__ : -__DBL_MAX__;
-                }
-            }
-            else
-            {
-                *(double *)result = left / right;
-            }
+            *(double *)result = *(double *)left_value / *(double *)right_value;
         }
         else if (promoted_type == VAR_SHORT)
         {
@@ -1500,6 +1488,37 @@ size_t handle_sizeof(ASTNode *node)
     return 0;
 }
 
+char *evaluate_expression_string(ASTNode *node)
+{
+    if (!node)
+        return NULL;
+
+    switch (node->type)
+    {
+    case NODE_STRING_LITERAL:
+    case NODE_STRING:
+        return safe_strdup(node->data.strvalue);
+    case NODE_IDENTIFIER:
+    {
+        return safe_strdup((char *)handle_identifier(node, "Undefined variable", 3));
+    }
+    case NODE_FUNC_CALL:
+    {
+        char *res = (char *)handle_function_call(node);
+        if (res != NULL)
+        {
+            char *result = strdup(res);
+            SAFE_FREE(res);
+            return result;
+        }
+        return NULL;
+    }
+    default:
+        yyerror("Invalid string expression");
+        return NULL;
+    }
+}
+
 short evaluate_expression_short(ASTNode *node)
 {
     if (!node)
@@ -1714,6 +1733,10 @@ void *handle_function_call(ASTNode *node)
             return_value = SAFE_MALLOC(short);
             *(short *)return_value = current_return_value.value.svalue;
             break;
+        case VAR_STRING: 
+            return_value = SAFE_MALLOC(char *);
+            *(char **)return_value = strdup(current_return_value.value.strvalue);
+            break;
         case NONE:
             return NULL;
         }
@@ -1909,31 +1932,23 @@ void check_const_assignment(const char *name)
     }
 }
 
-bool is_short_expression(ASTNode *node)
+
+bool is_expression(ASTNode *node, VarType type)
 {
     if (!node)
         return false;
 
     switch (node->type)
     {
-    case NODE_SHORT:
-        return true;
-    case NODE_FLOAT:
-        return false;
-    case NODE_INT:
-        return false;
-    case NODE_DOUBLE:
-        return false;
     case NODE_ARRAY_ACCESS:
     {
         Variable *var = get_variable(node->data.array.name);
         if (var != NULL)
         {
-            return var->var_type == VAR_SHORT;
+            return var->var_type == type;
         }
         yyerror("Undefined variable in type check");
         return false;
-
     }
     case NODE_IDENTIFIER:
     {
@@ -1942,23 +1957,22 @@ bool is_short_expression(ASTNode *node)
         Variable *var = get_variable(node->data.name);
         if (var != NULL)
         {
-            return var->var_type == VAR_SHORT;
+            return var->var_type == type;
         }
         yyerror("Undefined variable in type check");
         return false;
     }
     case NODE_OPERATION:
     {
-        // If either operand is short, result is short
-        return is_short_expression(node->data.op.left) ||
-               is_short_expression(node->data.op.right);
+        // For operations, check if the result type matches the target type
+        return get_expression_type(node) == type;
     }
     case NODE_FUNC_CALL:
     {
-        return get_function_return_type(node->data.func_call.function_name) == VAR_SHORT;
+        return get_function_return_type(node->data.func_call.function_name) == type;
     }
     default:
-        return false;
+        return node->type == VART_TO_NODET(type);
     }
 }
 
@@ -1987,117 +2001,18 @@ VarType get_function_return_type(const char *name)
     return NONE;
 }
 
-bool is_float_expression(ASTNode *node)
-{
-    if (!node)
-        return false;
-
-    switch (node->type)
-    {
-    case NODE_FLOAT:
-        return true;
-    case NODE_INT:
-        return false;
-    case NODE_DOUBLE:
-        return false;
-    case NODE_ARRAY_ACCESS:
-    {
-        Variable *var = get_variable(node->data.array.name);
-        if (var != NULL)
-        {
-            return var->var_type == VAR_FLOAT;
-        }
-        yyerror("Undefined variable in type check");
-        return false;
-    }
-    case NODE_IDENTIFIER:
-    {
-        if (!check_and_mark_identifier(node, "Undefined variable in type check"))
-            exit(1);
-        Variable *var = get_variable(node->data.name);
-        if (var != NULL)
-        {
-            return var->var_type == VAR_FLOAT;
-        }
-        yyerror("Undefined variable in type check");
-        return false;
-    }
-    case NODE_OPERATION:
-    {
-        // If either operand is float, result is float
-        return is_float_expression(node->data.op.left) ||
-               is_float_expression(node->data.op.right);
-    }
-    case NODE_FUNC_CALL:
-    {
-        return get_function_return_type(node->data.func_call.function_name) == VAR_FLOAT;
-    }
-    default:
-        return false;
-    }
-}
-
-bool is_double_expression(ASTNode *node)
-{
-    if (!node)
-        return false;
-
-    switch (node->type)
-    {
-    case NODE_DOUBLE:
-        return true;
-    case NODE_FLOAT:
-        return false;
-    case NODE_INT:
-        return false;
-    case NODE_ARRAY_ACCESS:
-    {
-        Variable *var = get_variable(node->data.array.name);
-        if (var != NULL)
-        {
-            return var->var_type == VAR_DOUBLE;
-        }
-        yyerror("Undefined variable in type check");
-        return false;
-    }
-    case NODE_IDENTIFIER:
-    {
-        if (!check_and_mark_identifier(node, "Undefined variable in type check"))
-            exit(1);
-        Variable *var = get_variable(node->data.name);
-        if (var != NULL)
-        {
-            return var->var_type == VAR_DOUBLE;
-        }
-        yyerror("Undefined variable in type check");
-        return false;
-    }
-    case NODE_OPERATION:
-    {
-        // If either operand is double, result is double
-        return is_double_expression(node->data.op.left) ||
-               is_double_expression(node->data.op.right);
-    }
-    case NODE_FUNC_CALL:
-    {
-        return get_function_return_type(node->data.func_call.function_name) == VAR_DOUBLE;
-    }
-    default:
-        return false;
-    }
-}
 
 int evaluate_expression(ASTNode *node)
 {
-    if (is_short_expression(node))
+    if (is_expression(node, VAR_SHORT))
     {
         return (short)evaluate_expression_short(node);
     }
-    if (is_float_expression(node))
+    if (is_expression(node, VAR_FLOAT))
     {
         return (int)evaluate_expression_float(node);
     }
-    if (is_double_expression(node))
+    if (is_expression(node, VAR_DOUBLE))
     {
         return (int)evaluate_expression_double(node);
     }
@@ -2165,7 +2080,7 @@ void execute_assignment(ASTNode *node)
     }
 
     // Handle type conversion for float to int
-    if (value_node->type == NODE_FLOAT || is_float_expression(value_node))
+    if (value_node->type == NODE_FLOAT || is_expression(value_node, VAR_FLOAT))
     {
         float value = evaluate_expression_float(value_node);
         if (node->data.op.left->type == NODE_INT)
@@ -2184,7 +2099,7 @@ void execute_assignment(ASTNode *node)
         }
     }
 
-    if (is_float_expression(value_node))
+    if (is_expression(value_node, VAR_FLOAT))
     {
         float value = evaluate_expression_float(value_node);
         if (!set_float_variable(name, value, mods))
@@ -2192,7 +2107,7 @@ void execute_assignment(ASTNode *node)
             yyerror("Failed to set float variable");
         }
     }
-    else if (is_double_expression(value_node))
+    else if (is_expression(value_node, VAR_DOUBLE))
     {
         double value = evaluate_expression_double(value_node);
         if (!set_double_variable(name, value, mods))
@@ -2200,13 +2115,22 @@ void execute_assignment(ASTNode *node)
             yyerror("Failed to set double variable");
         }
     }
-    else if (is_short_expression(value_node))
+    else if (is_expression(value_node,VAR_SHORT))
     {
         short value = evaluate_expression_short(value_node);
         if (!set_short_variable(name, value, mods))
         {
             yyerror("Failed to set short variable");
         }
+    }
+    else if (is_expression(value_node, VAR_STRING))
+    {
+        char *value = evaluate_expression_string(value_node);
+        if (!set_string_variable(name, value, mods))
+        {
+            yyerror("Failed to set string variable");
+        }
+        SAFE_FREE(value);
     }
     else
     {
@@ -2295,7 +2219,7 @@ void execute_statement(ASTNode *node)
                 yyerror("Failed to set short variable");
             }
         }
-        else if (node->var_type == VAR_FLOAT || is_float_expression(value_node))
+        else if (node->var_type == VAR_FLOAT || is_expression(value_node, VAR_FLOAT))
         {
             float value = evaluate_expression_float(value_node);
             if (!set_float_variable(name, value, mods))
@@ -2303,13 +2227,22 @@ void execute_statement(ASTNode *node)
                 yyerror("Failed to set float variable");
             }
         }
-        else if (node->var_type == VAR_DOUBLE || is_double_expression(value_node))
+        else if (node->var_type == VAR_DOUBLE || is_expression(value_node, VAR_DOUBLE))
         {
             double value = evaluate_expression_double(value_node);
             if (!set_double_variable(name, value, mods))
             {
                 yyerror("Failed to set double variable");
             }
+        }
+        else if (node->var_type == VAR_STRING || is_expression(value_node, VAR_STRING))
+        {
+            char *value = evaluate_expression_string(value_node);
+            if (!set_string_variable(name, value, mods))
+            {
+                yyerror("Failed to set string variable");
+            }
+            SAFE_FREE(value);
         }
         else
         {
@@ -2674,7 +2607,7 @@ void execute_yapping_call(ArgumentList *args)
                 
                 if (is_unsigned)
                 {
-                    if (is_short_expression(expr))
+                    if (is_expression(expr, VAR_SHORT))
                     {
                         unsigned short val = evaluate_expression_short(expr);
                         buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, val);
@@ -2687,7 +2620,7 @@ void execute_yapping_call(ArgumentList *args)
                 }
                 else
                 {
-                    if (is_short_expression(expr))
+                    if (is_expression(expr, VAR_SHORT))
                     {
                         short val = evaluate_expression_short(expr);
                         buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, val);
@@ -2734,12 +2667,12 @@ void execute_yapping_call(ArgumentList *args)
                         break;
                     }
                 }
-                else if (is_float_expression(expr))
+                else if (is_expression(expr, VAR_FLOAT))
                 {
                     float val = evaluate_expression_float(expr);
                     buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, val);
                 }
-                else if (is_double_expression(expr))
+                else if (is_expression(expr, VAR_DOUBLE))
                 {
                     double val = evaluate_expression_double(expr);
                     buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, val);
@@ -2762,7 +2695,7 @@ void execute_yapping_call(ArgumentList *args)
                 const Variable *var = get_variable(expr->data.name);
                 if (var != NULL)
                 {
-                    if (!var->is_array)
+                    if (!var->is_array && var->var_type != VAR_STRING)
                     {
                         yyerror("Invalid argument type for %s");
                         exit(EXIT_FAILURE);
@@ -2871,7 +2804,7 @@ void execute_yappin_call(ArgumentList *args)
             }
             else if (strchr("diouxX", *format))
             {
-                if (is_short_expression(expr))
+                if (is_expression(expr, VAR_SHORT))
                 {
                     short val = evaluate_expression_short(expr);
                     buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, val);
@@ -2885,12 +2818,12 @@ void execute_yappin_call(ArgumentList *args)
             else if (strchr("fFeEgGa", *format))
             {
                 // Handle floating-point numbers
-                if (is_float_expression(expr))
+                if (is_expression(expr, VAR_FLOAT))
                 {
                     float val = evaluate_expression_float(expr);
                     buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, val);
                 }
-                else if (is_double_expression(expr))
+                else if (is_expression(expr, VAR_DOUBLE))
                 {
                     double val = evaluate_expression_double(expr);
                     buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, val);
@@ -2912,7 +2845,7 @@ void execute_yappin_call(ArgumentList *args)
                 const Variable *var = get_variable(expr->data.name);
                 if (var != NULL)
                 {
-                    if (!var->is_array)
+                    if (!var->is_array && var->var_type != VAR_STRING)
                     {
                         yyerror("Invalid argument type for %s");
                         exit(EXIT_FAILURE);
@@ -3064,13 +2997,19 @@ void execute_slorp_call(ArgumentList *args)
         {
             char val[var->array_length];
             slorp_string(val, sizeof(val));
-            strncpy(var->value.array_data, val, var->array_length - 1);
-            ((char *)var->value.array_data)[var->array_length - 1] = '\0';
+            strncpy(var->value.strvalue, val, var->array_length - 1);
+            ((char *)var->value.strvalue)[var->array_length - 1] = '\0';
             return;
         }
         char val = 0;
         val = slorp_char(val);
         set_int_variable(name, val, var->modifiers);
+        break;
+    }
+    case VAR_STRING:
+    {
+
+        slorp_string((char *)var->value.strvalue, strlen(var->value.strvalue));
         break;
     }
     default:
@@ -3099,6 +3038,8 @@ ASTNode *create_default_node(VarType var_type)
         return create_char_node('\0');
     case VAR_BOOL:
         return create_boolean_node(0);
+    case VAR_STRING:
+        return create_string_literal_node("\0");
     default:
         yyerror("Unsupported type for default node");
         exit(1);
@@ -3545,6 +3486,9 @@ void enter_function_scope(Function *func, ArgumentList *args)
         case VAR_SHORT:
             arg_values[arg_count].svalue = evaluate_expression_short(curr_arg->expr);
             break;
+        case VAR_STRING:
+            yyerror("String parameters are not supported");
+            return;
         case NONE:
             break;
         }
@@ -3594,6 +3538,9 @@ void enter_function_scope(Function *func, ArgumentList *args)
         case VAR_SHORT:
             set_short_variable(curr_param->name, arg_values[i].svalue, mods);
             break;
+        case VAR_STRING:
+            yyerror("String parameters are not supported");
+            return;
         case NONE:
             break;
         }
