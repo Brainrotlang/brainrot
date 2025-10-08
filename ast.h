@@ -62,6 +62,7 @@ typedef enum
     VAR_DOUBLE,
     VAR_BOOL,
     VAR_CHAR,
+    VAR_STRING,
     NONE,
 } VarType;
 
@@ -92,6 +93,7 @@ typedef struct
         double dvalue;
         bool bvalue;
         short svalue;
+        char *strvalue;
     } value;
     VarType type;
 } ReturnValue;
@@ -108,6 +110,7 @@ typedef struct
         float fvalue;
         double dvalue;
         void *array_data;
+        char *strvalue;
     } value;
     TypeModifiers modifiers;
     VarType var_type;
@@ -126,6 +129,7 @@ typedef union
         bool bvalue;
         float fvalue;
         double dvalue;
+        char *strvalue;
     };
 } Value;
 
@@ -162,6 +166,7 @@ typedef enum
     NODE_DOUBLE,
     NODE_CHAR,
     NODE_BOOLEAN,
+    NODE_STRING,
     NODE_IDENTIFIER,
     NODE_ASSIGNMENT,
     NODE_DECLARATION,
@@ -238,6 +243,7 @@ struct ASTNode
         int ivalue;
         float fvalue;
         double dvalue;
+        char *strvalue;
         char *name;
         Array array;
         struct
@@ -369,8 +375,6 @@ int evaluate_expression_int(ASTNode *node);
 short evaluate_expression_short(ASTNode *node);
 bool evaluate_expression_bool(ASTNode *node);
 int evaluate_expression(ASTNode *node);
-bool is_double_expression(ASTNode *node);
-bool is_float_expression(ASTNode *node);
 bool is_const_variable(const char *name);
 void check_const_assignment(const char *name);
 void execute_statement(ASTNode *node);
@@ -388,6 +392,7 @@ void execute_chill_call(ArgumentList *args);
 void execute_slorp_call(ArgumentList *args);
 void reset_modifiers(void);
 bool check_and_mark_identifier(ASTNode *node, const char *contextErrorMessage);
+bool is_expression(ASTNode *node, VarType type);
 void bruh();
 size_t count_expression_list(ExpressionList *list);
 size_t handle_sizeof(ASTNode *node);
@@ -502,4 +507,12 @@ extern Arena arena;
         }                    \
     } while (0)
 
+#define VART_TO_NODET(var_type) \
+    ((var_type) == VAR_INT ? NODE_INT         \
+     : (var_type) == VAR_SHORT ? NODE_SHORT   \
+     : (var_type) == VAR_FLOAT ? NODE_FLOAT   \
+     : (var_type) == VAR_DOUBLE ? NODE_DOUBLE \
+     : (var_type) == VAR_BOOL ? NODE_BOOLEAN  \
+     : (var_type) == VAR_CHAR ? NODE_CHAR     \
+     : (var_type) == VAR_STRING ? NODE_STRING : (NodeType)-1)
 #endif /* AST_H */
