@@ -58,5 +58,9 @@
     "matrix_init_simple": "1\n9\n6\n",
     "grid_bfs": "8",
     "grid_bfs_1d": "8",
-    "rant":"hello, world!"
+    "rant":"hello, world!",
+    "semantic_error_const": "Error: Cannot modify const variable at line 5\n",
+    "semantic_error_function_redef": "15",
+    "semantic_error_scope": "Error: Undefined variable in type check at line 7",
+    "semantic_error_type_mismatch": "1090665841\n"
 }

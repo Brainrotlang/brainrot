@@ -1,0 +1,14 @@
+🚽 Test case: function redefinition error
+rizz add(rizz a, rizz b) {
+    bussin a + b;
+}
+
+rizz add(rizz x, rizz y) { 🚽 This should fail - function already defined
+    bussin x * y;
+}
+
+skibidi main {
+    rizz result = add(5, 3);
+    yapping("%d", result);
+    bussin 0;
+}

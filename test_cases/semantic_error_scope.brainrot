@@ -1,0 +1,10 @@
+🚽 Test case: variable scope error
+skibidi main {
+    goon (1) {
+        rizz y = 10;
+        ragequit;
+    }
+    
+    yapping("%d", y); 🚽 This should fail - y is out of scope
+    bussin 0;
+}
