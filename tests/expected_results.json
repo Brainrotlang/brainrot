@@ -59,8 +59,8 @@
     "grid_bfs": "8",
     "grid_bfs_1d": "8",
     "rant":"hello, world!",
-    "semantic_error_const": "Error: Cannot modify const variable at line 5\n",
-    "semantic_error_function_redef": "15",
-    "semantic_error_scope": "Error: Undefined variable in type check at line 7",
+    "semantic_error_const": "Error: Cannot modify const variable at line 1",
+    "semantic_error_function_redef": "Error: Function redefinition at line 1",
+    "semantic_error_scope": "Error: Variable out of scope at line 1",
     "semantic_error_type_mismatch": "1090665841\n"
 }

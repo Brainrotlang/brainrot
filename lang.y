@@ -621,7 +621,6 @@ int main(int argc, char *argv[]) {
 
     /* Phase 2: Semantic Analysis and Type Checking */
     if (!semantic_analyze(root)) {
-        fprintf(stderr, "Semantic analysis failed\n");
         cleanup();
         return 1;
     }
