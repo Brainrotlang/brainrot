@@ -27,7 +27,7 @@ SemanticAnalyzer* semantic_analyzer_new(void) {
     analyzer->base.visit_function_definition = semantic_visit_function_definition;
     analyzer->base.visit_binary_operation = semantic_visit_binary_operation;
     
-    /* Initialize other visitor methods to NULL - we only care about semantic checks */
+    /* Initialize other visitor methods to NULL */
     analyzer->base.visit_int_literal = NULL;
     analyzer->base.visit_float_literal = NULL;
     analyzer->base.visit_double_literal = NULL;
@@ -49,14 +49,12 @@ SemanticAnalyzer* semantic_analyzer_new(void) {
     analyzer->base.visit_print_statement = NULL;
     analyzer->base.visit_error_statement = NULL;
     
-    /* Initialize analyzer state */
     analyzer->current_scope = NULL;
     analyzer->symbol_table = NULL;
     analyzer->errors = NULL;
     analyzer->has_errors = false;
     analyzer->error_count = 0;
     analyzer->is_collecting_phase = false;
-    analyzer->scope_depth = 0;  /* Start at global scope */
     analyzer->scope_depth = 0;
     
     return analyzer;
@@ -69,7 +67,6 @@ void semantic_analyzer_free(SemanticAnalyzer *analyzer) {
     free_semantic_errors(analyzer->errors);
     free_symbol_table(analyzer->symbol_table);
     
-    /* Free all semantic scopes */
     while (analyzer->current_scope) {
         exit_semantic_scope(analyzer);
     }
@@ -77,7 +74,7 @@ void semantic_analyzer_free(SemanticAnalyzer *analyzer) {
     SAFE_FREE(analyzer);
 }
 
-/* Main semantic analysis function - Simplified Working Version */
+/* Main semantic analysis function */
 bool semantic_analyze(ASTNode *root) {
     if (!root) return true;
     
@@ -87,16 +84,15 @@ bool semantic_analyze(ASTNode *root) {
         return false;
     }
     
-    /* Phase 1: Collect all declarations to build symbol table */
+    /* Phase 1: Collect all declarations */
     analyzer->is_collecting_phase = true;
-    analyzer->scope_depth = 0; /* Reset scope depth for collection */
+    analyzer->scope_depth = 0;
     collect_declarations(analyzer, root);
     
-    /* Phase 2: Perform semantic analysis with populated symbol table */
+    /* Phase 2: Perform semantic analysis */
     analyzer->is_collecting_phase = false;
-    analyzer->scope_depth = 0; /* Reset scope depth for analysis */
+    analyzer->scope_depth = 0;
     
-    /* Use scope-aware AST traversal for analysis */
     semantic_analyze_with_scope_tracking(analyzer, root);
     
     bool success = !analyzer->has_errors;
@@ -119,7 +115,7 @@ void add_semantic_error(SemanticAnalyzer *analyzer, SemanticErrorType type,
     
     error->type = type;
     error->message = safe_strdup(message);
-    error->line_number = (line_number > 0) ? line_number : 1; /* Use 1 if no line number */
+    error->line_number = (line_number > 0) ? line_number : 1;
     error->next = analyzer->errors;
     
     analyzer->errors = error;
@@ -128,7 +124,6 @@ void add_semantic_error(SemanticAnalyzer *analyzer, SemanticErrorType type,
 }
 
 /* Convert VarType enum to readable string */
-/* Utility functions */
 const char* vartype_to_string(VarType type) {
     switch (type) {
         case VAR_INT:    return "int";
@@ -388,16 +383,12 @@ void* semantic_visit_identifier(Visitor *self, ASTNode *node) {
     
     if (!node || !node->data.name) return NULL;
     
-    /* Skip checking during collection phase */
     if (analyzer->is_collecting_phase) return NULL;
     
-    /* Check if variable is defined in symbol table first */
     const char *name = node->data.name;
     SymbolEntry *symbol = find_symbol(analyzer, name);
     
-    /* If not found in symbol table, check if it's a scope error vs undefined variable */
     if (!symbol) {
-        /* Check if variable exists at any scope level in symbol table */
         SymbolEntry *entry = analyzer->symbol_table;
         bool found_in_deeper_scope = false;
         
@@ -412,17 +403,13 @@ void* semantic_visit_identifier(Visitor *self, ASTNode *node) {
         }
         
         if (found_in_deeper_scope) {
-            /* Variable exists but in a deeper scope - scope error */
             char error_msg[256];
             snprintf(error_msg, sizeof(error_msg), "Variable '%s' is out of scope", name);
             add_semantic_error(analyzer, SEMANTIC_ERROR_SCOPE_ERROR, 
                               error_msg, node->line_number > 0 ? node->line_number : 1);
         } else {
-            /* Fallback to runtime variable lookup */
             Variable *var = get_variable(name);
             if (!var) {
-                /* Be more conservative - only report obvious errors */
-                /* Skip built-in functions, keywords, and potentially valid identifiers */
                 if (!is_builtin_function(name) && 
                     strcmp(name, "ragequit") != 0 &&
                     strcmp(name, "yapping") != 0 &&
@@ -430,7 +417,6 @@ void* semantic_visit_identifier(Visitor *self, ASTNode *node) {
                     strcmp(name, "baka") != 0 &&
                     strcmp(name, "chill") != 0 &&
                     strcmp(name, "slorp") != 0) {
-                    /* Only report if we're sure it's an undefined variable */
                     char error_msg[256];
                     snprintf(error_msg, sizeof(error_msg), "Undefined variable '%s'", name);
                     add_semantic_error(analyzer, SEMANTIC_ERROR_UNDEFINED_VARIABLE, 
@@ -450,7 +436,6 @@ void* semantic_visit_function_call(Visitor *self, ASTNode *node) {
     
     const char *func_name = node->data.func_call.function_name;
     
-    /* Check if function exists */
     if (!is_builtin_function(func_name)) {
         Function *func = get_function(func_name);
         if (!func) {
@@ -459,7 +444,6 @@ void* semantic_visit_function_call(Visitor *self, ASTNode *node) {
             add_semantic_error(analyzer, SEMANTIC_ERROR_UNDEFINED_FUNCTION, 
                               error_msg, node->line_number > 0 ? node->line_number : 1);
         }
-        /* TODO: Add parameter count and type checking */
     }
     
     return NULL;
@@ -470,11 +454,9 @@ void* semantic_visit_binary_operation(Visitor *self, ASTNode *node) {
     
     if (!node || !node->data.op.left || !node->data.op.right) return NULL;
     
-    /* First, recursively check operands */
     ast_accept(node->data.op.left, self);
     ast_accept(node->data.op.right, self);
     
-    /* Perform type checking for operations */
     validate_binary_operation(node->data.op.left, node->data.op.right, 
                              node->data.op.op, analyzer);
     
@@ -488,11 +470,8 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node) {
     
     const char *var_name = node->data.op.left->data.name;
     
-    /* Variables are now added to scope during parsing, so just do type checking here */
-    /* Type checking for initialization is done during visitor traversal */
-    /* The initializer (right side) was already visited by ast_accept in visitor.c */
     if (node->data.op.right) {
-        VarType declared_type = node->var_type; /* Type is stored in the declaration node itself */
+        VarType declared_type = node->var_type;
         VarType init_type = infer_expression_type(node->data.op.right, analyzer);
         
         if (declared_type != NONE && init_type != NONE && 
@@ -512,26 +491,20 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node) {
     
     if (!node || !node->data.op.left) return;
     
-    /* Check assignment value first */
     if (node->data.op.right) {
         ast_accept(node->data.op.right, self);
     }
     
-    /* Check if assigning to a const variable */
     if (node->data.op.left->type == NODE_IDENTIFIER) {
         const char *var_name = node->data.op.left->data.name;
         
-        /* Skip checking during collection phase */
         if (analyzer->is_collecting_phase) return;
         
-        /* Check if variable is defined in symbol table first */
         SymbolEntry *symbol = find_symbol(analyzer, var_name);
         
-        /* Fallback to runtime scope if not found in symbol table */
         if (!symbol) {
             Variable *var = get_variable(var_name);
             if (!var) {
-                /* Only report error for clearly undefined variables, not built-ins */
                 if (!is_builtin_function(var_name) && 
                     strcmp(var_name, "ragequit") != 0 &&
                     strcmp(var_name, "yapping") != 0 &&
@@ -548,7 +521,6 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node) {
                 return;
             }
             
-            /* Check const assignment using runtime variable */
             if (var->modifiers.is_const) {
                 char error_msg[256];
                 snprintf(error_msg, sizeof(error_msg), "Cannot assign to const variable '%s'", var_name);
@@ -556,7 +528,6 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node) {
                                   error_msg, node->line_number > 0 ? node->line_number : 1);
             }
         } else {
-            /* Check const assignment using symbol table */
             if (symbol->is_const) {
                 char error_msg[256];
                 snprintf(error_msg, sizeof(error_msg), "Cannot assign to const variable '%s'", var_name);
@@ -564,20 +535,12 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node) {
                                   error_msg, node->line_number > 0 ? node->line_number : 1);
             }
         }
-        
-        /* TODO: Add type compatibility checking here */
-        /* Type checking is complex with symbol table vs runtime scope mismatch */
-        /* For now, focus on undefined variable detection */
     }
 }
 
 void semantic_visit_function_definition(Visitor *self, ASTNode *node) {
     if (!node || !node->data.function_def.name) return;
     
-    /* Skip function redefinition check for now - the existing function table */
-    /* management already handles this correctly during parsing/execution */
-    
-    /* Recursively check function body */
     if (node->data.function_def.body) {
         ast_accept(node->data.function_def.body, self);
     }
@@ -633,7 +596,6 @@ void free_symbol_table(SymbolEntry *symbols) {
 void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node) {
     if (!node || !analyzer) return;
     
-    /* Prevent infinite recursion by limiting depth */
     static int depth = 0;
     if (depth > 1000) {
         fprintf(stderr, "Warning: Maximum recursion depth reached in collect_declarations\n");
@@ -645,13 +607,12 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node) {
         case NODE_DECLARATION:
             if (node->data.op.left && node->data.op.left->data.name) {
                 const char *var_name = node->data.op.left->data.name;
-                VarType var_type = node->var_type; /* Type is stored in the declaration node itself */
+                VarType var_type = node->var_type;
                 bool is_const = node->modifiers.is_const;
                 
                 add_symbol(analyzer, var_name, var_type, is_const, false, NONE, 
                           node->line_number > 0 ? node->line_number : 1);
             }
-            /* Also collect declarations from the initialization expression */
             if (node->data.op.right) {
                 collect_declarations(analyzer, node->data.op.right);
             }
@@ -659,7 +620,6 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node) {
             
         case NODE_FUNCTION_DEF:
             if (node->data.function_def.name) {
-                /* Check if function already exists */
                 SymbolEntry *existing = find_symbol(analyzer, node->data.function_def.name);
                 if (existing && existing->is_function) {
                     char error_msg[256];
@@ -673,10 +633,8 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node) {
                 }
             }
             
-            /* Enter function scope for parameters and body */
             analyzer->scope_depth++;
             
-            /* Collect function parameters as symbols */
             Parameter *param = node->data.function_def.parameters;
             while (param) {
                 if (param->name) {
@@ -686,7 +644,6 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node) {
                 param = param->next;
             }
             
-            /* Recurse into function body */
             if (node->data.function_def.body) {
                 collect_declarations(analyzer, node->data.function_def.body);
             }
@@ -707,7 +664,6 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node) {
             break;
             
         case NODE_IF_STATEMENT:
-            /* Don't recurse into condition, just the branches */
             if (node->data.if_stmt.then_branch) {
                 collect_declarations(analyzer, node->data.if_stmt.then_branch);
             }
@@ -717,7 +673,6 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node) {
             break;
             
         case NODE_FOR_STATEMENT:
-            /* Enter new scope for for loop (including init variable) */
             analyzer->scope_depth++;
             if (node->data.for_stmt.init && node->data.for_stmt.init->type == NODE_DECLARATION) {
                 collect_declarations(analyzer, node->data.for_stmt.init);
@@ -729,7 +684,6 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node) {
             break;
             
         case NODE_WHILE_STATEMENT:
-            /* Enter new scope for while body */
             analyzer->scope_depth++;
             if (node->data.while_stmt.body) {
                 collect_declarations(analyzer, node->data.while_stmt.body);
@@ -738,26 +692,20 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node) {
             break;
             
         case NODE_DO_WHILE_STATEMENT:
-            /* Enter new scope for do-while body */
             analyzer->scope_depth++;
             if (node->data.while_stmt.body) {
                 collect_declarations(analyzer, node->data.while_stmt.body);
             }
             analyzer->scope_depth--;
-            /* Don't recurse into condition - it's evaluated at global scope */
             break;
             
         case NODE_OPERATION:
-            /* Only recurse for assignment operations that might contain declarations */
             if (node->data.op.op == OP_ASSIGN) {
-                /* Skip recursion for assignments to avoid infinite loops */
                 break;
             }
-            /* For other operations, don't recurse to avoid expression traversal */
             break;
             
         default:
-            /* For most node types, don't recurse to avoid infinite loops */
             break;
     }
     

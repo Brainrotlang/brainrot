@@ -626,21 +626,15 @@ int main(int argc, char *argv[]) {
     }
 
     /* Phase 3: Execution */
-    /* Use direct AST execution for now - visitor pattern needs more work */
-    execute_statement(root);
-    
-    /* Old visitor-based execution - commented out for now */
-    /*
     Interpreter *interp = interpreter_new();
     if (!interp) {
         fprintf(stderr, "Failed to create interpreter\n");
-        fclose(source);
+        cleanup();
         return 1;
     }
 
     interpret(root, interp);
     interpreter_free(interp);
-    */
 
     /* Cleanup */
     cleanup();
