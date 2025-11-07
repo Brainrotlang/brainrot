@@ -122,55 +122,51 @@ void interpret(ASTNode *root, Interpreter *interp) {
 void* interpreter_visit_int_literal(Visitor *self, ASTNode *node) {
     (void)self;
     if (!node) return NULL;
-    int *result = SAFE_MALLOC(int);
-    *result = node->data.ivalue;
-    return result;
+    /* For the interpreter visitor, we don't need to return allocated memory
+     * since we're using this for side effects, not expression evaluation */
+    return NULL;
 }
 
 void* interpreter_visit_float_literal(Visitor *self, ASTNode *node) {
     (void)self;
     if (!node) return NULL;
-    float *result = SAFE_MALLOC(float);
-    *result = node->data.fvalue;
-    return result;
+    /* For the interpreter visitor, we don't need to return allocated memory */
+    return NULL;
 }
 
 void* interpreter_visit_double_literal(Visitor *self, ASTNode *node) {
     (void)self;
     if (!node) return NULL;
-    double *result = SAFE_MALLOC(double);
-    *result = node->data.dvalue;
-    return result;
+    /* For the interpreter visitor, we don't need to return allocated memory */
+    return NULL;
 }
 
 void* interpreter_visit_char_literal(Visitor *self, ASTNode *node) {
     (void)self;
     if (!node) return NULL;
-    char *result = SAFE_MALLOC(char);
-    *result = (char)node->data.ivalue;
-    return result;
+    /* For the interpreter visitor, we don't need to return allocated memory */
+    return NULL;
 }
 
 void* interpreter_visit_short_literal(Visitor *self, ASTNode *node) {
     (void)self;
     if (!node) return NULL;
-    short *result = SAFE_MALLOC(short);
-    *result = node->data.svalue;
-    return result;
+    /* For the interpreter visitor, we don't need to return allocated memory */
+    return NULL;
 }
 
 void* interpreter_visit_boolean_literal(Visitor *self, ASTNode *node) {
     (void)self;
     if (!node) return NULL;
-    bool *result = SAFE_MALLOC(bool);
-    *result = node->data.bvalue;
-    return result;
+    /* For the interpreter visitor, we don't need to return allocated memory */
+    return NULL;
 }
 
 void* interpreter_visit_string_literal(Visitor *self, ASTNode *node) {
     (void)self;
     if (!node) return NULL;
-    return safe_strdup(node->data.strvalue);
+    /* For the interpreter visitor, we don't need to return allocated memory */
+    return NULL;
 }
 
 void* interpreter_visit_identifier(Visitor *self, ASTNode *node) {
@@ -183,67 +179,28 @@ void* interpreter_visit_identifier(Visitor *self, ASTNode *node) {
         return NULL;
     }
     
-    /* Return a copy of the variable's value based on its type */
-    switch (var->var_type) {
-        case VAR_INT: {
-            int *result = SAFE_MALLOC(int);
-            *result = var->value.ivalue;
-            return result;
-        }
-        case VAR_FLOAT: {
-            float *result = SAFE_MALLOC(float);
-            *result = var->value.fvalue;
-            return result;
-        }
-        case VAR_DOUBLE: {
-            double *result = SAFE_MALLOC(double);
-            *result = var->value.dvalue;
-            return result;
-        }
-        case VAR_CHAR: {
-            char *result = SAFE_MALLOC(char);
-            *result = (char)var->value.ivalue;  /* char stored as int */
-            return result;
-        }
-        case VAR_SHORT: {
-            short *result = SAFE_MALLOC(short);
-            *result = var->value.svalue;
-            return result;
-        }
-        case VAR_BOOL: {
-            bool *result = SAFE_MALLOC(bool);
-            *result = var->value.bvalue;
-            return result;
-        }
-        case VAR_STRING: {
-            return safe_strdup(var->value.strvalue);
-        }
-        default:
-            return NULL;
-    }
+    /* For interpreter visitor, we don't need to return allocated memory
+     * since this is used for side effects, not expression evaluation */
+    return NULL;
 }
 
 void* interpreter_visit_binary_operation(Visitor *self, ASTNode *node) {
     (void)self;
     if (!node || !node->data.op.left || !node->data.op.right) return NULL;
     
-    /* For now, delegate to existing evaluation system */
-    int result = evaluate_expression_int(node);
-    int *ret = SAFE_MALLOC(int);
-    *ret = result;
-    return ret;
+    /* For interpreter visitor, we don't need to return allocated memory
+     * since this is used for side effects, not expression evaluation */
+    return NULL;
 }
 
 void* interpreter_visit_unary_operation(Visitor *self, ASTNode *node) {
     (void)self;
     if (!node) return NULL;
     
-    /* For increment/decrement operations, delegate to existing evaluation system 
-       to avoid complexity with visitor pattern double evaluation issues */
-    int result = evaluate_expression_int(node);
-    int *ret = SAFE_MALLOC(int);
-    *ret = result;
-    return ret;
+    /* For the interpreter visitor, we don't need to return allocated memory
+     * The unary operations are handled by the existing evaluation system for side effects */
+    evaluate_expression_int(node);
+    return NULL;
 }
 
 void* interpreter_visit_array_access(Visitor *self, ASTNode *node) {
@@ -292,17 +249,8 @@ void* interpreter_visit_function_call(Visitor *self, ASTNode *node) {
     if (is_builtin_function(func_name)) {
         execute_builtin_function(func_name, args);
     } else {
-        /* Handle user-defined functions using existing implementation */
-        
-        /* Ensure there's a scope for function execution */
-        extern void enter_scope();
-        extern void exit_scope();
-        
-        if (!current_scope) {
-            enter_scope();
-        }
-        
-        handle_function_call(node);
+        /* Handle user-defined functions directly without return value allocation */
+        execute_function_call(func_name, args);
     }
     
     return NULL;
@@ -312,10 +260,10 @@ void* interpreter_visit_sizeof(Visitor *self, ASTNode *node) {
     (void)self;
     if (!node) return NULL;
     
-    size_t size = handle_sizeof(node);
-    size_t *result = SAFE_MALLOC(size_t);
-    *result = size;
-    return result;
+    /* For the interpreter visitor, we don't need to return allocated memory
+     * The sizeof operation can be handled by the existing evaluation system */
+    handle_sizeof(node);
+    return NULL;
 }
 
 /* Statement visitor implementations */

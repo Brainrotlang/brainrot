@@ -36,6 +36,9 @@ extern FILE *yyin;
 
 /* Root of the AST */
 ASTNode *root = NULL;
+
+/* Global interpreter for cleanup */
+static Interpreter *global_interpreter = NULL;
 %}
 
 
@@ -626,15 +629,16 @@ int main(int argc, char *argv[]) {
     }
 
     /* Phase 3: Execution */
-    Interpreter *interp = interpreter_new();
-    if (!interp) {
+    global_interpreter = interpreter_new();
+    if (!global_interpreter) {
         fprintf(stderr, "Failed to create interpreter\n");
         cleanup();
         return 1;
     }
 
-    interpret(root, interp);
-    interpreter_free(interp);
+    interpret(root, global_interpreter);
+    interpreter_free(global_interpreter);
+    global_interpreter = NULL;
 
     /* Cleanup */
     cleanup();
@@ -821,6 +825,12 @@ double slorp_double(double var) {
 }
 
 void cleanup() {
+    // Free the global interpreter if it exists
+    if (global_interpreter) {
+        interpreter_free(global_interpreter);
+        global_interpreter = NULL;
+    }
+    
     // Close input file if still open
     if (yyin && yyin != stdin) {
         fclose(yyin);
