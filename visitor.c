@@ -56,9 +56,13 @@ void ast_accept(ASTNode *node, Visitor *visitor) {
             break;
             
         case NODE_UNARY_OPERATION:
-            // Visit operand first
-            if (node->data.unary.operand)
-                ast_accept(node->data.unary.operand, visitor);
+            // For increment/decrement operations, don't visit operand first to avoid double evaluation
+            if (node->data.unary.op != OP_POST_INC && node->data.unary.op != OP_PRE_INC && 
+                node->data.unary.op != OP_POST_DEC && node->data.unary.op != OP_PRE_DEC) {
+                // Visit operand first only for non-side-effect operations
+                if (node->data.unary.operand)
+                    ast_accept(node->data.unary.operand, visitor);
+            }
             if (visitor->visit_unary_operation)
                 visitor->visit_unary_operation(visitor, node);
             break;
@@ -99,59 +103,59 @@ void ast_accept(ASTNode *node, Visitor *visitor) {
             break;
             
         case NODE_DECLARATION:
-            // Visit the initializer expression first
-            if (node->data.op.right)
+            // For declarations with side-effect operations on the right, skip auto-visit to prevent double evaluation
+            bool skip_decl_right_visit = false;
+            if (node->data.op.right && node->data.op.right->type == NODE_UNARY_OPERATION) {
+                OperatorType op = node->data.op.right->data.unary.op;
+                if (op == OP_POST_INC || op == OP_PRE_INC || op == OP_POST_DEC || op == OP_PRE_DEC) {
+                    skip_decl_right_visit = true;
+                }
+            }
+            
+            // Visit the initializer expression first (unless it's a side-effect operation)
+            if (!skip_decl_right_visit && node->data.op.right)
                 ast_accept(node->data.op.right, visitor);
             if (visitor->visit_declaration)
                 visitor->visit_declaration(visitor, node);
             break;
             
         case NODE_ASSIGNMENT:
-            // Visit right side first
-            if (node->data.op.right)
+            // For assignments with side-effect operations on the right, skip auto-visit to prevent double evaluation
+            bool skip_right_visit = false;
+            if (node->data.op.right && node->data.op.right->type == NODE_UNARY_OPERATION) {
+                OperatorType op = node->data.op.right->data.unary.op;
+                if (op == OP_POST_INC || op == OP_PRE_INC || op == OP_POST_DEC || op == OP_PRE_DEC) {
+                    skip_right_visit = true;
+                }
+            }
+            
+            // Visit right side first (unless it's a side-effect operation)
+            if (!skip_right_visit && node->data.op.right)
                 ast_accept(node->data.op.right, visitor);
             if (visitor->visit_assignment)
                 visitor->visit_assignment(visitor, node);
             break;
             
         case NODE_IF_STATEMENT:
-            // Visit condition first, then branches
-            if (node->data.if_stmt.condition)
-                ast_accept(node->data.if_stmt.condition, visitor);
-            if (node->data.if_stmt.then_branch)
-                ast_accept(node->data.if_stmt.then_branch, visitor);
-            if (node->data.if_stmt.else_branch)
-                ast_accept(node->data.if_stmt.else_branch, visitor);
+            // Let the visitor handle the if statement logic
             if (visitor->visit_if_statement)
                 visitor->visit_if_statement(visitor, node);
             break;
             
         case NODE_FOR_STATEMENT:
-            // Visit all parts in order
-            if (node->data.for_stmt.init)
-                ast_accept(node->data.for_stmt.init, visitor);
-            if (node->data.for_stmt.cond)
-                ast_accept(node->data.for_stmt.cond, visitor);
-            if (node->data.for_stmt.incr)
-                ast_accept(node->data.for_stmt.incr, visitor);
-            if (node->data.for_stmt.body)
-                ast_accept(node->data.for_stmt.body, visitor);
+            // Let the visitor handle for statement logic
             if (visitor->visit_for_statement)
                 visitor->visit_for_statement(visitor, node);
             break;
             
         case NODE_WHILE_STATEMENT:
-            if (node->data.while_stmt.cond)
-                ast_accept(node->data.while_stmt.cond, visitor);
-            if (node->data.while_stmt.body)
-                ast_accept(node->data.while_stmt.body, visitor);
+            // Let the visitor handle while statement logic
             if (visitor->visit_while_statement)
                 visitor->visit_while_statement(visitor, node);
             break;
             
         case NODE_DO_WHILE_STATEMENT:
-            if (node->data.while_stmt.body)
-                ast_accept(node->data.while_stmt.body, visitor);
+            // Let the visitor handle do-while statement logic
             if (node->data.while_stmt.cond)
                 ast_accept(node->data.while_stmt.cond, visitor);
             if (visitor->visit_do_while_statement)
@@ -159,17 +163,7 @@ void ast_accept(ASTNode *node, Visitor *visitor) {
             break;
             
         case NODE_SWITCH_STATEMENT:
-            // Visit expression first, then cases
-            if (node->data.switch_stmt.expression)
-                ast_accept(node->data.switch_stmt.expression, visitor);
-            CaseNode *case_node = node->data.switch_stmt.cases;
-            while (case_node) {
-                if (case_node->value)
-                    ast_accept(case_node->value, visitor);
-                if (case_node->statements)
-                    ast_accept(case_node->statements, visitor);
-                case_node = case_node->next;
-            }
+            // Let the visitor handle switch statement logic
             if (visitor->visit_switch_statement)
                 visitor->visit_switch_statement(visitor, node);
             break;
@@ -187,22 +181,14 @@ void ast_accept(ASTNode *node, Visitor *visitor) {
             break;
             
         case NODE_FUNCTION_DEF:
-            // Visit body
-            if (node->data.function_def.body)
-                ast_accept(node->data.function_def.body, visitor);
+            // DON'T visit body during definition - only when function is called
             if (visitor->visit_function_definition)
                 visitor->visit_function_definition(visitor, node);
             break;
             
         case NODE_STATEMENT_LIST:
         {
-            // Visit all statements in the list
-            StatementList *stmt = node->data.statements;
-            while (stmt) {
-                if (stmt->statement)
-                    ast_accept(stmt->statement, visitor);
-                stmt = stmt->next;
-            }
+            // Let the visitor handle the statement list - don't auto-traverse
             if (visitor->visit_statement_list)
                 visitor->visit_statement_list(visitor, node);
             break;

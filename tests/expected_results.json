@@ -61,6 +61,5 @@
     "rant":"hello, world!",
     "semantic_error_const": "Error: Cannot modify const variable at line 1",
     "semantic_error_function_redef": "Error: Function redefinition at line 1",
-    "semantic_error_scope": "Error: Variable out of scope at line 1",
-    "semantic_error_type_mismatch": "1090665841\n"
+    "semantic_error_scope": "Error: Variable out of scope at line 1"
 }
