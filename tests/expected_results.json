@@ -58,5 +58,8 @@
     "matrix_init_simple": "1\n9\n6\n",
     "grid_bfs": "8",
     "grid_bfs_1d": "8",
-    "rant":"hello, world!"
+    "rant":"hello, world!",
+    "semantic_error_const": "Error: Cannot modify const variable at line 1",
+    "semantic_error_function_redef": "Error: Function redefinition at line 1",
+    "semantic_error_scope": "Error: Variable out of scope at line 1"
 }

@@ -1,0 +1,7 @@
+skibidi main {
+    rizz x = 5;
+    chad y = 3.14;
+    rizz result = x + y;  🚽 This should fail - mixing int and float without explicit conversion
+    yapping("%d", result);
+    bussin 0;
+}

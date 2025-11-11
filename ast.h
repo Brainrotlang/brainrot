@@ -66,6 +66,9 @@ typedef enum
     NONE,
 } VarType;
 
+/* AST helper functions */
+ASTNode* arena_alloc_astnode(void);
+
 typedef struct Parameter
 {
     char *name;
@@ -236,6 +239,7 @@ struct ASTNode
     bool is_array;
     int array_length;
     ArrayDimensions array_dimensions;
+    int line_number;               /* Line number for error reporting */
     union
     {
         short svalue;
@@ -417,6 +421,7 @@ extern TypeModifiers current_modifiers;
 extern Arena arena;
 
 #define ARENA_ALLOC(type) arena_alloc(&arena, sizeof(type))
+#define ARENA_ALLOC_ASTNODE() arena_alloc_astnode()
 #define ARENA_STRDUP(str) arena_strdup(&arena, str)
 
 /* Macros for assigning specific fields to a node */

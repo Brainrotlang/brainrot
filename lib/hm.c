@@ -241,6 +241,10 @@ void hm_free(HashMap *hm)
                 {
                     SAFE_FREE(var->value.array_data);
                 }
+                else if (var->var_type == VAR_STRING && var->value.strvalue)
+                {
+                    SAFE_FREE(var->value.strvalue);
+                }
             }
 
             SAFE_FREE(hm->nodes[i]->value);

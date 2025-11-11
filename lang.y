@@ -1,6 +1,9 @@
 %define parse.error verbose
 %{
 #include "ast.h"
+#include "visitor.h"
+#include "semantic_analyzer.h"
+#include "interpreter.h"
 #include "lib/mem.h"
 #include "lib/input.h"
 #include <stdio.h>
@@ -33,6 +36,9 @@ extern FILE *yyin;
 
 /* Root of the AST */
 ASTNode *root = NULL;
+
+/* Global interpreter for cleanup */
+static Interpreter *global_interpreter = NULL;
 %}
 
 
@@ -518,7 +524,7 @@ assignment:
     | IDENTIFIER multi_dimension_access EQUALS expression
         {
             ASTNode *access= create_multi_array_access_node($1, $2.indices, $2.num_dimensions);
-            ASTNode *node = ARENA_ALLOC(ASTNode);
+            ASTNode *node = ARENA_ALLOC_ASTNODE();
             if (!node) {
                 yyerror("Memory allocation failed");
                 SAFE_FREE($1);
@@ -609,15 +615,33 @@ int main(int argc, char *argv[]) {
     yyin = source;
     current_scope = create_scope(NULL);
 
-    if (yyparse() == 0) {
-        execute_statement(root);
+    /* Phase 1: Parse the source code to build AST */
+    if (yyparse() != 0) {
+        fprintf(stderr, "Parsing failed\n");
+        cleanup();
+        return 1;
     }
 
-    fclose(source);
-    free_ast();
-    free_function_table();
-    free_scope(current_scope);
-    yylex_destroy();
+    /* Phase 2: Semantic Analysis and Type Checking */
+    if (!semantic_analyze(root)) {
+        cleanup();
+        return 1;
+    }
+
+    /* Phase 3: Execution */
+    global_interpreter = interpreter_new();
+    if (!global_interpreter) {
+        fprintf(stderr, "Failed to create interpreter\n");
+        cleanup();
+        return 1;
+    }
+
+    interpret(root, global_interpreter);
+    interpreter_free(global_interpreter);
+    global_interpreter = NULL;
+
+    /* Cleanup */
+    cleanup();
     
     return 0;
 }
@@ -801,6 +825,18 @@ double slorp_double(double var) {
 }
 
 void cleanup() {
+    // Free the global interpreter if it exists
+    if (global_interpreter) {
+        interpreter_free(global_interpreter);
+        global_interpreter = NULL;
+    }
+    
+    // Close input file if still open
+    if (yyin && yyin != stdin) {
+        fclose(yyin);
+        yyin = NULL;
+    }
+    
     // Free the AST
     free_ast();
     

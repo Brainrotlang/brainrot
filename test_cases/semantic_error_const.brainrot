@@ -1,0 +1,7 @@
+🚽 Test case: const variable assignment error
+skibidi main {
+    deadass rizz x = 5;
+    x = 10;  🚽 This should fail - cannot assign to const variable
+    yapping("%d", x);
+    bussin 0;
+}
