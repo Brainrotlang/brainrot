@@ -83,7 +83,6 @@ typedef struct Function
     VarType return_type;
     Parameter *parameters;
     ASTNode *body;
-    struct Function *next;
 } Function;
 
 typedef struct
@@ -310,7 +309,7 @@ typedef struct Scope
 /* Global variable declarations */
 extern TypeModifiers current_modifiers;
 extern Scope *current_scope;
-extern Function *function_table;
+extern HashMap *function_map;
 extern ReturnValue current_return_value;
 extern JumpBuffer *jump_buffer;
 /* Function prototypes */
