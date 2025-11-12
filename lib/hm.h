@@ -33,5 +33,6 @@ void dump(HashMap *hm);
 void *hm_get(HashMap *hm, const void *key, size_t key_size);
 void hm_put(HashMap *hm, const void *key, size_t key_size, void *value, size_t value_size);
 void hm_free(HashMap *hm);
+void hm_free_shallow(HashMap *hm);
 
 #endif

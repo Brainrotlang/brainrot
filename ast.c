@@ -15,7 +15,8 @@
 
 JumpBuffer *jump_buffer = {0};
 
-Function *function_table = NULL;
+Function *function_table = NULL; /* DEPRECATED: Kept for backward compatibility */
+HashMap *function_map = NULL;
 ReturnValue current_return_value;
 Arena arena;
 
@@ -1600,7 +1601,7 @@ char *evaluate_expression_string(ASTNode *node)
         char *res = (char *)handle_function_call(node);
         if (res != NULL)
         {
-            char *result = strdup(res);
+            char *result = safe_strdup(res);
             SAFE_FREE(res);
             return result;
         }
@@ -1828,7 +1829,7 @@ void *handle_function_call(ASTNode *node)
             break;
         case VAR_STRING: 
             return_value = SAFE_MALLOC(char *);
-            *(char **)return_value = strdup(current_return_value.value.strvalue);
+            *(char **)return_value = safe_strdup(current_return_value.value.strvalue);
             break;
         case NONE:
             return NULL;
@@ -2069,6 +2070,17 @@ bool is_expression(ASTNode *node, VarType type)
 
 Function *get_function(const char *name)
 {
+    /* Use hash map for O(1) lookup instead of O(n) linked list traversal */
+    if (function_map) {
+        size_t name_len = strlen(name);
+        Function **func_ptr = (Function **)hm_get(function_map, name, name_len);
+        if (func_ptr) {
+            return *func_ptr;
+        }
+        return NULL;
+    }
+    
+    /* Fallback to linked list if hash map is not initialized (shouldn't happen) */
     Function *func = function_table;
     while (func != NULL)
     {
@@ -2864,7 +2876,10 @@ void add_variable_to_scope(const char *name, Variable *var)
         yyerror("No scope to add variable to");
         exit(1);
     }
-    Variable *existing = hm_get(current_scope->variables, name, strlen(name));
+    
+    /* Cache strlen result to avoid redundant calculations */
+    size_t name_len = strlen(name);
+    Variable *existing = hm_get(current_scope->variables, name, name_len);
     if (existing)
     {
         yyerror("Variable already exists in current scope");
@@ -2872,7 +2887,7 @@ void add_variable_to_scope(const char *name, Variable *var)
         exit(1);
     }
 
-    hm_put(current_scope->variables, name, strlen(name), var, sizeof(Variable));
+    hm_put(current_scope->variables, name, name_len, var, sizeof(Variable));
 }
 
 ASTNode *create_return_node(ASTNode *expr)
@@ -2904,18 +2919,20 @@ Function *create_function(char *name, VarType return_type, Parameter *params, AS
     func->next = function_table;
     function_table = func;
 
+    /* Add to hash map for O(1) lookups - store pointer to Function */
+    if (!function_map) {
+        function_map = hm_new();
+    }
+    size_t name_len = strlen(name);
+    hm_put(function_map, name, name_len, &func, sizeof(Function *));
+
     return func;
 }
 
 void execute_function_call(const char *name, ArgumentList *args)
 {
-    Function *func = NULL;
-
-    for (func = function_table; func != NULL; func = func->next)
-    {
-        if (strcmp(func->name, name) == 0)
-            break;
-    }
+    /* Use optimized O(1) hash map lookup instead of O(n) linked list search */
+    Function *func = get_function(name);
 
     if (!func)
     {
@@ -3044,6 +3061,12 @@ void free_function_table(void)
         f = next;
     }
     function_table = NULL;
+    
+    /* Free the hash map using shallow free (don't free the Function pointers) */
+    if (function_map) {
+        hm_free_shallow(function_map);
+        function_map = NULL;
+    }
 }
 
 void reverse_parameter_list(Parameter **head)
