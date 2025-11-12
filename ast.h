@@ -388,12 +388,6 @@ void execute_for_statement(ASTNode *node);
 void execute_while_statement(ASTNode *node);
 void execute_do_while_statement(ASTNode *node);
 void execute_if_statement(ASTNode *node);
-void execute_yapping_call(ArgumentList *args);
-void execute_yappin_call(ArgumentList *args);
-void execute_baka_call(ArgumentList *args);
-void execute_ragequit_call(ArgumentList *args);
-void execute_chill_call(ArgumentList *args);
-void execute_slorp_call(ArgumentList *args);
 void reset_modifiers(void);
 bool check_and_mark_identifier(ASTNode *node, const char *contextErrorMessage);
 bool is_expression(ASTNode *node, VarType type);
@@ -406,6 +400,14 @@ ASTNode *create_multi_array_declaration_node(char *name, int dimensions[], int n
 bool set_multi_array_variable(const char *name, int dimensions[], int num_dimensions, TypeModifiers mods, VarType type);
 ASTNode *create_array_access_node_single(char *name, ASTNode *index);
 ASTNode *create_multi_array_access_node(char *name, ASTNode *indices[], int num_indices);
+
+/* Built-In functions */
+void execute_yapping_call(ArgumentList *args);
+void execute_yappin_call(ArgumentList *args);
+void execute_baka_call(ArgumentList *args);
+void execute_ragequit_call(ArgumentList *args);
+void execute_chill_call(ArgumentList *args);
+void execute_slorp_call(ArgumentList *args);
 
 /* User-defined functions */
 Function *create_function(char *name, VarType return_type, Parameter *params, ASTNode *body);
