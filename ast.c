@@ -15,7 +15,6 @@
 
 JumpBuffer *jump_buffer = {0};
 
-Function *function_table = NULL; /* DEPRECATED: Kept for backward compatibility */
 HashMap *function_map = NULL;
 ReturnValue current_return_value;
 Arena arena;
@@ -2070,25 +2069,14 @@ bool is_expression(ASTNode *node, VarType type)
 
 Function *get_function(const char *name)
 {
-    /* Use hash map for O(1) lookup instead of O(n) linked list traversal */
-    if (function_map) {
-        size_t name_len = strlen(name);
-        Function **func_ptr = (Function **)hm_get(function_map, name, name_len);
-        if (func_ptr) {
-            return *func_ptr;
-        }
+    if (!function_map || !name) {
         return NULL;
     }
     
-    /* Fallback to linked list if hash map is not initialized (shouldn't happen) */
-    Function *func = function_table;
-    while (func != NULL)
-    {
-        if (strcmp(func->name, name) == 0)
-        {
-            return func;
-        }
-        func = func->next;
+    size_t name_len = strlen(name);
+    Function **func_ptr = (Function **)hm_get(function_map, name, name_len);
+    if (func_ptr) {
+        return *func_ptr;
     }
     return NULL;
 }
@@ -2905,6 +2893,12 @@ ASTNode *create_return_node(ASTNode *expr)
 
 Function *create_function(char *name, VarType return_type, Parameter *params, ASTNode *body)
 {
+    /* Check if function already exists - if so, just return it (parse + execute causes double creation) */
+    Function *existing = get_function(name);
+    if (existing) {
+        return existing;
+    }
+    
     Function *func = SAFE_MALLOC(Function);
     if (!func)
     {
@@ -2916,10 +2910,8 @@ Function *create_function(char *name, VarType return_type, Parameter *params, AS
     func->return_type = return_type;
     func->parameters = params;
     func->body = body;
-    func->next = function_table;
-    function_table = func;
 
-    /* Add to hash map for O(1) lookups - store pointer to Function */
+    /* Initialize hash map if needed and add function for O(1) lookups */
     if (!function_map) {
         function_map = hm_new();
     }
@@ -3045,28 +3037,35 @@ ASTNode *create_function_def_node(char *name, VarType return_type, Parameter *pa
 
 void free_function_table(void)
 {
-    Function *f = function_table;
-    while (f)
-    {
-        Function *next = f->next;
-
-        // Safe to free f->name: it's a separate safe_strdup from the AST's name.
-        SAFE_FREE(f->name);
-
-        // DO NOT free f->parameters or f->body here,
-        // because those pointers belong to the AST and
-        // are already freed in free_ast(root).
-
-        SAFE_FREE(f);
-        f = next;
+    if (!function_map) {
+        return;
     }
-    function_table = NULL;
     
-    /* Free the hash map using shallow free (don't free the Function pointers) */
-    if (function_map) {
-        hm_free_shallow(function_map);
-        function_map = NULL;
+    /* Iterate through hash map and free all functions */
+    for (size_t i = 0; i < function_map->capacity; i++)
+    {
+        if (function_map->nodes[i])
+        {
+            Function **func_ptr = (Function **)function_map->nodes[i]->value;
+            if (func_ptr && *func_ptr)
+            {
+                Function *f = *func_ptr;
+                
+                // Free function name (it's a separate safe_strdup from the AST's name)
+                SAFE_FREE(f->name);
+                
+                // DO NOT free f->parameters or f->body here,
+                // because those pointers belong to the AST and
+                // are already freed in free_ast(root).
+                
+                SAFE_FREE(f);
+            }
+        }
     }
+    
+    /* Free the hash map using shallow free */
+    hm_free_shallow(function_map);
+    function_map = NULL;
 }
 
 void reverse_parameter_list(Parameter **head)
