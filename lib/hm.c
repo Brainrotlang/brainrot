@@ -254,27 +254,3 @@ void hm_free(HashMap *hm)
     SAFE_FREE(hm->nodes);
     SAFE_FREE(hm);
 }
-
-/**
- * @brief Frees hashmap without freeing values (for pointer storage)
- * @param hm Pointer to hashmap to free
- *
- * Similar to hm_free but doesn't attempt to free the values themselves.
- * Use this when the hashmap stores pointers to data that's managed elsewhere.
- */
-void hm_free_shallow(HashMap *hm)
-{
-    if (!hm) return;
-    
-    for (size_t i = 0; i < hm->capacity; i++)
-    {
-        if (hm->nodes[i])
-        {
-            SAFE_FREE(hm->nodes[i]->key);
-            SAFE_FREE(hm->nodes[i]->value); /* Free the pointer copy, not what it points to */
-            SAFE_FREE(hm->nodes[i]);
-        }
-    }
-    SAFE_FREE(hm->nodes);
-    SAFE_FREE(hm);
-}

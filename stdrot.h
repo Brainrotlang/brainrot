@@ -2,8 +2,10 @@
 
 #ifndef STDROT_H
 #define STDROT_H
+
 #include "ast.h"
 #include <stdbool.h>
+
 /* Built-in function declarations */
 void execute_yapping_call(ArgumentList *args);
 void execute_yappin_call(ArgumentList *args);

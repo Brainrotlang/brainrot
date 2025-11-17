@@ -57,7 +57,8 @@ test:
 clean:
 	rm -f $(TARGET) $(GENERATED_SRCS) lang.tab.h
 	rm -f *.o
-	@echo "Blud cleaned up the mess like a true skibidi sigma coder."
+	@echo "Blud cleaned up the mess like a true sigma coder."
+
 # Run Valgrind on all .brainrot tests
 .PHONY: valgrind
 valgrind:
@@ -80,10 +81,10 @@ uninstall:
 # Check dependencies
 .PHONY: check-deps
 check-deps:
-	@command -v $(CC) >/dev/null 2>&1 || { echo "Error: The GNU  Compiler collection not found. Blud, for real! install gcc!"; exit 1; }
+	@command -v $(CC) >/dev/null 2>&1 || { echo "Error: gcc not found. Blud, install gcc!"; exit 1; }
 	@command -v $(BISON) >/dev/null 2>&1 || { echo "Error: bison not found. Duke Dennis did you pray today?"; exit 1; }
 	@command -v $(FLEX) >/dev/null 2>&1 || { echo "Error: flex not found. Ayo, where's flex?"; exit 1; }
-	@command -v $(PYTHON) >/dev/null 2>&1 || { echo "Error: python3 not found. Python3 in Ohio moment."; exit 1; }
+	@command -v $(PYTHON) >/dev/null 2>&1 || { echo "Error: python3 not found. Python in Ohio moment."; exit 1; }
 	@$(PYTHON) -c "import pytest" >/dev/null 2>&1 || { echo "Error: pytest not found. Install with: pip install pytest. That's the ocky way."; exit 1; }
 
 # Development helper to rebuild everything from scratch

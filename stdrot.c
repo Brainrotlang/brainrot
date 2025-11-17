@@ -96,7 +96,9 @@ void execute_yapping_call(ArgumentList *args) {
     const char *format = formatNode->data.name; // The format string
     char buffer[1024];                          // Buffer for the final formatted output
     int buffer_offset = 0;
+
     ArgumentList *cur = args->next;
+
     while (*format != '\0') {
         if (*format == '%' && cur != NULL) {
             // Start extracting the format specifier
@@ -108,7 +110,7 @@ void execute_yapping_call(ArgumentList *args) {
                 format++;
             }
 
-            if (*format == ' ') {
+            if (*format == '\0') {
                 yyerror("Invalid format specifier");
                 exit(EXIT_FAILURE);
             }
@@ -117,7 +119,8 @@ void execute_yapping_call(ArgumentList *args) {
             char specifier[32];
             int length = format - start + 1;
             strncpy(specifier, start, length);
-            specifier[length] = '0';
+            specifier[length] = '\0';
+
             // Process the argument based on the format specifier
             ASTNode *expr = cur->expr;
             if (!expr) {

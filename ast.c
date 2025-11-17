@@ -15,7 +15,7 @@
 
 JumpBuffer *jump_buffer = {0};
 
-HashMap *function_map = NULL;
+Function *function_table = NULL;
 ReturnValue current_return_value;
 Arena arena;
 
@@ -204,6 +204,7 @@ size_t calculate_array_offset(Variable *var, int indices[], int num_indices) {
     // TEMPORARY FIX: Skip strict dimension checking due to variable lookup bug
     // The issue is that get_variable() sometimes returns the wrong variable
     // This is a complex memory/hash collision bug that needs deeper investigation
+    
     // If the variable is not actually an array or dimensions don't match,
     // try to handle it gracefully instead of crashing
     if (!var->is_array) {
@@ -227,8 +228,8 @@ size_t calculate_array_offset(Variable *var, int indices[], int num_indices) {
     }
     
     // Calculate the offset using row-major order
-    int offset = 0;
-
+    size_t offset = 0;
+    
     // For row-major order: offset = i0 * (d1 * d2 * ... * dn-1) + i1 * (d2 * ... * dn-1) + ... + in-1
     for (int i = 0; i < num_indices; i++) {
         // Check if the index is within bounds
@@ -1599,7 +1600,7 @@ char *evaluate_expression_string(ASTNode *node)
         char *res = (char *)handle_function_call(node);
         if (res != NULL)
         {
-            char *result = safe_strdup(res);
+            char *result = strdup(res);
             SAFE_FREE(res);
             return result;
         }
@@ -1827,7 +1828,7 @@ void *handle_function_call(ASTNode *node)
             break;
         case VAR_STRING: 
             return_value = SAFE_MALLOC(char *);
-            *(char **)return_value = safe_strdup(current_return_value.value.strvalue);
+            *(char **)return_value = strdup(current_return_value.value.strvalue);
             break;
         case NONE:
             return NULL;
@@ -2068,14 +2069,14 @@ bool is_expression(ASTNode *node, VarType type)
 
 Function *get_function(const char *name)
 {
-    if (!function_map || !name) {
-        return NULL;
-    }
-    
-    size_t name_len = strlen(name);
-    Function **func_ptr = (Function **)hm_get(function_map, name, name_len);
-    if (func_ptr) {
-        return *func_ptr;
+    Function *func = function_table;
+    while (func != NULL)
+    {
+        if (strcmp(func->name, name) == 0)
+        {
+            return func;
+        }
+        func = func->next;
     }
     return NULL;
 }
@@ -2863,10 +2864,7 @@ void add_variable_to_scope(const char *name, Variable *var)
         yyerror("No scope to add variable to");
         exit(1);
     }
-    
-    /* Cache strlen result to avoid redundant calculations */
-    size_t name_len = strlen(name);
-    Variable *existing = hm_get(current_scope->variables, name, name_len);
+    Variable *existing = hm_get(current_scope->variables, name, strlen(name));
     if (existing)
     {
         yyerror("Variable already exists in current scope");
@@ -2874,7 +2872,7 @@ void add_variable_to_scope(const char *name, Variable *var)
         exit(1);
     }
 
-    hm_put(current_scope->variables, name, name_len, var, sizeof(Variable));
+    hm_put(current_scope->variables, name, strlen(name), var, sizeof(Variable));
 }
 
 ASTNode *create_return_node(ASTNode *expr)
@@ -2892,12 +2890,6 @@ ASTNode *create_return_node(ASTNode *expr)
 
 Function *create_function(char *name, VarType return_type, Parameter *params, ASTNode *body)
 {
-    /* Check if function already exists - if so, just return it (parse + execute causes double creation) */
-    Function *existing = get_function(name);
-    if (existing) {
-        return existing;
-    }
-    
     Function *func = SAFE_MALLOC(Function);
     if (!func)
     {
@@ -2909,21 +2901,21 @@ Function *create_function(char *name, VarType return_type, Parameter *params, AS
     func->return_type = return_type;
     func->parameters = params;
     func->body = body;
-
-    /* Initialize hash map if needed and add function for O(1) lookups */
-    if (!function_map) {
-        function_map = hm_new();
-    }
-    size_t name_len = strlen(name);
-    hm_put(function_map, name, name_len, &func, sizeof(Function *));
+    func->next = function_table;
+    function_table = func;
 
     return func;
 }
 
 void execute_function_call(const char *name, ArgumentList *args)
 {
-    /* Use optimized O(1) hash map lookup instead of O(n) linked list search */
-    Function *func = get_function(name);
+    Function *func = NULL;
+
+    for (func = function_table; func != NULL; func = func->next)
+    {
+        if (strcmp(func->name, name) == 0)
+            break;
+    }
 
     if (!func)
     {
@@ -3036,35 +3028,22 @@ ASTNode *create_function_def_node(char *name, VarType return_type, Parameter *pa
 
 void free_function_table(void)
 {
-    if (!function_map) {
-        return;
-    }
-    
-    /* Iterate through hash map and free all functions */
-    for (size_t i = 0; i < function_map->capacity; i++)
+    Function *f = function_table;
+    while (f)
     {
-        if (function_map->nodes[i])
-        {
-            Function **func_ptr = (Function **)function_map->nodes[i]->value;
-            if (func_ptr && *func_ptr)
-            {
-                Function *f = *func_ptr;
-                
-                // Free function name (it's a separate safe_strdup from the AST's name)
-                SAFE_FREE(f->name);
-                
-                // DO NOT free f->parameters or f->body here,
-                // because those pointers belong to the AST and
-                // are already freed in free_ast(root).
-                
-                SAFE_FREE(f);
-            }
-        }
+        Function *next = f->next;
+
+        // Safe to free f->name: it's a separate safe_strdup from the AST's name.
+        SAFE_FREE(f->name);
+
+        // DO NOT free f->parameters or f->body here,
+        // because those pointers belong to the AST and
+        // are already freed in free_ast(root).
+
+        SAFE_FREE(f);
+        f = next;
     }
-    
-    /* Free the hash map using shallow free */
-    hm_free_shallow(function_map);
-    function_map = NULL;
+    function_table = NULL;
 }
 
 void reverse_parameter_list(Parameter **head)
