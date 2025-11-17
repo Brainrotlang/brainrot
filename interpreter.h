@@ -14,14 +14,12 @@ typedef struct {
     bool should_break;              /* Break flag for loops/switch */
     bool should_return;             /* Return flag for functions */
 } Interpreter;
-
 /* Create and destroy interpreter */
 Interpreter* interpreter_new(void);
 void interpreter_free(Interpreter *interpreter);
 
 /* Main interpretation function */
 void interpret(ASTNode *root, Interpreter *interp);
-
 /* Visitor method implementations for expressions (return values) */
 void* interpreter_visit_int_literal(Visitor *self, ASTNode *node);
 void* interpreter_visit_float_literal(Visitor *self, ASTNode *node);

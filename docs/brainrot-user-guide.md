@@ -192,7 +192,7 @@ _(If your grammar doesn’t define actual multi-function usage beyond `main`, `b
 
 ---
 
-# 9. Built-In Functions for Printing
+# 9. Built-In Functions
 
 Brainrot includes some built-in functions for convenience:
 
