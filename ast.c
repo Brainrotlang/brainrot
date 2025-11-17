@@ -204,7 +204,6 @@ size_t calculate_array_offset(Variable *var, int indices[], int num_indices) {
     // TEMPORARY FIX: Skip strict dimension checking due to variable lookup bug
     // The issue is that get_variable() sometimes returns the wrong variable
     // This is a complex memory/hash collision bug that needs deeper investigation
-    
     // If the variable is not actually an array or dimensions don't match,
     // try to handle it gracefully instead of crashing
     if (!var->is_array) {
@@ -228,8 +227,8 @@ size_t calculate_array_offset(Variable *var, int indices[], int num_indices) {
     }
     
     // Calculate the offset using row-major order
-    size_t offset = 0;
-    
+    int offset = 0;
+
     // For row-major order: offset = i0 * (d1 * d2 * ... * dn-1) + i1 * (d2 * ... * dn-1) + ... + in-1
     for (int i = 0; i < num_indices; i++) {
         // Check if the index is within bounds
