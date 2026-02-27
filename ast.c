@@ -19,7 +19,7 @@ HashMap *function_map = NULL;
 ReturnValue current_return_value;
 Arena arena;
 
-TypeModifiers current_modifiers = {false, false, false, false, false};
+TypeModifiers current_modifiers = {false, false, false, false, false, false};
 extern VarType current_var_type;
 
 Scope *current_scope;
@@ -450,6 +450,7 @@ void reset_modifiers(void)
     current_modifiers.is_signed = false;
     current_modifiers.is_unsigned = false;
     current_modifiers.is_const = false;
+    current_modifiers.is_long = false;
 }
 
 TypeModifiers get_current_modifiers(void)

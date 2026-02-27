@@ -1,0 +1,9 @@
+skibidi main {
+	giga rizz num1 = 3;
+	rizz num2 = 7;
+
+	yapping("%d", maxxing(num1));
+	yapping("%d", maxxing(num2));
+
+	bussin 0;
+}

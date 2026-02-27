@@ -39,6 +39,7 @@ typedef struct
     bool is_unsigned;
     bool is_sizeof;
     bool is_const;
+    bool is_long;
 } TypeModifiers;
 
 typedef struct JumpBuffer
