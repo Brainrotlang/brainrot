@@ -163,7 +163,7 @@ Join our community on:
 | gyatt      | enum         | ❌           |
 | whopper    | extern       | ❌           |
 | cringe     | goto         | ❌           |
-| giga       | long         | ❌           |
+| giga       | long         | ✅           |
 | smol       | short        | ✅           |
 | nut        | signed       | ✅           |
 | maxxing    | sizeof       | ✅           |
