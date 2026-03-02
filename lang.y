@@ -150,7 +150,10 @@ params
 
 param_list
     : optional_modifiers type IDENTIFIER
-        { $$ = create_parameter($3, $2, NULL, get_current_modifiers()); SAFE_FREE($3); }
+        { 
+            $$ = create_parameter($3, $2, NULL, get_current_modifiers()); 
+            SAFE_FREE($3); 
+        }
     | param_list COMMA optional_modifiers type IDENTIFIER 
         { $$ = create_parameter($5, $4, $1, get_current_modifiers()); SAFE_FREE($5); }
     ;
@@ -383,6 +386,8 @@ optional_modifiers:
 modifier:
     VOLATILE
         { current_modifiers.is_volatile = true; }
+    | STATIC
+        { current_modifiers.is_static = true; }
     | LONG
         { current_modifiers.is_long = true; }
     | SIGNED
@@ -847,6 +852,8 @@ void cleanup() {
 
     free_function_table();
 
+    free_static_variable_map();
+
     CLEAN_JUMP_BUFFER();
     
     // Clean up flex's internal state
@@ -854,7 +861,7 @@ void cleanup() {
 }
 
 TypeModifiers get_variable_modifiers(const char* name) {
-    TypeModifiers mods = {false, false, false, false, false, false};  // Default modifiers
+    TypeModifiers mods = {false, false, false, false, false, false, false};  // Default modifiers
     Variable *var = get_variable(name); 
     if (var != NULL) {
         return var->modifiers;

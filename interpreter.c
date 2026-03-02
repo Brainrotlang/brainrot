@@ -274,46 +274,25 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node) {
     
     char *name = node->data.op.left->data.name;
     Variable *var = variable_new(name);
-    
-    /* TEMPORARY FIX: Set the variable type from the AST node, but fix invalid types */
-    if (node->data.op.left->var_type >= VAR_INT && node->data.op.left->var_type < NONE) {
-        var->var_type = node->data.op.left->var_type;
-    } else {
-        /* Fallback: Try to guess the type based on initialization value */
-        if (node->data.op.right) {
-            switch (node->data.op.right->type) {
-                case NODE_DOUBLE:
-                    var->var_type = VAR_DOUBLE;
-                    break;
-                case NODE_FLOAT:
-                    var->var_type = VAR_FLOAT;
-                    break;
-                case NODE_STRING_LITERAL:
-                    var->var_type = VAR_STRING;
-                    break;
-                case NODE_BOOLEAN:
-                    var->var_type = VAR_BOOL;
-                    break;
-                case NODE_CHAR:
-                    var->var_type = VAR_CHAR;
-                    break;
-                default:
-                    var->var_type = VAR_INT;  /* Default to int for most cases */
-                    break;
-            }
-        } else {
-            var->var_type = VAR_INT;  /* Default to int if no initializer */
+    var->modifiers = node->modifiers;
+    var->var_type = node->var_type;
+
+    /* If static and already exists in static map, skip entirely */
+    if (node->modifiers.is_static) {
+        Variable *existing = get_variable(name);
+        if (existing) {
+            SAFE_FREE(var);
+            return;
         }
     }
-    
+
     add_variable_to_scope(name, var);
-    
+    SAFE_FREE(var);
+
     /* Handle initialization */
     if (node->data.op.right) {
-        /* Get the variable from scope (it should be there now) */
         Variable *scope_var = get_variable(name);
         if (scope_var) {
-            /* Evaluate and set the initial value based on variable type */
             switch (scope_var->var_type) {
                 case VAR_INT: {
                     int int_value = evaluate_expression_int(node->data.op.right);
@@ -332,7 +311,7 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node) {
                 }
                 case VAR_CHAR: {
                     int int_value = evaluate_expression_int(node->data.op.right);
-                    scope_var->value.ivalue = int_value;  /* char stored as int */
+                    scope_var->value.ivalue = int_value;
                     break;
                 }
                 case VAR_SHORT: {
@@ -355,8 +334,6 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node) {
             }
         }
     }
-    
-    SAFE_FREE(var);
 }
 
 void interpreter_visit_assignment(Visitor *self, ASTNode *node) {

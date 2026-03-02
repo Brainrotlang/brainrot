@@ -83,13 +83,6 @@ void ast_accept(ASTNode *node, Visitor *visitor) {
             
         case NODE_FUNC_CALL:
         {
-            // Visit arguments first
-            ArgumentList *arg = node->data.func_call.arguments;
-            while (arg) {
-                if (arg->expr)
-                    ast_accept(arg->expr, visitor);
-                arg = arg->next;
-            }
             if (visitor->visit_function_call)
                 visitor->visit_function_call(visitor, node);
             break;

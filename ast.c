@@ -16,10 +16,11 @@
 JumpBuffer *jump_buffer = {0};
 
 HashMap *function_map = NULL;
+static HashMap *static_variable_map = NULL;
 ReturnValue current_return_value;
 Arena arena;
 
-TypeModifiers current_modifiers = {false, false, false, false, false, false};
+TypeModifiers current_modifiers = {false, false, false, false, false, false, false};
 extern VarType current_var_type;
 
 Scope *current_scope;
@@ -40,6 +41,13 @@ extern float slorp_float(float var);
 extern double slorp_double(double var);
 extern TypeModifiers get_variable_modifiers(const char *name);
 extern int yylineno;
+
+/* Helper to build a namespaced static key */
+static void make_static_key(char *out, size_t out_size,
+                             const char *func_name, const char *var_name)
+{
+    snprintf(out, out_size, "%s::%s", func_name ? func_name : "__global", var_name);
+}
 
 // Symbol table functions
 bool set_variable(const char *name, void *value, VarType type, TypeModifiers mods)
@@ -451,6 +459,7 @@ void reset_modifiers(void)
     current_modifiers.is_unsigned = false;
     current_modifiers.is_const = false;
     current_modifiers.is_long = false;
+    current_modifiers.is_static = false;
 }
 
 TypeModifiers get_current_modifiers(void)
@@ -2242,10 +2251,30 @@ void execute_statement(ASTNode *node)
     {
     case NODE_DECLARATION:
     {
-       char *name = node->data.op.left->data.name;
-       Variable *var = variable_new(name);
-       add_variable_to_scope(name, var);
-       SAFE_FREE(var);
+        char *name = node->data.op.left->data.name;
+        Variable *var = variable_new(name);
+        var->var_type = node->var_type;
+        var->modifiers = node->modifiers;
+
+        /* Check if it's static and already initialized */
+        if (node->modifiers.is_static) {
+            const char *func_name = NULL;
+            Scope *s = current_scope;
+            while (s) {
+                if (s->is_function_scope) { func_name = s->function_name; break; }
+                s = s->parent;
+            }
+            char static_key[512];
+            make_static_key(static_key, sizeof(static_key), func_name, name);
+            Variable *existing = hm_get(static_variable_map, static_key, strlen(static_key));
+            if (existing) {
+                SAFE_FREE(var);
+                break; /* Already initialized — skip assignment entirely */
+            }
+        }
+
+        add_variable_to_scope(name, var);
+        SAFE_FREE(var);
     }
         __attribute__((fallthrough));
     case NODE_ASSIGNMENT:
@@ -2803,6 +2832,20 @@ Scope *create_scope(Scope *parent)
 
 Variable *get_variable(const char *name)
 {
+    /* Check static store first */
+    if (static_variable_map) {
+        const char *func_name = NULL;
+        Scope *s = current_scope;
+        while (s) {
+            if (s->is_function_scope) { func_name = s->function_name; break; }
+            s = s->parent;
+        }
+        char static_key[512];
+        make_static_key(static_key, sizeof(static_key), func_name, name);
+        Variable *var = hm_get(static_variable_map, static_key, strlen(static_key));
+        if (var) { return var; }
+    }
+
     Scope *scope = current_scope;
     while (scope)
     {
@@ -2860,17 +2903,38 @@ Variable *variable_new(char *name)
 
 void add_variable_to_scope(const char *name, Variable *var)
 {
-    if (!current_scope)
-    {
+    if (!current_scope) {
         yyerror("No scope to add variable to");
         exit(1);
     }
-    
-    /* Cache strlen result to avoid redundant calculations */
+
+    /* Static variables go to the static store, not the scope */
+    if (var->modifiers.is_static) {
+        if (!static_variable_map)
+            static_variable_map = hm_new();
+
+        /* Find nearest function scope to namespace the key */
+        const char *func_name = NULL;
+        Scope *s = current_scope;
+        while (s) {
+            if (s->is_function_scope) { func_name = s->function_name; break; }
+            s = s->parent;
+        }
+
+        char static_key[512];
+        make_static_key(static_key, sizeof(static_key), func_name, name);
+        size_t key_len = strlen(static_key);
+
+        Variable *existing = hm_get(static_variable_map, static_key, key_len);
+        if (!existing)
+            hm_put(static_variable_map, static_key, key_len, var, sizeof(Variable));
+        return;  /* <-- always return here, never fall through to normal scope */
+    }
+
+    /* Normal (non-static) path — unchanged from your original */
     size_t name_len = strlen(name);
     Variable *existing = hm_get(current_scope->variables, name, name_len);
-    if (existing)
-    {
+    if (existing) {
         yyerror("Variable already exists in current scope");
         SAFE_FREE(var);
         exit(1);
@@ -3035,6 +3099,13 @@ ASTNode *create_function_def_node(char *name, VarType return_type, Parameter *pa
     return node;
 }
 
+void free_static_variable_map(void)
+{
+    if (static_variable_map) {
+        hm_free(static_variable_map);
+        static_variable_map = NULL;
+    }
+}
 
 void free_function_table(void)
 {
@@ -3135,7 +3206,7 @@ void enter_function_scope(Function *func, ArgumentList *args)
     Scope *scope = create_scope(current_scope);
     current_scope = scope;
     current_scope->is_function_scope = true;
-
+    current_scope->function_name = func->name;
     curr_param = func->parameters; // Reset parameter list after reversing
 
     // Assign evaluated values to function parameters
@@ -3175,4 +3246,3 @@ void enter_function_scope(Function *func, ArgumentList *args)
     }
     reverse_parameter_list(&func->parameters);
 }
-
