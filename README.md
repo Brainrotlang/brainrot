@@ -167,7 +167,7 @@ Join our community on:
 | smol       | short        | ✅           |
 | nut        | signed       | ✅           |
 | maxxing    | sizeof       | ✅           |
-| salty      | static       | ❌           |
+| salty      | static       | ✅           |
 | gang       | struct       | ❌           |
 | ohio       | switch       | ✅           |
 | chungus    | union        | ❌           |
