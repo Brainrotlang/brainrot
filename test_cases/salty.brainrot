@@ -1,0 +1,19 @@
+rizz counter1() {
+    salty rizz count = 0;
+    count = count + 1;
+    bussin count;
+}
+
+rizz counter2() {
+    salty rizz count = 0;
+    count = count + 1;
+    bussin count;
+}
+
+skibidi main {
+    yappin("%d\n", counter1());
+    yappin("%d\n", counter1());
+    yappin("%d\n", counter2());
+    yappin("%d\n", counter2());
+    bussin 0;
+}

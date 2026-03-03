@@ -40,6 +40,7 @@ typedef struct
     bool is_sizeof;
     bool is_const;
     bool is_long;
+    bool is_static;
 } TypeModifiers;
 
 typedef struct JumpBuffer
@@ -305,6 +306,7 @@ typedef struct Scope
     HashMap *variables;
     struct Scope *parent;
     bool is_function_scope;
+    char *function_name;    
 } Scope;
 
 /* Global variable declarations */
@@ -417,6 +419,7 @@ ASTNode *create_function_def_node(char *name, VarType return_type, Parameter *pa
 void handle_return_statement(ASTNode *expr);
 void *handle_binary_operation(ASTNode *node);
 void free_function_table(void);
+void free_static_variable_map(void);
 
 extern TypeModifiers current_modifiers;
 
