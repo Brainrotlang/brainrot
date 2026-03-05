@@ -175,7 +175,7 @@ Join our community on:
 | schizo     | volatile     | ✅           |
 | W          | true         | ✅           |
 | L          | false        | ✅           |
-| thicc      | long long    | ❌           |
+| thicc      | long long    | ✅           |
 | rant       | string type  | ✅           |
 | lit        | typedef      | ❌           |
 

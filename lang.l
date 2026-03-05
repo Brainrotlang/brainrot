@@ -68,6 +68,7 @@ extern int yylineno;
 "edgy"           { return IF; }
 "amogus"         { return ELSE; }
 "giga"           { return LONG; }
+"thicc"          { return LONG_LONG; }
 "smol"           { current_var_type = VAR_SHORT; return SMOL; }
 "nut"            { return SIGNED; }
 "maxxing"        { return SIZEOF; }
@@ -81,7 +82,7 @@ extern int yylineno;
 "baka"           { return BAKA; }
 "slorp"          { return SLORP; }
 "cap"            { current_var_type = VAR_BOOL; return CAP; }
-"rant"           {current_var_type = VAR_STRING; return RANT; }
+"rant"           { current_var_type = VAR_STRING; return RANT; }
 
 "=="             { return EQ; }
 "!="             { return NE; }
