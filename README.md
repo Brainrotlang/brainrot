@@ -71,37 +71,44 @@ sudo ln -s /path/to/libfl.dylib /usr/local/lib/libfl.dylib  # For Intel Macs
 ## For NixOS
 
 ```bash
-git clone https://github.com/bohosam/brainrot.git
+git clone https://github.com/Brainrotlang/brainrot.git
 cd brainrot
 nix develop
 # then create your .brainrot file
 ./result/bin/brainrot filename.brainrot
 ```
 
-Or via `/etc/nixos/configuration.nix`:
+Or via a flake-based NixOS config (`/etc/nixos/flake.nix`), which always tracks the latest version:
 
 ```nix
-{ pkgs, ... }: # based on your configruation file
+# /etc/nixos/flake.nix
 {
-    let
-        brainrot = builtins.getFlake "github:bohosam/brainrot/b24f6e0db75468016560518abba797cb116b6bdc";
-        # Change the hash based on the last stable commit with nixos
-    in {
-        # For spisific user
-        users.users.username = {
-            packages = with pkgs; [
-                brainrot.packages.x86_64-linux.default
-            ];
-        };
-        # For system wide installation 
-        environment.systemPackages = with pkgs; [
-            ...
-            brainrot.packages.x86_64-linux.default
-        ];
-    }
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    brainrot.url = "github:Brainrotlang/brainrot";
+  };
 
+  outputs = { nixpkgs, brainrot, ... }: {
+    nixosConfigurations.your-hostname = nixpkgs.lib.nixosSystem {
+      modules = [
+        ./configuration.nix
+        {
+          # For a specific user
+          users.users.username = {
+            packages = [ brainrot.packages.x86_64-linux.default ];
+          };
+          # For system-wide installation
+          environment.systemPackages = [
+            brainrot.packages.x86_64-linux.default
+          ];
+        }
+      ];
+    };
+  };
 }
 ```
+
+Run `nix flake update` whenever you want to pull the latest version, then rebuild with `sudo nixos-rebuild switch`.
 
 ## 🚀 Building the Compiler
 
