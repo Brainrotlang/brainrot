@@ -1,0 +1,16 @@
+skibidi main {
+    thicc rizz giga_array[3];
+    rizz i;
+
+    flex (i = 1; i < 4; i = i + 1) {
+        giga_array[i-1] = i;
+    }
+
+    flex (i = 0; i < 3; i = i + 1) {
+        yapping("%d", giga_array[i]);
+    }
+
+    yapping("%d", maxxing(giga_array));
+
+    bussin 0;
+}

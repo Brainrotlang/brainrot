@@ -20,7 +20,7 @@ static HashMap *static_variable_map = NULL;
 ReturnValue current_return_value;
 Arena arena;
 
-TypeModifiers current_modifiers = {false, false, false, false, false, false, false};
+TypeModifiers current_modifiers = {false, false, false, false, false, false, false, false};
 extern VarType current_var_type;
 
 Scope *current_scope;
@@ -59,9 +59,15 @@ bool set_variable(const char *name, void *value, VarType type, TypeModifiers mod
         var->modifiers = mods;
         var->var_type = type;
         switch (type)
-        {
-        case VAR_INT:
-            var->value.ivalue = *(int *)value;
+        
+        case VAR_INT:{
+            if (var->modifiers.is_long) {
+                var->value.ivalue = (long long)(*(int *)value);
+            } else if (var->modifiers.is_long_long) {
+                var->value.ivalue = (long)(*(int *)value);
+            } else {
+                var->value.ivalue = *(int *)value;
+            }
             break;
         case VAR_SHORT:
             var->value.svalue = *(short *)value;
@@ -459,6 +465,7 @@ void reset_modifiers(void)
     current_modifiers.is_unsigned = false;
     current_modifiers.is_const = false;
     current_modifiers.is_long = false;
+    current_modifiers.is_long_long = false;
     current_modifiers.is_static = false;
 }
 
@@ -1542,11 +1549,15 @@ size_t get_type_size(char *name)
         }
         else if (var->var_type == VAR_INT)
         {
-            if (var->is_array)
-            {
-                return sizeof(int) * var->array_length;
-            }
-            return sizeof(int);
+            size_t base;
+            if (var->modifiers.is_long_long)
+                base = sizeof(long long);
+            else if (var->modifiers.is_long)
+                base = sizeof(long);
+            else
+                base = sizeof(int);
+
+            return var->is_array ? base * var->array_length : base;
         }
         else
         {
@@ -2165,6 +2176,11 @@ void execute_assignment(ASTNode *node)
                 ((double *)var->value.array_data)[idx] = evaluate_expression_double(node->data.op.right);
                 break;
             case VAR_INT:
+                if (node->modifiers.is_long) {
+                    ((long int *)var->value.array_data)[idx] = evaluate_expression_int(node->data.op.right);
+                } else if (node->modifiers.is_long_long) {
+                    ((long long int *)var->value.array_data)[idx] = evaluate_expression_int(node->data.op.right);
+                }
                 ((int *)var->value.array_data)[idx] = evaluate_expression_int(node->data.op.right);
                 break;
             case VAR_SHORT:
@@ -2297,7 +2313,13 @@ void execute_statement(ASTNode *node)
                 *(double *)element = evaluate_expression_double(node->data.op.right);
                 break;
             case VAR_INT:
-                *(int *)element = evaluate_expression_int(node->data.op.right);
+                if (node->modifiers.is_long_long) {
+                    *(long long int *)element = (long long)evaluate_expression_int(node->data.op.right);
+                } else if (node->modifiers.is_long) {
+                    *(long int *)element = (long)evaluate_expression_int(node->data.op.right);
+                } else {
+                    *(int *)element = evaluate_expression_int(node->data.op.right);
+                }
                 break;
             case VAR_SHORT:
                 *(short *)element = evaluate_expression_short(node->data.op.right);

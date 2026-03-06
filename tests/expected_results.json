@@ -62,6 +62,9 @@
     "semantic_error_const": "Error: Cannot modify const variable at line 1",
     "semantic_error_function_redef": "Error: Function redefinition at line 1",
     "semantic_error_scope": "Error: Variable out of scope at line 1",
-    "giga": "4\n4\n",
-    "salty": "1\n2\n1\n2\n"
+    "giga": "8\n4\n",
+    "salty": "1\n2\n1\n2\n",
+    "thicc": "8\n4\n",
+    "giga_array": "1\n2\n3\n24\n",
+    "thicc_array": "1\n2\n3\n24\n"
 }

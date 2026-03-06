@@ -64,7 +64,7 @@ static Interpreter *global_interpreter = NULL;
 %token LPAREN RPAREN LBRACE RBRACE
 %token LT GT LE GE EQ NE EQUALS AND OR DEC INC
 %token BREAK CASE DEADASS CONTINUE DEFAULT DO DOUBLE ELSE ENUM
-%token EXTERN CHAD GIGACHAD FOR GOTO IF LONG SMOL SIGNED
+%token EXTERN CHAD GIGACHAD FOR GOTO IF LONG SMOL SIGNED LONG_LONG
 %token SIZEOF STATIC STRUCT SWITCH TYPEDEF UNION UNSIGNED VOID VOLATILE GOON 
 %token LBRACKET RBRACKET
 %token <strval> IDENTIFIER
@@ -390,6 +390,8 @@ modifier:
         { current_modifiers.is_static = true; }
     | LONG
         { current_modifiers.is_long = true; }
+    | LONG_LONG
+        { current_modifiers.is_long_long = true; }
     | SIGNED
         { current_modifiers.is_signed = true; }
     | UNSIGNED 
@@ -861,7 +863,7 @@ void cleanup() {
 }
 
 TypeModifiers get_variable_modifiers(const char* name) {
-    TypeModifiers mods = {false, false, false, false, false, false, false};  // Default modifiers
+    TypeModifiers mods = {false, false, false, false, false, false, false, false};  // Default modifiers
     Variable *var = get_variable(name); 
     if (var != NULL) {
         return var->modifiers;

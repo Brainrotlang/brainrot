@@ -40,6 +40,7 @@ typedef struct
     bool is_sizeof;
     bool is_const;
     bool is_long;
+    bool is_long_long;
     bool is_static;
 } TypeModifiers;
 
