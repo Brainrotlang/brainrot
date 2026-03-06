@@ -68,6 +68,41 @@ sudo ln -s /path/to/libfl.dylib /opt/homebrew/lib/libfl.dylib  # For Apple Silic
 sudo ln -s /path/to/libfl.dylib /usr/local/lib/libfl.dylib  # For Intel Macs
 ```
 
+## For NixOS
+
+```bash
+git clone https://github.com/bohosam/brainrot.git
+cd brainrot
+nix develop
+# then create your .brainrot file
+./result/bin/brainrot filename.brainrot
+```
+
+Or via `/etc/nixos/configuration.nix`:
+
+```nix
+{ pkgs, ... }: # based on your configruation file
+{
+    let
+        brainrot = builtins.getFlake "github:bohosam/brainrot/b24f6e0db75468016560518abba797cb116b6bdc";
+        # Change the hash based on the last stable commit with nixos
+    in {
+        # For spisific user
+        users.users.username = {
+            packages = with pkgs; [
+                brainrot.packages.x86_64-linux.default
+            ];
+        };
+        # For system wide installation 
+        environment.systemPackages = with pkgs; [
+            ...
+            brainrot.packages.x86_64-linux.default
+        ];
+    }
+
+}
+```
+
 ## 🚀 Building the Compiler
 
 1. Clone this repository:
@@ -103,40 +138,6 @@ sudo make install
 ```bash
 sudo make uninstall
 ```
-
-## For NixOS
-Easy start
-```bash
-git clone https://github.com/bohosam/brainrot.git
-cd brainrot
-nix develop
-# then create your .brainrot file
-./result/bin/brainrot filename.brainrot
-```
-Or via `/etc/nixos/configuration.nix`
-```nix
-{ pkgs, ... }: # based on your configruation file
-{
-    let
-        brainrot = builtins.getFlake "github:bohosam/brainrot/b24f6e0db75468016560518abba797cb116b6bdc";
-        # Change the hash based on the last stable commit with nixos
-    in {
-        # For spisific user
-        users.users.username = {
-            packages = with pkgs; [
-                brainrot.packages.x86_64-linux.default
-            ];
-        };
-        # For system wide installation 
-        environment.systemPackages = with pkgs; [
-            ...
-            brainrot.packages.x86_64-linux.default
-        ];
-    }
-
-}
-```
-Now you can make your .brainrot file and just write anywhere `brainrot filename.brainrot`.
 
 ## 💻 Usage
 
