@@ -68,6 +68,48 @@ sudo ln -s /path/to/libfl.dylib /opt/homebrew/lib/libfl.dylib  # For Apple Silic
 sudo ln -s /path/to/libfl.dylib /usr/local/lib/libfl.dylib  # For Intel Macs
 ```
 
+## For NixOS
+
+```bash
+git clone https://github.com/Brainrotlang/brainrot.git
+cd brainrot
+nix develop
+# then create your .brainrot file
+./result/bin/brainrot filename.brainrot
+```
+
+Or via a flake-based NixOS config (`/etc/nixos/flake.nix`), which always tracks the latest version:
+
+```nix
+# /etc/nixos/flake.nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    brainrot.url = "github:Brainrotlang/brainrot";
+  };
+
+  outputs = { nixpkgs, brainrot, ... }: {
+    nixosConfigurations.your-hostname = nixpkgs.lib.nixosSystem {
+      modules = [
+        ./configuration.nix
+        {
+          # For a specific user
+          users.users.username = {
+            packages = [ brainrot.packages.x86_64-linux.default ];
+          };
+          # For system-wide installation
+          environment.systemPackages = [
+            brainrot.packages.x86_64-linux.default
+          ];
+        }
+      ];
+    };
+  };
+}
+```
+
+Run `nix flake update` whenever you want to pull the latest version, then rebuild with `sudo nixos-rebuild switch`.
+
 ## 🚀 Building the Compiler
 
 1. Clone this repository:
