@@ -204,6 +204,7 @@ Brainrot includes some built-in functions for convenience:
 | **ragequit** | -           | -            | Terminates program execution immediately with the provided exit code. |
 | **chill**    | -           | -            | Sleeps for an integer number of seconds.                              |
 | **slorp**    | `stdin`     | -            | Reads user input.                                                     |
+| **bet**      | `stderr`    | No           | Tests conditions and terminates with error message if false.          |
 
 ## 9.1. yapping
 
@@ -346,6 +347,49 @@ skibidi main {
 	bussin 0;
 }
 ```
+
+## 9.7. bet
+
+**Prototype**
+
+```c
+void bet(int condition, const char* message);
+```
+
+**Key Points**
+
+- Tests a condition and terminates the program if it's false
+- Similar to C's `assert()` macro
+- When the condition fails, prints an error message with the line number and optional custom message
+- Useful for catching bugs and verifying assumptions during development
+
+### Example
+
+```c
+skibidi main {
+    rizz x = 10;
+    bet(x > 0, "x must be positive");
+    yapping("x is positive");
+    bussin 0;
+}
+```
+
+### Failed Assertion Example
+
+```c
+skibidi main {
+    bet(L, "this assertion must fail");
+    yapping("This won't print");
+    bussin 0;
+}
+```
+
+Output:
+```
+Error: bet: assertion failed at line 2: this assertion must fail
+```
+
+The program terminates immediately when a `bet` fails.
 
 ---
 

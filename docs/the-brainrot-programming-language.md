@@ -409,6 +409,46 @@ skibidi main {
 }
 ```
 
+### 8.7. `bet`
+
+```c
+void bet(int condition, const char* message);
+```
+
+- Tests a condition and terminates the program if it's false.
+- Similar to C's `assert()` macro, but designed for runtime checks in Brainrot.
+- When the condition fails, prints an error message to `stderr` with the line number and optional custom message.
+- Useful for verifying assumptions and catching bugs during development.
+
+**Example**:
+
+```c
+skibidi main {
+    rizz x = 10;
+    bet(x > 0, "x must be positive");
+    yapping("x is positive");
+    bussin 0;
+}
+```
+
+**What happens when the assertion fails:**
+
+```c
+skibidi main {
+    bet(L, "this assertion must fail");
+    yapping("This won't print");
+    bussin 0;
+}
+```
+
+Output:
+
+```
+Error: bet: assertion failed at line 2: this assertion must fail
+```
+
+The program terminates immediately when a `bet` fails, preventing further execution.
+
 ---
 
 ## 9. Limitations
