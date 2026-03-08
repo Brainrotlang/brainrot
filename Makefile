@@ -30,6 +30,14 @@ FLEX_OUTPUT := lex.yy.c
 .PHONY: all
 all: $(STDROT_LIB) $(TARGET)
 
+# Ensure shared library exists for runtime targets
+.PHONY: ensure-stdrot
+ensure-stdrot:
+	@if [ ! -f $(STDROT_LIB) ]; then \
+		echo "$(STDROT_LIB) not found. Building it now..."; \
+		$(MAKE) $(STDROT_LIB); \
+	fi
+
 # Build only the standard library
 .PHONY: lib
 lib: $(STDROT_LIB)
@@ -62,7 +70,7 @@ $(FLEX_OUTPUT): lang.l
 
 # Run tests
 .PHONY: test
-test:
+test: ensure-stdrot $(TARGET)
 	$(PYTHON) -m pytest -v
 	@echo "Tests ran bussin', no cap."
 
@@ -75,13 +83,13 @@ clean:
 
 # Run Valgrind on all .brainrot tests
 .PHONY: valgrind
-valgrind:
+valgrind: ensure-stdrot $(TARGET)
 	@./run_valgrind_tests.sh
 	@echo "Valgrind check done. If anything was sus, it'll show up with a non-zero exit code. No cap."
 
 # Install target
 .PHONY: install
-install:
+install: ensure-stdrot $(TARGET)
 	install -d /usr/local/bin
 	install -m 755 $(TARGET) /usr/local/bin/
 	@echo "$(TARGET) installed successfully. You're goated with the sauce!"
