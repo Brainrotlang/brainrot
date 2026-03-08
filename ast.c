@@ -28,17 +28,6 @@ Scope *current_scope;
 /* Include the symbol table functions */
 extern void yyerror(const char *s);
 extern void cleanup(void);
-extern void ragequit(int exit_code);
-extern void chill(unsigned int seconds);
-extern void yapping(const char *format, ...);
-extern void yappin(const char *format, ...);
-extern void baka(const char *format, ...);
-extern char slorp_char(char chr);
-extern char *slorp_string(char *string, size_t size);
-extern int slorp_int(int val);
-extern short slorp_short(short val);
-extern float slorp_float(float var);
-extern double slorp_double(double var);
 extern TypeModifiers get_variable_modifiers(const char *name);
 extern int yylineno;
 

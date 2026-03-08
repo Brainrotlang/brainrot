@@ -4,28 +4,17 @@
 #include "visitor.h"
 #include "semantic_analyzer.h"
 #include "interpreter.h"
+#include "stdrot.h"
 #include "lib/mem.h"
-#include "lib/input.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
 #include <stdbool.h>
-#include <unistd.h>
 
 int yylex(void);
 int yylex_destroy(void);
 void yyerror(const char *s);
-void ragequit(int exit_code);
-void yapping(const char* format, ...);
-void yappin(const char* format, ...);
-void baka(const char* format, ...);
-char slorp_char(char chr);
-char *slorp_string(char *string, size_t size);
-int slorp_int(int val);
-short slorp_short(short val);
-float slorp_float(float var);
-double slorp_double(double var);
 void cleanup();
 TypeModifiers get_variable_modifiers(const char* name);
 extern TypeModifiers current_modifiers;
@@ -624,6 +613,9 @@ int main(int argc, char *argv[]) {
     yyin = source;
     current_scope = create_scope(NULL);
 
+    /* Phase 0: Load standard library (needed for semantic analysis) */
+    stdrot_load();
+
     /* Phase 1: Parse the source code to build AST */
     if (yyparse() != 0) {
         fprintf(stderr, "Parsing failed\n");
@@ -651,186 +643,13 @@ int main(int argc, char *argv[]) {
 
     /* Cleanup */
     cleanup();
+    stdrot_unload();
     
     return 0;
 }
 
 void yyerror(const char *s) {
     fprintf(stderr, "Error: %s at line %d\n", s, yylineno - 1);
-}
-
-void ragequit(int exit_code) {
-    cleanup();
-    exit(exit_code);
-}
-
-void chill(unsigned int seconds) {
-    sleep(seconds);
-}
-
-void yapping(const char* format, ...) {
-    va_list args;
-    va_start(args, format);
-    vprintf(format, args);
-    va_end(args);
-    printf("\n");
-}
-
-void yappin(const char* format, ...) {
-    va_list args;
-    va_start(args, format);
-    vprintf(format, args);
-    va_end(args);
-}
-
-void baka(const char* format, ...) {
-    va_list args;
-    va_start(args, format);
-    vfprintf(stderr, format, args);
-    va_end(args);
-}
-
-char slorp_char(char chr) {
-    input_status status;
-
-    status = input_char(&chr);
-    if (status == INPUT_SUCCESS)
-    {
-        return chr;
-    }
-    else if (status == INPUT_INVALID_LENGTH)
-    {
-        fprintf(stderr, "Error: Invalid input length.\n");
-        exit(EXIT_FAILURE);
-    }
-    else
-    {
-        fprintf(stderr, "Error reading char: %d\n", status);
-        exit(EXIT_FAILURE);
-    }
-}
-
-char *slorp_string(char *string, size_t size) {
-    size_t chars_read;
-    input_status status;
-
-    status = input_string(string, size, &chars_read);
-    if (status == INPUT_SUCCESS)
-    {
-        return string;
-    }
-    else if (status == INPUT_BUFFER_OVERFLOW)
-    {
-        fprintf(stderr, "Error: Input exceeded buffer size.\n");
-        exit(EXIT_FAILURE);
-    }
-    else
-    {
-        fprintf(stderr, "Error reading string: %d\n", status);
-        exit(EXIT_FAILURE);
-    }
-}
-
-int slorp_int(int val) {
-    input_status status;
-
-    status = input_int(&val);
-    if (status == INPUT_SUCCESS)
-    {
-        return val;
-    }
-    else if (status == INPUT_INTEGER_OVERFLOW)
-    {
-        fprintf(stderr, "Error: Integer value out of range.\n");
-        exit(EXIT_FAILURE);
-    }
-    else if (status == INPUT_CONVERSION_ERROR)
-    {
-        fprintf(stderr, "Error: Invalid integer format.\n");
-        exit(EXIT_FAILURE);
-    }
-    else
-    {
-        fprintf(stderr, "Error reading integer: %d\n", status);
-        exit(EXIT_FAILURE);
-    }
-    return 0;
-}
-
-short slorp_short(short val) {
-    input_status status;
-
-    status = input_short(&val);
-    if (status == INPUT_SUCCESS)
-    {
-        return val;
-    }
-    else if (status == INPUT_SHORT_OVERFLOW)
-    {
-        fprintf(stderr, "Error: short value out of range.\n");
-        exit(EXIT_FAILURE);
-    }
-    else if (status == INPUT_CONVERSION_ERROR)
-    {
-        fprintf(stderr, "Error: short integer format.\n");
-        exit(EXIT_FAILURE);
-    }
-    else
-    {
-        fprintf(stderr, "Error reading short: %d\n", status);
-        exit(EXIT_FAILURE);
-    }
-    return 0;
-}
-
-float slorp_float(float var) {
-    input_status status;
-
-    status = input_float(&var);
-    if (status == INPUT_SUCCESS)
-    {
-        return var;
-    }
-    else if (status == INPUT_FLOAT_OVERFLOW)
-    {
-        fprintf(stderr, "Error: Double value out of range.\n");
-        exit(EXIT_FAILURE);
-    }
-    else if (status == INPUT_CONVERSION_ERROR)
-    {
-        fprintf(stderr, "Error: Invalid float format.\n");
-        exit(EXIT_FAILURE);
-    }
-    else
-    {
-        fprintf(stderr, "Error reading float: %d\n", status);
-        exit(EXIT_FAILURE);
-    }
-}
-
-double slorp_double(double var) {
-    input_status status;
-
-    status = input_double(&var);
-    if (status == INPUT_SUCCESS)
-    {
-        return var;
-    }
-    else if (status == INPUT_DOUBLE_OVERFLOW)
-    {
-        fprintf(stderr, "Error: Double value out of range.\n");
-        exit(EXIT_FAILURE);
-    }
-    else if (status == INPUT_CONVERSION_ERROR)
-    {
-        fprintf(stderr, "Error: Invalid double format.\n");
-        exit(EXIT_FAILURE);
-    }
-    else
-    {
-        fprintf(stderr, "Error reading double: %d\n", status);
-        exit(EXIT_FAILURE);
-    }
 }
 
 void cleanup() {

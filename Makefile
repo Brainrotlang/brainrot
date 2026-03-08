@@ -6,14 +6,20 @@ PYTHON := python3
 
 # Compiler and linker flags
 CFLAGS := -Wall -Wextra -Wpedantic -Werror -O2  -Wuninitialized
-LDFLAGS := -lfl -lm
+LDFLAGS := -lfl -lm -ldl
+SO_CFLAGS := -fPIC -shared
 
 # Source files and directories
 SRC_DIR := lib
 DEBUG_FLAGS := -g
-SRCS := $(SRC_DIR)/hm.c $(SRC_DIR)/mem.c $(SRC_DIR)/input.c $(SRC_DIR)/arena.c ast.c visitor.c semantic_analyzer.c interpreter.c stdrot.c
+SRCS := $(SRC_DIR)/hm.c $(SRC_DIR)/mem.c $(SRC_DIR)/arena.c ast.c visitor.c semantic_analyzer.c interpreter.c stdrot.c
 GENERATED_SRCS := lang.tab.c lex.yy.c
 ALL_SRCS := $(SRCS) $(GENERATED_SRCS)
+
+# stdrot shared library
+STDROT_DIR := stdrot
+STDROT_SRCS := $(STDROT_DIR)/yapping.c $(STDROT_DIR)/baka.c $(STDROT_DIR)/ragequit.c $(STDROT_DIR)/slorp.c $(STDROT_DIR)/registry.c $(SRC_DIR)/input.c
+STDROT_LIB := libstdrot.so
 
 # Output files
 TARGET := brainrot
@@ -22,18 +28,26 @@ FLEX_OUTPUT := lex.yy.c
 
 # Default target
 .PHONY: all
-all: $(TARGET)
+all: $(STDROT_LIB) $(TARGET)
+
+# Build only the standard library
+.PHONY: lib
+lib: $(STDROT_LIB)
 
 # Debug target
 .PHONY: debug
 debug: CFLAGS += $(DEBUG_FLAGS)
-debug: clean $(TARGET)
+debug: clean all
 	@echo "Debug build compiled with -g. Time to sigma grind with GDB."
 
+# stdrot shared library build
+$(STDROT_LIB): $(STDROT_SRCS)
+	$(CC) $(SO_CFLAGS) -I. -o $@ $^ -lm
+	@echo "libstdrot.so compiled with max rizz."
 
 # Main executable build
-$(TARGET): $(ALL_SRCS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+$(TARGET): $(ALL_SRCS) $(STDROT_LIB)
+	$(CC) $(CFLAGS) -o $@ $(ALL_SRCS) $(LDFLAGS)
 	@echo "Skibidi toilet: $(TARGET) compiled with max gyatt."
 
 # Generate parser files using Bison
@@ -55,7 +69,7 @@ test:
 # Clean build artifacts
 .PHONY: clean
 clean:
-	rm -f $(TARGET) $(GENERATED_SRCS) lang.tab.h
+	rm -f $(TARGET) $(STDROT_LIB) $(GENERATED_SRCS) lang.tab.h
 	rm -f *.o
 	@echo "Blud cleaned up the mess like a true sigma coder."
 

@@ -8,8 +8,7 @@
 
 extern void yyerror(const char *s);
 extern char *safe_strdup(const char *str);
-extern void yapping(const char* format, ...);
-extern void baka(const char* format, ...);
+extern void execute_func_call(const char *func_name, ArgumentList *args);
 
 /* External functions we need from the original implementation */
 extern Variable *variable_new(char *name);
@@ -646,12 +645,8 @@ void interpreter_visit_print_statement(Visitor *self, ASTNode *node) {
     if (!node || !node->data.op.left) return;
     
     ASTNode *expr = node->data.op.left;
-    if (expr->type == NODE_STRING_LITERAL) {
-        yapping("%s", expr->data.strvalue);
-    } else {
-        int value = evaluate_expression_int(expr);
-        yapping("%d", value);
-    }
+    ArgumentList args = {expr, NULL};
+    execute_func_call("yapping", &args);
 }
 
 void interpreter_visit_error_statement(Visitor *self, ASTNode *node) {
@@ -659,10 +654,6 @@ void interpreter_visit_error_statement(Visitor *self, ASTNode *node) {
     if (!node || !node->data.op.left) return;
     
     ASTNode *expr = node->data.op.left;
-    if (expr->type == NODE_STRING_LITERAL) {
-        baka("%s", expr->data.strvalue);
-    } else {
-        int value = evaluate_expression_int(expr);
-        baka("%d", value);
-    }
+    ArgumentList args = {expr, NULL};
+    execute_func_call("baka", &args);
 }
