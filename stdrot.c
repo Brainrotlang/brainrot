@@ -21,6 +21,9 @@
 #include <stdarg.h>
 #include <dlfcn.h>
 
+/* ── Global execution context ────────────────────────────────────────────── */
+ExecutionContext g_exec_context = {0, NULL, NULL};
+
 /* ── External interpreter functions ──────────────────────────────────────── */
 extern void yyerror(const char *s);
 extern int evaluate_expression_int(ASTNode *node);
@@ -97,10 +100,17 @@ static void *stdrot_lookup_symbol(const char *symbol_name)
 
 void stdrot_load(void)
 {
-    /* Open libstdrot.so from the same directory as the binary, or LD_LIBRARY_PATH */
-    lib_handle = dlopen("./libstdrot.so", RTLD_LAZY | RTLD_LOCAL);
+    /* First, make main binary symbols available to subsequently loaded libraries
+     * by loading the main program's symbols with RTLD_GLOBAL
+     */
+    dlopen(NULL, RTLD_LAZY | RTLD_GLOBAL);
+    
+    /* Open libstdrot.so from the same directory as the binary, or LD_LIBRARY_PATH
+     * Use RTLD_GLOBAL so the library can access symbols from the main binary (e.g., g_exec_context)
+     */
+    lib_handle = dlopen("./libstdrot.so", RTLD_LAZY | RTLD_GLOBAL);
     if (!lib_handle) {
-        lib_handle = dlopen("libstdrot.so", RTLD_LAZY | RTLD_LOCAL);
+        lib_handle = dlopen("libstdrot.so", RTLD_LAZY | RTLD_GLOBAL);
     }
     if (!lib_handle) {
         fprintf(stderr, "Failed to load libstdrot.so: %s\n", dlerror());
@@ -273,6 +283,13 @@ void execute_func_call(const char *func_name, ArgumentList *args)
     if (!entry || !entry->fn) {
         yyerror("Unknown function");
         return;
+    }
+
+    /* Set execution context - get line number from first argument node */
+    g_exec_context.function_name = func_name;
+    g_exec_context.line_number = 0;
+    if (args && args->expr && args->expr->line_number > 0) {
+        g_exec_context.line_number = args->expr->line_number;
     }
 
     /* Generic function call - evaluate all arguments to StdrotValue */

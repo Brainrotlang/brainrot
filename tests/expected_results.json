@@ -59,12 +59,15 @@
     "grid_bfs": "8",
     "grid_bfs_1d": "8",
     "rant":"hello, world!",
-    "semantic_error_const": "Error: Cannot modify const variable at line 1",
+    "semantic_error_const": "Error: Cannot modify const variable at line 4",
     "semantic_error_function_redef": "Error: Function redefinition at line 1",
-    "semantic_error_scope": "Error: Variable out of scope at line 1",
+    "semantic_error_scope": "Error: Variable out of scope at line 8",
     "giga": "8\n4\n",
     "salty": "1\n2\n1\n2\n",
     "thicc": "8\n4\n",
     "giga_array": "1\n2\n3\n24\n",
-    "thicc_array": "1\n2\n3\n24\n"
+    "thicc_array": "1\n2\n3\n24\n",
+    "bet": "Assertion passed!\n",
+    "bet_int": "x is positive\n",
+    "bet_fail": "Error: bet: assertion failed at line 2: this assertion must fail"
 }

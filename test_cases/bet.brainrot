@@ -1,0 +1,5 @@
+skibidi main {
+    bet(W);
+    yapping("Assertion passed!");
+    bussin 0;
+}

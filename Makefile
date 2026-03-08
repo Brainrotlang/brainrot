@@ -6,7 +6,7 @@ PYTHON := python3
 
 # Compiler and linker flags
 CFLAGS := -Wall -Wextra -Wpedantic -Werror -O2  -Wuninitialized
-LDFLAGS := -lfl -lm -ldl
+LDFLAGS := -lfl -lm -ldl -rdynamic
 SO_CFLAGS := -fPIC -shared
 
 # Source files and directories
@@ -18,7 +18,7 @@ ALL_SRCS := $(SRCS) $(GENERATED_SRCS)
 
 # stdrot shared library
 STDROT_DIR := stdrot
-STDROT_SRCS := $(STDROT_DIR)/yapping.c $(STDROT_DIR)/baka.c $(STDROT_DIR)/ragequit.c $(STDROT_DIR)/slorp.c $(STDROT_DIR)/registry.c $(SRC_DIR)/input.c
+STDROT_SRCS := $(wildcard $(STDROT_DIR)/*.c) $(SRC_DIR)/input.c
 STDROT_LIB := libstdrot.so
 
 # Output files

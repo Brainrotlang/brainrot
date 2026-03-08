@@ -542,7 +542,7 @@ static ASTNode *create_node(NodeType type, VarType var_type, TypeModifiers modif
     node->modifiers = modifiers;
     node->already_checked = false;
     node->is_valid_symbol = false;
-    node->line_number = 0; /* Initialize line number to avoid uninitialized value errors */
+    node->line_number = yylineno;
     return node;
 }
 
@@ -2405,7 +2405,12 @@ void execute_statement(ASTNode *node)
     case NODE_IDENTIFIER:
         evaluate_expression(node);
         break;
-    case NODE_FUNC_CALL:
+    case NODE_FUNC_CALL: {
+        // Set execution context with current line number
+        extern ExecutionContext g_exec_context;
+        g_exec_context.line_number = node->line_number;
+        g_exec_context.function_name = node->data.func_call.function_name;
+        
         // Use the stdrot built-in function system
         if (is_builtin_function(node->data.func_call.function_name))
         {
@@ -2418,6 +2423,7 @@ void execute_statement(ASTNode *node)
                 node->data.func_call.arguments);
         }
         break;
+    }
     case NODE_FOR_STATEMENT:
         execute_for_statement(node);
         break;

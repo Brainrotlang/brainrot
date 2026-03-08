@@ -30,6 +30,18 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+/* ── Global execution context ──────────────────────────────────────────── *
+ * Set by the main binary before calling stdlib functions
+ * Allows functions to report line numbers and context
+ */
+typedef struct {
+    int line_number;
+    const char *function_name;
+    const char *condition_text;
+} ExecutionContext;
+
+extern ExecutionContext g_exec_context;
+
 /* ── Pre-evaluated argument / return value ──────────────────────────────── */
 
 typedef enum {
