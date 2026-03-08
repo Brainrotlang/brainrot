@@ -4,3 +4,4 @@ lang.tab.c
 lang.tab.h
 lex.yy.c
 lang.gv
+libstdrot.so
