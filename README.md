@@ -68,7 +68,7 @@ sudo ln -s /path/to/libfl.dylib /opt/homebrew/lib/libfl.dylib  # For Apple Silic
 sudo ln -s /path/to/libfl.dylib /usr/local/lib/libfl.dylib  # For Intel Macs
 ```
 
-### For NixOS
+#### For NixOS
 
 ```bash
 git clone https://github.com/Brainrotlang/brainrot.git
