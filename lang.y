@@ -599,6 +599,10 @@ array_access:
 %%
 
 int main(int argc, char *argv[]) {
+    /* Register cleanup function to be called on exit */
+    atexit(cleanup);
+    atexit(stdrot_unload);
+    
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <sourcefile>\n", argv[0]);
         return 1;
@@ -619,13 +623,11 @@ int main(int argc, char *argv[]) {
     /* Phase 1: Parse the source code to build AST */
     if (yyparse() != 0) {
         fprintf(stderr, "Parsing failed\n");
-        cleanup();
         return 1;
     }
 
     /* Phase 2: Semantic Analysis and Type Checking */
     if (!semantic_analyze(root)) {
-        cleanup();
         return 1;
     }
 
@@ -633,7 +635,6 @@ int main(int argc, char *argv[]) {
     global_interpreter = interpreter_new();
     if (!global_interpreter) {
         fprintf(stderr, "Failed to create interpreter\n");
-        cleanup();
         return 1;
     }
 
@@ -641,9 +642,7 @@ int main(int argc, char *argv[]) {
     interpreter_free(global_interpreter);
     global_interpreter = NULL;
 
-    /* Cleanup */
-    cleanup();
-    stdrot_unload();
+    /* Note: cleanup and stdrot_unload are called via atexit */
     
     return 0;
 }
@@ -653,6 +652,10 @@ void yyerror(const char *s) {
 }
 
 void cleanup() {
+    static bool cleaned = false;
+    if (cleaned) return;  // Prevent double cleanup
+    cleaned = true;
+    
     // Free the global interpreter if it exists
     if (global_interpreter) {
         interpreter_free(global_interpreter);
@@ -669,7 +672,10 @@ void cleanup() {
     free_ast();
     
     // Free the scope
-    free_scope(current_scope);
+    if (current_scope) {
+        free_scope(current_scope);
+        current_scope = NULL;
+    }
 
     free_function_table();
 

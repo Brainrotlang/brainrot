@@ -334,8 +334,11 @@ void execute_func_call(const char *func_name, ArgumentList *args)
             case STDROT_STRING:
                 if (var->is_array && var->array_length > 0 && result.val.str) {
                     char *dst = (char *)var->value.array_data;
-                    strncpy(dst, result.val.str, var->array_length - 1);
-                    dst[var->array_length - 1] = '\0';
+                    /* Avoid overlapping copy */
+                    if (dst != result.val.str) {
+                        strncpy(dst, result.val.str, var->array_length - 1);
+                        dst[var->array_length - 1] = '\0';
+                    }
                 }
                 break;
             case STDROT_BOOL:
