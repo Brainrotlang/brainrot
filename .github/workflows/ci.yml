@@ -36,7 +36,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: brainrot
-          path: brainrot
+          path: |
+            brainrot
+            libstdrot.so
 
   test:
     runs-on: ubuntu-latest
@@ -50,9 +52,14 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: brainrot
+          path: .
 
       - name: Grant execute permissions to Brainrot
         run: chmod +x brainrot
+
+      - name: Prepare shared library for tests
+        run: |
+          cp -f libstdrot.so tests/libstdrot.so
 
       - name: Install Python and dependencies
         run: |
@@ -66,6 +73,7 @@ jobs:
       - name: Run Pytest
         run: |
           source .venv/bin/activate
+          export LD_LIBRARY_PATH="$PWD:$LD_LIBRARY_PATH"
           pytest -v test_brainrot.py
         working-directory: tests
 
