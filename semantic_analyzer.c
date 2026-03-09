@@ -410,13 +410,7 @@ void* semantic_visit_identifier(Visitor *self, ASTNode *node) {
         } else {
             Variable *var = get_variable(name);
             if (!var) {
-                if (!is_builtin_function(name) && 
-                    strcmp(name, "ragequit") != 0 &&
-                    strcmp(name, "yapping") != 0 &&
-                    strcmp(name, "yappin") != 0 &&
-                    strcmp(name, "baka") != 0 &&
-                    strcmp(name, "chill") != 0 &&
-                    strcmp(name, "slorp") != 0) {
+                if (!is_builtin_function(name)) {
                     char error_msg[256];
                     snprintf(error_msg, sizeof(error_msg), "Undefined variable '%s'", name);
                     add_semantic_error(analyzer, SEMANTIC_ERROR_UNDEFINED_VARIABLE, 
@@ -505,14 +499,7 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node) {
         if (!symbol) {
             Variable *var = get_variable(var_name);
             if (!var) {
-                if (!is_builtin_function(var_name) && 
-                    strcmp(var_name, "ragequit") != 0 &&
-                    strcmp(var_name, "yapping") != 0 &&
-                    strcmp(var_name, "yappin") != 0 &&
-                    strcmp(var_name, "baka") != 0 &&
-                    strcmp(var_name, "chill") != 0 &&
-                    strcmp(var_name, "slorp") != 0 &&
-                    strcmp(var_name, "bussin") != 0) {
+                if (!is_builtin_function(var_name)) {
                     char error_msg[256];
                     snprintf(error_msg, sizeof(error_msg), "Assignment to undefined variable '%s'", var_name);
                     add_semantic_error(analyzer, SEMANTIC_ERROR_UNDEFINED_VARIABLE, 
@@ -921,14 +908,7 @@ void semantic_analyze_node(SemanticAnalyzer *analyzer, ASTNode *node) {
             
             if (!find_semantic_variable(analyzer, name, &symbol)) {
                 /* Check if it's a built-in function or keyword */
-                if (!is_builtin_function(name) && 
-                    strcmp(name, "ragequit") != 0 &&
-                    strcmp(name, "yapping") != 0 &&
-                    strcmp(name, "yappin") != 0 &&
-                    strcmp(name, "baka") != 0 &&
-                    strcmp(name, "chill") != 0 &&
-                    strcmp(name, "slorp") != 0 &&
-                    strcmp(name, "bussin") != 0) {
+                if (!is_builtin_function(name)){
                     char error_msg[256];
                     snprintf(error_msg, sizeof(error_msg), "Undefined variable '%s'", name);
                     add_semantic_error(analyzer, SEMANTIC_ERROR_UNDEFINED_VARIABLE, 

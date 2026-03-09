@@ -1,4 +1,16 @@
-/* stdrot.c - Standard Brainrot built-in functions implementation */
+/* stdrot.c - Standard Brainrot library loader and AST bridge
+ *
+ * This file is the glue between:
+ *   • the AST/interpreter (understands ASTNode, ArgumentList, Variable, etc.)
+ *   • libstdrot.so (pure I/O functions, zero interpreter dependency)
+ *
+ * It provides:
+ *   1. Dynamic loader (stdrot_load/unload) that opens libstdrot.so and
+ *      discovers all functions via stdrot_get_api()
+ *   2. Thin varargs stubs (yapping/yappin/baka) that forward to the .so
+ *   3. AST bridge functions (execute_*_call) that evaluate arguments and
+ *      call the raw implementations
+ */
 
 #include "stdrot.h"
 #include "ast.h"
@@ -6,22 +18,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+#include <stdarg.h>
+#include <dlfcn.h>
 
-/* External function declarations */
+/* ── Global execution context ────────────────────────────────────────────── */
+ExecutionContext g_exec_context = {0, NULL, NULL};
+
+/* ── External interpreter functions ──────────────────────────────────────── */
 extern void yyerror(const char *s);
-extern void yapping(const char* format, ...);
-extern void yappin(const char* format, ...);
-extern void baka(const char* format, ...);
-extern void ragequit(int exit_code);
-extern void chill(unsigned int seconds);
-extern char slorp_char(char chr);
-extern char *slorp_string(char *string, size_t size);
-extern int slorp_int(int val);
-extern short slorp_short(short val);
-extern float slorp_float(float var);
-extern double slorp_double(double var);
-
 extern int evaluate_expression_int(ASTNode *node);
 extern float evaluate_expression_float(ASTNode *node);
 extern double evaluate_expression_double(ASTNode *node);
@@ -35,420 +39,393 @@ extern bool set_int_variable(const char *name, int value, TypeModifiers mods);
 extern bool set_float_variable(const char *name, float value, TypeModifiers mods);
 extern bool set_double_variable(const char *name, double value, TypeModifiers mods);
 extern bool set_short_variable(const char *name, short value, TypeModifiers mods);
+extern bool set_bool_variable(const char *name, bool value, TypeModifiers mods);
 
-/* Built-in function names */
-const char* BUILTIN_FUNCTIONS[] = {
-    "yapping",
-    "yappin", 
-    "baka",
-    "ragequit",
-    "chill",
-    "slorp"
-};
+/* ── Dynamic library state ────────────────────────────────────────────────── */
+static void *lib_handle = NULL;
+static StdrotEntry *functions = NULL;
+static int function_count = 0;
 
-const int BUILTIN_FUNCTION_COUNT = sizeof(BUILTIN_FUNCTIONS) / sizeof(BUILTIN_FUNCTIONS[0]);
+/* Symbol cache to avoid repeated dlsym calls */
+#define STDROT_CACHE_SIZE 64
+typedef struct {
+    const char *name;
+    void *ptr;
+} SymbolCache;
 
-/* Check if a function name is a built-in function */
-bool is_builtin_function(const char *func_name) {
-    if (!func_name) return false;
+static SymbolCache symbol_cache[STDROT_CACHE_SIZE];
+static int cache_count = 0;
+
+/* ── Forward declarations of stub functions ──────────────────────────────── */
+void yapping(const char* format, ...);
+void yappin(const char* format, ...);
+void baka(const char* format, ...);
+void ragequit(int exit_code);
+void chill(unsigned int seconds);
+char slorp_char(char chr);
+char *slorp_string(char *string, size_t size);
+int slorp_int(int val);
+short slorp_short(short val);
+float slorp_float(float var);
+double slorp_double(double var);
+
+/* ── Dynamic symbol lookup with caching ──────────────────────────────────── */
+
+static void *stdrot_lookup_symbol(const char *symbol_name)
+{
+    if (!lib_handle || !symbol_name) return NULL;
+
+    /* Check cache first */
+    for (int i = 0; i < cache_count; i++) {
+        if (strcmp(symbol_cache[i].name, symbol_name) == 0) {
+            return symbol_cache[i].ptr;
+        }
+    }
+
+    /* Not in cache, lookup via dlsym */
+    void *ptr = dlsym(lib_handle, symbol_name);
+    if (ptr && cache_count < STDROT_CACHE_SIZE) {
+        symbol_cache[cache_count].name = symbol_name;
+        symbol_cache[cache_count].ptr = ptr;
+        cache_count++;
+    }
+
+    return ptr;
+}
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+
+/* ── Loader ──────────────────────────────────────────────────────────────── */
+
+void stdrot_load(void)
+{
+    /* First, make main binary symbols available to subsequently loaded libraries
+     * by loading the main program's symbols with RTLD_GLOBAL
+     */
+    dlopen(NULL, RTLD_LAZY | RTLD_GLOBAL);
     
-    for (int i = 0; i < BUILTIN_FUNCTION_COUNT; i++) {
-        if (strcmp(func_name, BUILTIN_FUNCTIONS[i]) == 0) {
+    /* Open libstdrot.so from the same directory as the binary, or LD_LIBRARY_PATH
+     * Use RTLD_GLOBAL so the library can access symbols from the main binary (e.g., g_exec_context)
+     */
+    lib_handle = dlopen("./libstdrot.so", RTLD_LAZY | RTLD_GLOBAL);
+    if (!lib_handle) {
+        lib_handle = dlopen("libstdrot.so", RTLD_LAZY | RTLD_GLOBAL);
+    }
+    if (!lib_handle) {
+        fprintf(stderr, "Failed to load libstdrot.so: %s\n", dlerror());
+        exit(EXIT_FAILURE);
+    }
+
+    /* Get the API entrypoint */
+    StdrotAPI (*get_api)(void);
+    *(void **)(&get_api) = dlsym(lib_handle, "stdrot_get_api");
+    if (!get_api) {
+        fprintf(stderr, "libstdrot.so missing stdrot_get_api(): %s\n", dlerror());
+        dlclose(lib_handle);
+        exit(EXIT_FAILURE);
+    }
+
+    /* Discover all functions */
+    StdrotAPI api = get_api();
+    functions = api.functions;
+    function_count = api.count;
+}
+
+void stdrot_unload(void)
+{
+    if (lib_handle) {
+        dlclose(lib_handle);
+        lib_handle = NULL;
+        functions = NULL;
+        function_count = 0;
+        cache_count = 0;
+    }
+}
+
+/* ── Runtime query ────────────────────────────────────────────────────────── */
+
+bool is_builtin_function(const char *func_name)
+{
+    if (!func_name || !functions) return false;
+
+    for (int i = 0; i < function_count; i++) {
+        if (strcmp(func_name, functions[i].name) == 0) {
             return true;
         }
     }
     return false;
 }
 
-/* Execute a built-in function call */
-void execute_builtin_function(const char *func_name, ArgumentList *args) {
-    if (!func_name) return;
-    
-    if (strcmp(func_name, "yapping") == 0) {
-        execute_yapping_call(args);
-    } else if (strcmp(func_name, "yappin") == 0) {
-        execute_yappin_call(args);
-    } else if (strcmp(func_name, "baka") == 0) {
-        execute_baka_call(args);
-    } else if (strcmp(func_name, "ragequit") == 0) {
-        execute_ragequit_call(args);
-    } else if (strcmp(func_name, "chill") == 0) {
-        execute_chill_call(args);
-    } else if (strcmp(func_name, "slorp") == 0) {
-        execute_slorp_call(args);
-    }
+void execute_builtin_function(const char *func_name, ArgumentList *args)
+{
+    execute_func_call(func_name, args);
 }
 
-/* Built-in function implementations */
+static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
+{
+    out->type = STDROT_NONE;
+    if (!expr) return;
 
-void execute_yapping_call(ArgumentList *args) {
-    if (!args) {
-        yyerror("No arguments provided for yapping function call");
-        exit(EXIT_FAILURE);
-    }
-
-    ASTNode *formatNode = args->expr;
-    if (formatNode->type != NODE_STRING_LITERAL) {
-        yyerror("First argument to yapping must be a string literal");
+    switch (expr->type) {
+    case NODE_STRING_LITERAL:
+        out->type = STDROT_STRING;
+        out->val.str = expr->data.name;
         return;
-    }
-
-    const char *format = formatNode->data.name; // The format string
-    char buffer[1024];                          // Buffer for the final formatted output
-    int buffer_offset = 0;
-
-    ArgumentList *cur = args->next;
-
-    while (*format != '\0') {
-        if (*format == '%' && cur != NULL) {
-            // Start extracting the format specifier
-            const char *start = format;
-            format++; // Move past '%'
-
-            // Extract until a valid specifier character is found
-            while (strchr("diouxXfFeEgGaAcspnb%", *format) == NULL && *format != '\0') {
-                format++;
-            }
-
-            if (*format == '\0') {
-                yyerror("Invalid format specifier");
-                exit(EXIT_FAILURE);
-            }
-
-            // Copy the format specifier into a temporary buffer
-            char specifier[32];
-            int length = format - start + 1;
-            strncpy(specifier, start, length);
-            specifier[length] = '\0';
-
-            // Process the argument based on the format specifier
-            ASTNode *expr = cur->expr;
-            if (!expr) {
-                yyerror("Invalid argument in yapping call");
-                exit(EXIT_FAILURE);
-            }
-
-            if (*format == 'b') {
-                // Handle boolean values
-                bool val = evaluate_expression_bool(expr);
-                buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, "%s", val ? "W" : "L");
-            } else if (strchr("diouxX", *format)) {
-                // Integer or unsigned integer
-                volatile bool is_unsigned = (expr->type == NODE_IDENTIFIER &&
-                                    get_variable_modifiers(expr->data.name).is_unsigned);
-                
-                if (is_unsigned) {
-                    if (is_expression(expr, VAR_SHORT)) {
-                        unsigned short val = evaluate_expression_short(expr);
-                        buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, val);
-                    } else {
-                        unsigned int val = (unsigned int)evaluate_expression_int(expr);
-                        buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, val);
-                    }
-                } else {
-                    if (is_expression(expr, VAR_SHORT)) {
-                        short val = evaluate_expression_short(expr);
-                        buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, val);
-                    } else {
-                        int val = evaluate_expression_int(expr);
-                        buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, val);
-                    }
-                }
-            } else if (strchr("fFeEgGa", *format)) {
-                // Floating-point numbers
-                if (expr->type == NODE_ARRAY_ACCESS) {
-                    // Special handling for array access
-                    const char *array_name = expr->data.array.name;
-                    void *element = evaluate_multi_array_access(expr);
-                    if (!element) {
-                        yyerror("Invalid array access in floating-point format specifier");
-                        exit(EXIT_FAILURE);
-                    }
-
-                    Variable *var = get_variable(array_name);
-                    if (var != NULL) {
-                        if (var->var_type == VAR_FLOAT) {
-                            float val = *(float*)element;
-                            buffer_offset += snprintf(buffer + buffer_offset,
-                                                      sizeof(buffer) - buffer_offset,
-                                                      specifier, val);
-                        } else if (var->var_type == VAR_DOUBLE) {
-                            double val = *(double*)element;
-                            buffer_offset += snprintf(buffer + buffer_offset,
-                                                      sizeof(buffer) - buffer_offset,
-                                                      specifier, val);
-                        }
-                        break;
-                    }
-                } else if (is_expression(expr, VAR_FLOAT)) {
-                    float val = evaluate_expression_float(expr);
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, val);
-                } else if (is_expression(expr, VAR_DOUBLE)) {
-                    double val = evaluate_expression_double(expr);
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, val);
-                } else {
-                    yyerror("Invalid argument type for floating-point format specifier");
-                    exit(EXIT_FAILURE);
-                }
-            } else if (*format == 'c') {
-                // Character
-                int val = evaluate_expression_int(expr);
-                buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, val);
-            } else if (*format == 's') {
-                // String
-                const Variable *var = get_variable(expr->data.name);
-                if (var != NULL) {
-                    if (!var->is_array && var->var_type != VAR_STRING) {
-                        yyerror("Invalid argument type for %s");
-                        exit(EXIT_FAILURE);
-                    }
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, var->value.array_data);
-                } else if (expr->type != NODE_STRING_LITERAL) {
-                    yyerror("Invalid argument type for %s");
-                    exit(EXIT_FAILURE);
-                } else {
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, expr->data.name);
-                }
+    case NODE_INT:
+        out->type = STDROT_INT;
+        out->val.i = expr->data.ivalue;
+        return;
+    case NODE_SHORT:
+        out->type = STDROT_SHORT;
+        out->val.s = expr->data.svalue;
+        return;
+    case NODE_FLOAT:
+        out->type = STDROT_FLOAT;
+        out->val.f = expr->data.fvalue;
+        return;
+    case NODE_DOUBLE:
+        out->type = STDROT_DOUBLE;
+        out->val.d = expr->data.dvalue;
+        return;
+    case NODE_CHAR:
+        out->type = STDROT_CHAR;
+        out->val.c = (char)expr->data.ivalue;
+        return;
+    case NODE_BOOLEAN:
+        out->type = STDROT_BOOL;
+        out->val.b = expr->data.bvalue;
+        return;
+    case NODE_SIZEOF:
+        out->type = STDROT_INT;
+        out->val.i = evaluate_expression_int(expr);
+        return;
+    case NODE_IDENTIFIER: {
+        Variable *var = get_variable(expr->data.name);
+        if (!var) return;
+        switch (var->var_type) {
+        case VAR_INT:
+            out->type = STDROT_INT;
+            out->val.i = var->value.ivalue;
+            return;
+        case VAR_FLOAT:
+            out->type = STDROT_FLOAT;
+            out->val.f = var->value.fvalue;
+            return;
+        case VAR_DOUBLE:
+            out->type = STDROT_DOUBLE;
+            out->val.d = var->value.dvalue;
+            return;
+        case VAR_SHORT:
+            out->type = STDROT_SHORT;
+            out->val.s = var->value.svalue;
+            return;
+        case VAR_BOOL:
+            out->type = STDROT_BOOL;
+            out->val.b = var->value.bvalue;
+            return;
+        case VAR_CHAR:
+            if (var->is_array) {
+                out->type = STDROT_STRING;
+                out->val.str = (char *)var->value.array_data;
             } else {
-                yyerror("Unsupported format specifier");
-                exit(EXIT_FAILURE);
+                out->type = STDROT_CHAR;
+                out->val.c = (char)var->value.ivalue;
             }
-
-            cur = cur->next; // Move to the next argument
-            format++;        // Move past the format specifier
-        } else {
-            // Copy non-format characters to the buffer
-            buffer[buffer_offset++] = *format++;
-        }
-
-        // Check for buffer overflow
-        if (buffer_offset >= (int)sizeof(buffer)) {
-            yyerror("Buffer overflow in yapping call");
-            exit(EXIT_FAILURE);
-        }
-    }
-
-    buffer[buffer_offset] = '\0'; // Null-terminate the string
-
-    // Print the final formatted output
-    yapping("%s", buffer);
-}
-
-void execute_yappin_call(ArgumentList *args) {
-    if (!args) {
-        yyerror("No arguments provided for yappin function call");
-        exit(EXIT_FAILURE);
-    }
-
-    ASTNode *formatNode = args->expr;
-    if (formatNode->type != NODE_STRING_LITERAL) {
-        yyerror("First argument to yappin must be a string literal");
-        exit(EXIT_FAILURE);
-    }
-
-    const char *format = formatNode->data.name; // The format string
-    char buffer[1024];                          // Buffer for the final formatted output
-    int buffer_offset = 0;
-
-    ArgumentList *cur = args->next;
-
-    while (*format != '\0') {
-        if (*format == '%' && cur != NULL) {
-            // Start extracting the format specifier
-            const char *start = format;
-            format++; // Move past '%'
-
-            // Extract until a valid specifier character is found
-            while (strchr("diouxXfFeEgGaAcspnb%", *format) == NULL && *format != '\0') {
-                format++;
-            }
-
-            if (*format == '\0') {
-                yyerror("Invalid format specifier");
-                exit(EXIT_FAILURE);
-            }
-
-            // Copy the format specifier into a temporary buffer
-            char specifier[32];
-            int length = format - start + 1;
-            strncpy(specifier, start, length);
-            specifier[length] = '\0';
-
-            // Process the argument based on the format specifier
-            ASTNode *expr = cur->expr;
-            if (!expr) {
-                yyerror("Invalid argument in yappin call");
-                exit(EXIT_FAILURE);
-            }
-
-            if (*format == 'b') {
-                // Handle boolean values
-                bool val = evaluate_expression_bool(expr);
-                buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, "%s", val ? "W" : "L");
-            } else if (strchr("diouxX", *format)) {
-                if (is_expression(expr, VAR_SHORT)) {
-                    short val = evaluate_expression_short(expr);
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, val);
-                } else {
-                    int val = evaluate_expression_int(expr);
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, val);
-                }
-            } else if (strchr("fFeEgGa", *format)) {
-                // Handle floating-point numbers
-                if (is_expression(expr, VAR_FLOAT)) {
-                    float val = evaluate_expression_float(expr);
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, val);
-                } else if (is_expression(expr, VAR_DOUBLE)) {
-                    double val = evaluate_expression_double(expr);
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, val);
-                } else {
-                    yyerror("Invalid argument type for floating-point format specifier");
-                    exit(EXIT_FAILURE);
-                }
-            } else if (*format == 'c') {
-                // Handle character values
-                int val = evaluate_expression_int(expr);
-                buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, val);
-            } else if (*format == 's') {
-                const Variable *var = get_variable(expr->data.name);
-                if (var != NULL) {
-                    if (!var->is_array && var->var_type != VAR_STRING) {
-                        yyerror("Invalid argument type for %s");
-                        exit(EXIT_FAILURE);
-                    }
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, var->value.array_data);
-                } else if (expr->type != NODE_STRING_LITERAL) {
-                    yyerror("Invalid argument type for %s");
-                    exit(EXIT_FAILURE);
-                } else {
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, expr->data.name);
-                }
-            } else {
-                yyerror("Unsupported format specifier");
-                exit(EXIT_FAILURE);
-            }
-
-            cur = cur->next; // Move to the next argument
-            format++;        // Move past the format specifier
-        } else {
-            // Copy non-format characters to the buffer
-            buffer[buffer_offset++] = *format++;
-        }
-
-        // Check for buffer overflow
-        if (buffer_offset >= (int)sizeof(buffer)) {
-            yyerror("Buffer overflow in yappin call");
-            exit(EXIT_FAILURE);
-        }
-    }
-
-    buffer[buffer_offset] = '\0'; // Null-terminate the string
-
-    // Print the final formatted output
-    yappin("%s", buffer);
-}
-
-void execute_baka_call(ArgumentList *args) {
-    if (!args) {
-        baka("\n");
-        return;
-    }
-
-    ASTNode *formatNode = args->expr;
-    if (formatNode->type != NODE_STRING_LITERAL) {
-        yyerror("First argument to baka must be a string literal");
-        return;
-    }
-
-    baka(formatNode->data.name);
-}
-
-void execute_ragequit_call(ArgumentList *args) {
-    if (!args) {
-        yyerror("No arguments provided for ragequit function call");
-        exit(EXIT_FAILURE);
-    }
-
-    ASTNode *formatNode = args->expr;
-    if (formatNode->type != NODE_INT) {
-        yyerror("First argument to ragequit must be an integer");
-        exit(EXIT_FAILURE);
-    }
-
-    ragequit(formatNode->data.ivalue);
-}
-
-void execute_chill_call(ArgumentList *args) {
-    if (!args) {
-        yyerror("No arguments provided for chill function call");
-        exit(EXIT_FAILURE);
-    }
-
-    ASTNode *formatNode = args->expr;
-    if (formatNode->type != NODE_INT && !formatNode->modifiers.is_unsigned) {
-        yyerror("First argument to chill must be an unsigned integer");
-        exit(EXIT_FAILURE);
-    }
-
-    chill(formatNode->data.ivalue);
-}
-
-void execute_slorp_call(ArgumentList *args) {
-    if (!args || args->expr->type != NODE_IDENTIFIER) {
-        yyerror("slorp requires a variable identifier");
-        return;
-    }
-
-    char *name = args->expr->data.name;
-    Variable *var = get_variable(name);
-    if (!var) {
-        yyerror("Undefined variable");
-        return;
-    }
-
-    switch (var->var_type) {
-    case VAR_INT: {
-        int val = 0;
-        val = slorp_int(val);
-        set_int_variable(name, val, var->modifiers);
-        break;
-    }
-    case VAR_FLOAT: {
-        float val = 0.0f;
-        val = slorp_float(val);
-        set_float_variable(name, val, var->modifiers);
-        break;
-    }
-    case VAR_DOUBLE: {
-        double val = 0.0;
-        val = slorp_double(val);
-        set_double_variable(name, val, var->modifiers);
-        break;
-    }
-    case VAR_SHORT: {
-        short val = 0;
-        val = slorp_short(val);
-        set_short_variable(name, val, var->modifiers);
-        break;
-    }
-    case VAR_CHAR: {
-        if (var->is_array) {
-            char val[var->array_length];
-            slorp_string(val, sizeof(val));
-            strncpy(var->value.strvalue, val, var->array_length - 1);
-            ((char *)var->value.strvalue)[var->array_length - 1] = '\0';
+            return;
+        case VAR_STRING:
+            out->type = STDROT_STRING;
+            out->val.str = (char *)var->value.array_data;
+            return;
+        default:
             return;
         }
-        char val = 0;
-        val = slorp_char(val);
-        set_int_variable(name, val, var->modifiers);
-        break;
-    }
-    case VAR_STRING: {
-        slorp_string((char *)var->value.strvalue, strlen(var->value.strvalue));
-        break;
     }
     default:
-        yyerror("Unsupported type for slorp");
+        break;
+    }
+
+    /* General expression fallback */
+    if (is_expression(expr, VAR_BOOL)) {
+        out->type = STDROT_BOOL;
+        out->val.b = evaluate_expression_bool(expr);
+    } else if (is_expression(expr, VAR_SHORT)) {
+        out->type = STDROT_SHORT;
+        out->val.s = evaluate_expression_short(expr);
+    } else if (is_expression(expr, VAR_FLOAT)) {
+        out->type = STDROT_FLOAT;
+        out->val.f = evaluate_expression_float(expr);
+    } else if (is_expression(expr, VAR_DOUBLE)) {
+        out->type = STDROT_DOUBLE;
+        out->val.d = evaluate_expression_double(expr);
+    } else if (is_expression(expr, VAR_INT) || expr->type == NODE_ARRAY_ACCESS || expr->type == NODE_OPERATION || expr->type == NODE_UNARY_OPERATION) {
+        out->type = STDROT_INT;
+        out->val.i = evaluate_expression_int(expr);
     }
 }
+
+void execute_func_call(const char *func_name, ArgumentList *args)
+{
+    if (!func_name || !functions) {
+        yyerror("Function not found");
+        return;
+    }
+
+    /* Look up function in the registry */
+    StdrotEntry *entry = NULL;
+    for (int i = 0; i < function_count; i++) {
+        if (strcmp(functions[i].name, func_name) == 0) {
+            entry = &functions[i];
+            break;
+        }
+    }
+
+    if (!entry || !entry->fn) {
+        yyerror("Unknown function");
+        return;
+    }
+
+    /* Set execution context - get line number from first argument node */
+    g_exec_context.function_name = func_name;
+    g_exec_context.line_number = 0;
+    if (args && args->expr && args->expr->line_number > 0) {
+        g_exec_context.line_number = args->expr->line_number;
+    }
+
+    /* Generic function call - evaluate all arguments to StdrotValue */
+    StdrotValue arg_values[64];
+    int arg_count = 0;
+
+    ArgumentList *cur = args;
+    while (cur && arg_count < 64) {
+        ASTNode *expr = cur->expr;
+        if (!expr) break;
+
+        ast_expr_to_stdrot_value(expr, &arg_values[arg_count]);
+
+        arg_count++;
+        cur = cur->next;
+    }
+
+    StdrotValue result = entry->fn(arg_values, arg_count);
+
+    /* Generic write-back: if first arg is an identifier and function returned a value,
+     * write the returned value back to that variable. */
+    if (result.type != STDROT_NONE && args && args->expr && args->expr->type == NODE_IDENTIFIER) {
+        const char *name = args->expr->data.name;
+        Variable *var = get_variable(name);
+        if (var) {
+            switch (result.type) {
+            case STDROT_INT:
+                set_int_variable(name, result.val.i, var->modifiers);
+                break;
+            case STDROT_FLOAT:
+                set_float_variable(name, result.val.f, var->modifiers);
+                break;
+            case STDROT_DOUBLE:
+                set_double_variable(name, result.val.d, var->modifiers);
+                break;
+            case STDROT_SHORT:
+                set_short_variable(name, result.val.s, var->modifiers);
+                break;
+            case STDROT_CHAR:
+                set_int_variable(name, result.val.c, var->modifiers);
+                break;
+            case STDROT_STRING:
+                if (var->is_array && var->array_length > 0 && result.val.str) {
+                    char *dst = (char *)var->value.array_data;
+                    /* Avoid overlapping copy */
+                    if (dst != result.val.str) {
+                        strncpy(dst, result.val.str, var->array_length - 1);
+                        dst[var->array_length - 1] = '\0';
+                    }
+                }
+                break;
+            case STDROT_BOOL:
+                set_bool_variable(name, result.val.b, var->modifiers);
+                break;
+            default:
+                break;
+            }
+        }
+    }
+}
+
+/* ── Stub functions (thin wrappers that forward to .so) ────────────────────── */
+
+void yapping(const char* format, ...)
+{
+    va_list ap;
+    va_start(ap, format);
+    void (*fn)(const char *, va_list) = (void (*)(const char *, va_list))stdrot_lookup_symbol("v_yapping");
+    if (fn) fn(format, ap);
+    va_end(ap);
+}
+
+void yappin(const char* format, ...)
+{
+    va_list ap;
+    va_start(ap, format);
+    void (*fn)(const char *, va_list) = (void (*)(const char *, va_list))stdrot_lookup_symbol("v_yappin");
+    if (fn) fn(format, ap);
+    va_end(ap);
+}
+
+void baka(const char* format, ...)
+{
+    va_list ap;
+    va_start(ap, format);
+    void (*fn)(const char *, va_list) = (void (*)(const char *, va_list))stdrot_lookup_symbol("v_baka");
+    if (fn) fn(format, ap);
+    va_end(ap);
+}
+
+void ragequit(int exit_code)
+{
+    void (*fn)(int) = (void (*)(int))stdrot_lookup_symbol("ragequit");
+    if (fn) fn(exit_code);
+}
+
+void chill(unsigned int seconds)
+{
+    void (*fn)(unsigned int) = (void (*)(unsigned int))stdrot_lookup_symbol("chill");
+    if (fn) fn(seconds);
+}
+
+char slorp_char(char chr)
+{
+    char (*fn)(char) = (char (*)(char))stdrot_lookup_symbol("slorp_char");
+    return fn ? fn(chr) : chr;
+}
+
+char *slorp_string(char *string, size_t size)
+{
+    char *(*fn)(char *, size_t) = (char *(*)(char *, size_t))stdrot_lookup_symbol("slorp_string");
+    return fn ? fn(string, size) : string;
+}
+
+int slorp_int(int val)
+{
+    int (*fn)(int) = (int (*)(int))stdrot_lookup_symbol("slorp_int");
+    return fn ? fn(val) : val;
+}
+
+short slorp_short(short val)
+{
+    short (*fn)(short) = (short (*)(short))stdrot_lookup_symbol("slorp_short");
+    return fn ? fn(val) : val;
+}
+
+float slorp_float(float var)
+{
+    float (*fn)(float) = (float (*)(float))stdrot_lookup_symbol("slorp_float");
+    return fn ? fn(var) : var;
+}
+
+double slorp_double(double var)
+{
+    double (*fn)(double) = (double (*)(double))stdrot_lookup_symbol("slorp_double");
+    return fn ? fn(var) : var;
+}
+
+#pragma GCC diagnostic pop

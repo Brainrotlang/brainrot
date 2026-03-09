@@ -1,0 +1,5 @@
+skibidi main {
+    bet(L, "this assertion must fail");
+    yapping("Should not reach here");
+    bussin 0;
+}
