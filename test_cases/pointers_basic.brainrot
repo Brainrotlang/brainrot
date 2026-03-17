@@ -1,0 +1,16 @@
+rizz bump(rizz **value_ptr) {
+    **value_ptr = **value_ptr + 5;
+    bussin **value_ptr;
+}
+
+skibidi main {
+    rizz value = 10;
+    rizz *ptr = &value;
+    rizz **double_ptr = &ptr;
+
+    yapping("%d", bump(double_ptr));
+    yapping("%d", value);
+    *ptr = *ptr + 2;
+    yapping("%d", **double_ptr);
+    bussin 0;
+}
