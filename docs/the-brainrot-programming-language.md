@@ -18,6 +18,7 @@ A Meme-Fueled Journey into Compiler Design, Internet Slang, and Skibidi Toilets
    - 7.5. Return Statements (`bussin`)
    - 7.6. Built-In Functions
    - 7.7. User Defined Functions
+    - 7.8. Pointers and Call by Reference
 8. **Extended User Documentation**
    - 8.1. `yapping`
    - 8.2. `yappin`
@@ -308,6 +309,50 @@ cap is_prime(rizz n) {
 cap isPrime = is_prime(11)
 
 ```
+
+### 7.8. Pointers and Call by Reference
+
+Brainrot supports C-style pointers with arbitrary indirection levels.
+
+#### Declaration and basic usage
+
+```c
+rizz value = 10;
+rizz *p = &value;
+rizz **pp = &p;
+
+*p = 20;
+yapping("%d", value);   🚽 20
+yapping("%d", **pp);    🚽 20
+```
+
+Supported forms:
+
+- Pointer declaration: `rizz *p`, `rizz **pp`, ...
+- Address-of: `&expr`
+- Dereference: `*expr`
+- Pointer assignment and comparison
+- Pointer arithmetic: `pointer +/- integer`
+
+#### Call by reference (pointer-based)
+
+Use pointer parameters and pass addresses from the caller:
+
+```c
+rizz increment(rizz *n) {
+    *n = *n + 1;
+    bussin 0;
+}
+
+skibidi main {
+    rizz x = 5;
+    increment(&x);
+    yapping("%d", x);  🚽 6
+    bussin 0;
+}
+```
+
+This is the Brainrot equivalent of call by reference.
 
 ## 8. Extended User Documentation
 
