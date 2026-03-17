@@ -39,9 +39,11 @@ typedef struct SemanticScope {
 typedef struct SymbolEntry {
     char *name;
     VarType type;
+    int pointer_level;
     bool is_const;
     bool is_function;
     VarType return_type;        /* For functions */
+    int return_pointer_level;
     int line_number;
     int scope_depth;            /* Track which scope level this was declared in */
     struct SymbolEntry *next;
@@ -67,7 +69,7 @@ void semantic_analyzer_free(SemanticAnalyzer *analyzer);
 bool semantic_analyze(ASTNode *root);
 
 /* Symbol table management */
-void add_symbol(SemanticAnalyzer *analyzer, const char *name, VarType type, bool is_const, bool is_function, VarType return_type, int line_number);
+void add_symbol(SemanticAnalyzer *analyzer, const char *name, VarType type, int pointer_level, bool is_const, bool is_function, VarType return_type, int return_pointer_level, int line_number);
 SymbolEntry* find_symbol(SemanticAnalyzer *analyzer, const char *name);
 void free_symbol_table(SymbolEntry *symbols);
 
@@ -78,7 +80,7 @@ void enter_semantic_scope(SemanticAnalyzer *analyzer, bool is_function_scope);
 void exit_semantic_scope(SemanticAnalyzer *analyzer);
 
 /* Variable management in semantic scopes */
-bool add_semantic_variable(SemanticAnalyzer *analyzer, const char *name, VarType type, bool is_const);
+bool add_semantic_variable(SemanticAnalyzer *analyzer, const char *name, VarType type, int pointer_level, bool is_const);
 bool find_semantic_variable(SemanticAnalyzer *analyzer, const char *name, SymbolEntry **result);
 
 /* Two-phase analysis */
@@ -95,7 +97,9 @@ void free_semantic_errors(SemanticError *errors);
 
 /* Type checking functions */
 bool check_type_compatibility(VarType expected, VarType actual);
+bool check_type_compatibility_ex(VarType expected, int expected_pointer_level, VarType actual, int actual_pointer_level);
 VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer);
+int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer);
 bool validate_binary_operation(ASTNode *left, ASTNode *right, OperatorType op, SemanticAnalyzer *analyzer);
 
 /* Utility functions */

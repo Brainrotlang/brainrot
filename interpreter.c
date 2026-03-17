@@ -196,9 +196,10 @@ void* interpreter_visit_unary_operation(Visitor *self, ASTNode *node) {
     (void)self;
     if (!node) return NULL;
     
-    /* For the interpreter visitor, we don't need to return allocated memory
-     * The unary operations are handled by the existing evaluation system for side effects */
-    evaluate_expression_int(node);
+    if (node->data.unary.op == OP_PRE_INC || node->data.unary.op == OP_PRE_DEC ||
+        node->data.unary.op == OP_POST_INC || node->data.unary.op == OP_POST_DEC) {
+        evaluate_expression_int(node);
+    }
     return NULL;
 }
 
@@ -275,6 +276,7 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node) {
     Variable *var = variable_new(name);
     var->modifiers = node->modifiers;
     var->var_type = node->var_type;
+    var->pointer_level = node->pointer_level;
 
     /* If static and already exists in static map, skip entirely */
     if (node->modifiers.is_static) {
@@ -292,6 +294,10 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node) {
     if (node->data.op.right) {
         Variable *scope_var = get_variable(name);
         if (scope_var) {
+            if (scope_var->pointer_level > 0) {
+                scope_var->value.pvalue = evaluate_expression_pointer(node->data.op.right);
+                return;
+            }
             switch (scope_var->var_type) {
                 case VAR_INT: {
                     int int_value = evaluate_expression_int(node->data.op.right);
@@ -338,149 +344,14 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node) {
 void interpreter_visit_assignment(Visitor *self, ASTNode *node) {
     (void)self;
     if (!node || !node->data.op.left || !node->data.op.right) return;
-    
-    /* Handle simple identifier assignments directly */
-    if (node->data.op.left->type == NODE_IDENTIFIER) {
-        const char *name = node->data.op.left->data.name;
-        
-        /* Check for const assignment */
-        extern void check_const_assignment(const char *name);
-        check_const_assignment(name);
-        
-        Variable *var = get_variable(name);
-        
-        if (!var) {
-            yyerror("Assignment to undefined variable");
-            return;
-        }
-        
-        /* Evaluate the right-hand side expression based on the target variable type */
-        switch (var->var_type) {
-            case VAR_INT: {
-                /* Check if the expression is actually a float/double that needs bit-level conversion */
-                extern VarType get_expression_type(ASTNode *node);
-                VarType expr_type = get_expression_type(node->data.op.right);
-                
-                if (expr_type == VAR_FLOAT) {
-                    /* Do bit-level conversion (reinterpret float bits as int) */
-                    float float_value = evaluate_expression_float(node->data.op.right);
-                    union { float f; int i; } u;
-                    u.f = float_value;
-                    var->value.ivalue = u.i;
-                } else if (expr_type == VAR_DOUBLE) {
-                    /* Do bit-level conversion (reinterpret double bits as int) */
-                    double double_value = evaluate_expression_double(node->data.op.right);
-                    union { double d; int i; } u;
-                    u.d = double_value;
-                    var->value.ivalue = u.i;
-                } else {
-                    int int_value = evaluate_expression_int(node->data.op.right);
-                    var->value.ivalue = int_value;
-                }
-                break;
-            }
-            case VAR_FLOAT: {
-                float float_value = evaluate_expression_float(node->data.op.right);
-                var->value.fvalue = float_value;
-                break;
-            }
-            case VAR_DOUBLE: {
-                double double_value = evaluate_expression_double(node->data.op.right);
-                var->value.dvalue = double_value;
-                break;
-            }
-            case VAR_CHAR: {
-                int int_value = evaluate_expression_int(node->data.op.right);
-                var->value.ivalue = int_value;  /* char stored as int */
-                break;
-            }
-            case VAR_SHORT: {
-                short short_value = evaluate_expression_short(node->data.op.right);
-                var->value.svalue = short_value;
-                break;
-            }
-            case VAR_BOOL: {
-                bool bool_value = evaluate_expression_bool(node->data.op.right);
-                var->value.bvalue = bool_value;
-                break;
-            }
-            case VAR_STRING: {
-                char *string_value = evaluate_expression_string(node->data.op.right);
-                var->value.strvalue = string_value;
-                break;
-            }
-            default:
-                break;
-        }
-    } else if (node->data.op.left->type == NODE_ARRAY_ACCESS) {
-        /* Handle array element assignments - use evaluate_multi_array_access for multi-dimensional arrays */
-        ASTNode *array_node = node->data.op.left;
-        Variable *var = get_variable(array_node->data.array.name);
-        
-        if (!var) {
-            yyerror("Assignment to undefined array");
-            return;
-        }
-        
-        if (!var->is_array) {
-            yyerror("Variable is not an array");
-            return;
-        }
-        
-        /* Use evaluate_multi_array_access to get pointer to element */
-        void *element = evaluate_multi_array_access(array_node);
-        if (!element) {
-            yyerror("Invalid array access");
-            return;
-        }
-        
-        /* Assign to array element based on the array type */
-        switch (var->var_type) {
-            case VAR_INT: {
-                int value = evaluate_expression_int(node->data.op.right);
-                *(int*)element = value;
-                break;
-            }
-            case VAR_SHORT: {
-                short value = evaluate_expression_short(node->data.op.right);
-                *(short*)element = value;
-                break;
-            }
-            case VAR_FLOAT: {
-                float value = evaluate_expression_float(node->data.op.right);
-                *(float*)element = value;
-                break;
-            }
-            case VAR_DOUBLE: {
-                double value = evaluate_expression_double(node->data.op.right);
-                *(double*)element = value;
-                break;
-            }
-            case VAR_BOOL: {
-                bool value = evaluate_expression_bool(node->data.op.right);
-                *(bool*)element = value;
-                break;
-            }
-            case VAR_CHAR: {
-                int value = evaluate_expression_int(node->data.op.right);
-                *(char*)element = (char)value;
-                break;
-            }
-            default:
-                yyerror("Unsupported array type for assignment");
-                break;
-        }
-    } else {
-        /* Handle other complex assignments using old system */
-        execute_assignment(node);
-    }
+
+    execute_assignment(node);
 }
 
 void interpreter_visit_if_statement(Visitor *self, ASTNode *node) {
     (void)self;
     if (!node) return;
     
-    /* Use existing expression evaluation */
     int condition = evaluate_expression_int(node->data.if_stmt.condition);
     
     if (condition) {
@@ -498,20 +369,15 @@ void interpreter_visit_for_statement(Visitor *self, ASTNode *node) {
     extern void enter_scope();
     extern void exit_scope();
     
-    /* Use setjmp/longjmp for break handling like the old code */
     PUSH_JUMP_BUFFER();
     if (setjmp(CURRENT_JUMP_BUFFER()) == 0) {
-        /* Enter scope for the entire for loop (including initialization) */
         enter_scope();
         
-        /* Execute initialization */
         if (node->data.for_stmt.init) {
             ast_accept(node->data.for_stmt.init, self);
         }
         
-        /* Loop while condition is true */
         while (1) {
-            /* Evaluate condition */
             enter_scope();
             if (node->data.for_stmt.cond) {
                 int cond_result = evaluate_expression_int(node->data.for_stmt.cond);
@@ -521,19 +387,16 @@ void interpreter_visit_for_statement(Visitor *self, ASTNode *node) {
                 }
             }
             
-            /* Execute the body using the visitor */
             if (node->data.for_stmt.body) {
                 ast_accept(node->data.for_stmt.body, self);
             }
             
-            /* Execute increment */
             if (node->data.for_stmt.incr) {
                 ast_accept(node->data.for_stmt.incr, self);
             }
             exit_scope();
         }
         
-        /* Exit scope for the entire for loop */
         exit_scope();
     }
     POP_JUMP_BUFFER();
@@ -545,19 +408,15 @@ void interpreter_visit_while_statement(Visitor *self, ASTNode *node) {
     extern void enter_scope();
     extern void exit_scope();
     
-    /* Use setjmp/longjmp for break handling like the old code */
     PUSH_JUMP_BUFFER();
     enter_scope();
     while (evaluate_expression_int(node->data.while_stmt.cond) && setjmp(CURRENT_JUMP_BUFFER()) == 0) {
-        /* Enter new scope for each iteration */
         enter_scope();
         
-        /* Execute the body using the visitor */
         if (node->data.while_stmt.body) {
             ast_accept(node->data.while_stmt.body, self);
         }
         
-        /* Exit scope before next iteration */
         exit_scope();
     }
     exit_scope();
@@ -621,6 +480,15 @@ void interpreter_visit_function_definition(Visitor *self, ASTNode *node) {
         node->data.function_def.return_type,
         node->data.function_def.parameters,
         node->data.function_def.body);
+    
+    if (node->pointer_level > 0) {
+        func = create_function_ex(
+            node->data.function_def.name,
+            node->data.function_def.return_type,
+            node->pointer_level,
+            node->data.function_def.parameters,
+            node->data.function_def.body);
+    }
     
     if (!func) {
         yyerror("Failed to create function");

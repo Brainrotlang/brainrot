@@ -206,6 +206,14 @@ void print_semantic_errors(SemanticAnalyzer *analyzer) {
 
 /* Type checking helper functions */
 bool check_type_compatibility(VarType expected, VarType actual) {
+    return check_type_compatibility_ex(expected, 0, actual, 0);
+}
+
+bool check_type_compatibility_ex(VarType expected, int expected_pointer_level, VarType actual, int actual_pointer_level) {
+    if (expected_pointer_level != actual_pointer_level) return false;
+    if (expected_pointer_level > 0) {
+        return expected == actual;
+    }
     if (expected == actual) return true;
     
     /* Allow implicit conversions between numeric types */
@@ -217,6 +225,53 @@ bool check_type_compatibility(VarType expected, VarType actual) {
     }
     
     return false;
+}
+
+int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer) {
+    if (!node) return 0;
+
+    switch (node->type) {
+        case NODE_IDENTIFIER: {
+            SymbolEntry *symbol = find_symbol(analyzer, node->data.name);
+            if (symbol) return symbol->pointer_level;
+            Variable *var = get_variable(node->data.name);
+            return var ? var->pointer_level : node->pointer_level;
+        }
+        case NODE_ARRAY_ACCESS: {
+            Variable *var = get_variable(node->data.array.name);
+            return var ? var->pointer_level : node->pointer_level;
+        }
+        case NODE_UNARY_OPERATION:
+            if (node->data.unary.op == OP_ADDRESS_OF) {
+                return infer_expression_pointer_level(node->data.unary.operand, analyzer) + 1;
+            }
+            if (node->data.unary.op == OP_DEREFERENCE) {
+                int operand_level = infer_expression_pointer_level(node->data.unary.operand, analyzer);
+                return operand_level > 0 ? operand_level - 1 : 0;
+            }
+            return infer_expression_pointer_level(node->data.unary.operand, analyzer);
+        case NODE_FUNC_CALL: {
+            SymbolEntry *symbol = find_symbol(analyzer, node->data.func_call.function_name);
+            if (symbol && symbol->is_function) return symbol->return_pointer_level;
+            Function *func = get_function(node->data.func_call.function_name);
+            return func ? func->return_pointer_level : 0;
+        }
+        case NODE_OPERATION:
+            switch (node->data.op.op) {
+                case OP_PLUS:
+                case OP_MINUS: {
+                    int left_level = infer_expression_pointer_level(node->data.op.left, analyzer);
+                    int right_level = infer_expression_pointer_level(node->data.op.right, analyzer);
+                    if (left_level > 0 && right_level == 0) return left_level;
+                    if (right_level > 0 && left_level == 0 && node->data.op.op == OP_PLUS) return right_level;
+                    return 0;
+                }
+                default:
+                    return 0;
+            }
+        default:
+            return node->pointer_level;
+    }
 }
 
 /* Infer the type of an expression */
@@ -258,6 +313,21 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer) {
         case NODE_OPERATION: {
             VarType left_type = infer_expression_type(node->data.op.left, analyzer);
             VarType right_type = infer_expression_type(node->data.op.right, analyzer);
+            int left_pointer_level = infer_expression_pointer_level(node->data.op.left, analyzer);
+            int right_pointer_level = infer_expression_pointer_level(node->data.op.right, analyzer);
+
+            if (node->data.op.op == OP_EQ || node->data.op.op == OP_NE || node->data.op.op == OP_LT ||
+                node->data.op.op == OP_GT || node->data.op.op == OP_LE || node->data.op.op == OP_GE ||
+                node->data.op.op == OP_AND || node->data.op.op == OP_OR) {
+                return VAR_BOOL;
+            }
+
+            if (left_pointer_level > 0 && right_pointer_level == 0) {
+                return left_type;
+            }
+            if (right_pointer_level > 0 && left_pointer_level == 0 && node->data.op.op == OP_PLUS) {
+                return right_type;
+            }
             
             /* For arithmetic operations, return the "wider" type */
             if (left_type == VAR_DOUBLE || right_type == VAR_DOUBLE) {
@@ -270,16 +340,11 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer) {
                 return VAR_INT;
             }
             
-            /* For comparison operations, return boolean */
-            OperatorType op = node->data.op.op;
-            if (op == OP_EQ || op == OP_NE || op == OP_LT || 
-                op == OP_GT || op == OP_LE || op == OP_GE ||
-                op == OP_AND || op == OP_OR) {
-                return VAR_BOOL;
-            }
-            
             return left_type; /* Default to left operand type */
         }
+
+        case NODE_UNARY_OPERATION:
+            return infer_expression_type(node->data.unary.operand, analyzer);
         
         case NODE_FUNC_CALL: {
             /* Check if it's a built-in function */
@@ -305,6 +370,8 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer) {
 bool validate_binary_operation(ASTNode *left, ASTNode *right, OperatorType op, SemanticAnalyzer *analyzer) {
     VarType left_type = infer_expression_type(left, analyzer);
     VarType right_type = infer_expression_type(right, analyzer);
+    int left_pointer_level = infer_expression_pointer_level(left, analyzer);
+    int right_pointer_level = infer_expression_pointer_level(right, analyzer);
     
     /* Skip validation if we can't determine types */
     if (left_type == NONE || right_type == NONE) {
@@ -314,6 +381,24 @@ bool validate_binary_operation(ASTNode *left, ASTNode *right, OperatorType op, S
     switch (op) {
         case OP_PLUS:
         case OP_MINUS:
+            if (left_pointer_level > 0 || right_pointer_level > 0) {
+                if (left_pointer_level > 0 && right_pointer_level == 0 &&
+                    (right_type == VAR_INT || right_type == VAR_SHORT || right_type == VAR_CHAR || right_type == VAR_BOOL)) {
+                    return true;
+                }
+                if (op == OP_PLUS && right_pointer_level > 0 && left_pointer_level == 0 &&
+                    (left_type == VAR_INT || left_type == VAR_SHORT || left_type == VAR_CHAR || left_type == VAR_BOOL)) {
+                    return true;
+                }
+                if (op == OP_MINUS && left_pointer_level > 0 && right_pointer_level > 0 &&
+                    left_pointer_level == right_pointer_level && left_type == right_type) {
+                    return true;
+                }
+                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                  "Invalid pointer arithmetic", 1);
+                return false;
+            }
+            /* fallthrough */
         case OP_TIMES:
         case OP_DIVIDE:
         case OP_MOD:
@@ -339,6 +424,9 @@ bool validate_binary_operation(ASTNode *left, ASTNode *right, OperatorType op, S
             
         case OP_EQ:
         case OP_NE:
+            if (left_pointer_level > 0 || right_pointer_level > 0) {
+                return left_pointer_level == right_pointer_level && left_type == right_type;
+            }
             /* Equality comparisons allow same or compatible types */
             return true; /* Be more lenient for equality */
             
@@ -346,6 +434,9 @@ bool validate_binary_operation(ASTNode *left, ASTNode *right, OperatorType op, S
         case OP_GT:
         case OP_LE:
         case OP_GE:
+            if (left_pointer_level > 0 || right_pointer_level > 0) {
+                return left_pointer_level == right_pointer_level && left_type == right_type;
+            }
             /* Relational comparisons require numeric types */
             if ((left_type == VAR_INT || left_type == VAR_SHORT || 
                  left_type == VAR_FLOAT || left_type == VAR_DOUBLE) &&
@@ -466,10 +557,12 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node) {
     
     if (node->data.op.right) {
         VarType declared_type = node->var_type;
+        int declared_pointer_level = node->pointer_level;
         VarType init_type = infer_expression_type(node->data.op.right, analyzer);
+        int init_pointer_level = infer_expression_pointer_level(node->data.op.right, analyzer);
         
         if (declared_type != NONE && init_type != NONE && 
-            !check_type_compatibility(declared_type, init_type)) {
+            !check_type_compatibility_ex(declared_type, declared_pointer_level, init_type, init_pointer_level)) {
             char error_msg[256];
             snprintf(error_msg, sizeof(error_msg), 
                     "Type mismatch in initialization of '%s': expected %s, got %s", 
@@ -487,6 +580,16 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node) {
     
     if (node->data.op.right) {
         ast_accept(node->data.op.right, self);
+    }
+
+    if (node->data.op.left->type == NODE_UNARY_OPERATION && node->data.op.left->data.unary.op == OP_DEREFERENCE) {
+        ASTNode *operand = node->data.op.left->data.unary.operand;
+        if (infer_expression_pointer_level(operand, analyzer) <= 0) {
+            add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                              "Cannot dereference a non-pointer expression",
+                              node->line_number > 0 ? node->line_number : 1);
+            return;
+        }
     }
     
     if (node->data.op.left->type == NODE_IDENTIFIER) {
@@ -523,6 +626,26 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node) {
             }
         }
     }
+
+    if (node->data.op.left->type != NODE_IDENTIFIER && node->data.op.left->type != NODE_ARRAY_ACCESS &&
+        !(node->data.op.left->type == NODE_UNARY_OPERATION && node->data.op.left->data.unary.op == OP_DEREFERENCE)) {
+        add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                          "Left-hand side of assignment is not assignable",
+                          node->line_number > 0 ? node->line_number : 1);
+        return;
+    }
+
+    VarType target_type = infer_expression_type(node->data.op.left, analyzer);
+    int target_pointer_level = infer_expression_pointer_level(node->data.op.left, analyzer);
+    VarType value_type = infer_expression_type(node->data.op.right, analyzer);
+    int value_pointer_level = infer_expression_pointer_level(node->data.op.right, analyzer);
+
+    if ((target_pointer_level > 0 || value_pointer_level > 0) &&
+        !check_type_compatibility_ex(target_type, target_pointer_level, value_type, value_pointer_level)) {
+        add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                          "Assignment type mismatch",
+                          node->line_number > 0 ? node->line_number : 1);
+    }
 }
 
 void semantic_visit_function_definition(Visitor *self, ASTNode *node) {
@@ -534,7 +657,7 @@ void semantic_visit_function_definition(Visitor *self, ASTNode *node) {
 }
 
 /* Symbol table management functions */
-void add_symbol(SemanticAnalyzer *analyzer, const char *name, VarType type, bool is_const, bool is_function, VarType return_type, int line_number) {
+void add_symbol(SemanticAnalyzer *analyzer, const char *name, VarType type, int pointer_level, bool is_const, bool is_function, VarType return_type, int return_pointer_level, int line_number) {
     if (!analyzer || !name) return;
     
     SymbolEntry *entry = SAFE_MALLOC(SymbolEntry);
@@ -542,9 +665,11 @@ void add_symbol(SemanticAnalyzer *analyzer, const char *name, VarType type, bool
     
     entry->name = safe_strdup(name);
     entry->type = type;
+    entry->pointer_level = pointer_level;
     entry->is_const = is_const;
     entry->is_function = is_function;
     entry->return_type = return_type;
+    entry->return_pointer_level = return_pointer_level;
     entry->line_number = line_number;
     entry->scope_depth = analyzer->scope_depth;
     entry->next = analyzer->symbol_table;
@@ -597,7 +722,7 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node) {
                 VarType var_type = node->var_type;
                 bool is_const = node->modifiers.is_const;
                 
-                add_symbol(analyzer, var_name, var_type, is_const, false, NONE, 
+                add_symbol(analyzer, var_name, var_type, node->pointer_level, is_const, false, NONE, 0,
                           node->line_number > 0 ? node->line_number : 1);
             }
             if (node->data.op.right) {
@@ -614,8 +739,8 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node) {
                     add_semantic_error(analyzer, SEMANTIC_ERROR_REDEFINITION, 
                                       error_msg, node->line_number > 0 ? node->line_number : 1);
                 } else {
-                    add_symbol(analyzer, node->data.function_def.name, NONE, false, true, 
-                              node->data.function_def.return_type, 
+                    add_symbol(analyzer, node->data.function_def.name, NONE, 0, false, true, 
+                              node->data.function_def.return_type, node->pointer_level,
                               node->line_number > 0 ? node->line_number : 1);
                 }
             }
@@ -625,7 +750,7 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node) {
             Parameter *param = node->data.function_def.parameters;
             while (param) {
                 if (param->name) {
-                    add_symbol(analyzer, param->name, param->type, false, false, NONE,
+                    add_symbol(analyzer, param->name, param->type, param->pointer_level, false, false, NONE, 0,
                               node->line_number > 0 ? node->line_number : 1);
                 }
                 param = param->next;
@@ -842,6 +967,29 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer, ASTNode *n
             semantic_visit_binary_operation((Visitor*)analyzer, node);
             break;
         }
+
+        case NODE_UNARY_OPERATION: {
+            if (node->data.unary.operand) {
+                semantic_analyze_with_scope_tracking(analyzer, node->data.unary.operand);
+            }
+            if (node->data.unary.op == OP_ADDRESS_OF) {
+                ASTNode *operand = node->data.unary.operand;
+                bool valid_lvalue = operand && (operand->type == NODE_IDENTIFIER || operand->type == NODE_ARRAY_ACCESS ||
+                    (operand->type == NODE_UNARY_OPERATION && operand->data.unary.op == OP_DEREFERENCE));
+                if (!valid_lvalue) {
+                    add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                                      "Address-of requires an assignable expression",
+                                      node->line_number > 0 ? node->line_number : 1);
+                }
+            } else if (node->data.unary.op == OP_DEREFERENCE) {
+                if (infer_expression_pointer_level(node->data.unary.operand, analyzer) <= 0) {
+                    add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                                      "Cannot dereference a non-pointer expression",
+                                      node->line_number > 0 ? node->line_number : 1);
+                }
+            }
+            break;
+        }
         
         case NODE_DECLARATION: {
             /* Use visitor method for declaration checking */
@@ -891,7 +1039,7 @@ void semantic_analyze_node(SemanticAnalyzer *analyzer, ASTNode *node) {
                 VarType var_type = node->var_type;
                 bool is_const = node->modifiers.is_const;
                 
-                add_semantic_variable(analyzer, var_name, var_type, is_const);
+                add_semantic_variable(analyzer, var_name, var_type, node->pointer_level, is_const);
                 
                 /* Also analyze the initialization expression */
                 if (node->data.op.right) {
@@ -1030,6 +1178,29 @@ void semantic_analyze_node(SemanticAnalyzer *analyzer, ASTNode *node) {
             }
             break;
         }
+
+        case NODE_UNARY_OPERATION: {
+            if (node->data.unary.operand) {
+                semantic_analyze_node(analyzer, node->data.unary.operand);
+            }
+            if (node->data.unary.op == OP_ADDRESS_OF) {
+                ASTNode *operand = node->data.unary.operand;
+                bool valid_lvalue = operand && (operand->type == NODE_IDENTIFIER || operand->type == NODE_ARRAY_ACCESS ||
+                    (operand->type == NODE_UNARY_OPERATION && operand->data.unary.op == OP_DEREFERENCE));
+                if (!valid_lvalue) {
+                    add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                                      "Address-of requires an assignable expression",
+                                      node->line_number > 0 ? node->line_number : 1);
+                }
+            } else if (node->data.unary.op == OP_DEREFERENCE) {
+                if (infer_expression_pointer_level(node->data.unary.operand, analyzer) <= 0) {
+                    add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                                      "Cannot dereference a non-pointer expression",
+                                      node->line_number > 0 ? node->line_number : 1);
+                }
+            }
+            break;
+        }
         
         default:
             /* For other node types, recursively visit children if they exist */
@@ -1085,7 +1256,7 @@ void exit_semantic_scope(SemanticAnalyzer *analyzer) {
     free_semantic_scope(old_scope);
 }
 
-bool add_semantic_variable(SemanticAnalyzer *analyzer, const char *name, VarType type, bool is_const) {
+bool add_semantic_variable(SemanticAnalyzer *analyzer, const char *name, VarType type, int pointer_level, bool is_const) {
     if (!analyzer || !analyzer->current_scope || !name) return false;
     
     /* Check if variable already exists in current scope */
@@ -1102,8 +1273,11 @@ bool add_semantic_variable(SemanticAnalyzer *analyzer, const char *name, VarType
     
     entry->name = safe_strdup(name);
     entry->type = type;
+    entry->pointer_level = pointer_level;
     entry->is_const = is_const;
     entry->is_function = false;
+    entry->return_type = NONE;
+    entry->return_pointer_level = 0;
     entry->scope_depth = analyzer->scope_depth;
     entry->line_number = 1;
     entry->next = NULL;

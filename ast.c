@@ -30,6 +30,8 @@ extern void yyerror(const char *s);
 extern void cleanup(void);
 extern TypeModifiers get_variable_modifiers(const char *name);
 extern int yylineno;
+static int get_function_return_pointer_level(const char *name);
+char *evaluate_expression_string(ASTNode *node);
 
 /* Helper to build a namespaced static key */
 static void make_static_key(char *out, size_t out_size,
@@ -37,6 +39,43 @@ static void make_static_key(char *out, size_t out_size,
 {
     snprintf(out, out_size, "%s::%s", func_name ? func_name : "__global", var_name);
 }
+
+size_t get_type_size_for_descriptor(VarType type, int pointer_level, TypeModifiers mods)
+{
+    if (pointer_level > 0) {
+        return sizeof(uintptr_t);
+    }
+
+    switch (type)
+    {
+    case VAR_FLOAT:
+        return sizeof(float);
+    case VAR_DOUBLE:
+        return sizeof(double);
+    case VAR_BOOL:
+        return sizeof(bool);
+    case VAR_SHORT:
+        return mods.is_unsigned ? sizeof(unsigned short) : sizeof(short);
+    case VAR_CHAR:
+        return sizeof(char);
+    case VAR_INT:
+        if (mods.is_long_long)
+            return sizeof(long long);
+        if (mods.is_long)
+            return sizeof(long);
+        if (mods.is_unsigned)
+            return sizeof(unsigned int);
+        return sizeof(int);
+    case VAR_STRING:
+        return sizeof(char *);
+    case NONE:
+    default:
+        return 0;
+    }
+}
+
+static void write_value_to_address(void *address, VarType type, int pointer_level, ASTNode *expr, TypeModifiers mods);
+static void initialize_variable_from_expr(Variable *var, ASTNode *expr);
 
 // Symbol table functions
 bool set_variable(const char *name, void *value, VarType type, TypeModifiers mods)
@@ -107,31 +146,9 @@ bool set_multi_array_variable(const char *name, int dimensions[], int num_dimens
     var->array_dimensions.total_size = total;
     var->array_length = total;
 
-    size_t element_size;
-    switch (type)
-    {
-    case VAR_INT:
+    size_t element_size = get_type_size_for_descriptor(type, var->pointer_level, mods);
+    if (element_size == 0)
         element_size = sizeof(int);
-        break;
-    case VAR_SHORT:
-        element_size = sizeof(short);
-        break;
-    case VAR_FLOAT:
-        element_size = sizeof(float);
-        break;
-    case VAR_DOUBLE:
-        element_size = sizeof(double);
-        break;
-    case VAR_BOOL:
-        element_size = sizeof(bool);
-        break;
-    case VAR_CHAR:
-        element_size = sizeof(char);
-        break;
-    default:
-        element_size = sizeof(int);
-        break;
-    }
 
     var->value.array_data = safe_malloc_array(total, element_size);
     if (var->value.array_data == NULL)
@@ -153,6 +170,7 @@ ASTNode *create_multi_array_declaration_node(char *name, int dimensions[], int n
     node->type = NODE_ARRAY_ACCESS;
     node->var_type = type;
     node->is_array = true;
+    node->pointer_level = 0;
     
     // Store dimensions in node
     for (int i = 0; i < num_dimensions; i++) {
@@ -170,6 +188,12 @@ ASTNode *create_multi_array_declaration_node(char *name, int dimensions[], int n
     
     // Set the variable name
     node->data.name = ARENA_STRDUP(name);
+
+    Variable *var = get_variable(name);
+    if (var) {
+        node->pointer_level = var->pointer_level;
+        node->modifiers = var->modifiers;
+    }
     
     return node;
 }
@@ -190,6 +214,14 @@ ASTNode *create_multi_array_access_node(char *name, ASTNode *indices[], int num_
     node->data.array.num_dimensions = num_indices;
     for (int i = 0; i < num_indices; i++) {
         node->data.array.indices[i] = indices[i];
+    }
+
+    Variable *var = get_variable(name);
+    if (var) {
+        node->var_type = var->var_type;
+        node->pointer_level = var->pointer_level;
+        node->modifiers = var->modifiers;
+        node->is_array = var->is_array;
     }
     
     return node;
@@ -542,6 +574,7 @@ static ASTNode *create_node(NodeType type, VarType var_type, TypeModifiers modif
     node->modifiers = modifiers;
     node->already_checked = false;
     node->is_valid_symbol = false;
+    node->pointer_level = 0;
     node->line_number = yylineno;
     return node;
 }
@@ -597,6 +630,7 @@ ASTNode *create_array_access_node(char *name, ASTNode *index)
     if (var != NULL)
     {
         node->var_type = var->var_type;
+        node->pointer_level = var->pointer_level;
         node->array_length = var->array_length;
         node->modifiers = var->modifiers;
     }
@@ -634,22 +668,40 @@ ASTNode *create_boolean_node(bool value)
 
 ASTNode *create_identifier_node(char *name)
 {
+    return create_identifier_node_ex(name, 0);
+}
+
+ASTNode *create_identifier_node_ex(char *name, int pointer_level)
+{
     ASTNode *node = create_node(NODE_IDENTIFIER, current_var_type, current_modifiers);
+    node->pointer_level = pointer_level;
     SET_DATA_NAME(node, name);
     return node;
 }
 
 ASTNode *create_assignment_node(char *name, ASTNode *expr)
 {
-    ASTNode *node = create_node(NODE_ASSIGNMENT, current_var_type, get_current_modifiers());
-    SET_DATA_OP(node, create_identifier_node(name), expr, OP_ASSIGN);
+    return create_assignment_target_node(create_identifier_node(name), expr);
+}
+
+ASTNode *create_assignment_target_node(ASTNode *target, ASTNode *expr)
+{
+    ASTNode *node = create_node(NODE_ASSIGNMENT, target ? target->var_type : current_var_type, get_current_modifiers());
+    node->pointer_level = target ? target->pointer_level : 0;
+    SET_DATA_OP(node, target, expr, OP_ASSIGN);
     return node;
 }
 
 ASTNode *create_declaration_node(char *name, ASTNode *expr)
 {
+    return create_declaration_node_ex(name, expr, 0);
+}
+
+ASTNode *create_declaration_node_ex(char *name, ASTNode *expr, int pointer_level)
+{
     ASTNode *node = create_node(NODE_DECLARATION, current_var_type, get_current_modifiers());
-    SET_DATA_OP(node, create_identifier_node(name), expr, OP_ASSIGN);
+    node->pointer_level = pointer_level;
+    SET_DATA_OP(node, create_identifier_node_ex(name, pointer_level), expr, OP_ASSIGN);
     return node;
 }
 
@@ -720,6 +772,15 @@ void *handle_identifier(ASTNode *node, const char *contextErrorMessage, int prom
     if (var != NULL)
     {
         static Value promoted_value;
+        if (var->pointer_level > 0)
+        {
+            if (promote != 0)
+            {
+                yyerror("Cannot use pointer in floating-point context");
+                return NULL;
+            }
+            return &var->value.pvalue;
+        }
         if (promote == 1)
         {
 
@@ -800,6 +861,67 @@ void *handle_identifier(ASTNode *node, const char *contextErrorMessage, int prom
     return NULL;
 }
 
+int get_expression_pointer_level(ASTNode *node)
+{
+    if (!node)
+    {
+        return 0;
+    }
+
+    switch (node->type)
+    {
+    case NODE_IDENTIFIER:
+    {
+        Variable *var = get_variable(node->data.name);
+        return var ? var->pointer_level : node->pointer_level;
+    }
+    case NODE_ARRAY_ACCESS:
+    {
+        Variable *var = get_variable(node->data.array.name);
+        return var ? var->pointer_level : node->pointer_level;
+    }
+    case NODE_UNARY_OPERATION:
+        if (node->data.unary.op == OP_ADDRESS_OF)
+            return get_expression_pointer_level(node->data.unary.operand) + 1;
+        if (node->data.unary.op == OP_DEREFERENCE)
+        {
+            int operand_level = get_expression_pointer_level(node->data.unary.operand);
+            return operand_level > 0 ? operand_level - 1 : 0;
+        }
+        return get_expression_pointer_level(node->data.unary.operand);
+    case NODE_FUNC_CALL:
+        return get_function_return_pointer_level(node->data.func_call.function_name);
+    case NODE_OPERATION:
+        switch (node->data.op.op)
+        {
+        case OP_EQ:
+        case OP_NE:
+        case OP_LT:
+        case OP_GT:
+        case OP_LE:
+        case OP_GE:
+        case OP_AND:
+        case OP_OR:
+            return 0;
+        case OP_PLUS:
+        case OP_MINUS:
+        {
+            int left_level = get_expression_pointer_level(node->data.op.left);
+            int right_level = get_expression_pointer_level(node->data.op.right);
+            if (left_level > 0 && right_level == 0)
+                return left_level;
+            if (right_level > 0 && left_level == 0 && node->data.op.op == OP_PLUS)
+                return right_level;
+            return 0;
+        }
+        default:
+            return 0;
+        }
+    default:
+        return node->pointer_level;
+    }
+}
+
 VarType get_expression_type(ASTNode *node)
 {
     if (!node)
@@ -856,20 +978,35 @@ VarType get_expression_type(ASTNode *node)
     }
     case NODE_OPERATION:
     {
-        // For binary operations, evaluate both operands to determine the highest type
-        int left_type = get_expression_type(node->data.op.left);
-        int right_type = get_expression_type(node->data.op.right);
+        OperatorType op = node->data.op.op;
+        if (op == OP_EQ || op == OP_NE || op == OP_LT || op == OP_GT ||
+            op == OP_LE || op == OP_GE || op == OP_AND || op == OP_OR)
+            return VAR_BOOL;
 
-        // Promote to the highest type (int -> float -> double)
+        VarType left_type = get_expression_type(node->data.op.left);
+        VarType right_type = get_expression_type(node->data.op.right);
+        int left_level = get_expression_pointer_level(node->data.op.left);
+        int right_level = get_expression_pointer_level(node->data.op.right);
+
+        if (left_level > 0 && right_level == 0)
+            return left_type;
+        if (right_level > 0 && left_level == 0 && op == OP_PLUS)
+            return right_type;
+        if (left_level > 0 || right_level > 0)
+            return left_type;
+
         if (left_type == VAR_DOUBLE || right_type == VAR_DOUBLE)
             return VAR_DOUBLE;
-        else if (left_type == VAR_FLOAT || right_type == VAR_FLOAT)
+        if (left_type == VAR_FLOAT || right_type == VAR_FLOAT)
             return VAR_FLOAT;
-        else
-            return VAR_INT;
+        return VAR_INT;
     }
     case NODE_UNARY_OPERATION:
     {
+        if (node->data.unary.op == OP_ADDRESS_OF || node->data.unary.op == OP_DEREFERENCE)
+        {
+            return get_expression_type(node->data.unary.operand);
+        }
         return get_expression_type(node->data.unary.operand);
     }
     case NODE_SIZEOF:
@@ -918,6 +1055,8 @@ void *handle_binary_operation(ASTNode *node)
         promoted_type = VAR_FLOAT;
     else if (left_type == VAR_INT || right_type == VAR_INT)
         promoted_type = VAR_INT;
+
+    void *result = NULL;
 
     // Allocate and evaluate operands based on promoted type.
     switch (promoted_type)
@@ -968,20 +1107,24 @@ void *handle_binary_operation(ASTNode *node)
 
     
     // Perform the operation and allocate the result.
-    void *result;
-    if (promoted_type == VAR_DOUBLE)
+    if (node->data.op.op == OP_LT || node->data.op.op == OP_GT || node->data.op.op == OP_LE ||
+        node->data.op.op == OP_GE || node->data.op.op == OP_EQ || node->data.op.op == OP_NE)
+    {
+        result = SAFE_MALLOC(int);
+    }
+    else if (!result && promoted_type == VAR_DOUBLE)
     {
         result = SAFE_MALLOC(double);
     }
-    else if (promoted_type == VAR_FLOAT)
+    else if (!result && promoted_type == VAR_FLOAT)
     {
         result = SAFE_MALLOC(float);
     }
-    else if (promoted_type == VAR_SHORT)
+    else if (!result && promoted_type == VAR_SHORT)
     {
         result = SAFE_MALLOC(short);
     }
-    else
+    else if (!result)
     {
         result = SAFE_MALLOC(int);
     }
@@ -1096,48 +1239,44 @@ void *handle_binary_operation(ASTNode *node)
         if (promoted_type == VAR_INT)
             *(int *)result = *(int *)left_value < *(int *)right_value;
         else if (promoted_type == VAR_FLOAT)
-            *(float *)result = *(float *)left_value < *(float *)right_value;
+            *(int *)result = *(float *)left_value < *(float *)right_value;
         else if (promoted_type == VAR_DOUBLE)
-            *(double *)result = *(double *)left_value < *(double *)right_value;
+            *(int *)result = *(double *)left_value < *(double *)right_value;
         else if (promoted_type == VAR_SHORT)
-            *(short *)result = *(short *)left_value < *(short *)right_value;
+            *(int *)result = *(short *)left_value < *(short *)right_value;
         break;
 
     case OP_GT:
         if (promoted_type == VAR_INT)
             *(int *)result = *(int *)left_value > *(int *)right_value;
         else if (promoted_type == VAR_FLOAT)
-            *(float *)result = *(float *)left_value > *(float *)right_value;
+            *(int *)result = *(float *)left_value > *(float *)right_value;
         else if (promoted_type == VAR_DOUBLE)
-            *(double *)result = *(double *)left_value > *(double *)right_value;
+            *(int *)result = *(double *)left_value > *(double *)right_value;
         else if (promoted_type == VAR_SHORT)
-            *(short *)result = *(short *)left_value > *(short *)right_value;
+            *(int *)result = *(short *)left_value > *(short *)right_value;
         break;
 
     case OP_LE:
         if (promoted_type == VAR_INT)
             *(int *)result = *(int *)left_value <= *(int *)right_value;
         else if (promoted_type == VAR_FLOAT)
-            *(float *)result = *(float *)left_value <= *(float *)right_value;
+            *(int *)result = *(float *)left_value <= *(float *)right_value;
         else if (promoted_type == VAR_DOUBLE)
-            *(double *)result = *(double *)left_value <= *(double *)right_value;
+            *(int *)result = *(double *)left_value <= *(double *)right_value;
         else if (promoted_type == VAR_SHORT)
-            *(short *)result = *(short *)left_value <= *(short *)right_value;
-        else if (promoted_type == VAR_SHORT)
-            *(short *)result = *(short *)left_value <= *(short *)right_value;
+            *(int *)result = *(short *)left_value <= *(short *)right_value;
         break;
 
     case OP_GE:
         if (promoted_type == VAR_INT)
             *(int *)result = *(int *)left_value >= *(int *)right_value;
         else if (promoted_type == VAR_FLOAT)
-            *(float *)result = *(float *)left_value >= *(float *)right_value;
+            *(int *)result = *(float *)left_value >= *(float *)right_value;
         else if (promoted_type == VAR_DOUBLE)
-            *(double *)result = *(double *)left_value >= *(double *)right_value;
+            *(int *)result = *(double *)left_value >= *(double *)right_value;
         else if (promoted_type == VAR_SHORT)
-            *(short *)result = *(short *)left_value >= *(short *)right_value;
-        else if (promoted_type == VAR_SHORT)
-            *(short *)result = *(short *)left_value >= *(short *)right_value;
+            *(int *)result = *(short *)left_value >= *(short *)right_value;
         break;
 
     case OP_EQ:
@@ -1145,22 +1284,22 @@ void *handle_binary_operation(ASTNode *node)
         if (promoted_type == VAR_INT)
             *(int *)result = *(int *)left_value == *(int *)right_value;
         else if (promoted_type == VAR_FLOAT)
-            *(float *)result = *(float *)left_value == *(float *)right_value;
+            *(int *)result = *(float *)left_value == *(float *)right_value;
         else if (promoted_type == VAR_DOUBLE)
-            *(double *)result = *(double *)left_value == *(double *)right_value;
+            *(int *)result = *(double *)left_value == *(double *)right_value;
         else if (promoted_type == VAR_SHORT)
-            *(short *)result = *(short *)left_value == *(short *)right_value;
+            *(int *)result = *(short *)left_value == *(short *)right_value;
         break;
 
     case OP_NE:
         if (promoted_type == VAR_INT)
             *(int *)result = *(int *)left_value != *(int *)right_value;
         else if (promoted_type == VAR_FLOAT)
-            *(float *)result = *(float *)left_value != *(float *)right_value;
+            *(int *)result = *(float *)left_value != *(float *)right_value;
         else if (promoted_type == VAR_DOUBLE)
-            *(double *)result = *(double *)left_value != *(double *)right_value;
+            *(int *)result = *(double *)left_value != *(double *)right_value;
         else if (promoted_type == VAR_SHORT)
-            *(short *)result = *(short *)left_value != *(short *)right_value;
+            *(int *)result = *(short *)left_value != *(short *)right_value;
         break;
 
     default:
@@ -1173,6 +1312,223 @@ void *handle_binary_operation(ASTNode *node)
     SAFE_FREE(right_value);
 
     return result;
+}
+
+void *evaluate_lvalue_address(ASTNode *node)
+{
+    if (!node)
+    {
+        yyerror("Invalid lvalue");
+        return NULL;
+    }
+
+    switch (node->type)
+    {
+    case NODE_IDENTIFIER:
+    {
+        Variable *var = get_variable(node->data.name);
+        if (!var)
+        {
+            yyerror("Undefined variable");
+            return NULL;
+        }
+
+        if (var->pointer_level > 0)
+            return &var->value.pvalue;
+
+        switch (var->var_type)
+        {
+        case VAR_INT:
+            return &var->value.ivalue;
+        case VAR_SHORT:
+            return &var->value.svalue;
+        case VAR_FLOAT:
+            return &var->value.fvalue;
+        case VAR_DOUBLE:
+            return &var->value.dvalue;
+        case VAR_BOOL:
+            return &var->value.bvalue;
+        case VAR_CHAR:
+            return &var->value.ivalue;
+        case VAR_STRING:
+            return &var->value.strvalue;
+        default:
+            yyerror("Unsupported lvalue type");
+            return NULL;
+        }
+    }
+    case NODE_ARRAY_ACCESS:
+        return evaluate_multi_array_access(node);
+    case NODE_UNARY_OPERATION:
+        if (node->data.unary.op == OP_DEREFERENCE)
+            return (void *)evaluate_expression_pointer(node->data.unary.operand);
+        break;
+    default:
+        break;
+    }
+
+    yyerror("Expression is not assignable");
+    return NULL;
+}
+
+uintptr_t evaluate_expression_pointer(ASTNode *node)
+{
+    if (!node)
+        return (uintptr_t)0;
+
+    switch (node->type)
+    {
+    case NODE_IDENTIFIER:
+    {
+        Variable *var = get_variable(node->data.name);
+        if (!var)
+        {
+            yyerror("Undefined variable");
+            return (uintptr_t)0;
+        }
+        if (var->pointer_level <= 0)
+        {
+            yyerror("Expression is not a pointer");
+            return (uintptr_t)0;
+        }
+        return var->value.pvalue;
+    }
+    case NODE_ARRAY_ACCESS:
+        return *(uintptr_t *)evaluate_multi_array_access(node);
+    case NODE_UNARY_OPERATION:
+        if (node->data.unary.op == OP_ADDRESS_OF)
+            return (uintptr_t)evaluate_lvalue_address(node->data.unary.operand);
+        if (node->data.unary.op == OP_DEREFERENCE)
+            return *(uintptr_t *)(uintptr_t)evaluate_expression_pointer(node->data.unary.operand);
+        break;
+    case NODE_FUNC_CALL:
+    {
+        uintptr_t *res = (uintptr_t *)handle_function_call(node);
+        if (res)
+        {
+            uintptr_t value = *res;
+            SAFE_FREE(res);
+            return value;
+        }
+        return (uintptr_t)0;
+    }
+    case NODE_OPERATION:
+    {
+        int left_ptr = get_expression_pointer_level(node->data.op.left);
+        int right_ptr = get_expression_pointer_level(node->data.op.right);
+        if (node->data.op.op == OP_PLUS || node->data.op.op == OP_MINUS)
+        {
+            if (left_ptr > 0 && right_ptr == 0)
+            {
+                uintptr_t base = evaluate_expression_pointer(node->data.op.left);
+                ptrdiff_t offset = evaluate_expression_int(node->data.op.right);
+                size_t scale = get_type_size_for_descriptor(get_expression_type(node->data.op.left), left_ptr - 1, node->data.op.left->modifiers);
+                if (scale == 0) scale = 1;
+                return node->data.op.op == OP_PLUS ? base + (uintptr_t)(offset * (ptrdiff_t)scale)
+                                                   : base - (uintptr_t)(offset * (ptrdiff_t)scale);
+            }
+            if (right_ptr > 0 && left_ptr == 0 && node->data.op.op == OP_PLUS)
+            {
+                uintptr_t base = evaluate_expression_pointer(node->data.op.right);
+                ptrdiff_t offset = evaluate_expression_int(node->data.op.left);
+                size_t scale = get_type_size_for_descriptor(get_expression_type(node->data.op.right), right_ptr - 1, node->data.op.right->modifiers);
+                if (scale == 0) scale = 1;
+                return base + (uintptr_t)(offset * (ptrdiff_t)scale);
+            }
+        }
+        break;
+    }
+    default:
+        break;
+    }
+
+    yyerror("Invalid pointer expression");
+    return (uintptr_t)0;
+}
+
+static void write_value_to_address(void *address, VarType type, int pointer_level, ASTNode *expr, TypeModifiers mods)
+{
+    if (!address)
+    {
+        yyerror("Invalid assignment target");
+        return;
+    }
+
+    if (pointer_level > 0)
+    {
+        *(uintptr_t *)address = evaluate_expression_pointer(expr);
+        return;
+    }
+
+    switch (type)
+    {
+    case VAR_INT:
+        *(int *)address = evaluate_expression_int(expr);
+        break;
+    case VAR_SHORT:
+        *(short *)address = evaluate_expression_short(expr);
+        break;
+    case VAR_FLOAT:
+        *(float *)address = evaluate_expression_float(expr);
+        break;
+    case VAR_DOUBLE:
+        *(double *)address = evaluate_expression_double(expr);
+        break;
+    case VAR_BOOL:
+        *(bool *)address = evaluate_expression_bool(expr);
+        break;
+    case VAR_CHAR:
+        *(int *)address = evaluate_expression_int(expr);
+        break;
+    case VAR_STRING:
+        *(char **)address = evaluate_expression_string(expr);
+        break;
+    case NONE:
+    default:
+        yyerror("Unsupported assignment type");
+        break;
+    }
+    (void)mods;
+}
+
+static void initialize_variable_from_expr(Variable *var, ASTNode *expr)
+{
+    if (!var || !expr)
+        return;
+
+    if (var->pointer_level > 0)
+    {
+        var->value.pvalue = evaluate_expression_pointer(expr);
+        return;
+    }
+
+    switch (var->var_type)
+    {
+    case VAR_INT:
+        var->value.ivalue = evaluate_expression_int(expr);
+        break;
+    case VAR_SHORT:
+        var->value.svalue = evaluate_expression_short(expr);
+        break;
+    case VAR_FLOAT:
+        var->value.fvalue = evaluate_expression_float(expr);
+        break;
+    case VAR_DOUBLE:
+        var->value.dvalue = evaluate_expression_double(expr);
+        break;
+    case VAR_BOOL:
+        var->value.bvalue = evaluate_expression_bool(expr);
+        break;
+    case VAR_CHAR:
+        var->value.ivalue = evaluate_expression_int(expr);
+        break;
+    case VAR_STRING:
+        var->value.strvalue = evaluate_expression_string(expr);
+        break;
+    case NONE:
+    default:
+        break;
+    }
 }
 
 void *handle_unary_expression(ASTNode *node, void *operand_value, int operand_type)
@@ -1367,6 +1723,10 @@ float evaluate_expression_float(ASTNode *node)
     {
     case NODE_ARRAY_ACCESS:
     {
+        if (get_expression_pointer_level(node) > 0) {
+            yyerror("Cannot use pointer in float context");
+            return 0.0f;
+        }
         return *(float*)evaluate_multi_array_access(node);
     }
     case NODE_FLOAT:
@@ -1377,11 +1737,21 @@ float evaluate_expression_float(ASTNode *node)
         return (float)node->data.ivalue;
     case NODE_IDENTIFIER:
     {
+        if (get_expression_pointer_level(node) > 0) {
+            yyerror("Cannot use pointer in float context");
+            return 0.0f;
+        }
         return *(float *)handle_identifier(node, "Undefined variable", 2);
     }
     case NODE_OPERATION:
     {
         int result_type = get_expression_type(node);
+        if (result_type == VAR_BOOL)
+            return (float)evaluate_expression_bool(node);
+        if (get_expression_pointer_level(node) > 0) {
+            yyerror("Cannot use pointer in float context");
+            return 0.0f;
+        }
         void *result = handle_binary_operation(node);
         float result_float = 0.0f;
         result_float = (result_type == VAR_INT)
@@ -1394,6 +1764,17 @@ float evaluate_expression_float(ASTNode *node)
     }
     case NODE_UNARY_OPERATION:
     {
+        if (node->data.unary.op == OP_DEREFERENCE) {
+            if (get_expression_pointer_level(node) > 0) {
+                yyerror("Cannot use pointer in float context");
+                return 0.0f;
+            }
+            return *(float *)(uintptr_t)evaluate_expression_pointer(node->data.unary.operand);
+        }
+        if (node->data.unary.op == OP_ADDRESS_OF) {
+            yyerror("Cannot use pointer in float context");
+            return 0.0f;
+        }
         float operand = evaluate_expression_float(node->data.unary.operand);
         float *result = (float *)handle_unary_expression(node, &operand, VAR_FLOAT);
         float return_val = *result;
@@ -1430,6 +1811,10 @@ double evaluate_expression_double(ASTNode *node)
     {
     case NODE_ARRAY_ACCESS:
     {
+        if (get_expression_pointer_level(node) > 0) {
+            yyerror("Cannot use pointer in double context");
+            return 0.0;
+        }
         return *(double*)evaluate_multi_array_access(node);
     }
     case NODE_DOUBLE:
@@ -1440,11 +1825,21 @@ double evaluate_expression_double(ASTNode *node)
         return (double)node->data.ivalue;
     case NODE_IDENTIFIER:
     {
+        if (get_expression_pointer_level(node) > 0) {
+            yyerror("Cannot use pointer in double context");
+            return 0.0;
+        }
         return *(double *)handle_identifier(node, "Undefined variable", 1);
     }
     case NODE_OPERATION:
     {
         int result_type = get_expression_type(node);
+        if (result_type == VAR_BOOL)
+            return (double)evaluate_expression_bool(node);
+        if (get_expression_pointer_level(node) > 0) {
+            yyerror("Cannot use pointer in double context");
+            return 0.0;
+        }
         void *result = handle_binary_operation(node);
         double result_double = 0.0L;
         result_double = (result_type == VAR_INT)
@@ -1457,6 +1852,17 @@ double evaluate_expression_double(ASTNode *node)
     }
     case NODE_UNARY_OPERATION:
     {
+        if (node->data.unary.op == OP_DEREFERENCE) {
+            if (get_expression_pointer_level(node) > 0) {
+                yyerror("Cannot use pointer in double context");
+                return 0.0;
+            }
+            return *(double *)(uintptr_t)evaluate_expression_pointer(node->data.unary.operand);
+        }
+        if (node->data.unary.op == OP_ADDRESS_OF) {
+            yyerror("Cannot use pointer in double context");
+            return 0.0;
+        }
         double operand = evaluate_expression_double(node->data.unary.operand);
         double *result = (double *)handle_unary_expression(node, &operand, VAR_DOUBLE);
         double return_val = *result;
@@ -1488,70 +1894,13 @@ size_t get_type_size(char *name)
     Variable *var = get_variable(name);
     if (var != NULL)
     {
-        if (var->var_type == VAR_FLOAT)
-        {
-            if (var->is_array)
-            {
-                return sizeof(float) * var->array_length;
-            }
-            return sizeof(float);
-        }
-        else if (var->var_type == VAR_DOUBLE)
-        {
-            if (var->is_array)
-            {
-                return sizeof(double) * var->array_length;
-            }
-            return sizeof(double);
-        }
-        else if (var->modifiers.is_unsigned && var->var_type == VAR_INT)
-        {
-            if (var->is_array)
-            {
-                return sizeof(unsigned int) * var->array_length;
-            }
-            return sizeof(unsigned int);
-        }
-        else if (var->var_type == VAR_BOOL)
-        {
-            if (var->is_array)
-            {
-                return sizeof(bool) * var->array_length;
-            }
-            return sizeof(bool);
-        }
-        else if (var->modifiers.is_unsigned && var->var_type == VAR_SHORT)
-        {
-            if (var->is_array)
-            {
-                return sizeof(unsigned short) * var->array_length;
-            }
-            return sizeof(unsigned short);
-        }
-        else if (var->var_type == VAR_SHORT)
-        {
-            if (var->is_array)
-            {
-                return sizeof(short) * var->array_length;
-            }
-            return sizeof(short);
-        }
-        else if (var->var_type == VAR_INT)
-        {
-            size_t base;
-            if (var->modifiers.is_long_long)
-                base = sizeof(long long);
-            else if (var->modifiers.is_long)
-                base = sizeof(long);
-            else
-                base = sizeof(int);
-
-            return var->is_array ? base * var->array_length : base;
-        }
-        else
+        size_t base = get_type_size_for_descriptor(var->var_type, var->pointer_level, var->modifiers);
+        if (base == 0)
         {
             yyerror("Undefined variable in sizeof");
+            return 0;
         }
+        return var->is_array ? base * var->array_length : base;
     }
     yyerror("Undefined variable in sizeof");
     return 0;
@@ -1573,17 +1922,17 @@ size_t handle_sizeof(ASTNode *node)
         switch (type)
         {
         case VAR_INT:
-            return sizeof(int);
+            return get_type_size_for_descriptor(type, get_expression_pointer_level(expr), expr->modifiers);
         case VAR_FLOAT:
-            return sizeof(float);
+            return get_type_size_for_descriptor(type, get_expression_pointer_level(expr), expr->modifiers);
         case VAR_DOUBLE:
-            return sizeof(double);
+            return get_type_size_for_descriptor(type, get_expression_pointer_level(expr), expr->modifiers);
         case VAR_SHORT:
-            return sizeof(short);
+            return get_type_size_for_descriptor(type, get_expression_pointer_level(expr), expr->modifiers);
         case VAR_BOOL:
-            return sizeof(bool);
+            return get_type_size_for_descriptor(type, get_expression_pointer_level(expr), expr->modifiers);
         case VAR_CHAR:
-            return sizeof(char);
+            return get_type_size_for_descriptor(type, get_expression_pointer_level(expr), expr->modifiers);
         default:
             yyerror("Invalid type in sizeof");
             return 0;
@@ -1649,6 +1998,10 @@ short evaluate_expression_short(ASTNode *node)
     }
     case NODE_IDENTIFIER:
     {
+        if (get_expression_pointer_level(node) > 0) {
+            yyerror("Cannot use pointer in integer context");
+            return 0;
+        }
         return *(short *)handle_identifier(node, "Undefined variable", 0);
     }
     case NODE_OPERATION:
@@ -1672,6 +2025,12 @@ short evaluate_expression_short(ASTNode *node)
 
         // Regular integer operations
         int result_type = get_expression_type(node);
+        if (result_type == VAR_BOOL)
+            return (short)evaluate_expression_bool(node);
+        if (get_expression_pointer_level(node) > 0) {
+            yyerror("Cannot use pointer in integer context");
+            return 0;
+        }
         void *result = handle_binary_operation(node);
         short result_short = 0;
         result_short = (result_type == VAR_SHORT)
@@ -1686,6 +2045,17 @@ short evaluate_expression_short(ASTNode *node)
     }
     case NODE_UNARY_OPERATION:
     {
+        if (node->data.unary.op == OP_DEREFERENCE) {
+            if (get_expression_pointer_level(node) > 0) {
+                yyerror("Cannot use pointer in integer context");
+                return 0;
+            }
+            return *(short *)(uintptr_t)evaluate_expression_pointer(node->data.unary.operand);
+        }
+        if (node->data.unary.op == OP_ADDRESS_OF) {
+            yyerror("Cannot use pointer in integer context");
+            return 0;
+        }
         short operand = evaluate_expression_short(node->data.unary.operand);
         short *result = (short *)handle_unary_expression(node, &operand, VAR_SHORT);
         short return_val = *result;
@@ -1694,7 +2064,10 @@ short evaluate_expression_short(ASTNode *node)
     }
     case NODE_ARRAY_ACCESS:
     {
-      
+        if (get_expression_pointer_level(node) > 0) {
+            yyerror("Cannot use pointer in integer context");
+            return 0;
+        }
         return *(short*)evaluate_multi_array_access(node);
     }
     case NODE_FUNC_CALL:
@@ -1741,10 +2114,20 @@ int evaluate_expression_int(ASTNode *node)
     }
     case NODE_IDENTIFIER:
     {
+        if (get_expression_pointer_level(node) > 0) {
+            yyerror("Cannot use pointer in integer context");
+            return 0;
+        }
         return *(int *)handle_identifier(node, "Undefined variable", 0);
     }
     case NODE_OPERATION:
     {
+        if (get_expression_type(node) == VAR_BOOL)
+            return evaluate_expression_bool(node) ? 1 : 0;
+        if (get_expression_pointer_level(node) > 0) {
+            yyerror("Cannot use pointer in integer context");
+            return 0;
+        }
         // Special handling for logical operations
         if (node->data.op.op == OP_AND)
         {
@@ -1775,6 +2158,17 @@ int evaluate_expression_int(ASTNode *node)
     }
     case NODE_UNARY_OPERATION:
     {
+        if (node->data.unary.op == OP_DEREFERENCE) {
+            if (get_expression_pointer_level(node) > 0) {
+                yyerror("Cannot use pointer in integer context");
+                return 0;
+            }
+            return *(int *)(uintptr_t)evaluate_expression_pointer(node->data.unary.operand);
+        }
+        if (node->data.unary.op == OP_ADDRESS_OF) {
+            yyerror("Cannot use pointer in integer context");
+            return 0;
+        }
         int operand = evaluate_expression_int(node->data.unary.operand);
         int *result = (int *)handle_unary_expression(node, &operand, VAR_INT);
         int return_val = *result;
@@ -1783,6 +2177,10 @@ int evaluate_expression_int(ASTNode *node)
     }
     case NODE_ARRAY_ACCESS:
     {
+        if (get_expression_pointer_level(node) > 0) {
+            yyerror("Cannot use pointer in integer context");
+            return 0;
+        }
         return *(int*)evaluate_multi_array_access(node);
     }
     case NODE_FUNC_CALL:
@@ -1813,6 +2211,12 @@ void *handle_function_call(ASTNode *node)
         switch (current_return_value.type)
         {
         case VAR_INT:
+            if (current_return_value.pointer_level > 0)
+            {
+                return_value = SAFE_MALLOC(uintptr_t);
+                *(uintptr_t *)return_value = current_return_value.value.pvalue;
+                break;
+            }
             return_value = SAFE_MALLOC(int);
             *(int *)return_value = current_return_value.value.ivalue;
             break;
@@ -1868,10 +2272,34 @@ bool evaluate_expression_bool(ASTNode *node)
         return (bool)node->data.dvalue;
     case NODE_IDENTIFIER:
     {
+        if (get_expression_pointer_level(node) > 0) {
+            return evaluate_expression_pointer(node) != (uintptr_t)0;
+        }
         return *(bool *)handle_identifier(node, "Undefined variable", 0);
     }
     case NODE_OPERATION:
     {
+        int left_ptr_level = get_expression_pointer_level(node->data.op.left);
+        int right_ptr_level = get_expression_pointer_level(node->data.op.right);
+        if (left_ptr_level > 0 || right_ptr_level > 0) {
+            uintptr_t left = left_ptr_level > 0 ? evaluate_expression_pointer(node->data.op.left)
+                                               : (uintptr_t)evaluate_expression_int(node->data.op.left);
+            uintptr_t right = right_ptr_level > 0 ? evaluate_expression_pointer(node->data.op.right)
+                                                 : (uintptr_t)evaluate_expression_int(node->data.op.right);
+            switch (node->data.op.op) {
+            case OP_EQ: return left == right;
+            case OP_NE: return left != right;
+            case OP_LT: return left < right;
+            case OP_GT: return left > right;
+            case OP_LE: return left <= right;
+            case OP_GE: return left >= right;
+            case OP_AND: return left && right;
+            case OP_OR: return left || right;
+            default:
+                yyerror("Invalid pointer operation");
+                return false;
+            }
+        }
         // Special handling for logical operations
         if (node->data.op.op == OP_AND)
         {
@@ -1892,7 +2320,9 @@ bool evaluate_expression_bool(ASTNode *node)
         int result_type = get_expression_type(node);
         void *result = handle_binary_operation(node);
         bool result_bool = 0;
-        result_bool = (result_type == VAR_INT)
+        result_bool = (result_type == VAR_BOOL)
+                          ? (*(int *)result != 0)
+                      : (result_type == VAR_INT)
                           ? (bool)(*(int *)result)
                       : (result_type == VAR_FLOAT)
                           ? (bool)(*(float *)result)
@@ -1902,6 +2332,10 @@ bool evaluate_expression_bool(ASTNode *node)
     }
     case NODE_UNARY_OPERATION:
     {
+        if (node->data.unary.op == OP_ADDRESS_OF || get_expression_pointer_level(node) > 0)
+            return evaluate_expression_pointer(node) != (uintptr_t)0;
+        if (node->data.unary.op == OP_DEREFERENCE)
+            return *(bool *)(uintptr_t)evaluate_expression_pointer(node->data.unary.operand);
         bool operand = evaluate_expression_bool(node->data.unary.operand);
         bool *result = (bool *)handle_unary_expression(node, &operand, VAR_BOOL);
         bool return_val = *result;
@@ -1910,6 +2344,9 @@ bool evaluate_expression_bool(ASTNode *node)
     }
     case NODE_ARRAY_ACCESS:
     {
+        if (get_expression_pointer_level(node) > 0) {
+            return *(uintptr_t*)evaluate_multi_array_access(node) != (uintptr_t)0;
+        }
         return *(bool*)evaluate_multi_array_access(node);
     }
     case NODE_FUNC_CALL:
@@ -2102,6 +2539,17 @@ VarType get_function_return_type(const char *name)
     return NONE;
 }
 
+static int get_function_return_pointer_level(const char *name)
+{
+    Function *func = get_function(name);
+    if (func != NULL)
+    {
+        return func->return_pointer_level;
+    }
+    yyerror("Undefined function in type check");
+    return 0;
+}
+
 
 int evaluate_expression(ASTNode *node)
 {
@@ -2128,124 +2576,29 @@ void execute_assignment(ASTNode *node)
         return;
     }
 
-    char *name = node->data.op.left->data.name;
-    check_const_assignment(name);
-
+    ASTNode *target = node->data.op.left;
     ASTNode *value_node = node->data.op.right;
+    VarType target_type = get_expression_type(target);
+    int target_pointer_level = get_expression_pointer_level(target);
     TypeModifiers mods = node->modifiers;
 
-    if (node->data.op.left->type == NODE_ARRAY_ACCESS)
+    if (target->type == NODE_IDENTIFIER)
     {
-        // Evaluate the right side with proper type handling
-        const char *array_name = node->data.op.left->data.array.name;
-        int idx = evaluate_expression_int(node->data.op.left->data.array.index);
-
-        // Find array in symbol table
-        Variable *var = get_variable(array_name);
-        if (var != NULL)
+        char *name = target->data.name;
+        check_const_assignment(name);
+        Variable *var = get_variable(name);
+        if (!var)
         {
-            if (!var->is_array)
-            {
-                yyerror("Not an array!");
-                return;
-            }
-            if (idx < 0 || idx >= var->array_length)
-            {
-                yyerror("Array index out of bounds!");
-                return;
-            }
-
-            // Use the array's actual type for assignment
-            switch (var->var_type)
-            {
-            case VAR_FLOAT:
-                ((float *)var->value.array_data)[idx] = evaluate_expression_float(node->data.op.right);
-                break;
-            case VAR_DOUBLE:
-                ((double *)var->value.array_data)[idx] = evaluate_expression_double(node->data.op.right);
-                break;
-            case VAR_INT:
-                if (node->modifiers.is_long) {
-                    ((long int *)var->value.array_data)[idx] = evaluate_expression_int(node->data.op.right);
-                } else if (node->modifiers.is_long_long) {
-                    ((long long int *)var->value.array_data)[idx] = evaluate_expression_int(node->data.op.right);
-                }
-                ((int *)var->value.array_data)[idx] = evaluate_expression_int(node->data.op.right);
-                break;
-            case VAR_SHORT:
-                ((short *)var->value.array_data)[idx] = evaluate_expression_short(node->data.op.right);
-                break;
-            default:
-                yyerror("Unsupported array type");
-                return;
-            }
+            yyerror("Assignment to undefined variable");
             return;
         }
-        yyerror("Undefined array variable");
-        return;
+        target_type = var->var_type;
+        target_pointer_level = var->pointer_level;
+        mods = var->modifiers;
     }
 
-    // Handle type conversion for float to int
-    if (value_node->type == NODE_FLOAT || is_expression(value_node, VAR_FLOAT))
-    {
-        float value = evaluate_expression_float(value_node);
-        if (node->data.op.left->type == NODE_INT)
-        {
-            // Check for overflow
-            if (value > INT_MAX || value < INT_MIN)
-            {
-                yyerror("Float to int conversion overflow");
-                value = INT_MAX;
-            }
-            if (!set_int_variable(name, (int)value, mods))
-            {
-                yyerror("Failed to set integer variable");
-            }
-            return;
-        }
-    }
-
-    if (is_expression(value_node, VAR_FLOAT))
-    {
-        float value = evaluate_expression_float(value_node);
-        if (!set_float_variable(name, value, mods))
-        {
-            yyerror("Failed to set float variable");
-        }
-    }
-    else if (is_expression(value_node, VAR_DOUBLE))
-    {
-        double value = evaluate_expression_double(value_node);
-        if (!set_double_variable(name, value, mods))
-        {
-            yyerror("Failed to set double variable");
-        }
-    }
-    else if (is_expression(value_node,VAR_SHORT))
-    {
-        short value = evaluate_expression_short(value_node);
-        if (!set_short_variable(name, value, mods))
-        {
-            yyerror("Failed to set short variable");
-        }
-    }
-    else if (is_expression(value_node, VAR_STRING))
-    {
-        char *value = evaluate_expression_string(value_node);
-        if (!set_string_variable(name, value, mods))
-        {
-            yyerror("Failed to set string variable");
-        }
-        SAFE_FREE(value);
-    }
-    else
-    {
-        int value = evaluate_expression_int(value_node);
-        if (!set_int_variable(name, value, mods))
-        {
-            yyerror("Failed to set integer variable");
-        }
-    }
+    void *address = evaluate_lvalue_address(target);
+    write_value_to_address(address, target_type, target_pointer_level, value_node, mods);
 }
 
 void execute_statement(ASTNode *node)
@@ -2259,6 +2612,7 @@ void execute_statement(ASTNode *node)
         char *name = node->data.op.left->data.name;
         Variable *var = variable_new(name);
         var->var_type = node->var_type;
+        var->pointer_level = node->pointer_level;
         var->modifiers = node->modifiers;
 
         /* Check if it's static and already initialized */
@@ -2280,110 +2634,18 @@ void execute_statement(ASTNode *node)
 
         add_variable_to_scope(name, var);
         SAFE_FREE(var);
+
+        if (node->data.op.right)
+        {
+            Variable *scope_var = get_variable(name);
+            initialize_variable_from_expr(scope_var, node->data.op.right);
+            break;
+        }
     }
         __attribute__((fallthrough));
     case NODE_ASSIGNMENT:
     {
-        char *name = node->data.op.left->data.name;
-        check_const_assignment(name);
-
-        // Handle array assignment
-        if (node->data.op.left->type == NODE_ARRAY_ACCESS)
-        {
-            ASTNode *array_node = node->data.op.left;
-            Variable *var = get_variable(array_node->data.array.name);
-            void *element = evaluate_multi_array_access(array_node);
-            switch (var->var_type)
-            {
-            case VAR_FLOAT:
-                *(float *)element = evaluate_expression_float(node->data.op.right);
-                break;
-            case VAR_DOUBLE:
-                *(double *)element = evaluate_expression_double(node->data.op.right);
-                break;
-            case VAR_INT:
-                if (node->modifiers.is_long_long) {
-                    *(long long int *)element = (long long)evaluate_expression_int(node->data.op.right);
-                } else if (node->modifiers.is_long) {
-                    *(long int *)element = (long)evaluate_expression_int(node->data.op.right);
-                } else {
-                    *(int *)element = evaluate_expression_int(node->data.op.right);
-                }
-                break;
-            case VAR_SHORT:
-                *(short *)element = evaluate_expression_short(node->data.op.right);
-                break;
-            case VAR_BOOL:
-                *(bool *)element = evaluate_expression_bool(node->data.op.right);
-                break;
-            case VAR_CHAR:
-                *(char *)element = evaluate_expression_int(node->data.op.right);
-                break;
-            default:
-                yyerror("Unsupported array type");
-                return;
-            }
-            return;
-        }
-
-        ASTNode *value_node = node->data.op.right;
-        TypeModifiers mods = node->modifiers;
-
-        if (value_node->type == NODE_CHAR)
-        {
-            // Handle character assignments directly
-            if (!set_char_variable(name, value_node->data.ivalue, mods))
-            {
-                yyerror("Failed to set character variable");
-            }
-        }
-        else if (value_node->type == NODE_BOOLEAN)
-        {
-            if (!set_bool_variable(name, value_node->data.bvalue, mods))
-            {
-                yyerror("Failed to set boolean variable");
-            }
-        }
-        else if (value_node->type == NODE_SHORT)
-        {
-            if (!set_short_variable(name, value_node->data.svalue, mods))
-            {
-                yyerror("Failed to set short variable");
-            }
-        }
-        else if (node->var_type == VAR_FLOAT || is_expression(value_node, VAR_FLOAT))
-        {
-            float value = evaluate_expression_float(value_node);
-            if (!set_float_variable(name, value, mods))
-            {
-                yyerror("Failed to set float variable");
-            }
-        }
-        else if (node->var_type == VAR_DOUBLE || is_expression(value_node, VAR_DOUBLE))
-        {
-            double value = evaluate_expression_double(value_node);
-            if (!set_double_variable(name, value, mods))
-            {
-                yyerror("Failed to set double variable");
-            }
-        }
-        else if (node->var_type == VAR_STRING || is_expression(value_node, VAR_STRING))
-        {
-            char *value = evaluate_expression_string(value_node);
-            if (!set_string_variable(name, value, mods))
-            {
-                yyerror("Failed to set string variable");
-            }
-            SAFE_FREE(value);
-        }
-        else
-        {
-            int value = evaluate_expression_int(value_node);
-            if (!set_int_variable(name, value, mods))
-            {
-                yyerror("Failed to set integer variable");
-            }
-        }
+        execute_assignment(node);
         break;
     }
     case NODE_ARRAY_ACCESS:
@@ -2913,6 +3175,7 @@ Variable *variable_new(char *name)
         yyerror("Failed to allocate memory for variable");
         exit(1);
     }
+    memset(var, 0, sizeof(Variable));
     var->name = name;
     var->is_array = false;
     return var;
@@ -2973,7 +3236,7 @@ ASTNode *create_return_node(ASTNode *expr)
     return node;
 }
 
-Function *create_function(char *name, VarType return_type, Parameter *params, ASTNode *body)
+Function *create_function_ex(char *name, VarType return_type, int return_pointer_level, Parameter *params, ASTNode *body)
 {
     /* Check if function already exists - if so, just return it (parse + execute causes double creation) */
     Function *existing = get_function(name);
@@ -2990,6 +3253,7 @@ Function *create_function(char *name, VarType return_type, Parameter *params, AS
 
     func->name = safe_strdup(name);
     func->return_type = return_type;
+    func->return_pointer_level = return_pointer_level;
     func->parameters = params;
     func->body = body;
 
@@ -3001,6 +3265,11 @@ Function *create_function(char *name, VarType return_type, Parameter *params, AS
     hm_put(function_map, name, name_len, &func, sizeof(Function *));
 
     return func;
+}
+
+Function *create_function(char *name, VarType return_type, Parameter *params, ASTNode *body)
+{
+    return create_function_ex(name, return_type, 0, params, body);
 }
 
 void execute_function_call(const char *name, ArgumentList *args)
@@ -3016,6 +3285,7 @@ void execute_function_call(const char *name, ArgumentList *args)
 
     enter_function_scope(func, args);
     current_return_value.type = func->return_type;
+    current_return_value.pointer_level = func->return_pointer_level;
     current_return_value.has_value = false;
 
     PUSH_JUMP_BUFFER();
@@ -3043,6 +3313,12 @@ void handle_return_statement(ASTNode *expr)
     current_return_value.has_value = true;
     if (expr)
     {
+        if (current_return_value.pointer_level > 0)
+        {
+            current_return_value.value.pvalue = evaluate_expression_pointer(expr);
+        }
+        else
+        {
         switch (current_return_value.type)
         {
         case VAR_INT:
@@ -3060,9 +3336,13 @@ void handle_return_statement(ASTNode *expr)
         case VAR_SHORT:
             current_return_value.value.svalue = evaluate_expression_short(expr);
             break;
+        case NONE:
+            /* void/skibidi return type: ignore expression value */
+            break;
         default:
             yyerror("Unsupported return type");
             exit(1);
+        }
         }
     }
     // Clean up all scopes until we reach the function scope
@@ -3078,7 +3358,7 @@ void handle_return_statement(ASTNode *expr)
     }
 }
 
-Parameter *create_parameter(char *name, VarType type, Parameter *next, TypeModifiers mods)
+Parameter *create_parameter_ex(char *name, VarType type, int pointer_level, Parameter *next, TypeModifiers mods)
 {
     Parameter *param = ARENA_ALLOC(Parameter);
     if (!param)
@@ -3089,13 +3369,19 @@ Parameter *create_parameter(char *name, VarType type, Parameter *next, TypeModif
 
     param->name = ARENA_STRDUP(name);
     param->type = type;
+    param->pointer_level = pointer_level;
     param->next = next;
     param->modifiers = mods;
 
     return param;
 }
 
-ASTNode *create_function_def_node(char *name, VarType return_type, Parameter *params, ASTNode *body)
+Parameter *create_parameter(char *name, VarType type, Parameter *next, TypeModifiers mods)
+{
+    return create_parameter_ex(name, type, 0, next, mods);
+}
+
+ASTNode *create_function_def_node_ex(char *name, VarType return_type, int return_pointer_level, Parameter *params, ASTNode *body)
 {
     ASTNode *node = ARENA_ALLOC_ASTNODE();
     if (!node)
@@ -3107,13 +3393,19 @@ ASTNode *create_function_def_node(char *name, VarType return_type, Parameter *pa
     node->type = NODE_FUNCTION_DEF;
     node->data.function_def.name = ARENA_STRDUP(name);
     node->data.function_def.return_type = return_type;
+    node->pointer_level = return_pointer_level;
     node->data.function_def.parameters = params;
     node->data.function_def.body = body;
 
     // Add function to global function table
-    create_function(name, return_type, params, body);
+    create_function_ex(name, return_type, return_pointer_level, params, body);
 
     return node;
+}
+
+ASTNode *create_function_def_node(char *name, VarType return_type, Parameter *params, ASTNode *body)
+{
+    return create_function_def_node_ex(name, return_type, 0, params, body);
 }
 
 void free_static_variable_map(void)
@@ -3183,6 +3475,15 @@ void enter_function_scope(Function *func, ArgumentList *args)
     // Evaluate argument values before creating the scope
     while (curr_arg && curr_param)
     {
+        arg_values[arg_count].pointer_level = curr_param->pointer_level;
+        if (curr_param->pointer_level > 0)
+        {
+            arg_values[arg_count].pvalue = evaluate_expression_pointer(curr_arg->expr);
+            curr_arg = curr_arg->next;
+            curr_param = curr_param->next;
+            arg_count++;
+            continue;
+        }
         switch (curr_param->type)
         {
         case VAR_INT:
@@ -3231,9 +3532,22 @@ void enter_function_scope(Function *func, ArgumentList *args)
     {
         Variable *var = variable_new(curr_param->name);
         var->var_type = curr_param->type;
+        var->pointer_level = curr_param->pointer_level;
         TypeModifiers mods = curr_param->modifiers;
         add_variable_to_scope(curr_param->name, var);
         SAFE_FREE(var);
+
+        if (curr_param->pointer_level > 0)
+        {
+            Variable *bound = get_variable(curr_param->name);
+            if (bound)
+            {
+                bound->pointer_level = curr_param->pointer_level;
+                bound->value.pvalue = arg_values[i].pvalue;
+            }
+            curr_param = curr_param->next;
+            continue;
+        }
 
         switch (curr_param->type)
         {
