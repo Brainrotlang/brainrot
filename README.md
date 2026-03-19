@@ -224,11 +224,11 @@ Join our community on:
 
 | Brainrot   | C Equivalent | Implemented? |
 | ---------- | ------------ | ------------ |
-| cooked     | #include     | ❌           |
-| edgydef    | #ifdef       | ❌           |
-| edgyndef   | #ifndef      | ❌           |
-| endedgy    | #endif       | ❌           |
-| slaps      | #define      | ❌           |
+| #cooked     | #include    | ❌           |
+| #edgydef    | #ifdef      | ❌           |
+| #edgyndef   | #ifndef     | ❌           |
+| #endedgy    | #endif      | ❌           |
+| #slaps      | #define     | ❌           |
 
 ### Builtin functions
 
