@@ -187,7 +187,6 @@ Join our community on:
 | skibidi    | void         | ✅           |
 | rizz       | int          | ✅           |
 | cap        | bool         | ✅           |
-| cooked     | auto         | ❌           |
 | flex       | for          | ✅           |
 | bussin     | return       | ✅           |
 | edgy       | if           | ✅           |
@@ -220,6 +219,16 @@ Join our community on:
 | thicc      | long long    | ✅           |
 | rant       | string type  | ✅           |
 | lit        | typedef      | ❌           |
+
+### Preprocessor directives
+
+| Brainrot   | C Equivalent | Implemented? |
+| ---------- | ------------ | ------------ |
+| cooked     | #include     | ❌           |
+| edgydef    | #ifdef       | ❌           |
+| edgyndef   | #ifndef      | ❌           |
+| endedgy    | #endif       | ❌           |
+| slaps      | #define      | ❌           |
 
 ### Builtin functions
 
