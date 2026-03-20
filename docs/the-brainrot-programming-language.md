@@ -18,7 +18,7 @@ A Meme-Fueled Journey into Compiler Design, Internet Slang, and Skibidi Toilets
    - 7.5. Return Statements (`bussin`)
    - 7.6. Built-In Functions
    - 7.7. User Defined Functions
-    - 7.8. Pointers and Call by Reference
+   - 7.8. Pointers and Call by Reference
 8. **Extended User Documentation**
    - 8.1. `yapping`
    - 8.2. `yappin`
