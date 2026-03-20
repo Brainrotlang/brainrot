@@ -90,6 +90,7 @@ extern int yylineno;
 ">="             { return GE; }
 "&&"             { return AND; }
 "||"             { return OR; }
+"&"              { return AMPERSAND; }
 "<"              { return LT; }
 ">"              { return GT; }
 "="              { return EQUALS; }

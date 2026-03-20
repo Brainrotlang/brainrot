@@ -67,6 +67,9 @@
     "thicc": "8\n4\n",
     "giga_array": "1\n2\n3\n24\n",
     "thicc_array": "1\n2\n3\n24\n",
+    "pointers_basic": "15\n15\n17\n",
+    "sort_array_pointer": "1\n2\n3\n4\n5\n",
+    "semantic_error_pointer_deref": "Error: Cannot dereference a non-pointer expression at line 3",
     "bet": "Assertion passed!\n",
     "bet_int": "x is positive\n",
     "bet_fail": "Error: bet: assertion failed at line 2: this assertion must fail"

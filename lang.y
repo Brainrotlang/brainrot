@@ -45,11 +45,13 @@ static Interpreter *global_interpreter = NULL;
     Parameter *param;
     ArrayDimensions array_dims;
     Array array;
+    Declarator declarator;
 }
 
 /* Define token types */
 %token SKIBIDI RIZZ YAP BAKA MAIN BUSSIN FLEX CAP RANT
 %token PLUS MINUS TIMES DIVIDE MOD SEMICOLON COLON COMMA
+%token AMPERSAND
 %token LPAREN RPAREN LBRACE RBRACE
 %token LT GT LE GE EQ NE EQUALS AND OR DEC INC
 %token BREAK CASE DEADASS CONTINUE DEFAULT DO DOUBLE ELSE ENUM
@@ -95,6 +97,9 @@ static Interpreter *global_interpreter = NULL;
 %type <array_dims> dimensions
 %type <array_dims> dimensions_or_unsized
 %type <array> multi_dimension_access
+%type <declarator> declarator
+%type <ival> pointer_stars
+%type <node> assignment_target
 
 %start program
 
@@ -126,8 +131,8 @@ function_def_list
     ;
 
 function_def
-    : type IDENTIFIER LPAREN params RPAREN LBRACE statements RBRACE
-        { $$ = create_function_def_node($2, $1, $4, $7); SAFE_FREE($2); }
+    : type declarator LPAREN params RPAREN LBRACE statements RBRACE
+        { $$ = create_function_def_node_ex($2.name, $1, $2.pointer_level, $4, $7); SAFE_FREE($2.name); }
     ;
 
 params
@@ -138,13 +143,28 @@ params
     ;
 
 param_list
-    : optional_modifiers type IDENTIFIER
+    : optional_modifiers type declarator
         { 
-            $$ = create_parameter($3, $2, NULL, get_current_modifiers()); 
-            SAFE_FREE($3); 
+            $$ = create_parameter_ex($3.name, $2, $3.pointer_level, NULL, get_current_modifiers()); 
+            SAFE_FREE($3.name); 
         }
-    | param_list COMMA optional_modifiers type IDENTIFIER 
-        { $$ = create_parameter($5, $4, $1, get_current_modifiers()); SAFE_FREE($5); }
+    | param_list COMMA optional_modifiers type declarator 
+        { $$ = create_parameter_ex($5.name, $4, $5.pointer_level, $1, get_current_modifiers()); SAFE_FREE($5.name); }
+    ;
+
+pointer_stars:
+      /* empty */
+        { $$ = 0; }
+    | pointer_stars TIMES
+        { $$ = $1 + 1; }
+    ;
+
+declarator:
+    pointer_stars IDENTIFIER
+        {
+            $$.name = $2;
+            $$.pointer_level = $1;
+        }
     ;
 
 
@@ -224,48 +244,54 @@ type:
     | YAP       { $$ = VAR_CHAR; }
     | CAP       { $$ = VAR_BOOL; }
     | RANT      { $$ = VAR_STRING; }
+    | SKIBIDI   { $$ = NONE; }
     ;
 
 declaration:
-    optional_modifiers type IDENTIFIER
+    optional_modifiers type declarator
         {
-            $$ = create_declaration_node($3, create_default_node($2));
-            SAFE_FREE($3);
+            $$ = create_declaration_node_ex($3.name, create_default_node($2), $3.pointer_level);
+            SAFE_FREE($3.name);
         }
-    | optional_modifiers type IDENTIFIER EQUALS expression
+    | optional_modifiers type declarator EQUALS expression
         {
-            $$ = create_declaration_node($3, $5);
-            SAFE_FREE($3);
+            $$ = create_declaration_node_ex($3.name, $5, $3.pointer_level);
+            SAFE_FREE($3.name);
         }
-    | optional_modifiers type IDENTIFIER dimensions
+    | optional_modifiers type declarator dimensions
         {
-            Variable *var = variable_new($3);
-            add_variable_to_scope($3, var);
-            if (!set_multi_array_variable($3, $4.dimensions, $4.num_dimensions, get_current_modifiers(), $2)) {
+            Variable *var = variable_new($3.name);
+            var->pointer_level = $3.pointer_level;
+            add_variable_to_scope($3.name, var);
+            if (!set_multi_array_variable($3.name, $4.dimensions, $4.num_dimensions, get_current_modifiers(), $2)) {
                 yyerror("Failed to create array");
-                SAFE_FREE($3);
+                SAFE_FREE($3.name);
                 YYABORT;
             }
-            $$ = create_multi_array_declaration_node($3, $4.dimensions, $4.num_dimensions, $2);
-            SAFE_FREE($3);
+            $$ = create_multi_array_declaration_node($3.name, $4.dimensions, $4.num_dimensions, $2);
+            $$->pointer_level = $3.pointer_level;
+            SAFE_FREE($3.name);
             SAFE_FREE(var);
         }
-    | optional_modifiers type IDENTIFIER dimensions EQUALS array_init
+    | optional_modifiers type declarator dimensions EQUALS array_init
         {
-            Variable *var = variable_new($3);
-            add_variable_to_scope($3, var);
-            set_multi_array_variable($3, $4.dimensions, $4.num_dimensions, get_current_modifiers(), $2);
+            Variable *var = variable_new($3.name);
+            var->pointer_level = $3.pointer_level;
+            add_variable_to_scope($3.name, var);
+            set_multi_array_variable($3.name, $4.dimensions, $4.num_dimensions, get_current_modifiers(), $2);
             // Handle initialization with proper dimension checks
-            populate_multi_array_variable($3, $6, $4.dimensions, $4.num_dimensions);
-            $$ = create_multi_array_declaration_node($3, $4.dimensions, $4.num_dimensions, $2);
-            SAFE_FREE($3);
+            populate_multi_array_variable($3.name, $6, $4.dimensions, $4.num_dimensions);
+            $$ = create_multi_array_declaration_node($3.name, $4.dimensions, $4.num_dimensions, $2);
+            $$->pointer_level = $3.pointer_level;
+            SAFE_FREE($3.name);
             SAFE_FREE(var);
             free_expression_list($6);
         }
-    | optional_modifiers type IDENTIFIER dimensions_or_unsized EQUALS array_init
+    | optional_modifiers type declarator dimensions_or_unsized EQUALS array_init
         {
-            Variable *var = variable_new($3);
-            add_variable_to_scope($3, var);
+            Variable *var = variable_new($3.name);
+            var->pointer_level = $3.pointer_level;
+            add_variable_to_scope($3.name, var);
             ArrayDimensions dims = $4;
             if (dims.num_dimensions == 0) {
                 size_t n = count_expression_list($6);
@@ -284,10 +310,11 @@ declaration:
             }
             int tmp_dims[MAX_DIMENSIONS];
             for (int i = 0; i < dims.num_dimensions; i++) tmp_dims[i] = dims.dimensions[i];
-            set_multi_array_variable($3, tmp_dims, dims.num_dimensions, get_current_modifiers(), $2);
-            populate_multi_array_variable($3, $6, tmp_dims, dims.num_dimensions);
-            $$ = create_multi_array_declaration_node($3, tmp_dims, dims.num_dimensions, $2);
-            SAFE_FREE($3);
+            set_multi_array_variable($3.name, tmp_dims, dims.num_dimensions, get_current_modifiers(), $2);
+            populate_multi_array_variable($3.name, $6, tmp_dims, dims.num_dimensions);
+            $$ = create_multi_array_declaration_node($3.name, tmp_dims, dims.num_dimensions, $2);
+            $$->pointer_level = $3.pointer_level;
+            SAFE_FREE($3.name);
             SAFE_FREE(var);
             free_expression_list($6);
         }
@@ -514,27 +541,19 @@ identifier:
     ;
 
 assignment:
-      IDENTIFIER EQUALS expression
+      assignment_target EQUALS expression
         { 
-            $$ = create_assignment_node($1, $3); 
-            SAFE_FREE($1);
+            $$ = create_assignment_target_node($1, $3);
         }
-    | IDENTIFIER multi_dimension_access EQUALS expression
-        {
-            ASTNode *access= create_multi_array_access_node($1, $2.indices, $2.num_dimensions);
-            ASTNode *node = ARENA_ALLOC_ASTNODE();
-            if (!node) {
-                yyerror("Memory allocation failed");
-                SAFE_FREE($1);
-                exit(EXIT_FAILURE);
-            }
-            node->type = NODE_ASSIGNMENT;
-            node->data.op.left = access;
-            node->data.op.right = $4;
-            node->data.op.op = OP_ASSIGN;
-            $$ = node;
-            SAFE_FREE($1);
-        }
+    ;
+
+assignment_target:
+      identifier
+        { $$ = $1; }
+    | array_access
+        { $$ = $1; }
+    | TIMES assignment_target %prec UMINUS
+        { $$ = create_unary_operation_node(OP_DEREFERENCE, $2); }
     ;
 
 multi_dimension_access:
@@ -573,6 +592,10 @@ binary_operation:
 
 unary_operation:
       MINUS expression %prec UMINUS    { $$ = create_unary_operation_node(OP_NEG, $2); }
+    | TIMES expression %prec UMINUS
+        { $$ = create_unary_operation_node(OP_DEREFERENCE, $2); }
+    | AMPERSAND expression %prec UMINUS
+        { $$ = create_unary_operation_node(OP_ADDRESS_OF, $2); }
     | INC expression %prec LOWER_THAN_ELSE
         { $$ = create_unary_operation_node(OP_PRE_INC, $2); }
     | DEC expression %prec LOWER_THAN_ELSE

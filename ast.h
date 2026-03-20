@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include <stdint.h>
 #include <setjmp.h>
 
 #define MAX_VARS 100
@@ -21,6 +22,12 @@ typedef struct ASTNode ASTNode;
 typedef struct StatementList StatementList;
 typedef struct ArgumentList ArgumentList;
 typedef struct CaseNode CaseNode;
+
+typedef struct
+{
+    char *name;
+    int pointer_level;
+} Declarator;
 
 
 /* Define Array Dimensions */
@@ -76,6 +83,7 @@ typedef struct Parameter
 {
     char *name;
     VarType type;
+    int pointer_level;
     TypeModifiers modifiers;
     struct Parameter *next;
 } Parameter;
@@ -84,6 +92,7 @@ typedef struct Function
 {
     char *name;
     VarType return_type;
+    int return_pointer_level;
     Parameter *parameters;
     ASTNode *body;
 } Function;
@@ -99,8 +108,10 @@ typedef struct
         bool bvalue;
         short svalue;
         char *strvalue;
+        uintptr_t pvalue;
     } value;
     VarType type;
+    int pointer_level;
 } ReturnValue;
 
 /* Symbol table structure */
@@ -116,9 +127,11 @@ typedef struct
         double dvalue;
         void *array_data;
         char *strvalue;
+        uintptr_t pvalue;
     } value;
     TypeModifiers modifiers;
     VarType var_type;
+    int pointer_level;
     bool is_array;
     int array_length; // lets keep it for now for backword compatibility
     ArrayDimensions array_dimensions;
@@ -135,7 +148,9 @@ typedef union
         float fvalue;
         double dvalue;
         char *strvalue;
+        uintptr_t pvalue;
     };
+    int pointer_level;
 } Value;
 
 /* Operator types */
@@ -160,6 +175,8 @@ typedef enum
     OP_PRE_INC,
     OP_PRE_DEC,
     OP_ASSIGN,
+    OP_ADDRESS_OF,
+    OP_DEREFERENCE,
 } OperatorType;
 
 /* AST node types */
@@ -239,6 +256,7 @@ struct ASTNode
     bool already_checked;
     bool is_valid_symbol;
     bool is_array;
+    int pointer_level;
     int array_length;
     ArrayDimensions array_dimensions;
     int line_number;               /* Line number for error reporting */
@@ -346,8 +364,11 @@ ASTNode *create_double_node(double value);
 ASTNode *create_char_node(char value);
 ASTNode *create_boolean_node(bool value);
 ASTNode *create_identifier_node(char *name);
+ASTNode *create_identifier_node_ex(char *name, int pointer_level);
 ASTNode *create_assignment_node(char *name, ASTNode *expr);
+ASTNode *create_assignment_target_node(ASTNode *target, ASTNode *expr);
 ASTNode *create_declaration_node(char *name, ASTNode *expr);
+ASTNode *create_declaration_node_ex(char *name, ASTNode *expr, int pointer_level);
 ASTNode *create_operation_node(OperatorType op, ASTNode *left, ASTNode *right);
 ASTNode *create_unary_operation_node(OperatorType op, ASTNode *operand);
 ASTNode *create_for_statement_node(ASTNode *init, ASTNode *cond, ASTNode *incr, ASTNode *body);
@@ -394,10 +415,14 @@ void execute_if_statement(ASTNode *node);
 void reset_modifiers(void);
 bool check_and_mark_identifier(ASTNode *node, const char *contextErrorMessage);
 bool is_expression(ASTNode *node, VarType type);
+int get_expression_pointer_level(ASTNode *node);
+uintptr_t evaluate_expression_pointer(ASTNode *node);
+void *evaluate_lvalue_address(ASTNode *node);
 void bruh();
 size_t count_expression_list(ExpressionList *list);
 size_t handle_sizeof(ASTNode *node);
 size_t get_type_size(char *name);
+size_t get_type_size_for_descriptor(VarType type, int pointer_level, TypeModifiers mods);
 void *handle_function_call(ASTNode *node);
 ASTNode *create_multi_array_declaration_node(char *name, int dimensions[], int num_dimensions, VarType type);
 bool set_multi_array_variable(const char *name, int dimensions[], int num_dimensions, TypeModifiers mods, VarType type);
@@ -414,9 +439,12 @@ void execute_slorp_call(ArgumentList *args);
 
 /* User-defined functions */
 Function *create_function(char *name, VarType return_type, Parameter *params, ASTNode *body);
+Function *create_function_ex(char *name, VarType return_type, int return_pointer_level, Parameter *params, ASTNode *body);
 Parameter *create_parameter(char *name, VarType type, Parameter *next, TypeModifiers mods);
+Parameter *create_parameter_ex(char *name, VarType type, int pointer_level, Parameter *next, TypeModifiers mods);
 void execute_function_call(const char *name, ArgumentList *args);
 ASTNode *create_function_def_node(char *name, VarType return_type, Parameter *params, ASTNode *body);
+ASTNode *create_function_def_node_ex(char *name, VarType return_type, int return_pointer_level, Parameter *params, ASTNode *body);
 void handle_return_statement(ASTNode *expr);
 void *handle_binary_operation(ASTNode *node);
 void free_function_table(void);

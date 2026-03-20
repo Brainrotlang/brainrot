@@ -61,6 +61,29 @@ count = 42;
 
 - This reassigns the variable using the typical `=` operator.
 
+### Pointers (C-style)
+
+Brainrot now supports C-style pointers with any level of indirection:
+
+```c
+rizz x = 10;
+rizz *p = &x;
+rizz **pp = &p;
+```
+
+- `*` in declarations means pointer type (`rizz *p`, `rizz **pp`, ...)
+- `&expr` gets an address (address-of)
+- `*expr` dereferences a pointer
+
+Examples:
+
+```c
+yapping("%d", *p);     🚽 10
+*p = 15;
+yapping("%d", x);      🚽 15
+yapping("%d", **pp);   🚽 15
+```
+
 ---
 
 # 4. Expressions and Statements
@@ -77,6 +100,21 @@ In addition to basic arithmetic and logical expressions, you can also use **incr
 - **Post-Increment (`i++`)**: Uses the current value of `i`, then increments it by 1.
 - **Pre-Decrement (`--i`)**: Decrements the value of `i` by 1 before it is used in an expression.
 - **Post-Decrement (`i--`)**: Uses the current value of `i`, then decrements it by 1.
+
+Pointer-specific unary operations are also available:
+
+- `&value` (address-of)
+- `*ptr` (dereference)
+
+You can use dereference on the left-hand side of assignment:
+
+```c
+rizz n = 5;
+rizz *p = &n;
+*p = 42;
+```
+
+After this, `n` is `42`.
 
 You can use these operators in expressions to simplify code and make it more concise.
 
@@ -189,6 +227,28 @@ bussin 0;
 - This signals that your program (or function) finishes execution and returns the given value.
 
 _(If your grammar doesn’t define actual multi-function usage beyond `main`, `bussin 0` is a typical “exit code.”)_
+
+---
+
+# 8.1 Call by Reference (via pointers)
+
+Brainrot uses pointer-based call by reference, just like C.
+
+```c
+rizz bump(rizz *v) {
+    *v = *v + 1;
+    bussin 0;
+}
+
+skibidi main {
+    rizz x = 10;
+    bump(&x);
+    yapping("%d", x);  🚽 11
+    bussin 0;
+}
+```
+
+For multi-level reference passing, use `**`, `***`, etc.
 
 ---
 
