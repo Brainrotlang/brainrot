@@ -273,6 +273,20 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node) {
     if (!node || !node->data.op.left || !node->data.op.left->data.name) return;
     
     char *name = node->data.op.left->data.name;
+    /* Struct declarations: set up blob now (at runtime, after hashmap is stable) */
+    if (node->var_type == VAR_STRUCT ||
+        (node->data.op.right && node->data.op.right->type == NODE_STRUCT_DEF)) {
+        const char *struct_type = node->data.op.right
+                                  ? node->data.op.right->data.struct_def.name
+                                  : NULL;
+        if (!struct_type) return;
+        Variable *sv = get_variable(name);
+        if (sv && sv->var_type == VAR_STRUCT && !sv->value.array_data) {
+            StructDef *def = get_struct_def(sv->struct_name ? sv->struct_name : struct_type);
+            if (def) sv->value.array_data = calloc(1, def->total_size);
+        }
+        return;
+    }
     Variable *var = variable_new(name);
     var->modifiers = node->modifiers;
     var->var_type = node->var_type;
@@ -287,12 +301,29 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node) {
         }
     }
 
+    /* Detect struct declaration: right node is a NODE_STRUCT_DEF */
+    if (node->data.op.right && node->data.op.right->type == NODE_STRUCT_DEF) {
+        var->var_type    = VAR_STRUCT;
+        var->struct_name = safe_strdup(node->data.op.right->data.struct_def.name);
+    }
+
     add_variable_to_scope(name, var);
     SAFE_FREE(var);
 
     /* Handle initialization */
     if (node->data.op.right) {
         Variable *scope_var = get_variable(name);
+        if (scope_var && scope_var->var_type == VAR_STRUCT) {
+            if (!scope_var->value.array_data) {
+                StructDef *def = get_struct_def(scope_var->struct_name);
+                if (def) {
+                    scope_var->value.array_data = calloc(1, def->total_size);
+                    hm_put(current_scope->variables, name, strlen(name),
+                        scope_var, sizeof(Variable));
+                }
+            }
+            return;
+        }
         if (scope_var) {
             if (scope_var->pointer_level > 0) {
                 scope_var->value.pvalue = evaluate_expression_pointer(node->data.op.right);

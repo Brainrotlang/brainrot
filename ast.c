@@ -17,6 +17,8 @@ JumpBuffer *jump_buffer = {0};
 
 HashMap *function_map = NULL;
 static HashMap *static_variable_map = NULL;
+static HashMap *struct_registry = NULL;
+static StructDef *struct_registry_list = NULL;
 ReturnValue current_return_value;
 Arena arena;
 
@@ -115,6 +117,9 @@ bool set_variable(const char *name, void *value, VarType type, TypeModifiers mod
         case VAR_STRING:
             var->value.strvalue = ARENA_STRDUP((char *)value);
             break;
+        case VAR_STRUCT:
+            /* struct blob is managed separately via array_data; nothing to copy here */
+            break;
         case NONE:
             break;
         }
@@ -158,6 +163,38 @@ bool set_multi_array_variable(const char *name, int dimensions[], int num_dimens
 
     memset(var->value.array_data, 0, total * element_size);
     return true;
+}
+
+ASTNode *create_struct_def_node(char *name, StructField *fields) {
+    ASTNode *node = ARENA_ALLOC_ASTNODE();
+    node->type = NODE_STRUCT_DEF;
+    node->data.struct_def.name   = ARENA_STRDUP(name);
+    node->data.struct_def.fields = fields; /* pointer only — registry owns memory */
+    return node;
+}
+
+ASTNode *create_struct_access_node(ASTNode *object, char *member) {
+    ASTNode *node = ARENA_ALLOC_ASTNODE();
+    node->type = NODE_STRUCT_ACCESS;
+    node->data.struct_access.object      = object;
+    node->data.struct_access.member_name = ARENA_STRDUP(member);
+    /* Propagate struct_name so callers can infer the type */
+    if (object && object->type == NODE_IDENTIFIER) {
+        Variable *var = get_variable(object->data.name);
+        if (var && var->var_type == VAR_STRUCT && var->struct_name) {
+            node->data.struct_access.struct_name = ARENA_STRDUP(var->struct_name);
+            /* Set var_type/pointer_level based on the field */
+            StructDef *def = get_struct_def(var->struct_name);
+            if (def) {
+                StructField *fld = find_struct_field(def, member);
+                if (fld) {
+                    node->var_type      = fld->type;
+                    node->pointer_level = fld->pointer_level;
+                }
+            }
+        }
+    }
+    return node;
 }
 
 ASTNode *create_multi_array_declaration_node(char *name, int dimensions[], int num_dimensions, VarType type) {
@@ -287,6 +324,48 @@ size_t calculate_array_offset(Variable *var, int indices[], int num_indices) {
     }
     
     return offset;
+}
+
+void *evaluate_struct_member_address(ASTNode *node) {
+    if (!node || node->type != NODE_STRUCT_ACCESS) {
+        yyerror("Invalid struct member access node");
+        return NULL;
+    }
+
+    ASTNode *obj = node->data.struct_access.object;
+    const char *member = node->data.struct_access.member_name;
+
+    Variable *var = NULL;
+    if (obj->type == NODE_IDENTIFIER) {
+        var = get_variable(obj->data.name);
+    } else {
+        yyerror("Nested struct access not yet supported");
+        return NULL;
+    }
+
+    if (!var) { yyerror("Undefined struct variable"); return NULL; }
+    if (var->var_type != VAR_STRUCT) { yyerror("Variable is not a struct"); return NULL; }
+
+    StructDef *def = get_struct_def(var->struct_name);
+    if (!def) { yyerror("Unknown struct type"); return NULL; }
+
+    /* Lazily allocate blob if missing — handles cases where parse-time
+       pointer was invalidated by hashmap resize during semantic analysis */
+    if (!var->value.array_data) {
+        var->value.array_data = calloc(1, def->total_size);
+        if (!var->value.array_data) { yyerror("Out of memory for struct blob"); return NULL; }
+    }
+
+    StructField *fld = find_struct_field(def, member);
+    if (!fld) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Struct '%s' has no member '%s'",
+                 var->struct_name, member);
+        yyerror(msg);
+        return NULL;
+    }
+
+    return (char *)var->value.array_data + fld->offset;
 }
 
 // Evaluate a multi-dimensional array access node
@@ -917,6 +996,15 @@ int get_expression_pointer_level(ASTNode *node)
         default:
             return 0;
         }
+    case NODE_STRUCT_ACCESS: {
+        ASTNode *obj = node->data.struct_access.object;
+        Variable *var = (obj->type == NODE_IDENTIFIER)
+                        ? get_variable(obj->data.name) : NULL;
+        if (!var || var->var_type != VAR_STRUCT) return 0;
+        StructDef *def = get_struct_def(var->struct_name);
+        StructField *fld = def ? find_struct_field(def, node->data.struct_access.member_name) : NULL;
+        return fld ? fld->pointer_level : 0;
+    }
     default:
         return node->pointer_level;
     }
@@ -1024,6 +1112,16 @@ VarType get_expression_type(ASTNode *node)
         }
         yyerror("Undefined function in get_expression_type");
         return NONE;
+    }
+    case NODE_STRUCT_ACCESS: {
+            ASTNode *obj = node->data.struct_access.object;
+            Variable *var = (obj->type == NODE_IDENTIFIER)
+                            ? get_variable(obj->data.name) : NULL;
+            if (!var || var->var_type != VAR_STRUCT) return NONE;
+            StructDef *def = get_struct_def(var->struct_name);
+            if (!def) return NONE;
+            StructField *fld = find_struct_field(def, node->data.struct_access.member_name);
+            return fld ? fld->type : NONE;
     }
     default:
         yyerror("Unknown node type in get_expression_type");
@@ -1363,6 +1461,8 @@ void *evaluate_lvalue_address(ASTNode *node)
         if (node->data.unary.op == OP_DEREFERENCE)
             return (void *)evaluate_expression_pointer(node->data.unary.operand);
         break;
+    case NODE_STRUCT_ACCESS:
+            return evaluate_struct_member_address(node);
     default:
         break;
     }
@@ -1796,6 +1896,26 @@ float evaluate_expression_float(ASTNode *node)
         }
         return 0.0f;
     }
+    case NODE_STRUCT_ACCESS: {
+        void *addr = evaluate_struct_member_address(node);
+        if (!addr) return 0;
+        /* Read based on the field's type */
+        ASTNode *obj = node->data.struct_access.object;
+        Variable *var = get_variable(obj->data.name);
+        StructDef *def = var ? get_struct_def(var->struct_name) : NULL;
+        StructField *fld = def ? find_struct_field(def, node->data.struct_access.member_name) : NULL;
+        if (!fld) return 0;
+        if (fld->pointer_level > 0) return (float)*(uintptr_t *)addr;
+        switch (fld->type) {
+            case VAR_INT:    return (float)*(int    *)addr;
+            case VAR_SHORT:  return (float)*(short  *)addr;
+            case VAR_BOOL:   return (float)*(bool   *)addr;
+            case VAR_CHAR:   return (float)*(char   *)addr;
+            case VAR_FLOAT:  return        *(float  *)addr;
+            case VAR_DOUBLE: return (float)*(double *)addr;
+            default:         return 0;
+        }
+    }
     default:
         yyerror("Invalid float expression");
         return 0.0f;
@@ -1883,6 +2003,26 @@ double evaluate_expression_double(ASTNode *node)
             return result;
         }
         return 0.0L;
+    }
+    case NODE_STRUCT_ACCESS: {
+        void *addr = evaluate_struct_member_address(node);
+        if (!addr) return 0;
+        /* Read based on the field's type */
+        ASTNode *obj = node->data.struct_access.object;
+        Variable *var = get_variable(obj->data.name);
+        StructDef *def = var ? get_struct_def(var->struct_name) : NULL;
+        StructField *fld = def ? find_struct_field(def, node->data.struct_access.member_name) : NULL;
+        if (!fld) return 0;
+        if (fld->pointer_level > 0) return (double)*(uintptr_t *)addr;
+        switch (fld->type) {
+            case VAR_INT:    return (double)*(int    *)addr;
+            case VAR_SHORT:  return (double)*(short  *)addr;
+            case VAR_BOOL:   return (double)*(bool   *)addr;
+            case VAR_CHAR:   return (double)*(char   *)addr;
+            case VAR_FLOAT:  return (double)*(float  *)addr;
+            case VAR_DOUBLE: return         *(double *)addr;
+            default:         return 0;
+        }
     }
     default:
         yyerror("Invalid double expression");
@@ -2081,6 +2221,26 @@ short evaluate_expression_short(ASTNode *node)
         }
         return 0;
     }
+    case NODE_STRUCT_ACCESS: {
+        void *addr = evaluate_struct_member_address(node);
+        if (!addr) return 0;
+        /* Read based on the field's type */
+        ASTNode *obj = node->data.struct_access.object;
+        Variable *var = get_variable(obj->data.name);
+        StructDef *def = var ? get_struct_def(var->struct_name) : NULL;
+        StructField *fld = def ? find_struct_field(def, node->data.struct_access.member_name) : NULL;
+        if (!fld) return 0;
+        if (fld->pointer_level > 0) return (short)*(uintptr_t *)addr;
+        switch (fld->type) {
+            case VAR_INT:    return (short)*(int    *)addr;
+            case VAR_SHORT:  return        *(short  *)addr;
+            case VAR_BOOL:   return (short)*(bool   *)addr;
+            case VAR_CHAR:   return (short)*(char   *)addr;
+            case VAR_FLOAT:  return (short)*(float  *)addr;
+            case VAR_DOUBLE: return (short)*(double *)addr;
+            default:         return 0;
+        }
+    }
     default:
         yyerror("Invalid short expression");
         return 0;
@@ -2194,6 +2354,26 @@ int evaluate_expression_int(ASTNode *node)
         }
         return 0;
     }
+    case NODE_STRUCT_ACCESS: {
+        void *addr = evaluate_struct_member_address(node);
+        if (!addr) return 0;
+        /* Read based on the field's type */
+        ASTNode *obj = node->data.struct_access.object;
+        Variable *var = get_variable(obj->data.name);
+        StructDef *def = var ? get_struct_def(var->struct_name) : NULL;
+        StructField *fld = def ? find_struct_field(def, node->data.struct_access.member_name) : NULL;
+        if (!fld) return 0;
+        if (fld->pointer_level > 0) return (int)*(uintptr_t *)addr;
+        switch (fld->type) {
+        case VAR_INT:    return *(int    *)addr;
+        case VAR_SHORT:  return (int)*(short  *)addr;
+        case VAR_BOOL:   return (int)*(bool   *)addr;
+        case VAR_CHAR:   return (int)*(char   *)addr;
+        case VAR_FLOAT:  return (int)*(float  *)addr;
+        case VAR_DOUBLE: return (int)*(double *)addr;
+        default:         return 0;
+        }
+    }
     default:
         yyerror("Invalid integer expression");
         return 0;
@@ -2243,6 +2423,9 @@ void *handle_function_call(ASTNode *node)
         case VAR_STRING: 
             return_value = SAFE_MALLOC(char *);
             *(char **)return_value = safe_strdup(current_return_value.value.strvalue);
+            break;
+        case VAR_STRUCT:
+            /* struct return not yet supported; fall through to NULL */
             break;
         case NONE:
             return NULL;
@@ -2359,6 +2542,26 @@ bool evaluate_expression_bool(ASTNode *node)
             return return_val;
         }
         return 0;
+    }
+    case NODE_STRUCT_ACCESS: {
+        void *addr = evaluate_struct_member_address(node);
+        if (!addr) return 0;
+        /* Read based on the field's type */
+        ASTNode *obj = node->data.struct_access.object;
+        Variable *var = get_variable(obj->data.name);
+        StructDef *def = var ? get_struct_def(var->struct_name) : NULL;
+        StructField *fld = def ? find_struct_field(def, node->data.struct_access.member_name) : NULL;
+        if (!fld) return 0;
+        if (fld->pointer_level > 0) return (bool)*(uintptr_t *)addr;
+        switch (fld->type) {
+            case VAR_INT:    return (bool)*(int    *)addr;
+            case VAR_SHORT:  return (bool)*(short  *)addr;
+            case VAR_BOOL:   return       *(bool   *)addr;
+            case VAR_CHAR:   return (bool)*(char   *)addr;
+            case VAR_FLOAT:  return (bool)*(float  *)addr;
+            case VAR_DOUBLE: return (bool)*(double *)addr;
+            default:         return 0;
+        }
     }
     default:
         yyerror("Invalid boolean expression");
@@ -2509,6 +2712,16 @@ bool is_expression(ASTNode *node, VarType type)
     {
         return get_function_return_type(node->data.func_call.function_name) == type;
     }
+    case NODE_STRUCT_ACCESS: {
+        ASTNode *obj = node->data.struct_access.object;
+        Variable *var = (obj && obj->type == NODE_IDENTIFIER)
+                        ? get_variable(obj->data.name) : NULL;
+        StructDef *def = var ? get_struct_def(var->struct_name) : NULL;
+        StructField *fld = def
+            ? find_struct_field(def, node->data.struct_access.member_name)
+            : NULL;
+        return fld ? (fld->type == type) : false;
+    }
     default:
         return node->type == VART_TO_NODET(type);
     }
@@ -2595,6 +2808,22 @@ void execute_assignment(ASTNode *node)
         target_type = var->var_type;
         target_pointer_level = var->pointer_level;
         mods = var->modifiers;
+    }
+    else if (target->type == NODE_STRUCT_ACCESS)
+    {
+        /* Resolve type from the actual field at runtime */
+        ASTNode *obj = target->data.struct_access.object;
+        if (obj && obj->type == NODE_IDENTIFIER) {
+            Variable *var = get_variable(obj->data.name);
+            if (var && var->var_type == VAR_STRUCT) {
+                StructDef *def = get_struct_def(var->struct_name);
+                StructField *fld = def ? find_struct_field(def, target->data.struct_access.member_name) : NULL;
+                if (fld) {
+                    target_type = fld->type;
+                    target_pointer_level = fld->pointer_level;
+                }
+            }
+        }
     }
 
     void *address = evaluate_lvalue_address(target);
@@ -3012,6 +3241,34 @@ void free_expression_list(ExpressionList *list)
         current = next;
     }
     SAFE_FREE(list);
+}
+
+void populate_struct_variable(const char *name, ExpressionList *list) {
+    Variable *var = get_variable(name);
+    if (!var || var->var_type != VAR_STRUCT) return;
+    StructDef *def = get_struct_def(var->struct_name);
+    if (!def) return;
+
+    StructField *fld = def->fields;
+    ExpressionList *cur = list;
+    while (fld && cur) {
+        void *addr = (char *)var->value.array_data + fld->offset;
+        if (fld->pointer_level > 0) {
+            *(uintptr_t *)addr = evaluate_expression_pointer(cur->expr);
+        } else {
+            switch (fld->type) {
+            case VAR_INT:    *(int    *)addr = evaluate_expression_int(cur->expr);    break;
+            case VAR_SHORT:  *(short  *)addr = evaluate_expression_short(cur->expr);  break;
+            case VAR_FLOAT:  *(float  *)addr = evaluate_expression_float(cur->expr);  break;
+            case VAR_DOUBLE: *(double *)addr = evaluate_expression_double(cur->expr); break;
+            case VAR_BOOL:   *(bool   *)addr = evaluate_expression_bool(cur->expr);   break;
+            case VAR_CHAR:   *(char   *)addr = (char)evaluate_expression_int(cur->expr); break;
+            default: break;
+            }
+        }
+        fld = fld->next;
+        cur = cur->next;
+    }
 }
 
 void populate_multi_array_variable(char *name, ExpressionList *list, int dimensions[], int num_dimensions) {
@@ -3505,6 +3762,9 @@ void enter_function_scope(Function *func, ArgumentList *args)
         case VAR_STRING:
             yyerror("String parameters are not supported");
             return;
+        case VAR_STRUCT:
+            yyerror("Struct parameters are not yet supported");
+            return;
         case NONE:
             break;
         }
@@ -3570,10 +3830,80 @@ void enter_function_scope(Function *func, ArgumentList *args)
         case VAR_STRING:
             yyerror("String parameters are not supported");
             return;
+        case VAR_STRUCT:
+            yyerror("Struct parameters are not yet supported");
+            return;
         case NONE:
             break;
         }
         curr_param = curr_param->next;
     }
     reverse_parameter_list(&func->parameters);
+}
+
+void register_struct_def(StructDef *def) {
+    if (!struct_registry) struct_registry = hm_new();
+    size_t len = strlen(def->name);
+    hm_put(struct_registry, def->name, len, def, sizeof(StructDef));
+    def->next_def = struct_registry_list;
+    struct_registry_list = def;
+}
+
+StructDef *get_struct_def(const char *name) {
+    if (!struct_registry || !name) return NULL;
+    return (StructDef *)hm_get(struct_registry, name, strlen(name));
+}
+
+void free_struct_registry(void) {
+    if (struct_registry) {
+        hm_free_shallow(struct_registry);
+        struct_registry = NULL;
+    }
+    StructDef *def = struct_registry_list;
+    while (def) {
+        StructField *f = def->fields;
+        while (f) {
+            StructField *nxt = f->next;
+            SAFE_FREE(f->name);
+            SAFE_FREE(f);
+            f = nxt;
+        }
+        SAFE_FREE(def->name);
+        StructDef *nxt = def->next_def;
+        SAFE_FREE(def);
+        def = nxt;
+    }
+    struct_registry_list = NULL;
+}
+
+StructField *find_struct_field(StructDef *def, const char *name) {
+    if (!def || !name) return NULL;
+    StructField *f = def->fields;
+    while (f) {
+        if (strcmp(f->name, name) == 0) return f;
+        f = f->next;
+    }
+    return NULL;
+}
+
+/* Walk the field list, assign natural-alignment offsets, return total size.
+   We use simple sequential layout (no padding) to keep it straightforward;
+   add alignment rounding here if needed later. */
+size_t compute_struct_layout(StructField *fields) {
+    size_t off = 0;
+    StructField *f = fields;
+    while (f) {
+        f->offset = off;
+        size_t fsz;
+        if (f->pointer_level > 0) {
+            fsz = sizeof(uintptr_t);
+        } else {
+            TypeModifiers m = {0};
+            fsz = get_type_size_for_descriptor(f->type, 0, m);
+            if (fsz == 0) fsz = sizeof(int);
+        }
+        off += fsz;
+        f = f->next;
+    }
+    return off; /* total bytes */
 }

@@ -67,6 +67,9 @@ static Interpreter *global_interpreter = NULL;
 %token <fval> FLOAT_LITERAL
 %token <dval> DOUBLE_LITERAL
 %token SLORP
+%token DOT
+%type <node>  struct_def struct_access
+%type <param> struct_field_list struct_field   /* reuse Parameter as field carrier */
 
 /* Declare types for non-terminals */
 %type <ival> type
@@ -107,6 +110,7 @@ static Interpreter *global_interpreter = NULL;
 %nonassoc LOWER_THAN_ELSE
 %nonassoc ELSE
 
+%left DOT
 %right EQUALS           /* Assignment operator */
 %left OR                /* Logical OR */
 %left AND               /* Logical AND */
@@ -128,6 +132,58 @@ function_def_list
         { $$ = NULL; }
     | function_def_list function_def
         { $$ = create_statement_list($2, $1); }
+    | function_def_list struct_def
+        { $$ = $1; (void)$2; }
+    ;
+
+struct_def
+    : STRUCT IDENTIFIER LBRACE struct_field_list RBRACE SEMICOLON
+        {
+            /* Build StructField list from Parameter list */
+            StructField *fields = NULL, *tail = NULL;
+            Parameter *p = $4;
+            while (p) {
+                StructField *f = SAFE_MALLOC(StructField);
+                f->name          = safe_strdup(p->name);
+                f->type          = p->type;
+                f->pointer_level = p->pointer_level;
+                f->offset        = 0; /* filled by compute_struct_layout */
+                f->next          = NULL;
+                if (!tail) { fields = tail = f; }
+                else        { tail->next = f; tail = f; }
+                p = p->next;
+            }
+            size_t total = compute_struct_layout(fields);
+            StructDef *def = SAFE_MALLOC(StructDef);
+            def->name       = safe_strdup($2);
+            def->fields     = fields;
+            def->total_size = total;
+            register_struct_def(def);
+            $$ = create_struct_def_node($2, fields);
+            SAFE_FREE($2);
+        }
+    ;
+
+struct_field_list
+    : struct_field
+        { $$ = $1; }
+    | struct_field_list struct_field
+        {
+            /* append $2 to the end of $1 */
+            Parameter *tail = $1;
+            while (tail->next) tail = tail->next;
+            tail->next = $2;
+            $$ = $1;
+        }
+    ;
+
+struct_field
+    : type declarator SEMICOLON
+        {
+            $$ = create_parameter_ex($2.name, $1, $2.pointer_level, NULL,
+                                     (TypeModifiers){0});
+            SAFE_FREE($2.name);
+        }
     ;
 
 function_def
@@ -317,6 +373,55 @@ declaration:
             SAFE_FREE($3.name);
             SAFE_FREE(var);
             free_expression_list($6);
+        }
+    | optional_modifiers STRUCT IDENTIFIER declarator
+        {
+            Variable *var = variable_new($4.name);
+            var->var_type    = VAR_STRUCT;
+            var->struct_name = safe_strdup($3);
+            add_variable_to_scope($4.name, var);
+            SAFE_FREE(var);
+
+            Variable *scope_var = get_variable($4.name);
+            StructDef *def = get_struct_def($3);
+            if (scope_var && def) {
+                scope_var->value.array_data = calloc(1, def->total_size);
+            }
+
+            $$ = create_declaration_node_ex($4.name,
+                     create_struct_def_node($3, def ? def->fields : NULL),
+                     $4.pointer_level);
+            $$->var_type = VAR_STRUCT;
+            if ($$->data.op.right)
+                $$->data.op.right->data.name = ARENA_STRDUP($3);
+            SAFE_FREE($3);
+            SAFE_FREE($4.name);
+        }
+    | optional_modifiers STRUCT IDENTIFIER declarator EQUALS LBRACE initializer_list RBRACE
+        {
+            Variable *var = variable_new($4.name);
+            var->var_type    = VAR_STRUCT;
+            var->struct_name = safe_strdup($3);
+            add_variable_to_scope($4.name, var);
+            SAFE_FREE(var);
+
+            /* Fetch the scope-owned copy, allocate blob, then populate */
+            Variable *scope_var = get_variable($4.name);
+            StructDef *def = get_struct_def($3);
+            if (scope_var && def) {
+                scope_var->value.array_data = calloc(1, def->total_size);
+                populate_struct_variable($4.name, $7);
+            }
+
+            $$ = create_declaration_node_ex($4.name,
+                     create_struct_def_node($3, def ? def->fields : NULL),
+                     $4.pointer_level);
+            $$->var_type = VAR_STRUCT;
+            if ($$->data.op.right)
+                $$->data.op.right->data.name = ARENA_STRDUP($3);
+            SAFE_FREE($3);
+            SAFE_FREE($4.name);
+            free_expression_list($7);
         }
     ;
 
@@ -517,6 +622,7 @@ expression:
     | array_access
     | sizeof_expression
     | function_call
+    | struct_access
     ;
 
 sizeof_expression:
@@ -552,6 +658,8 @@ assignment_target:
         { $$ = $1; }
     | array_access
         { $$ = $1; }
+    | struct_access
+            { $$ = $1; }
     | TIMES assignment_target %prec UMINUS
         { $$ = create_unary_operation_node(OP_DEREFERENCE, $2); }
     ;
@@ -619,6 +727,13 @@ array_access:
         }
     ;
 
+struct_access:
+    expression DOT IDENTIFIER
+        {
+            $$ = create_struct_access_node($1, $3);
+            SAFE_FREE($3);
+        }
+    ;
 %%
 
 int main(int argc, char *argv[]) {
@@ -703,6 +818,8 @@ void cleanup() {
     free_function_table();
 
     free_static_variable_map();
+
+    free_struct_registry();
 
     CLEAN_JUMP_BUFFER();
     

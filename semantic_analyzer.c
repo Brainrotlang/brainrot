@@ -360,6 +360,18 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer) {
             
             return NONE;
         }
+
+        case NODE_STRUCT_ACCESS: {
+            ASTNode *obj = node->data.struct_access.object;
+            Variable *var = (obj->type == NODE_IDENTIFIER)
+                            ? get_variable(obj->data.name) : NULL;
+            if (!var || var->var_type != VAR_STRUCT) return NONE;
+            StructDef *def = get_struct_def(var->struct_name);
+            if (!def) return NONE;
+            StructField *fld = find_struct_field(def,
+                                   node->data.struct_access.member_name);
+            return fld ? fld->type : NONE;
+        }
         
         default:
             return NONE;
@@ -627,8 +639,11 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node) {
         }
     }
 
-    if (node->data.op.left->type != NODE_IDENTIFIER && node->data.op.left->type != NODE_ARRAY_ACCESS &&
-        !(node->data.op.left->type == NODE_UNARY_OPERATION && node->data.op.left->data.unary.op == OP_DEREFERENCE)) {
+    if (node->data.op.left->type != NODE_IDENTIFIER && 
+        node->data.op.left->type != NODE_ARRAY_ACCESS &&
+        node->data.op.left->type != NODE_STRUCT_ACCESS &&
+        !(node->data.op.left->type == NODE_UNARY_OPERATION && 
+          node->data.op.left->data.unary.op == OP_DEREFERENCE)) {
         add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
                           "Left-hand side of assignment is not assignable",
                           node->line_number > 0 ? node->line_number : 1);
@@ -996,6 +1011,34 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer, ASTNode *n
             semantic_visit_declaration((Visitor*)analyzer, node);
             break;
         }
+
+        case NODE_STRUCT_ACCESS: {
+            /* Check the object is a known struct variable with that field */
+            ASTNode *obj = node->data.struct_access.object;
+            if (obj) semantic_analyze_with_scope_tracking(analyzer, obj);
+            if (obj && obj->type == NODE_IDENTIFIER) {
+                Variable *var = get_variable(obj->data.name);
+                if (!var) break;
+                if (var->var_type != VAR_STRUCT) {
+                    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                        "Member access on non-struct variable",
+                        node->line_number > 0 ? node->line_number : 1);
+                    break;
+                }
+                StructDef *def = get_struct_def(var->struct_name);
+                if (def && !find_struct_field(def,
+                                node->data.struct_access.member_name)) {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg),
+                             "Struct '%s' has no member '%s'",
+                             var->struct_name,
+                             node->data.struct_access.member_name);
+                    add_semantic_error(analyzer, SEMANTIC_ERROR_UNDEFINED_VARIABLE,
+                                       msg, node->line_number > 0 ? node->line_number : 1);
+                }
+            }
+            break;
+        }
         
         default:
             /* For other node types, only process simple operands to avoid crashes */
@@ -1084,6 +1127,10 @@ void semantic_analyze_node(SemanticAnalyzer *analyzer, ASTNode *node) {
                         add_semantic_error(analyzer, SEMANTIC_ERROR_CONST_ASSIGNMENT, 
                                           error_msg, node->line_number > 0 ? node->line_number : 1);
                     }
+                } else if (node->data.op.left->type != NODE_ARRAY_ACCESS &&
+                   node->data.op.left->type != NODE_STRUCT_ACCESS &&
+                   !(node->data.op.left->type == NODE_UNARY_OPERATION && 
+                     node->data.op.left->data.unary.op == OP_DEREFERENCE)) {
                 } else {
                     /* Analyze left side (could be array access, etc.) */
                     semantic_analyze_node(analyzer, node->data.op.left);

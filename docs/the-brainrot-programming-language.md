@@ -19,6 +19,7 @@ A Meme-Fueled Journey into Compiler Design, Internet Slang, and Skibidi Toilets
    - 7.6. Built-In Functions
    - 7.7. User Defined Functions
    - 7.8. Pointers and Call by Reference
+   - 7.9. Structs (`gang`)
 8. **Extended User Documentation**
    - 8.1. `yapping`
    - 8.2. `yappin`
@@ -156,7 +157,6 @@ Brainrot replaces familiar C keywords with meme-inspired slang:
 | skibidi    | void         |
 | rizz       | int          |
 | cap        | bool         |
-| cooked     | auto         |
 | flex       | for          |
 | bussin     | return       |
 | edgy       | if           |
@@ -352,7 +352,91 @@ skibidi main {
 }
 ```
 
-This is the Brainrot equivalent of call by reference.
+### 7.9. Structs (`gang`)
+
+Use **`gang`** to define a struct type and declare struct variables. Structs group multiple fields of different types under a single name.
+
+#### Struct Definition
+
+Define a struct at the top level, outside of any function:
+
+```c
+gang Point {
+    rizz x;
+    rizz y;
+    chad magnitude;
+};
+```
+
+- **`gang TypeName { ... };`**: Defines a new struct type.
+- Fields are declared using any supported type keyword (`rizz`, `chad`, `gigachad`, `smol`, `cap`, `yap`).
+- The definition must end with `};`.
+
+#### Struct Declaration
+
+Declare a struct variable inside a function body:
+
+```c
+gang Point p;
+```
+
+All fields are zero-initialized by default.
+
+#### Initializer Syntax
+
+Initialize a struct at declaration time with a brace-enclosed list:
+
+```c
+gang Point q = {10, 20, 0.0};
+```
+
+Values are assigned to fields in order of declaration.
+
+#### Member Access
+
+Use `.` to read or write individual fields:
+
+```c
+p.x = 3;
+p.y = 4;
+p.magnitude = 5.0;
+yapping("Point: %d %d %f", p.x, p.y, p.magnitude);
+```
+
+#### Full Example
+
+```c
+gang Point {
+    rizz x;
+    rizz y;
+    chad magnitude;
+};
+
+skibidi main {
+    gang Point p;
+    p.x = 3;
+    p.y = 4;
+    p.magnitude = 5.0;
+    yapping("Point: %d %d %f", p.x, p.y, p.magnitude);
+
+    gang Point q = {10, 20, 0.0};
+    yapping("Q: %d %d %f", q.x, q.y, q.magnitude);
+
+    bussin 0;
+}
+```
+
+Output:
+
+```
+Point: 3 4 5.0
+Q: 10 20 0.0
+```
+
+#### Current Limitations
+
+- Nested struct access (`p.inner.x`) is not yet supported.
+- Structs cannot be passed as function parameters or returned from functions.
 
 ## 8. Extended User Documentation
 
@@ -500,7 +584,8 @@ The program terminates immediately when a `bet` fails, preventing further execut
 
 - No built-in support for increment/decrement (`++`, `--`).
 - Functions other than `skibidi main` not fully supported (unless you add them).
-- Arrays, complex data structures, and advanced memory management are absent.
+- Complex data structures beyond basic structs, and advanced memory management are not fully supported.
+- Struct function parameters and return values are not yet implemented.
 - Error reporting is minimal, typically halting on the first serious parse error.
 
 ---

@@ -1,0 +1,17 @@
+🚽 Example: 2D point struct
+gang Point {
+    rizz x;
+    rizz y;
+    chad magnitude;
+};
+
+skibidi main {
+    gang Point p;
+    p.x = 3;
+    p.y = 4;
+    p.magnitude = 5.0;
+    yapping("Point: %d %d %.1f", p.x, p.y, p.magnitude);
+
+    gang Point q = {10, 20, 0.0};
+    yapping("Q: %d %d %.1f", q.x, q.y, q.magnitude);
+}
