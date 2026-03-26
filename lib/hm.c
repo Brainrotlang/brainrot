@@ -241,9 +241,18 @@ void hm_free(HashMap *hm)
                 {
                     SAFE_FREE(var->value.array_data);
                 }
+                else if (var->var_type == VAR_STRUCT && var->value.array_data)
+                {
+                    free(var->value.array_data);
+                    var->value.array_data = NULL;
+                }
                 else if (var->var_type == VAR_STRING && var->value.strvalue)
                 {
                     SAFE_FREE(var->value.strvalue);
+                }
+                if (var->struct_name)
+                {
+                    SAFE_FREE(var->struct_name);
                 }
             }
 

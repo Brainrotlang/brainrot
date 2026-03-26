@@ -74,6 +74,7 @@ extern int yylineno;
 "maxxing"        { return SIZEOF; }
 "salty"          { return STATIC; }
 "gang"           { return STRUCT; }
+"."              { return DOT; }
 "ohio"           { return SWITCH; }
 "chungus"        { return UNION; }
 "nonut"          { return UNSIGNED; }

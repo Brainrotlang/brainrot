@@ -200,6 +200,17 @@ void ast_accept(ASTNode *node, Visitor *visitor) {
             if (visitor->visit_error_statement)
                 visitor->visit_error_statement(visitor, node);
             break;
+
+        case NODE_STRUCT_DEF:
+                    break;
+
+        case NODE_STRUCT_ACCESS:
+            /* Visit the object sub-expression */
+            if (node->data.struct_access.object)
+                ast_accept(node->data.struct_access.object, visitor);
+            /* No dedicated visitor hook needed — access is handled by
+               evaluate_struct_member_address at evaluation time.         */
+            break;
             
         default:
             // Unknown node type - just continue

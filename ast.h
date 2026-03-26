@@ -73,8 +73,26 @@ typedef enum
     VAR_BOOL,
     VAR_CHAR,
     VAR_STRING,
+    VAR_STRUCT,
     NONE,
 } VarType;
+
+/* A single field inside a struct definition */
+typedef struct StructField {
+    char        *name;
+    VarType      type;
+    int          pointer_level;
+    size_t       offset;          /* byte offset within the struct blob */
+    struct StructField *next;
+} StructField;
+
+/* A struct definition (the "template") */
+typedef struct StructDef {
+    char        *name;
+    StructField *fields;
+    size_t       total_size;      /* total byte size of one instance */
+    struct StructDef *next_def;
+} StructDef;
 
 /* AST helper functions */
 ASTNode* arena_alloc_astnode(void);
@@ -135,6 +153,7 @@ typedef struct
     bool is_array;
     int array_length; // lets keep it for now for backword compatibility
     ArrayDimensions array_dimensions;
+    char   *struct_name;   /* non-NULL when var_type == VAR_STRUCT */
 } Variable;
 
 typedef union
@@ -211,6 +230,8 @@ typedef enum
     NODE_FUNC_CALL,
     NODE_FUNCTION_DEF,
     NODE_RETURN,
+    NODE_STRUCT_DEF,
+    NODE_STRUCT_ACCESS,
 } NodeType;
 
 typedef struct
@@ -270,6 +291,16 @@ struct ASTNode
         char *strvalue;
         char *name;
         Array array;
+        struct {
+            char    *struct_name;   /* name of the struct type */
+            char    *member_name;   /* field being accessed     */
+            ASTNode *object;        /* the struct-valued expr   */
+        } struct_access;
+
+        struct {
+            char        *name;          /* struct tag               */
+            StructField *fields;        /* linked list of fields    */
+        } struct_def;
         struct
         {
             ASTNode *left;
@@ -449,6 +480,17 @@ void handle_return_statement(ASTNode *expr);
 void *handle_binary_operation(ASTNode *node);
 void free_function_table(void);
 void free_static_variable_map(void);
+
+/* Struct types */
+void      register_struct_def(StructDef *def);
+StructDef *get_struct_def(const char *name);
+void      free_struct_registry(void);
+StructField *find_struct_field(StructDef *def, const char *name);
+size_t       compute_struct_layout(StructField *fields); /* fills offsets, returns total */
+ASTNode *create_struct_def_node(char *name, StructField *fields);
+ASTNode *create_struct_access_node(ASTNode *object, char *member);
+void    *evaluate_struct_member_address(ASTNode *node);
+void populate_struct_variable(const char *name, ExpressionList *list);
 
 extern TypeModifiers current_modifiers;
 

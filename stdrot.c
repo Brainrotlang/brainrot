@@ -258,7 +258,7 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
     } else if (is_expression(expr, VAR_DOUBLE)) {
         out->type = STDROT_DOUBLE;
         out->val.d = evaluate_expression_double(expr);
-    } else if (is_expression(expr, VAR_INT) || expr->type == NODE_ARRAY_ACCESS || expr->type == NODE_OPERATION || expr->type == NODE_UNARY_OPERATION) {
+    } else if (is_expression(expr, VAR_INT) || expr->type == NODE_ARRAY_ACCESS || expr->type == NODE_OPERATION || expr->type == NODE_UNARY_OPERATION    || expr->type == NODE_STRUCT_ACCESS) {
         out->type = STDROT_INT;
         out->val.i = evaluate_expression_int(expr);
     }
