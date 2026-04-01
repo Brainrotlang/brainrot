@@ -74,13 +74,16 @@ void *arena_alloc(Arena *arena, size_t size_bytes)
  * @param str The string to copy.
  * @return The pointer to the copied string.
  */
-char *arena_strdup(Arena *arena, const char *str)
+String arena_strdup(Arena *arena, String str)
 {
-    size_t len = strlen(str);
-    char *result = (char *)arena_alloc(arena, len + 1);
-    memcpy(result, str, len);
-    result[len] = '\0';
-    return result;
+    String out;
+    out.len = str.len;
+    out.data = arena_alloc(arena, out.len + 1);
+
+    memcpy(out.data, str.data, out.len);
+    out.data[out.len] = '\0'; // optional
+
+    return out;
 }
 
 /* 

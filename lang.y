@@ -6,6 +6,7 @@
 #include "interpreter.h"
 #include "stdrot.h"
 #include "lib/mem.h"
+#include "lib/string_value.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,7 +17,7 @@ int yylex(void);
 int yylex_destroy(void);
 void yyerror(const char *s);
 void cleanup();
-TypeModifiers get_variable_modifiers(const char* name);
+TypeModifiers get_variable_modifiers(const String name);
 extern TypeModifiers current_modifiers;
 extern VarType current_var_type;
 
@@ -37,7 +38,7 @@ static Interpreter *global_interpreter = NULL;
     float fval;
     double dval;
     char cval;
-    char *strval;
+    String strval;
     ASTNode *node;
     CaseNode *case_node;
     ArgumentList *args;
@@ -144,7 +145,7 @@ struct_def
             Parameter *p = $4;
             while (p) {
                 StructField *f = SAFE_MALLOC(StructField);
-                f->name          = safe_strdup(p->name);
+                f->name          = safe_strdup(&p->name);
                 f->type          = p->type;
                 f->pointer_level = p->pointer_level;
                 f->offset        = 0; /* filled by compute_struct_layout */
@@ -155,7 +156,7 @@ struct_def
             }
             size_t total = compute_struct_layout(fields);
             StructDef *def = SAFE_MALLOC(StructDef);
-            def->name       = safe_strdup($2);
+            def->name       = safe_strdup(&$2);
             def->fields     = fields;
             def->total_size = total;
             register_struct_def(def);
@@ -378,7 +379,7 @@ declaration:
         {
             Variable *var = variable_new($4.name);
             var->var_type    = VAR_STRUCT;
-            var->struct_name = safe_strdup($3);
+            var->struct_name = safe_strdup(&$3);
             add_variable_to_scope($4.name, var);
             SAFE_FREE(var);
 
@@ -401,7 +402,7 @@ declaration:
         {
             Variable *var = variable_new($4.name);
             var->var_type    = VAR_STRUCT;
-            var->struct_name = safe_strdup($3);
+            var->struct_name = safe_strdup(&$3);
             add_variable_to_scope($4.name, var);
             SAFE_FREE(var);
 
@@ -563,13 +564,16 @@ increment:
 
 function_call:
     SLORP LPAREN identifier RPAREN
-        { 
-            $$ = create_function_call_node("slorp", create_argument_list($3, NULL)); 
+        {
+            $$ = create_function_call_node(
+                (String){ .data = "slorp", .len = sizeof("slorp") - 1 },
+                create_argument_list($3, NULL)
+            );
         }
     | IDENTIFIER LPAREN arg_list RPAREN
         { 
             $$ = create_function_call_node($1, $3);
-            SAFE_FREE($1);
+            SAFE_FREE($1.data);
         }
     ;
 
@@ -635,7 +639,7 @@ literal:
     | CHAR               { $$ = create_char_node($1); }
     | SHORT_LITERAL      { $$ = create_short_node($1); }
     | BOOLEAN            { $$ = create_boolean_node($1); }
-    | STRING_LITERAL     { $$ = create_string_literal_node($1); free($1);}
+    | STRING_LITERAL     { $$ = create_string_literal_node($1); SAFE_FREE($1.data);}
     ;
 
 identifier:
@@ -827,7 +831,7 @@ void cleanup() {
     yylex_destroy();
 }
 
-TypeModifiers get_variable_modifiers(const char* name) {
+TypeModifiers get_variable_modifiers(const String name) {
     TypeModifiers mods = {false, false, false, false, false, false, false, false};  // Default modifiers
     Variable *var = get_variable(name); 
     if (var != NULL) {

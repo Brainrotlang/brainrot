@@ -7,23 +7,23 @@
 #include <stdio.h>
 
 extern void yyerror(const char *s);
-extern char *safe_strdup(const char *str);
-extern void execute_func_call(const char *func_name, ArgumentList *args);
+extern String safe_strdup(const String *str);
+extern void execute_func_call(const String func_name, ArgumentList *args);
 
 /* External functions we need from the original implementation */
-extern Variable *variable_new(char *name);
-extern void add_variable_to_scope(const char *name, Variable *var);
-extern Variable *get_variable(const char *name);
-extern Function *get_function(const char *name);
-extern bool is_builtin_function(const char *name);
-extern void execute_builtin_function(const char *name, ArgumentList *args);
+extern Variable *variable_new(String name);
+extern void add_variable_to_scope(const String name, Variable *var);
+extern Variable *get_variable(const String name);
+extern Function *get_function(const String name);
+extern bool is_builtin_function(const String name);
+extern void execute_builtin_function(const String name, ArgumentList *args);
 extern void execute_assignment(ASTNode *node);
 extern void execute_for_statement(ASTNode *node);
 extern void execute_while_statement(ASTNode *node);
 extern void execute_do_while_statement(ASTNode *node);
 extern void execute_switch_statement(ASTNode *node);
 extern void handle_return_statement(ASTNode *expr);
-extern Function *create_function(char *name, VarType return_type, Parameter *params, ASTNode *body);
+extern Function *create_function(String name, VarType return_type, Parameter *params, ASTNode *body);
 extern void bruh(void);
 
 /* For now, use the original evaluation system with visitor wrappers */
@@ -32,7 +32,7 @@ extern float evaluate_expression_float(ASTNode *node);
 extern double evaluate_expression_double(ASTNode *node);
 extern short evaluate_expression_short(ASTNode *node);
 extern bool evaluate_expression_bool(ASTNode *node);
-extern char *evaluate_expression_string(ASTNode *node);
+extern String evaluate_expression_string(ASTNode *node);
 extern void *evaluate_multi_array_access(ASTNode *node);
 extern void *handle_function_call(ASTNode *node);
 extern size_t handle_sizeof(ASTNode *node);
@@ -170,7 +170,7 @@ void* interpreter_visit_string_literal(Visitor *self, ASTNode *node) {
 
 void* interpreter_visit_identifier(Visitor *self, ASTNode *node) {
     (void)self;
-    if (!node || !node->data.name) return NULL;
+    if (!node || !node->data.name.data) return NULL;
     
     Variable *var = get_variable(node->data.name);
     if (!var) {
@@ -240,7 +240,7 @@ void* interpreter_visit_function_call(Visitor *self, ASTNode *node) {
     (void)self;
     if (!node) return NULL;
     
-    const char *func_name = node->data.func_call.function_name;
+    const String func_name = node->data.func_call.function_name;
     ArgumentList *args = node->data.func_call.arguments;
     
     extern Scope* current_scope;
@@ -270,19 +270,19 @@ void* interpreter_visit_sizeof(Visitor *self, ASTNode *node) {
 
 void interpreter_visit_declaration(Visitor *self, ASTNode *node) {
     (void)self;
-    if (!node || !node->data.op.left || !node->data.op.left->data.name) return;
+    if (!node || !node->data.op.left || !node->data.op.left->data.name.data) return;
     
-    char *name = node->data.op.left->data.name;
+    String name = node->data.op.left->data.name;
     /* Struct declarations: set up blob now (at runtime, after hashmap is stable) */
     if (node->var_type == VAR_STRUCT ||
         (node->data.op.right && node->data.op.right->type == NODE_STRUCT_DEF)) {
-        const char *struct_type = node->data.op.right
+        const String struct_type = node->data.op.right
                                   ? node->data.op.right->data.struct_def.name
-                                  : NULL;
-        if (!struct_type) return;
+                                  : (String){ .data = NULL, .len = 0 };
+        if (!struct_type.data) return;
         Variable *sv = get_variable(name);
         if (sv && sv->var_type == VAR_STRUCT && !sv->value.array_data) {
-            StructDef *def = get_struct_def(sv->struct_name ? sv->struct_name : struct_type);
+            StructDef *def = get_struct_def(sv->struct_name.data ? sv->struct_name : struct_type);
             if (def) sv->value.array_data = calloc(1, def->total_size);
         }
         return;
@@ -304,7 +304,7 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node) {
     /* Detect struct declaration: right node is a NODE_STRUCT_DEF */
     if (node->data.op.right && node->data.op.right->type == NODE_STRUCT_DEF) {
         var->var_type    = VAR_STRUCT;
-        var->struct_name = safe_strdup(node->data.op.right->data.struct_def.name);
+        var->struct_name = safe_strdup(&node->data.op.right->data.struct_def.name);
     }
 
     add_variable_to_scope(name, var);
@@ -318,7 +318,7 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node) {
                 StructDef *def = get_struct_def(scope_var->struct_name);
                 if (def) {
                     scope_var->value.array_data = calloc(1, def->total_size);
-                    hm_put(current_scope->variables, name, strlen(name),
+                    hm_put(current_scope->variables, name.data, name.len,
                         scope_var, sizeof(Variable));
                 }
             }
@@ -361,7 +361,7 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node) {
                     break;
                 }
                 case VAR_STRING: {
-                    char *string_value = evaluate_expression_string(node->data.op.right);
+                    String string_value = evaluate_expression_string(node->data.op.right);
                     scope_var->value.strvalue = string_value;
                     break;
                 }
@@ -545,7 +545,7 @@ void interpreter_visit_print_statement(Visitor *self, ASTNode *node) {
     
     ASTNode *expr = node->data.op.left;
     ArgumentList args = {expr, NULL};
-    execute_func_call("yapping", &args);
+    execute_func_call((String){ .data = "yapping", .len = sizeof("yapping") }, &args);
 }
 
 void interpreter_visit_error_statement(Visitor *self, ASTNode *node) {
@@ -554,5 +554,5 @@ void interpreter_visit_error_statement(Visitor *self, ASTNode *node) {
     
     ASTNode *expr = node->data.op.left;
     ArgumentList args = {expr, NULL};
-    execute_func_call("baka", &args);
+    execute_func_call((String){ .data = "baka", .len = sizeof("baka") }, &args);
 }

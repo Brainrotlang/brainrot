@@ -37,7 +37,7 @@ StdrotValue stdrot_bet(StdrotValue *args, int argc) {
     // Optional second argument is the message
     const char *message = NULL;
     if (argc > 1 && args[1].type == STDROT_STRING) {
-        message = args[1].val.str;
+        message = args[1].val.str.data;
     }
 
     bet(condition, message);

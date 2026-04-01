@@ -5,41 +5,56 @@
 #include "ast.h"
 #include "lib/mem.h"
 #include "lib/arena.h"
+#include "lib/string_value.h"
 #include "lang.tab.h"
 
 VarType current_var_type = NONE;
 
-char *unescape_string(const char *src) {
-    // Allocate a buffer big enough for the worst case
-    // (same length as src, since we only shrink on escapes)
-    char *dest = malloc(strlen(src) + 1);
+static String copy_bytes(const char *src, size_t len) {
+    String s;
+    s.data = safe_malloc(len + 1);
+    if (!s.data) { fprintf(stderr, "out of memory\n"); exit(1); }
+    memcpy(s.data, src, len);
+    s.data[len] = '\0';
+    s.len = len;
+    return s;
+}
+
+static String unescape_string(const char *src, size_t len) {
+    char *dest = safe_malloc(len + 1);
+    if (!dest) { fprintf(stderr, "out of memory\n"); exit(1); }
+
     char *d = dest;
     const char *s = src;
+    const char *end = src + len;
 
-    while (*s) {
+    while (s < end) {
         if (*s == '\\') {
             s++;
+            if (s >= end) break;
             switch (*s) {
                 case 'n':  *d++ = '\n'; break;
                 case 't':  *d++ = '\t'; break;
                 case '\\': *d++ = '\\'; break;
-                case '"':  *d++ = '"'; break;
-                // ... handle other escapes you care about ...
-                default:
-                    // If it's an unknown escape like \q,
-                    // you might just copy it literally or skip it.
-                    *d++ = *s;
-                    break;
+                case '"':  *d++ = '"';  break;
+                case '\'': *d++ = '\''; break;
+                case 'r':  *d++ = '\r'; break;
+                case '0':  *d++ = '\0'; break;
+                default:   *d++ = *s;   break;
             }
             s++;
         } else {
             *d++ = *s++;
         }
     }
-    *d = '\0';
-    return dest;
-}
 
+    String out;
+    out.len = (size_t)(d - dest);
+    // removed realloc — incompatible with safe_malloc blocks
+    out.data = dest;
+    out.data[out.len] = '\0';
+    return out;
+}
 
 extern int yylineno;
 %}
@@ -155,16 +170,13 @@ extern int yylineno;
 }
 
 '.' { yylval.ival = yytext[1]; return CHAR; }
-[a-zA-Z_][a-zA-Z0-9_]* { yylval.strval = safe_strdup(yytext); return IDENTIFIER; }
+[a-zA-Z_][a-zA-Z0-9_]* {
+    yylval.strval = copy_bytes(yytext, (size_t)yyleng);
+    return IDENTIFIER;
+}
 \"([^\\\"]|\\.)*\" {
-    // Strip the leading and trailing quotes:
-    char *raw = (yytext + 1);
-    raw[strlen(raw) - 1] = '\0';
-
-    // Convert backslash escapes to real characters:
-    char *unescaped = unescape_string(raw);
-
-    yylval.strval = unescaped;  // Now it has real newlines, etc.
+    size_t raw_len = (size_t)yyleng - 2;   // strip the surrounding quotes
+    yylval.strval = unescape_string(yytext + 1, raw_len);
     return STRING_LITERAL;
 }
 \'([^\\\']|\\.)\' {

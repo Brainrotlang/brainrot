@@ -22,7 +22,11 @@
 #include <dlfcn.h>
 
 /* ── Global execution context ────────────────────────────────────────────── */
-ExecutionContext g_exec_context = {0, NULL, NULL};
+ExecutionContext g_exec_context = {
+    0,
+    { NULL, 0 },
+    { NULL, 0 }
+};
 
 /* ── External interpreter functions ──────────────────────────────────────── */
 extern void yyerror(const char *s);
@@ -32,14 +36,14 @@ extern double evaluate_expression_double(ASTNode *node);
 extern short evaluate_expression_short(ASTNode *node);
 extern bool evaluate_expression_bool(ASTNode *node);
 extern bool is_expression(ASTNode *node, VarType type);
-extern Variable *get_variable(const char *name);
-extern TypeModifiers get_variable_modifiers(const char* name);
+extern Variable *get_variable(const String name);
+extern TypeModifiers get_variable_modifiers(const String name);
 extern void *evaluate_multi_array_access(ASTNode *node);
-extern bool set_int_variable(const char *name, int value, TypeModifiers mods);
-extern bool set_float_variable(const char *name, float value, TypeModifiers mods);
-extern bool set_double_variable(const char *name, double value, TypeModifiers mods);
-extern bool set_short_variable(const char *name, short value, TypeModifiers mods);
-extern bool set_bool_variable(const char *name, bool value, TypeModifiers mods);
+extern bool set_int_variable(const String name, int value, TypeModifiers mods);
+extern bool set_float_variable(const String name, float value, TypeModifiers mods);
+extern bool set_double_variable(const String name, double value, TypeModifiers mods);
+extern bool set_short_variable(const String name, short value, TypeModifiers mods);
+extern bool set_bool_variable(const String name, bool value, TypeModifiers mods);
 
 /* ── Dynamic library state ────────────────────────────────────────────────── */
 static void *lib_handle = NULL;
@@ -49,7 +53,7 @@ static int function_count = 0;
 /* Symbol cache to avoid repeated dlsym calls */
 #define STDROT_CACHE_SIZE 64
 typedef struct {
-    const char *name;
+    String name;
     void *ptr;
 } SymbolCache;
 
@@ -57,13 +61,13 @@ static SymbolCache symbol_cache[STDROT_CACHE_SIZE];
 static int cache_count = 0;
 
 /* ── Forward declarations of stub functions ──────────────────────────────── */
-void yapping(const char* format, ...);
-void yappin(const char* format, ...);
-void baka(const char* format, ...);
+void yapping(const String format, ...);
+void yappin(const String format, ...);
+void baka(const String format, ...);
 void ragequit(int exit_code);
 void chill(unsigned int seconds);
 char slorp_char(char chr);
-char *slorp_string(char *string, size_t size);
+String slorp_string(String string, size_t size);
 int slorp_int(int val);
 short slorp_short(short val);
 float slorp_float(float var);
@@ -71,21 +75,22 @@ double slorp_double(double var);
 
 /* ── Dynamic symbol lookup with caching ──────────────────────────────────── */
 
-static void *stdrot_lookup_symbol(const char *symbol_name)
+static void *stdrot_lookup_symbol(const String symbol_name)
 {
-    if (!lib_handle || !symbol_name) return NULL;
+    if (!lib_handle || !symbol_name.data) return NULL;
 
     /* Check cache first */
     for (int i = 0; i < cache_count; i++) {
-        if (strcmp(symbol_cache[i].name, symbol_name) == 0) {
+        if (strcmp(symbol_cache[i].name.data, symbol_name.data) == 0) {
             return symbol_cache[i].ptr;
         }
     }
 
     /* Not in cache, lookup via dlsym */
-    void *ptr = dlsym(lib_handle, symbol_name);
+    void *ptr = dlsym(lib_handle, symbol_name.data);
     if (ptr && cache_count < STDROT_CACHE_SIZE) {
-        symbol_cache[cache_count].name = symbol_name;
+        symbol_cache[cache_count].name.data = symbol_name.data;
+        symbol_cache[cache_count].name.len = symbol_name.len;
         symbol_cache[cache_count].ptr = ptr;
         cache_count++;
     }
@@ -145,19 +150,19 @@ void stdrot_unload(void)
 
 /* ── Runtime query ────────────────────────────────────────────────────────── */
 
-bool is_builtin_function(const char *func_name)
+bool is_builtin_function(const String func_name)
 {
-    if (!func_name || !functions) return false;
+    if (!func_name.data || !functions) return false;
 
     for (int i = 0; i < function_count; i++) {
-        if (strcmp(func_name, functions[i].name) == 0) {
+        if (strcmp(func_name.data, functions[i].name) == 0) {
             return true;
         }
     }
     return false;
 }
 
-void execute_builtin_function(const char *func_name, ArgumentList *args)
+void execute_builtin_function(const String func_name, ArgumentList *args)
 {
     execute_func_call(func_name, args);
 }
@@ -227,7 +232,8 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
         case VAR_CHAR:
             if (var->is_array) {
                 out->type = STDROT_STRING;
-                out->val.str = (char *)var->value.array_data;
+                out->val.str.data = (char *)var->value.array_data;
+                out->val.str.len  = (size_t)var->array_length;
             } else {
                 out->type = STDROT_CHAR;
                 out->val.c = (char)var->value.ivalue;
@@ -235,7 +241,8 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
             return;
         case VAR_STRING:
             out->type = STDROT_STRING;
-            out->val.str = (char *)var->value.array_data;
+            out->val.str.data = (char *)var->value.array_data;
+            out->val.str.len  = var->value.strvalue.len;
             return;
         default:
             return;
@@ -264,9 +271,9 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
     }
 }
 
-void execute_func_call(const char *func_name, ArgumentList *args)
+void execute_func_call(const String func_name, ArgumentList *args)
 {
-    if (!func_name || !functions) {
+    if (!func_name.data || !functions) {
         yyerror("Function not found");
         return;
     }
@@ -274,7 +281,7 @@ void execute_func_call(const char *func_name, ArgumentList *args)
     /* Look up function in the registry */
     StdrotEntry *entry = NULL;
     for (int i = 0; i < function_count; i++) {
-        if (strcmp(functions[i].name, func_name) == 0) {
+        if (strcmp(functions[i].name, func_name.data) == 0) {
             entry = &functions[i];
             break;
         }
@@ -286,7 +293,7 @@ void execute_func_call(const char *func_name, ArgumentList *args)
     }
 
     /* Set execution context - get line number from first argument node */
-    g_exec_context.function_name = func_name;
+    g_exec_context.function_name.data = func_name.data;
     g_exec_context.line_number = 0;
     if (args && args->expr && args->expr->line_number > 0) {
         g_exec_context.line_number = args->expr->line_number;
@@ -312,7 +319,7 @@ void execute_func_call(const char *func_name, ArgumentList *args)
     /* Generic write-back: if first arg is an identifier and function returned a value,
      * write the returned value back to that variable. */
     if (result.type != STDROT_NONE && args && args->expr && args->expr->type == NODE_IDENTIFIER) {
-        const char *name = args->expr->data.name;
+        const String name = args->expr->data.name;
         Variable *var = get_variable(name);
         if (var) {
             switch (result.type) {
@@ -332,13 +339,16 @@ void execute_func_call(const char *func_name, ArgumentList *args)
                 set_int_variable(name, result.val.c, var->modifiers);
                 break;
             case STDROT_STRING:
-                if (var->is_array && var->array_length > 0 && result.val.str) {
+                if (var->is_array && var->var_type == VAR_CHAR
+                        && var->array_length > 0) {
                     char *dst = (char *)var->value.array_data;
-                    /* Avoid overlapping copy */
-                    if (dst != result.val.str) {
-                        strncpy(dst, result.val.str, var->array_length - 1);
+                    // slorp already wrote directly into dst via the pointer we passed,
+                    // so only copy if the returned pointer is different
+                    if (result.val.str.data && result.val.str.data != dst) {
+                        strncpy(dst, result.val.str.data, var->array_length - 1);
                         dst[var->array_length - 1] = '\0';
                     }
+                    // if pointers are equal, buffer already updated in-place — do nothing
                 }
                 break;
             case STDROT_BOOL:
@@ -353,78 +363,122 @@ void execute_func_call(const char *func_name, ArgumentList *args)
 
 /* ── Stub functions (thin wrappers that forward to .so) ────────────────────── */
 
-void yapping(const char* format, ...)
+void yapping(const String format, ...)
 {
+    String s = {
+        .data = "v_yapping",
+        .len = sizeof("v_yapping") - 1
+    };
     va_list ap;
     va_start(ap, format);
-    void (*fn)(const char *, va_list) = (void (*)(const char *, va_list))stdrot_lookup_symbol("v_yapping");
+    void (*fn)(const String, va_list) = (void (*)(const String, va_list))stdrot_lookup_symbol(s);
     if (fn) fn(format, ap);
     va_end(ap);
 }
 
-void yappin(const char* format, ...)
+void yappin(const String format, ...)
 {
+    String s = {
+        .data = "v_yappin",
+        .len = sizeof("v_yappin") - 1
+    };
     va_list ap;
     va_start(ap, format);
-    void (*fn)(const char *, va_list) = (void (*)(const char *, va_list))stdrot_lookup_symbol("v_yappin");
+    void (*fn)(const String , va_list) = (void (*)(const String , va_list))stdrot_lookup_symbol(s);
     if (fn) fn(format, ap);
     va_end(ap);
 }
 
-void baka(const char* format, ...)
+void baka(const String format, ...)
 {
+    String s = {
+        .data = "v_baka",
+        .len = sizeof("v_baka") - 1
+    };
     va_list ap;
     va_start(ap, format);
-    void (*fn)(const char *, va_list) = (void (*)(const char *, va_list))stdrot_lookup_symbol("v_baka");
+    void (*fn)(const String , va_list) = (void (*)(const String , va_list))stdrot_lookup_symbol(s);
     if (fn) fn(format, ap);
     va_end(ap);
 }
 
 void ragequit(int exit_code)
 {
-    void (*fn)(int) = (void (*)(int))stdrot_lookup_symbol("ragequit");
+    String s = {
+        .data = "ragequit",
+        .len = sizeof("ragequit") - 1
+    };
+    void (*fn)(int) = (void (*)(int))stdrot_lookup_symbol(s);
     if (fn) fn(exit_code);
 }
 
 void chill(unsigned int seconds)
 {
-    void (*fn)(unsigned int) = (void (*)(unsigned int))stdrot_lookup_symbol("chill");
+    String s = {
+        .data = "chill",
+        .len = sizeof("chill") - 1
+    };
+    void (*fn)(unsigned int) = (void (*)(unsigned int))stdrot_lookup_symbol(s);
     if (fn) fn(seconds);
 }
 
 char slorp_char(char chr)
 {
-    char (*fn)(char) = (char (*)(char))stdrot_lookup_symbol("slorp_char");
+    String s = {
+        .data = "slorp_char",
+        .len = sizeof("slorp_char") - 1
+    };
+    char (*fn)(char) = (char (*)(char))stdrot_lookup_symbol(s);
     return fn ? fn(chr) : chr;
 }
 
-char *slorp_string(char *string, size_t size)
+String slorp_string(String string, size_t size)
 {
-    char *(*fn)(char *, size_t) = (char *(*)(char *, size_t))stdrot_lookup_symbol("slorp_string");
+    String s = {
+        .data = "slorp_string",
+        .len = sizeof("slorp_string") - 1
+    };
+    String (*fn)(String , size_t) = (String (*)(String , size_t))stdrot_lookup_symbol(s);
     return fn ? fn(string, size) : string;
 }
 
 int slorp_int(int val)
 {
-    int (*fn)(int) = (int (*)(int))stdrot_lookup_symbol("slorp_int");
+    String s = {
+        .data = "slorp_int",
+        .len = sizeof("slorp_int") - 1
+    };
+    int (*fn)(int) = (int (*)(int))stdrot_lookup_symbol(s);
     return fn ? fn(val) : val;
 }
 
 short slorp_short(short val)
 {
-    short (*fn)(short) = (short (*)(short))stdrot_lookup_symbol("slorp_short");
+    String s = {
+        .data = "slorp_short",
+        .len = sizeof("slorp_short") - 1
+    };
+    short (*fn)(short) = (short (*)(short))stdrot_lookup_symbol(s);
     return fn ? fn(val) : val;
 }
 
 float slorp_float(float var)
 {
-    float (*fn)(float) = (float (*)(float))stdrot_lookup_symbol("slorp_float");
+    String s = {
+        .data = "slorp_float",
+        .len = sizeof("slorp_float") - 1
+    };
+    float (*fn)(float) = (float (*)(float))stdrot_lookup_symbol(s);
     return fn ? fn(var) : var;
 }
 
 double slorp_double(double var)
 {
-    double (*fn)(double) = (double (*)(double))stdrot_lookup_symbol("slorp_double");
+    String s = {
+        .data = "slorp_double",
+        .len = sizeof("slorp_double") - 1
+    };
+    double (*fn)(double) = (double (*)(double))stdrot_lookup_symbol(s);
     return fn ? fn(var) : var;
 }
 
