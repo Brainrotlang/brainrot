@@ -342,13 +342,17 @@ void execute_func_call(const String func_name, ArgumentList *args)
                 if (var->is_array && var->var_type == VAR_CHAR
                         && var->array_length > 0) {
                     char *dst = (char *)var->value.array_data;
-                    // slorp already wrote directly into dst via the pointer we passed,
-                    // so only copy if the returned pointer is different
+
                     if (result.val.str.data && result.val.str.data != dst) {
-                        strncpy(dst, result.val.str.data, var->array_length - 1);
-                        dst[var->array_length - 1] = '\0';
+
+                        size_t max = var->array_length - 1;
+                        size_t n = strlen(result.val.str.data);
+
+                        if (n > max) n = max;
+
+                        memcpy(dst, result.val.str.data, n);
+                        dst[n] = '\0';
                     }
-                    // if pointers are equal, buffer already updated in-place — do nothing
                 }
                 break;
             case STDROT_BOOL:

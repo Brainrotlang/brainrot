@@ -388,18 +388,22 @@ void *evaluate_multi_array_access(ASTNode *node) {
     // The array name might be corrupted if we access node->data.array.name after
     // evaluating indices, due to union memory layout issues
     char array_name_buffer[MAX_BUFFER_LEN];
+
     const String original_array_name = node->data.array.name;
     if (!original_array_name.data) {
         yyerror("Invalid array access node: missing array name");
         exit(EXIT_FAILURE);
     }
-    int name_len = (int)(original_array_name.len);
-    if (name_len == 0 || name_len >= (int)sizeof(array_name_buffer)) {
+
+    size_t name_len = original_array_name.len;
+
+    if (name_len == 0 || name_len >= sizeof(array_name_buffer)) {
         yyerror("Invalid array name in array access");
         exit(EXIT_FAILURE);
     }
-    strncpy(array_name_buffer, original_array_name.data, sizeof(array_name_buffer) - 1);
-    array_name_buffer[sizeof(array_name_buffer) - 1] = '\0';
+
+    memcpy(array_name_buffer, original_array_name.data, name_len);
+    array_name_buffer[name_len] = '\0';
     const String array_name = {
         .data = array_name_buffer,
         .len = original_array_name.len  // ← use the actual name length

@@ -51,9 +51,12 @@ static void process_baka_format(const char *format, const StdrotValue *args, int
             if (spec == '\0') break;
 
             char specifier[32];
-            int length = format - start + 1;
-            if (length >= (int)sizeof(specifier)) length = sizeof(specifier) - 1;
-            strncpy(specifier, start, length);
+            size_t length = (size_t)(format - start + 1);
+
+            if (length >= sizeof(specifier))
+                length = sizeof(specifier) - 1;
+
+            memcpy(specifier, start, length);
             specifier[length] = '\0';
 
             const StdrotValue *arg = &args[arg_idx];
