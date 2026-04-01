@@ -346,7 +346,7 @@ void execute_func_call(const String func_name, ArgumentList *args)
                     if (result.val.str.data && result.val.str.data != dst) {
 
                         size_t max = var->array_length - 1;
-                        size_t n = strlen(result.val.str.data);
+                        size_t n = result.val.str.len;
 
                         if (n > max) n = max;
 
