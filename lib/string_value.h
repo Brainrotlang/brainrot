@@ -10,4 +10,6 @@ typedef struct {
     size_t len;
 } String;
 
+#define STRING_LITERAL(s) ((String){ .data = (s), .len = sizeof(s) - 1 })
+
 #endif

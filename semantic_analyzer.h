@@ -91,8 +91,8 @@ bool analyze_with_scopes(SemanticAnalyzer *analyzer, ASTNode *root);
 void semantic_analyze_node(SemanticAnalyzer *analyzer, ASTNode *node);
 
 /* Error reporting functions */
-void add_semantic_error(SemanticAnalyzer *analyzer, SemanticErrorType type, 
-                       char *message, int line_number);
+void add_semantic_error(SemanticAnalyzer *analyzer, SemanticErrorType type,
+                        String message, int line_number);
 void print_semantic_errors(SemanticAnalyzer *analyzer);
 void free_semantic_errors(SemanticError *errors);
 
