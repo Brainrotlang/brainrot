@@ -5,6 +5,7 @@
 
 #include "visitor.h"
 #include "ast.h"
+#include "lib/string_value.h"
 
 /* Error types for semantic analysis */
 typedef enum {
@@ -21,7 +22,7 @@ typedef enum {
 /* Semantic error structure */
 typedef struct SemanticError {
     SemanticErrorType type;
-    char *message;
+    String message;
     int line_number;
     struct SemanticError *next;
 } SemanticError;
@@ -37,7 +38,7 @@ typedef struct SemanticScope {
 
 /* Symbol table for pre-collected declarations */
 typedef struct SymbolEntry {
-    char *name;
+    String name;
     VarType type;
     int pointer_level;
     bool is_const;
@@ -69,8 +70,8 @@ void semantic_analyzer_free(SemanticAnalyzer *analyzer);
 bool semantic_analyze(ASTNode *root);
 
 /* Symbol table management */
-void add_symbol(SemanticAnalyzer *analyzer, const char *name, VarType type, int pointer_level, bool is_const, bool is_function, VarType return_type, int return_pointer_level, int line_number);
-SymbolEntry* find_symbol(SemanticAnalyzer *analyzer, const char *name);
+void add_symbol(SemanticAnalyzer *analyzer, const String name, VarType type, int pointer_level, bool is_const, bool is_function, VarType return_type, int return_pointer_level, int line_number);
+SymbolEntry* find_symbol(SemanticAnalyzer *analyzer, const String name);
 void free_symbol_table(SymbolEntry *symbols);
 
 /* Semantic scope management */
@@ -80,8 +81,8 @@ void enter_semantic_scope(SemanticAnalyzer *analyzer, bool is_function_scope);
 void exit_semantic_scope(SemanticAnalyzer *analyzer);
 
 /* Variable management in semantic scopes */
-bool add_semantic_variable(SemanticAnalyzer *analyzer, const char *name, VarType type, int pointer_level, bool is_const);
-bool find_semantic_variable(SemanticAnalyzer *analyzer, const char *name, SymbolEntry **result);
+bool add_semantic_variable(SemanticAnalyzer *analyzer, const String name, VarType type, int pointer_level, bool is_const);
+bool find_semantic_variable(SemanticAnalyzer *analyzer, const String name, SymbolEntry **result);
 
 /* Two-phase analysis */
 void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *root);
@@ -91,7 +92,7 @@ void semantic_analyze_node(SemanticAnalyzer *analyzer, ASTNode *node);
 
 /* Error reporting functions */
 void add_semantic_error(SemanticAnalyzer *analyzer, SemanticErrorType type, 
-                       const char *message, int line_number);
+                       char *message, int line_number);
 void print_semantic_errors(SemanticAnalyzer *analyzer);
 void free_semantic_errors(SemanticError *errors);
 

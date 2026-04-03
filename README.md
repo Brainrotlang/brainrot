@@ -209,7 +209,7 @@ Join our community on:
 | nut        | signed       | ✅           |
 | maxxing    | sizeof       | ✅           |
 | salty      | static       | ✅           |
-| gang       | struct       | ❌           |
+| gang       | struct       | ✅           |
 | ohio       | switch       | ✅           |
 | chungus    | union        | ❌           |
 | nonut      | unsigned     | ✅           |
@@ -255,7 +255,6 @@ Current limitations include:
 - Limited support for complex expressions
 - Basic error reporting
 - No support for arrays in user-defined functions
-- No support for pointers
 
 ## 🔌 VSCode Extension
 

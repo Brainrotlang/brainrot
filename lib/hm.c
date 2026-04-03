@@ -110,7 +110,7 @@ void dump(HashMap *hm)
         if (hm->nodes[i])
         {
             Variable *v = (Variable *)hm->nodes[i]->value;
-            printf("key: %p, value: %s, is_array: %s\n", hm->nodes[i]->key, v->name, v->is_array ? "true" : "false");
+            printf("key: %p, value: %s, is_array: %s\n", hm->nodes[i]->key, v->name.data, v->is_array ? "true" : "false");
         }
     }
 }
@@ -241,9 +241,18 @@ void hm_free(HashMap *hm)
                 {
                     SAFE_FREE(var->value.array_data);
                 }
-                else if (var->var_type == VAR_STRING && var->value.strvalue)
+                else if (var->var_type == VAR_STRUCT && var->value.array_data)
+                {
+                    free(var->value.array_data);
+                    var->value.array_data = NULL;
+                }
+                else if (var->var_type == VAR_STRING && var->value.strvalue.data)
                 {
                     SAFE_FREE(var->value.strvalue);
+                }
+                if (var->struct_name.data)
+                {
+                    SAFE_FREE(var->struct_name);
                 }
             }
 

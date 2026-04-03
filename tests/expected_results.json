@@ -72,5 +72,6 @@
     "semantic_error_pointer_deref": "Error: Cannot dereference a non-pointer expression at line 3",
     "bet": "Assertion passed!\n",
     "bet_int": "x is positive\n",
-    "bet_fail": "Error: bet: assertion failed at line 2: this assertion must fail"
+    "bet_fail": "Error: bet: assertion failed at line 2: this assertion must fail",
+    "gang": "Point: 3 4 5.0\nQ: 10 20 0.0\n"
 }

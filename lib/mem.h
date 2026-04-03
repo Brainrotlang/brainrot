@@ -3,6 +3,7 @@
 #ifndef MEM_H
 #define MEM_H
 
+#include "string_value.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -32,7 +33,7 @@ void *safe_malloc(size_t size);
 void *safe_malloc_array(size_t nmemb, size_t size);
 void safe_free(void **ptr, const char *file, int line, const char *func);
 void *safe_memcpy(void *dest, const void *src, size_t n);
-char *safe_strdup(const char *str);
+String safe_strdup(const String *str);
 int is_safe_malloc_ptr(const void *ptr);
 void *safe_calloc(size_t count, size_t size);
 

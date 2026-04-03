@@ -13,6 +13,7 @@
 
 #include "ast.h"
 #include "stdrot/stdrot_api.h"
+#include "lib/string_value.h"
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -24,18 +25,18 @@ void stdrot_load(void);
 void stdrot_unload(void);
 
 /* ── Runtime query / dispatch ────────────────────────────────────────────── */
-bool is_builtin_function(const char *func_name);
-void execute_builtin_function(const char *func_name, ArgumentList *args);
-void execute_func_call(const char *func_name, ArgumentList *args);
+bool is_builtin_function(const String func_name);
+void execute_builtin_function(const String func_name, ArgumentList *args);
+void execute_func_call(const String func_name, ArgumentList *args);
 
 /* ── Stub functions (forward declarations for use by ast.c) ──────────────── */
-void yapping(const char* format, ...);
-void yappin(const char* format, ...);
-void baka(const char* format, ...);
+void yapping(const String format, ...);
+void yappin(const String format, ...);
+void baka(const String format, ...);
 void ragequit(int exit_code);
 void chill(unsigned int seconds);
 char slorp_char(char chr);
-char *slorp_string(char *string, size_t size);
+String slorp_string(String string, size_t size);
 int slorp_int(int val);
 short slorp_short(short val);
 float slorp_float(float var);

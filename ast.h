@@ -6,6 +6,7 @@
 #include "lib/hm.h"
 #include "lib/arena.h"
 #include "lib/mem.h"
+#include "lib/string_value.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -25,7 +26,7 @@ typedef struct CaseNode CaseNode;
 
 typedef struct
 {
-    char *name;
+    String name;
     int pointer_level;
 } Declarator;
 
@@ -73,15 +74,33 @@ typedef enum
     VAR_BOOL,
     VAR_CHAR,
     VAR_STRING,
+    VAR_STRUCT,
     NONE,
 } VarType;
+
+/* A single field inside a struct definition */
+typedef struct StructField {
+    String       name;
+    VarType      type;
+    int          pointer_level;
+    size_t       offset;          /* byte offset within the struct blob */
+    struct StructField *next;
+} StructField;
+
+/* A struct definition (the "template") */
+typedef struct StructDef {
+    String       name;
+    StructField *fields;
+    size_t       total_size;      /* total byte size of one instance */
+    struct StructDef *next_def;
+} StructDef;
 
 /* AST helper functions */
 ASTNode* arena_alloc_astnode(void);
 
 typedef struct Parameter
 {
-    char *name;
+    String  name;
     VarType type;
     int pointer_level;
     TypeModifiers modifiers;
@@ -90,7 +109,7 @@ typedef struct Parameter
 
 typedef struct Function
 {
-    char *name;
+    String  name;
     VarType return_type;
     int return_pointer_level;
     Parameter *parameters;
@@ -107,7 +126,7 @@ typedef struct
         double dvalue;
         bool bvalue;
         short svalue;
-        char *strvalue;
+        String strvalue;
         uintptr_t pvalue;
     } value;
     VarType type;
@@ -117,7 +136,7 @@ typedef struct
 /* Symbol table structure */
 typedef struct
 {
-    char *name;
+    String name;
     union
     {
         int ivalue;
@@ -126,7 +145,7 @@ typedef struct
         float fvalue;
         double dvalue;
         void *array_data;
-        char *strvalue;
+        String strvalue;
         uintptr_t pvalue;
     } value;
     TypeModifiers modifiers;
@@ -135,6 +154,7 @@ typedef struct
     bool is_array;
     int array_length; // lets keep it for now for backword compatibility
     ArrayDimensions array_dimensions;
+    String struct_name;   /* non-NULL when var_type == VAR_STRUCT */
 } Variable;
 
 typedef union
@@ -147,7 +167,7 @@ typedef union
         bool bvalue;
         float fvalue;
         double dvalue;
-        char *strvalue;
+        String strvalue;
         uintptr_t pvalue;
     };
     int pointer_level;
@@ -211,11 +231,13 @@ typedef enum
     NODE_FUNC_CALL,
     NODE_FUNCTION_DEF,
     NODE_RETURN,
+    NODE_STRUCT_DEF,
+    NODE_STRUCT_ACCESS,
 } NodeType;
 
 typedef struct
 {
-    char *name;
+    String name;
     ASTNode *index;
     ASTNode *indices[MAX_DIMENSIONS];
     int num_dimensions;
@@ -267,9 +289,19 @@ struct ASTNode
         int ivalue;
         float fvalue;
         double dvalue;
-        char *strvalue;
-        char *name;
+        String strvalue;
+        String name;
         Array array;
+        struct {
+            String   struct_name;   /* name of the struct type */
+            String   member_name;   /* field being accessed     */
+            ASTNode *object;        /* the struct-valued expr   */
+        } struct_access;
+
+        struct {
+            String       name;          /* struct tag               */
+            StructField *fields;        /* linked list of fields    */
+        } struct_def;
         struct
         {
             ASTNode *left;
@@ -295,7 +327,7 @@ struct ASTNode
         } while_stmt;
         struct
         {
-            char *function_name;
+            String function_name;
             ArgumentList *arguments;
         } func_call;
         StatementList *statements;
@@ -311,7 +343,7 @@ struct ASTNode
         } sizeof_stmt;
         struct
         {
-            char *name;
+            String name;
             VarType return_type;
             Parameter *parameters;
             ASTNode *body;
@@ -325,7 +357,7 @@ typedef struct Scope
     HashMap *variables;
     struct Scope *parent;
     bool is_function_scope;
-    char *function_name;    
+    String function_name;    
 } Scope;
 
 /* Global variable declarations */
@@ -335,53 +367,53 @@ extern HashMap *function_map;
 extern ReturnValue current_return_value;
 extern JumpBuffer *jump_buffer;
 /* Function prototypes */
-bool set_int_variable(const char *name, int value, TypeModifiers mods);
-bool set_array_variable(char *name, int length, TypeModifiers mods, VarType type);
-bool set_short_variable(const char *name, short value, TypeModifiers mods);
-bool set_float_variable(const char *name, float value, TypeModifiers mods);
-bool set_double_variable(const char *name, double value, TypeModifiers mods);
-TypeModifiers get_variable_modifiers(const char *name);
+bool set_int_variable(const String name, int value, TypeModifiers mods);
+bool set_array_variable(String name, int length, TypeModifiers mods, VarType type);
+bool set_short_variable(const String name, short value, TypeModifiers mods);
+bool set_float_variable(const String name, float value, TypeModifiers mods);
+bool set_double_variable(const String name, double value, TypeModifiers mods);
+TypeModifiers get_variable_modifiers(const String name);
 void reset_modifiers(void);
 TypeModifiers get_current_modifiers(void);
-Variable *get_variable(const char *name);
+Variable *get_variable(const String name);
 Scope *create_scope(Scope *parent);
 void enter_function_scope(Function *func, ArgumentList *args);
 void exit_scope();
 void enter_scope();
 void free_scope(Scope *scope);
-void add_variable_to_scope(const char *name, Variable *var);
-Variable *variable_new(char *name);
-Function *get_function(const char *name);
-VarType get_function_return_type(const char *name);
+void add_variable_to_scope(const String name, Variable *var);
+Variable *variable_new(String name);
+Function *get_function(const String name);
+VarType get_function_return_type(const String name);
 
 /* Node creation functions */
 ASTNode *create_int_node(int value);
-ASTNode *create_array_declaration_node(char *name, int length, VarType type);
-ASTNode *create_array_access_node(char *name, ASTNode *index);
+ASTNode *create_array_declaration_node(String name, int length, VarType type);
+ASTNode *create_array_access_node(String name, ASTNode *index);
 ASTNode *create_short_node(short value);
 ASTNode *create_float_node(float value);
 ASTNode *create_double_node(double value);
 ASTNode *create_char_node(char value);
 ASTNode *create_boolean_node(bool value);
-ASTNode *create_identifier_node(char *name);
-ASTNode *create_identifier_node_ex(char *name, int pointer_level);
-ASTNode *create_assignment_node(char *name, ASTNode *expr);
+ASTNode *create_identifier_node(String name);
+ASTNode *create_identifier_node_ex(String name, int pointer_level);
+ASTNode *create_assignment_node(String name, ASTNode *expr);
 ASTNode *create_assignment_target_node(ASTNode *target, ASTNode *expr);
-ASTNode *create_declaration_node(char *name, ASTNode *expr);
-ASTNode *create_declaration_node_ex(char *name, ASTNode *expr, int pointer_level);
+ASTNode *create_declaration_node(String name, ASTNode *expr);
+ASTNode *create_declaration_node_ex(String name, ASTNode *expr, int pointer_level);
 ASTNode *create_operation_node(OperatorType op, ASTNode *left, ASTNode *right);
 ASTNode *create_unary_operation_node(OperatorType op, ASTNode *operand);
 ASTNode *create_for_statement_node(ASTNode *init, ASTNode *cond, ASTNode *incr, ASTNode *body);
 ASTNode *create_while_statement_node(ASTNode *cond, ASTNode *body);
 ASTNode *create_do_while_statement_node(ASTNode *cond, ASTNode *body);
-ASTNode *create_function_call_node(char *func_name, ArgumentList *args);
+ASTNode *create_function_call_node(String func_name, ArgumentList *args);
 ArgumentList *create_argument_list(ASTNode *expr, ArgumentList *existing_list);
 ASTNode *create_print_statement_node(ASTNode *expr);
 ASTNode *create_sizeof_node(ASTNode *node);
 ASTNode *create_error_statement_node(ASTNode *expr);
 ASTNode *create_statement_list(ASTNode *statement, ASTNode *next_statement);
 ASTNode *create_if_statement_node(ASTNode *condition, ASTNode *then_branch, ASTNode *else_branch);
-ASTNode *create_string_literal_node(char *string);
+ASTNode *create_string_literal_node(String string);
 ASTNode *create_switch_statement_node(ASTNode *expression, CaseNode *cases);
 CaseNode *create_case_node(ASTNode *value, ASTNode *statements);
 CaseNode *create_default_case_node(ASTNode *statements);
@@ -392,7 +424,7 @@ ASTNode *create_return_node(ASTNode *expr);
 ExpressionList *create_expression_list(ASTNode *expr);
 ExpressionList *append_expression_list(ExpressionList *list, ASTNode *expr);
 void free_expression_list(ExpressionList *list);
-void populate_multi_array_variable(char *name, ExpressionList *list, int dimensions[], int num_dimensions);
+void populate_multi_array_variable(String name, ExpressionList *list, int dimensions[], int num_dimensions);
 void free_ast(void);
 
 /* Evaluation and execution functions */
@@ -403,8 +435,8 @@ int evaluate_expression_int(ASTNode *node);
 short evaluate_expression_short(ASTNode *node);
 bool evaluate_expression_bool(ASTNode *node);
 int evaluate_expression(ASTNode *node);
-bool is_const_variable(const char *name);
-void check_const_assignment(const char *name);
+bool is_const_variable(const String name);
+void check_const_assignment(const String name);
 void execute_statement(ASTNode *node);
 void execute_statements(ASTNode *node);
 void execute_assignment(ASTNode *node);
@@ -413,7 +445,7 @@ void execute_while_statement(ASTNode *node);
 void execute_do_while_statement(ASTNode *node);
 void execute_if_statement(ASTNode *node);
 void reset_modifiers(void);
-bool check_and_mark_identifier(ASTNode *node, const char *contextErrorMessage);
+bool check_and_mark_identifier(ASTNode *node, const String contextErrorMessage);
 bool is_expression(ASTNode *node, VarType type);
 int get_expression_pointer_level(ASTNode *node);
 uintptr_t evaluate_expression_pointer(ASTNode *node);
@@ -421,34 +453,37 @@ void *evaluate_lvalue_address(ASTNode *node);
 void bruh();
 size_t count_expression_list(ExpressionList *list);
 size_t handle_sizeof(ASTNode *node);
-size_t get_type_size(char *name);
+size_t get_type_size(String name);
 size_t get_type_size_for_descriptor(VarType type, int pointer_level, TypeModifiers mods);
 void *handle_function_call(ASTNode *node);
-ASTNode *create_multi_array_declaration_node(char *name, int dimensions[], int num_dimensions, VarType type);
-bool set_multi_array_variable(const char *name, int dimensions[], int num_dimensions, TypeModifiers mods, VarType type);
-ASTNode *create_array_access_node_single(char *name, ASTNode *index);
-ASTNode *create_multi_array_access_node(char *name, ASTNode *indices[], int num_indices);
-
-/* Built-In functions */
-void execute_yapping_call(ArgumentList *args);
-void execute_yappin_call(ArgumentList *args);
-void execute_baka_call(ArgumentList *args);
-void execute_ragequit_call(ArgumentList *args);
-void execute_chill_call(ArgumentList *args);
-void execute_slorp_call(ArgumentList *args);
+ASTNode *create_multi_array_declaration_node(String name, int dimensions[], int num_dimensions, VarType type);
+bool set_multi_array_variable(const String name, int dimensions[], int num_dimensions, TypeModifiers mods, VarType type);
+ASTNode *create_array_access_node_single(String name, ASTNode *index);
+ASTNode *create_multi_array_access_node(String name, ASTNode *indices[], int num_indices);
 
 /* User-defined functions */
-Function *create_function(char *name, VarType return_type, Parameter *params, ASTNode *body);
-Function *create_function_ex(char *name, VarType return_type, int return_pointer_level, Parameter *params, ASTNode *body);
-Parameter *create_parameter(char *name, VarType type, Parameter *next, TypeModifiers mods);
-Parameter *create_parameter_ex(char *name, VarType type, int pointer_level, Parameter *next, TypeModifiers mods);
-void execute_function_call(const char *name, ArgumentList *args);
-ASTNode *create_function_def_node(char *name, VarType return_type, Parameter *params, ASTNode *body);
-ASTNode *create_function_def_node_ex(char *name, VarType return_type, int return_pointer_level, Parameter *params, ASTNode *body);
+Function *create_function(String name, VarType return_type, Parameter *params, ASTNode *body);
+Function *create_function_ex(String name, VarType return_type, int return_pointer_level, Parameter *params, ASTNode *body);
+Parameter *create_parameter(String name, VarType type, Parameter *next, TypeModifiers mods);
+Parameter *create_parameter_ex(String name, VarType type, int pointer_level, Parameter *next, TypeModifiers mods);
+void execute_function_call(const String name, ArgumentList *args);
+ASTNode *create_function_def_node(String name, VarType return_type, Parameter *params, ASTNode *body);
+ASTNode *create_function_def_node_ex(String name, VarType return_type, int return_pointer_level, Parameter *params, ASTNode *body);
 void handle_return_statement(ASTNode *expr);
 void *handle_binary_operation(ASTNode *node);
 void free_function_table(void);
 void free_static_variable_map(void);
+
+/* Struct types */
+void      register_struct_def(StructDef *def);
+StructDef *get_struct_def(const String name);
+void      free_struct_registry(void);
+StructField *find_struct_field(StructDef *def, const String name);
+size_t       compute_struct_layout(StructField *fields); /* fills offsets, returns total */
+ASTNode *create_struct_def_node(String name, StructField *fields);
+ASTNode *create_struct_access_node(ASTNode *object, String member);
+void    *evaluate_struct_member_address(ASTNode *node);
+void populate_struct_variable(const String name, ExpressionList *list);
 
 extern TypeModifiers current_modifiers;
 

@@ -64,9 +64,12 @@ static void process_yapping_format(const char *format, const StdrotValue *args, 
             if (spec == '\0') break;
             
             char specifier[32];
-            int length = format - start + 1;
-            if (length >= (int)sizeof(specifier)) length = sizeof(specifier) - 1;
-            strncpy(specifier, start, length);
+            size_t length = (size_t)(format - start + 1);
+
+            if (length >= sizeof(specifier))
+                length = sizeof(specifier) - 1;
+
+            memcpy(specifier, start, length);
             specifier[length] = '\0';
             
             const StdrotValue *arg = &args[arg_idx];
@@ -99,7 +102,7 @@ static void process_yapping_format(const char *format, const StdrotValue *args, 
                 }
             } else if (spec == 's') {
                 if (arg->type == STDROT_STRING) {
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, "%s", arg->val.str);
+                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, "%s", arg->val.str.data);
                 }
             }
             
@@ -123,7 +126,7 @@ static void process_yapping_format(const char *format, const StdrotValue *args, 
 static StdrotValue stdrot_yapping(StdrotValue *args, int arg_count)
 {
     if (arg_count > 0 && args[0].type == STDROT_STRING) {
-        process_yapping_format(args[0].val.str, &args[1], arg_count - 1, 1);
+        process_yapping_format(args[0].val.str.data, &args[1], arg_count - 1, 1);
     }
     return (StdrotValue){STDROT_NONE, {0}};
 }
@@ -132,7 +135,7 @@ static StdrotValue stdrot_yapping(StdrotValue *args, int arg_count)
 static StdrotValue stdrot_yappin(StdrotValue *args, int arg_count)
 {
     if (arg_count > 0 && args[0].type == STDROT_STRING) {
-        process_yapping_format(args[0].val.str, &args[1], arg_count - 1, 0);
+        process_yapping_format(args[0].val.str.data, &args[1], arg_count - 1, 0);
     }
     return (StdrotValue){STDROT_NONE, {0}};
 }

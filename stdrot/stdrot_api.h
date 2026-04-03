@@ -27,6 +27,7 @@
 #ifndef STDROT_API_H
 #define STDROT_API_H
 
+#include "../lib/string_value.h"
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -36,8 +37,8 @@
  */
 typedef struct {
     int line_number;
-    const char *function_name;
-    const char *condition_text;
+    String function_name;
+    String condition_text;
 } ExecutionContext;
 
 extern ExecutionContext g_exec_context;
@@ -64,7 +65,7 @@ typedef struct {
         short  s;
         bool   b;
         char   c;
-        char  *str;
+        String str;
     } val;
 } StdrotValue;
 

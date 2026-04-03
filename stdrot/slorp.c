@@ -134,10 +134,10 @@ static StdrotValue stdrot_slorp(StdrotValue *args, int argc)
         out.val.c = slorp_char(args[0].val.c);
         break;
     case STDROT_STRING:
-        if (args[0].val.str) {
-            size_t size = strlen(args[0].val.str);
+        if (args[0].val.str.data) {
+            size_t size = args[0].val.str.len;
             if (size == 0) size = 1024;
-            slorp_string(args[0].val.str, size);
+            slorp_string(args[0].val.str.data, size);
             out.type = STDROT_STRING;
             out.val.str = args[0].val.str;
         }

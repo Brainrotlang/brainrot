@@ -1,4 +1,5 @@
 #include "mem.h"
+#include "string_value.h"
 #include <stdint.h>
 
 /**
@@ -348,21 +349,21 @@ void *safe_memcpy(void *dest, const void *src, size_t n)
  * @note Sets errno on failure
  * @note Returned string must be freed with safe_free
  */
-char *safe_strdup(const char *str)
+String safe_strdup(const String *str)
 {
-    if (!str)
-    {
+    if (!str || !str->data) {
         errno = EINVAL;
-        return NULL;
+        return (String){ .data = NULL, .len = 0 };
     }
 
-    size_t len = strlen(str) + 1;
-    char *new_str = safe_malloc(len);
-    if (new_str)
-    {
-        memcpy(new_str, str, len);
-    }
-    return new_str;
+    String out;
+    out.len = str->len;
+    out.data = safe_malloc(out.len + 1);
+
+    memcpy(out.data, str->data, out.len);
+    out.data[out.len] = '\0'; // optional
+
+    return out;
 }
 
 

@@ -2,9 +2,9 @@
 
 # 1. Introduction
 
-This language (informally called **Brainrot**) allows you to write a “main” function using the keyword `skibidi main`, declare integer variables with `rizz`, and use specialized keywords for loops (`goon` for while, `flex` for for-loops), conditionals (`edgy` for if, `amogus` for else), and more. It also includes three built-in print/error functions—`yapping`, `yappin`, and `baka`—to handle common output scenarios.
+This language (informally called **Brainrot**) allows you to write a "main" function using the keyword `skibidi main`, declare integer variables with `rizz`, and use specialized keywords for loops (`goon` for while, `flex` for for-loops), conditionals (`edgy` for if, `amogus` for else), and more. It also includes three built-in print/error functions—`yapping`, `yappin`, and `baka`—to handle common output scenarios.
 
-Below, you’ll find a reference for each core feature, along with short code snippets illustrating proper usage.
+Below, you'll find a reference for each core feature, along with short code snippets illustrating proper usage.
 
 ---
 
@@ -141,8 +141,8 @@ amogus {
 }
 ```
 
-- **`edgy`**: The “if” keyword.
-- **`amogus`**: The “else” keyword.
+- **`edgy`**: The "if" keyword.
+- **`amogus`**: The "else" keyword.
 
 You can nest these if you want multiple branches.
 
@@ -212,11 +212,101 @@ ohio (expr) {
 - **`based`**: The `default` keyword.
 - **`bruh`**: The `break` statement, optionally used to exit the switch after a case.
 
-_(Your actual grammar might vary, but these are the typical synonyms used.)_
+---
+
+# 8. Structs (`gang`)
+
+Use **`gang`** to define a struct type and declare struct variables.
+
+### Struct Definition
+
+Define a struct outside of `skibidi main` (at the top level):
+
+```c
+gang Point {
+    rizz x;
+    rizz y;
+    chad magnitude;
+};
+```
+
+- **`gang TypeName { ... };`**: Defines a new struct type.
+- Fields are declared using any supported type keyword (`rizz`, `chad`, `gigachad`, `smol`, `cap`, `yap`).
+- The definition must end with `};`.
+
+### Struct Declaration
+
+Declare a struct variable inside a function:
+
+```c
+gang Point p;
+```
+
+This allocates storage for all fields, zero-initialized.
+
+### Initializer Syntax
+
+You can initialize a struct at declaration time with a brace-enclosed list:
+
+```c
+gang Point q = {10, 20, 0.0};
+```
+
+Values are assigned to fields in order of declaration.
+
+### Member Access
+
+Use `.` to read or write individual fields:
+
+```c
+p.x = 3;
+p.y = 4;
+p.magnitude = 5.0;
+yapping("Point: %d %d %f", p.x, p.y, p.magnitude);
+```
+
+### Full Example
+
+```c
+gang Point {
+    rizz x;
+    rizz y;
+    chad magnitude;
+};
+
+skibidi main {
+    gang Point p;
+    p.x = 3;
+    p.y = 4;
+    p.magnitude = 5.0;
+    yapping("Point: %d %d %f", p.x, p.y, p.magnitude);
+
+    gang Point q = {10, 20, 0.0};
+    yapping("Q: %d %d %f", q.x, q.y, q.magnitude);
+}
+```
+
+Output:
+```
+Point: 3 4 5.0
+Q: 10 20 0.0
+```
+
+### Keyword Reference
+
+| Brainrot | C equivalent |
+|----------|-------------|
+| `gang`   | `struct`    |
+| `.`      | `.`         |
+
+### Current Limitations
+
+- Nested struct access (`p.inner.x`) is not yet supported.
+- Structs cannot be passed as function parameters or returned from functions.
 
 ---
 
-# 8. Return Statements (`bussin`)
+# 9. Return Statements (`bussin`)
 
 To return from **`skibidi main`** (or any function, if you support them), use **`bussin expression`**:
 
@@ -226,11 +316,9 @@ bussin 0;
 
 - This signals that your program (or function) finishes execution and returns the given value.
 
-_(If your grammar doesn’t define actual multi-function usage beyond `main`, `bussin 0` is a typical “exit code.”)_
-
 ---
 
-# 8.1 Call by Reference (via pointers)
+# 9.1 Call by Reference (via pointers)
 
 Brainrot uses pointer-based call by reference, just like C.
 
@@ -252,7 +340,7 @@ For multi-level reference passing, use `**`, `***`, etc.
 
 ---
 
-# 9. Built-In Functions
+# 10. Built-In Functions
 
 Brainrot includes some built-in functions for convenience:
 
@@ -266,7 +354,7 @@ Brainrot includes some built-in functions for convenience:
 | **slorp**    | `stdin`     | -            | Reads user input.                                                     |
 | **bet**      | `stderr`    | No           | Tests conditions and terminates with error message if false.          |
 
-## 9.1. yapping
+## 10.1. yapping
 
 **Prototype**
 
@@ -286,7 +374,7 @@ yapping("Hello %s", "User");
 🚽 Prints => "Hello User" + newline
 ```
 
-## 9.2. yappin
+## 10.2. yappin
 
 **Prototype**
 
@@ -307,7 +395,7 @@ yappin("Hello ");
 yappin("World!\n");  🚽 One newline here
 ```
 
-## 9.3. baka
+## 10.3. baka
 
 **Prototype**
 
@@ -326,9 +414,7 @@ void baka(const char* format, ...);
 baka("Error: something went wrong at %s\n", location);
 ```
 
-_(This prints to stderr, not stdout.)_
-
-## 9.4. ragequit
+## 10.4. ragequit
 
 **Prototype**
 
@@ -339,8 +425,7 @@ void ragequit(int exit_code);
 **Key Points**
 
 - Terminates program execution immediately with the provided exit code.
-- Behaves like exit(exit_code);, but uses the custom ragequit keyword for dramatic exits.
-- No additional output is printed unless explicitly added before the ragequit call.
+- Behaves like `exit(exit_code)`, but with more drama.
 
 ### Example
 
@@ -356,12 +441,7 @@ amogus {
 }
 ```
 
-In the example above:
-
-- If i == 1, the program prints the message and exits with code 1.
-- If the condition fails, the program exits with code 0.
-
-## 9.5. chill
+## 10.5. chill
 
 **Prototype**
 
@@ -371,20 +451,20 @@ void chill(unsigned int seconds);
 
 **Key Points**
 
-- Sleeps for a specified number of seconds (must be an unsigned integer)
+- Sleeps for a specified number of seconds (must be an unsigned integer).
 
 ### Example
 
 ```c
 skibidi main {
-    yapping("I'll chill for a 2 seconds ...");
+    yapping("I'll chill for 2 seconds ...");
     chill(2); 🚽 sleep for 2 seconds
     yapping("Ok imma head out");
     bussin 0;
 }
 ```
 
-## 9.6. slorp
+## 10.6. slorp
 
 **Prototype**
 
@@ -394,7 +474,7 @@ void slorp(var_type var_name);
 
 **Key Points**
 
-- Reads user input (similar to C's `scanf` but safer)
+- Reads user input (similar to C's `scanf` but safer).
 
 ### Example
 
@@ -402,13 +482,13 @@ void slorp(var_type var_name);
 skibidi main {
     rizz num;
     yapping("Enter a number:");
-	slorp(num);
+    slorp(num);
     yapping("You typed: %d", num);
-	bussin 0;
+    bussin 0;
 }
 ```
 
-## 9.7. bet
+## 10.7. bet
 
 **Prototype**
 
@@ -418,10 +498,9 @@ void bet(int condition, const char* message);
 
 **Key Points**
 
-- Tests a condition and terminates the program if it's false
-- Similar to C's `assert()` macro
-- When the condition fails, prints an error message with the line number and optional custom message
-- Useful for catching bugs and verifying assumptions during development
+- Tests a condition and terminates the program if it's false.
+- Similar to C's `assert()` macro.
+- When the condition fails, prints an error message with the line number and optional custom message.
 
 ### Example
 
@@ -449,11 +528,9 @@ Output:
 Error: bet: assertion failed at line 2: this assertion must fail
 ```
 
-The program terminates immediately when a `bet` fails.
-
 ---
 
-# 10. Example Program
+# 11. Example Program
 
 Below is a short **full** example showing variable declarations, loops, conditionals, and printing:
 
@@ -488,22 +565,12 @@ skibidi main {
 }
 ```
 
-### Explanation
-
-1. **`rizz i = 1;`** declares an integer `i` with initial value 1.
-2. **`goon (i < 5) { ... }`** loops while `i` is less than 5.
-3. Inside the loop, two prints:
-   - `yapping(...)` => includes an automatic newline.
-   - `yappin(...)` => user must add `\n` if needed.
-4. We increment `i` each iteration until `i >= 5`.
-5. **`edgy (i == 5) { ... } amogus { ... }`** checks if `i` is exactly 5. If not, logs an error using `baka(...)`.
-6. **`bussin 0;`** exits the program with code 0.
-
 ---
 
-## 11. Additional Notes
+## 12. Additional Notes
 
-- **Keywords** like `skibidi`, `rizz`, `goon`, `flex`, `edgy`, `amogus`, etc., are specialized synonyms for standard concepts (`main`, `int`, `while`, `for`, `if`, `else`, etc.).
+- **Keywords** like `skibidi`, `rizz`, `goon`, `flex`, `edgy`, `amogus`, `gang`, etc., are specialized synonyms for standard concepts (`main`, `int`, `while`, `for`, `if`, `else`, `struct`, etc.).
 - **Syntax** is otherwise quite C-like: `;` to end statements, braces `{ }` to define blocks, parentheses `( )` around conditions.
 - **Expressions** accept typical operators (`+`,`++`, `-`,`--`, `*`, `/`, `%`, relational, logical) plus the assignment operator `=`, matching standard precedence rules.
-- **Escapes in strings** (`"\n"`, `"\t"`, etc.) may require an unescape function in your lexer, so check that it’s converting them into real newlines or tabs at runtime.
+- **Escapes in strings** (`"\n"`, `"\t"`, etc.) may require an unescape function in your lexer, so check that it's converting them into real newlines or tabs at runtime.
+````

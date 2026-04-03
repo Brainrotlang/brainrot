@@ -51,9 +51,12 @@ static void process_baka_format(const char *format, const StdrotValue *args, int
             if (spec == '\0') break;
 
             char specifier[32];
-            int length = format - start + 1;
-            if (length >= (int)sizeof(specifier)) length = sizeof(specifier) - 1;
-            strncpy(specifier, start, length);
+            size_t length = (size_t)(format - start + 1);
+
+            if (length >= sizeof(specifier))
+                length = sizeof(specifier) - 1;
+
+            memcpy(specifier, start, length);
             specifier[length] = '\0';
 
             const StdrotValue *arg = &args[arg_idx];
@@ -84,8 +87,8 @@ static void process_baka_format(const char *format, const StdrotValue *args, int
                     buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, "%c", arg->val.i);
                 }
             } else if (spec == 's') {
-                if (arg->type == STDROT_STRING && arg->val.str) {
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, "%s", arg->val.str);
+                if (arg->type == STDROT_STRING && arg->val.str.data) {
+                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, "%s", arg->val.str.data);
                 }
             }
 
@@ -103,8 +106,8 @@ static void process_baka_format(const char *format, const StdrotValue *args, int
 
 static StdrotValue stdrot_baka(StdrotValue *args, int arg_count)
 {
-    if (arg_count > 0 && args[0].type == STDROT_STRING && args[0].val.str) {
-        process_baka_format(args[0].val.str, &args[1], arg_count - 1);
+    if (arg_count > 0 && args[0].type == STDROT_STRING && args[0].val.str.data) {
+        process_baka_format(args[0].val.str.data, &args[1], arg_count - 1);
     }
     return (StdrotValue){STDROT_NONE, {0}};
 }
