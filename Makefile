@@ -5,7 +5,7 @@ FLEX := flex
 PYTHON := python3
 
 # Compiler and linker flags
-CFLAGS := -Wall -Wextra -Wpedantic -Werror -O2  -Wuninitialized
+CFLAGS := -Wall -Wextra -Wpedantic -Werror -O2 -Wuninitialized -fsanitize=address,undefined -fno-omit-frame-pointer -g
 LDFLAGS := -lfl -lm -ldl -rdynamic
 SO_CFLAGS := -fPIC -shared
 

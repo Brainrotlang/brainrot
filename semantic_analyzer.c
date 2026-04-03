@@ -106,22 +106,18 @@ bool semantic_analyze(ASTNode *root) {
 }
 
 /* Add a semantic error */
-void add_semantic_error(SemanticAnalyzer *analyzer, SemanticErrorType type, 
-                       char *message, int line_number) {
-    if (!analyzer || !message) return;
-    
+void add_semantic_error(SemanticAnalyzer *analyzer, SemanticErrorType type,
+                        String message, int line_number) {
+    if (!analyzer || !message.data) return;
+
     SemanticError *error = SAFE_MALLOC(SemanticError);
     if (!error) return;
-    
+
     error->type = type;
-    String s = {
-        .data = message,
-        .len = MAX_BUFFER_LEN
-    };
-    error->message = safe_strdup(&s);
+    error->message = safe_strdup(&message);
     error->line_number = (line_number > 0) ? line_number : 1;
     error->next = analyzer->errors;
-    
+
     analyzer->errors = error;
     analyzer->has_errors = true;
     analyzer->error_count++;
@@ -411,7 +407,7 @@ bool validate_binary_operation(ASTNode *left, ASTNode *right, OperatorType op, S
                     return true;
                 }
                 add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
-                                  "Invalid pointer arithmetic", 1);
+                                  STRING_LITERAL("Invalid pointer arithmetic"), 1);
                 return false;
             }
             /* fallthrough */
@@ -432,7 +428,7 @@ bool validate_binary_operation(ASTNode *left, ASTNode *right, OperatorType op, S
                     snprintf(error_msg, sizeof(error_msg), 
                             "Arithmetic operation requires numeric types, got %s and %s", 
                             vartype_to_string(left_type), vartype_to_string(right_type));
-                    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH, error_msg, 1);
+                    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH, STRING_LITERAL(error_msg), 1);
                     return false;
                 }
                 return true; /* Allow most numeric combinations */
@@ -467,7 +463,7 @@ bool validate_binary_operation(ASTNode *left, ASTNode *right, OperatorType op, S
                     snprintf(error_msg, sizeof(error_msg), 
                             "Relational comparison requires numeric types, got %s and %s", 
                             vartype_to_string(left_type), vartype_to_string(right_type));
-                    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH, error_msg, 1);
+                    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH, STRING_LITERAL(error_msg), 1);
                     return false;
                 }
                 return true;
@@ -513,7 +509,7 @@ void* semantic_visit_identifier(Visitor *self, ASTNode *node) {
             char error_msg[MAX_BUFFER_LEN];
             snprintf(error_msg, sizeof(error_msg), "Variable '%s' is out of scope", name.data);
             add_semantic_error(analyzer, SEMANTIC_ERROR_SCOPE_ERROR, 
-                              error_msg, node->line_number > 0 ? node->line_number : 1);
+                              STRING_LITERAL(error_msg), node->line_number > 0 ? node->line_number : 1);
         } else {
             Variable *var = get_variable(name);
             if (!var) {
@@ -521,7 +517,7 @@ void* semantic_visit_identifier(Visitor *self, ASTNode *node) {
                     char error_msg[MAX_BUFFER_LEN];
                     snprintf(error_msg, sizeof(error_msg), "Undefined variable '%s'", name.data);
                     add_semantic_error(analyzer, SEMANTIC_ERROR_UNDEFINED_VARIABLE, 
-                                      error_msg, node->line_number > 0 ? node->line_number : 1);
+                                      STRING_LITERAL(error_msg), node->line_number > 0 ? node->line_number : 1);
                 }
             }
         }
@@ -543,7 +539,7 @@ void* semantic_visit_function_call(Visitor *self, ASTNode *node) {
             char error_msg[MAX_BUFFER_LEN];
             snprintf(error_msg, sizeof(error_msg), "Undefined function '%s'", func_name.data);
             add_semantic_error(analyzer, SEMANTIC_ERROR_UNDEFINED_FUNCTION, 
-                              error_msg, node->line_number > 0 ? node->line_number : 1);
+                              STRING_LITERAL(error_msg), node->line_number > 0 ? node->line_number : 1);
         }
     }
     
@@ -584,7 +580,7 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node) {
                     "Type mismatch in initialization of '%s': expected %s, got %s", 
                     var_name.data, vartype_to_string(declared_type), vartype_to_string(init_type));
             add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH, 
-                              error_msg, 1);
+                              STRING_LITERAL(error_msg), 1);
         }
     }
 }
@@ -602,7 +598,7 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node) {
         ASTNode *operand = node->data.op.left->data.unary.operand;
         if (infer_expression_pointer_level(operand, analyzer) <= 0) {
             add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
-                              "Cannot dereference a non-pointer expression",
+                              STRING_LITERAL("Cannot dereference a non-pointer expression"),
                               node->line_number > 0 ? node->line_number : 1);
             return;
         }
@@ -622,7 +618,7 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node) {
                     char error_msg[MAX_BUFFER_LEN];
                     snprintf(error_msg, sizeof(error_msg), "Assignment to undefined variable '%s'", var_name.data);
                     add_semantic_error(analyzer, SEMANTIC_ERROR_UNDEFINED_VARIABLE, 
-                                      error_msg, node->line_number > 0 ? node->line_number : 1);
+                                      STRING_LITERAL(error_msg), node->line_number > 0 ? node->line_number : 1);
                 }
                 return;
             }
@@ -631,14 +627,14 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node) {
                 char error_msg[MAX_BUFFER_LEN];
                 snprintf(error_msg, sizeof(error_msg), "Cannot assign to const variable '%s'", var_name.data);
                 add_semantic_error(analyzer, SEMANTIC_ERROR_CONST_ASSIGNMENT, 
-                                  error_msg, node->line_number > 0 ? node->line_number : 1);
+                                  STRING_LITERAL(error_msg), node->line_number > 0 ? node->line_number : 1);
             }
         } else {
             if (symbol->is_const) {
                 char error_msg[MAX_BUFFER_LEN];
                 snprintf(error_msg, sizeof(error_msg), "Cannot assign to const variable '%s'", var_name.data);
                 add_semantic_error(analyzer, SEMANTIC_ERROR_CONST_ASSIGNMENT, 
-                                  error_msg, node->line_number > 0 ? node->line_number : 1);
+                                  STRING_LITERAL(error_msg), node->line_number > 0 ? node->line_number : 1);
             }
         }
     }
@@ -649,7 +645,7 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node) {
         !(node->data.op.left->type == NODE_UNARY_OPERATION && 
           node->data.op.left->data.unary.op == OP_DEREFERENCE)) {
         add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
-                          "Left-hand side of assignment is not assignable",
+                          STRING_LITERAL("Left-hand side of assignment is not assignable"),
                           node->line_number > 0 ? node->line_number : 1);
         return;
     }
@@ -662,7 +658,7 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node) {
     if ((target_pointer_level > 0 || value_pointer_level > 0) &&
         !check_type_compatibility_ex(target_type, target_pointer_level, value_type, value_pointer_level)) {
         add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
-                          "Assignment type mismatch",
+                          STRING_LITERAL("Assignment type mismatch"),
                           node->line_number > 0 ? node->line_number : 1);
     }
 }
@@ -756,7 +752,7 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node) {
                     char error_msg[MAX_BUFFER_LEN];
                     snprintf(error_msg, sizeof(error_msg), "Function '%s' is already defined", node->data.function_def.name.data);
                     add_semantic_error(analyzer, SEMANTIC_ERROR_REDEFINITION, 
-                                      error_msg, node->line_number > 0 ? node->line_number : 1);
+                                      STRING_LITERAL(error_msg), node->line_number > 0 ? node->line_number : 1);
                 } else {
                     add_symbol(analyzer, node->data.function_def.name, NONE, 0, false, true, 
                               node->data.function_def.return_type, node->pointer_level,
@@ -997,13 +993,13 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer, ASTNode *n
                     (operand->type == NODE_UNARY_OPERATION && operand->data.unary.op == OP_DEREFERENCE));
                 if (!valid_lvalue) {
                     add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
-                                      "Address-of requires an assignable expression",
+                                      STRING_LITERAL("Address-of requires an assignable expression"),
                                       node->line_number > 0 ? node->line_number : 1);
                 }
             } else if (node->data.unary.op == OP_DEREFERENCE) {
                 if (infer_expression_pointer_level(node->data.unary.operand, analyzer) <= 0) {
                     add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
-                                      "Cannot dereference a non-pointer expression",
+                                      STRING_LITERAL("Cannot dereference a non-pointer expression"),
                                       node->line_number > 0 ? node->line_number : 1);
                 }
             }
@@ -1025,7 +1021,7 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer, ASTNode *n
                 if (!var) break;
                 if (var->var_type != VAR_STRUCT) {
                     add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
-                        "Member access on non-struct variable",
+                        STRING_LITERAL("Member access on non-struct variable"),
                         node->line_number > 0 ? node->line_number : 1);
                     break;
                 }
@@ -1038,7 +1034,7 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer, ASTNode *n
                              var->struct_name.data,
                              node->data.struct_access.member_name.data);
                     add_semantic_error(analyzer, SEMANTIC_ERROR_UNDEFINED_VARIABLE,
-                                       msg, node->line_number > 0 ? node->line_number : 1);
+                                       STRING_LITERAL(msg), node->line_number > 0 ? node->line_number : 1);
                 }
             }
             break;
@@ -1107,7 +1103,7 @@ void semantic_analyze_node(SemanticAnalyzer *analyzer, ASTNode *node) {
                     char error_msg[MAX_BUFFER_LEN];
                     snprintf(error_msg, sizeof(error_msg), "Undefined variable '%s'", name.data);
                     add_semantic_error(analyzer, SEMANTIC_ERROR_UNDEFINED_VARIABLE, 
-                                      error_msg, node->line_number > 0 ? node->line_number : 1);
+                                      STRING_LITERAL(error_msg), node->line_number > 0 ? node->line_number : 1);
                 }
             }
             break;
@@ -1124,12 +1120,12 @@ void semantic_analyze_node(SemanticAnalyzer *analyzer, ASTNode *node) {
                         char error_msg[MAX_BUFFER_LEN];
                         snprintf(error_msg, sizeof(error_msg), "Assignment to undefined variable '%s'", var_name.data);
                         add_semantic_error(analyzer, SEMANTIC_ERROR_UNDEFINED_VARIABLE, 
-                                          error_msg, node->line_number > 0 ? node->line_number : 1);
+                                          STRING_LITERAL(error_msg), node->line_number > 0 ? node->line_number : 1);
                     } else if (symbol && symbol->is_const) {
                         char error_msg[MAX_BUFFER_LEN];
                         snprintf(error_msg, sizeof(error_msg), "Cannot assign to const variable '%s'", var_name.data);
                         add_semantic_error(analyzer, SEMANTIC_ERROR_CONST_ASSIGNMENT, 
-                                          error_msg, node->line_number > 0 ? node->line_number : 1);
+                                          STRING_LITERAL(error_msg), node->line_number > 0 ? node->line_number : 1);
                     }
                 } else if (node->data.op.left->type != NODE_ARRAY_ACCESS &&
                    node->data.op.left->type != NODE_STRUCT_ACCESS &&
@@ -1240,13 +1236,13 @@ void semantic_analyze_node(SemanticAnalyzer *analyzer, ASTNode *node) {
                     (operand->type == NODE_UNARY_OPERATION && operand->data.unary.op == OP_DEREFERENCE));
                 if (!valid_lvalue) {
                     add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
-                                      "Address-of requires an assignable expression",
+                                      STRING_LITERAL("Address-of requires an assignable expression"),
                                       node->line_number > 0 ? node->line_number : 1);
                 }
             } else if (node->data.unary.op == OP_DEREFERENCE) {
                 if (infer_expression_pointer_level(node->data.unary.operand, analyzer) <= 0) {
                     add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
-                                      "Cannot dereference a non-pointer expression",
+                                      STRING_LITERAL("Cannot dereference a non-pointer expression"),
                                       node->line_number > 0 ? node->line_number : 1);
                 }
             }
@@ -1314,7 +1310,7 @@ bool add_semantic_variable(SemanticAnalyzer *analyzer, const String name, VarTyp
     if (hm_get(analyzer->current_scope->variables, name.data, name.len + 1)) {
         char error_msg[MAX_BUFFER_LEN];
         snprintf(error_msg, sizeof(error_msg), "Variable '%s' already declared in current scope", name.data);
-        add_semantic_error(analyzer, SEMANTIC_ERROR_REDEFINITION, error_msg, 1);
+        add_semantic_error(analyzer, SEMANTIC_ERROR_REDEFINITION, STRING_LITERAL(error_msg), 1);
         return false;
     }
     
