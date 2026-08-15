@@ -34,9 +34,9 @@ merge" / "what's missing before I open a PR."
 7. **Docs**: if a keyword/builtin's implementation status changed, check
    `README.md`'s table and `docs/the-brainrot-programming-language.md` were
    updated to match.
-8. **PR hygiene**: check the change follows `.github/PULL_REQUEST_TEMPLATE.md`
-   (description, linked issue, type of change, checklist) if reviewing an
-   actual PR.
+8. **PR hygiene**: every PR must follow `.github/PULL_REQUEST_TEMPLATE.md` in
+   full (description, linked issue, type of change, checklist) — a PR with the
+   template stripped down or sections left unfilled is not ready to merge.
 
 ## Conventions and Best Practices
 

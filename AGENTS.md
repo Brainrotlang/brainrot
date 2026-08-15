@@ -55,9 +55,15 @@ pass both `make test` and `make valgrind` — the codebase compiles with
 build failures, not suggestions. Memory safety is a recurring source of real
 bugs here; treat any new leak/UB as a blocker, not a follow-up.
 
+## Pull Requests
+
+Every PR must follow `.github/PULL_REQUEST_TEMPLATE.md` (Description, Related
+Issue, Type of Change, Checklist) — fill it in, don't strip it out.
+
 ## Boundaries
 
 - **Always**: run `make test` and `make valgrind` before calling a change done.
+- **Always**: fill out `.github/PULL_REQUEST_TEMPLATE.md` in full when opening a PR.
 - **Ask first**: changing existing keyword syntax/semantics in `lang.l`/`lang.y`
   (README's keyword table is a public compatibility surface).
 - **Never**: commit generated files (`lang.tab.*`, `lex.yy.c`, `brainrot`,

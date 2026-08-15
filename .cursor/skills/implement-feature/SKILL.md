@@ -40,6 +40,9 @@ the ❌ rows in the README keyword table, like `gyatt`/enum or `chungus`/union).
     in `docs/the-brainrot-programming-language.md` if it's a builtin/keyword.
 12. **Build and test**: `make && make test && make valgrind`. All three must
     pass — the build uses `-Werror -fsanitize=address,undefined`.
+13. **Open the PR using `.github/PULL_REQUEST_TEMPLATE.md`**: fill in every
+    section (Description, Related Issue, Type of Change, Checklist) — don't
+    submit a bare description.
 
 ## Conventions and Best Practices
 

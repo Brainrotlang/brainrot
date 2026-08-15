@@ -33,6 +33,9 @@ error, a Valgrind leak, or a failing pytest case for a `.brainrot` program.
    expected output to `tests/expected_results.json` so it can't regress silently.
 6. **Verify the full suite still passes**: `make test && make valgrind`. Fixing
    one bug must not reintroduce another — the whole point of these two gates.
+7. **Open the PR using `.github/PULL_REQUEST_TEMPLATE.md`**: fill in every
+   section (Description, Related Issue, Type of Change, Checklist) — don't
+   submit a bare description.
 
 ## Conventions and Best Practices
 
