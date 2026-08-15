@@ -1,0 +1,33 @@
+name: Discord PR Notification
+
+# Uses pull_request_target (not pull_request) so the workflow has access to
+# the DISCORD_WEBHOOK_URL secret even for PRs opened from forks. This is safe
+# here because the job never checks out or executes the PR's code — it only
+# reads metadata from the event payload and posts it to Discord.
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions: {}
+
+jobs:
+  notify-discord:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post new PR to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo "DISCORD_WEBHOOK_URL secret is not set; skipping notification." >&2
+            exit 0
+          fi
+
+          content="📬 New PR opened by **${PR_AUTHOR}**: [#${PR_NUMBER} ${PR_TITLE}](${PR_URL})"
+          payload=$(jq -n --arg content "$content" '{content: $content}')
+
+          curl -sf -H "Content-Type: application/json" -X POST -d "$payload" "$DISCORD_WEBHOOK_URL"
