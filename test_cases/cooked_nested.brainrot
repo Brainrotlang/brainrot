@@ -1,0 +1,9 @@
+🚽 Regression test: #cooked paths resolve relative to the including file's
+🚽 own directory at every nesting level, independent of the top-level file's
+🚽 location or the caller's CWD.
+#cooked "sub/mod.brainrot"
+
+skibidi main {
+    yapping("%d", mod_combine(5));
+    bussin 0;
+}

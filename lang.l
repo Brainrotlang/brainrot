@@ -4,6 +4,7 @@
 #include <string.h>
 #include <errno.h>
 #include <libgen.h>
+#include <sys/stat.h>
 #include "ast.h"
 #include "lib/mem.h"
 #include "lib/arena.h"
@@ -38,32 +39,17 @@ static int visited_count = 0;
  * relative #cooked resolution and error messages. Owned by this subsystem. */
 char *current_filename = NULL;
 
-/* Fatal #cooked error exit. exit() skips the normal <<EOF>> unwind that
- * closes one file and pops one flex buffer per open #cooked file, so
- * without this, both the open FILE*s and yypush_buffer_state's internal
- * allocations for every still-open ancestor would never be freed/closed,
- * and LeakSanitizer would flag them.
- *
- * This closes everything itself (innermost file + every ancestor) rather
- * than leaving the innermost file for lang.y's cleanup(): yypop_buffer_state
- * resets the global yyin to whatever file each popped-to buffer belongs to,
- * which after a full unwind is the same FILE* this loop already closed —
- * cleanup()'s own "close yyin if still open" step would then double-close
- * it. Nulling yyin here (both before and after the unwind) makes that step
- * a safe no-op. include_stack's filename strings, current_filename, and
- * visited_paths are still freed afterwards by cooked_cleanup() via
- * atexit(cleanup) as usual. */
+/* Fatal #cooked error exit. Closes the innermost (currently active) file
+ * immediately, since cleanup() won't run until exit()'s atexit chain fires.
+ * Everything else — every ancestor FILE*, flex's pushed buffers, and all
+ * strings this subsystem owns — is unwound uniformly by cooked_cleanup()
+ * (see below), which atexit(cleanup) already calls on every exit path, not
+ * just this one. That matters: a plain bison syntax error while a #cooked
+ * file is still on the stack (e.g. malformed content in an included file)
+ * exits via main()'s ordinary `return 1`, never touching this function at
+ * all, and still needs the exact same unwind. */
 static void cooked_die(void) {
     if (yyin) { fclose(yyin); yyin = NULL; }
-    while (include_stack_top > 0) {
-        include_stack_top--;
-        if (include_stack[include_stack_top].file) {
-            fclose(include_stack[include_stack_top].file);
-        }
-        free(include_stack[include_stack_top].filename);
-        yypop_buffer_state();
-    }
-    yyin = NULL; /* undo yypop_buffer_state's restore of an already-closed FILE* */
     exit(1);
 }
 
@@ -123,6 +109,19 @@ static char *resolve_cooked_path(const char *raw) {
         cooked_die();
     }
     free(joined);
+
+    /* fopen("r") on a directory succeeds on Linux, then flex's own read
+     * fails later with an opaque "input in flex scanner failed" — reject it
+     * here with a clear diagnostic instead. */
+    struct stat st;
+    if (stat(resolved, &st) != 0 || !S_ISREG(st.st_mode)) {
+        char *base = basename_copy(current_filename);
+        fprintf(stderr, "Error: %s:%d: #cooked \"%s\" is not a regular file\n",
+                base, yylineno, raw);
+        free(base);
+        free(resolved);
+        cooked_die();
+    }
     return resolved;
 }
 
@@ -155,6 +154,12 @@ static void handle_cooked_directive(const char *text) {
                 fprintf(stderr, "  %s\n", base);
                 free(base);
             }
+            /* include_stack holds ancestors only — the file that's actually
+             * performing this doomed #cooked (current_filename) is the last
+             * link in the chain before it cycles back to `resolved`. */
+            char *cur_base = basename_copy(current_filename);
+            fprintf(stderr, "  %s\n", cur_base);
+            free(cur_base);
             char *base = basename_copy(resolved);
             fprintf(stderr, "  %s  <-- already included above\n", base);
             free(base);
@@ -197,13 +202,27 @@ static void handle_cooked_directive(const char *text) {
         cooked_die();
     }
 
+    /* Do the fallible visited-set copy *before* touching include_stack: if
+     * it fails, yyin/current_filename must still describe the parent only
+     * (not yet duplicated into include_stack), so cooked_die()'s "close
+     * yyin" is closing a file cooked_cleanup() doesn't also know about —
+     * otherwise this would double-close the same FILE* once here and once
+     * more when cooked_cleanup() walks the ancestor it was already
+     * recorded as. */
+    char *visited_copy = strdup(resolved);
+    if (!visited_copy) {
+        fclose(inc);
+        fprintf(stderr, "out of memory\n");
+        free(resolved);
+        cooked_die();
+    }
+
     include_stack[include_stack_top].file = yyin;
     include_stack[include_stack_top].filename = current_filename;
     include_stack[include_stack_top].saved_lineno = yylineno;
     include_stack_top++;
 
-    visited_paths[visited_count] = strdup(resolved);
-    if (!visited_paths[visited_count]) { fprintf(stderr, "out of memory\n"); exit(1); }
+    visited_paths[visited_count] = visited_copy;
     visited_count++;
 
     current_filename = resolved; /* ownership transferred */
@@ -224,18 +243,34 @@ void cooked_init(const char *initial_filename) {
     visited_count = 0;
 }
 
-/* Called once from cleanup(); closes any files left open by an abnormal
- * exit (e.g. a parse error partway through an included file) and frees all
- * strings owned by this subsystem. Does not touch yyin/the innermost file —
- * that remains lang.y's cleanup() responsibility. */
+/* Called once from cleanup(), on every exit path (normal completion, a
+ * plain bison syntax error, or a #cooked-specific fatal error via
+ * cooked_die()). Closes every ancestor FILE* left open by an abnormal exit
+ * (e.g. a parse error partway through an included file) and unwinds every
+ * buffer this subsystem pushed via yypush_buffer_state — flex's own
+ * yylex_destroy() only frees whichever buffer is current at the time it's
+ * called, not the whole push stack, so without this, every ancestor's
+ * yy_create_buffer allocation leaks under LeakSanitizer whenever we exit
+ * before naturally popping back out through <<EOF>> (e.g. a syntax error
+ * inside an included file). Also frees every string this subsystem owns.
+ *
+ * Does not touch yyin/the innermost file itself — lang.y's cleanup() closes
+ * that before calling here. yypop_buffer_state resets the global yyin to
+ * whichever file each popped-to buffer belongs to, which after a full
+ * unwind is the same FILE* this loop already closed itself (for ancestors)
+ * or that cleanup() already closed (for the innermost file) — nulling yyin
+ * after the loop prevents either from being double-closed by whatever runs
+ * next. */
 void cooked_cleanup(void) {
-    for (int i = 0; i < include_stack_top; i++) {
-        if (include_stack[i].file) {
-            fclose(include_stack[i].file);
+    while (include_stack_top > 0) {
+        include_stack_top--;
+        if (include_stack[include_stack_top].file) {
+            fclose(include_stack[include_stack_top].file);
         }
-        free(include_stack[i].filename);
+        free(include_stack[include_stack_top].filename);
+        yypop_buffer_state();
     }
-    include_stack_top = 0;
+    yyin = NULL;
 
     free(current_filename);
     current_filename = NULL;
@@ -367,10 +402,16 @@ extern int yylineno;
 
 "🚽"[^\n]*      ; /* Ignore single line comments */
 
-^[ \t]*"#cooked"[ \t]+\"[^"\n]*\"[ \t]*\n? {
+^[ \t]*"#cooked"[ \t]+\"[^"\n]*\"[ \t]* {
+    /* Deliberately doesn't consume the trailing newline: with %option
+     * yylineno, a match containing '\n' bumps yylineno before this action
+     * runs, so diagnostics inside handle_cooked_directive would report the
+     * *next* line instead of the directive's own line. Leaving '\n'
+     * unmatched lets the ordinary whitespace rule below consume it
+     * afterward, on its own turn. */
     handle_cooked_directive(yytext);
 }
-^[ \t]*"#cooked"[^\n]*\n? {
+^[ \t]*"#cooked"[^\n]* {
     char *base = basename_copy(current_filename);
     fprintf(stderr, "Error: %s:%d: malformed #cooked directive "
             "(expected: #cooked \"path/to/file.brainrot\")\n",

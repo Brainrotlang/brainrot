@@ -1,0 +1,8 @@
+🚽 Exercises both relative-path forms: a peer in the same directory and a
+🚽 parent-directory path, both resolved relative to *this* file's directory.
+#cooked "peer.brainrot"
+#cooked "../lib.brainrot"
+
+rizz mod_combine(rizz n) {
+    bussin lib_double(peer_increment(n));
+}
