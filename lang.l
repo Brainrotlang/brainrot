@@ -226,7 +226,8 @@ static void handle_cooked_directive(const char *text) {
     visited_count++;
 
     current_filename = resolved; /* ownership transferred */
-    yylineno = 1;
+    yylineno = 1; /* NOTE: a syntax error on this file's own line 1 will
+                     print "line 0" — see the comment on yyerror in lang.y. */
     yypush_buffer_state(yy_create_buffer(inc, YY_BUF_SIZE));
 }
 

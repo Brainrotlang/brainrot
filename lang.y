@@ -802,7 +802,17 @@ void yyerror(const char *s) {
      * test_cases/expected_results.json entries depend on verbatim — not
      * safe to change without touching every call site. current_filename is
      * available (see cooked_init/cooked_cleanup in lang.l) for a future,
-     * more surgical pass at multi-file error attribution. */
+     * more surgical pass at multi-file error attribution.
+     *
+     * Known pre-existing quirk, unrelated to #cooked but made much more
+     * likely by it: the `yylineno - 1` below is a heuristic that assumes
+     * bison's one-token lookahead has already advanced past the error line,
+     * which is wrong for a syntax error on line 1 of *any* file (prints
+     * "line 0"). #cooked resets yylineno to 1 for every included file (see
+     * handle_cooked_directive in lang.l), so a syntax error on an included
+     * file's first line hits this every time. Fixing it properly needs
+     * filename+line attribution on ASTNode, which is the same follow-up
+     * noted above — not fixed here. */
     fprintf(stderr, "Error: %s at line %d\n", s, yylineno - 1);
 }
 
