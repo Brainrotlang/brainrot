@@ -170,6 +170,7 @@ Check out the [examples](examples/README.md):
 - [Bubble Sort](examples/bubble_sort.brainrot)
 - [One-dimensional Heat Equation Solver](examples/heat_equation_1d.brainrot)
 - [Fibonacci Sequence](examples/fibonacci.brainrot)
+- [Modules (`#cooked`)](examples/modules.brainrot)
 
 ## 🗪 Community
 

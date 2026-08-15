@@ -336,4 +336,46 @@ skibidi main{
 - Using a `goon` loop to find the next numbers, until limit.
 
 
+## 8. Modules (`#cooked`)
+
+**File Names:** `mathutils.brainrot`, `modules.brainrot`
+
+`mathutils.brainrot`:
+
+```c
+rizz square(rizz n) {
+    bussin n * n;
+}
+
+rizz cube(rizz n) {
+    bussin n * n * n;
+}
+```
+
+`modules.brainrot`:
+
+```c
+#cooked "mathutils.brainrot"
+
+skibidi main {
+    yapping("square(6) = %d", square(6));
+    yapping("cube(3) = %d", cube(3));
+    bussin 0;
+}
+```
+
+Run with `./brainrot examples/modules.brainrot`.
+
+### What It Does
+
+- Demonstrates `#cooked` (Brainrot's `#include`): `modules.brainrot` splices
+  in `mathutils.brainrot`'s functions and calls them from `main`.
+- `mathutils.brainrot` is a module, not a standalone program — it has no
+  `skibidi main` of its own, only function definitions, and can't be run
+  directly.
+- Showcases:
+  - Splitting a program across multiple files.
+  - Relative path resolution (`#cooked` paths resolve relative to the file
+    containing the directive).
+
 Feel free to explore and modify each example to learn more about how this language’s syntax and features work!

@@ -40,6 +40,22 @@ _(followed by a newline due to `yapping`)_
 
 ---
 
+## 2.1. Modules (`#cooked`)
+
+A program can be split across files with `#cooked`, Brainrot's `#include`:
+
+```c
+#cooked "path/to/file.brainrot"
+```
+
+The path resolves relative to the directory of the file containing the
+directive. A `#cooked`-included file should contain only function/struct
+definitions — not its own `skibidi main` — since it's spliced directly into
+the including file. See [the language reference](the-brainrot-programming-language.md#710-modules-cooked)
+for the full details (include-once behavior, circular-include detection).
+
+---
+
 # 3. Variables and Declarations
 
 Use **`rizz`** as the type for declaring integer variables. For instance:
