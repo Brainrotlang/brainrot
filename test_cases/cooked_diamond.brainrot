@@ -1,0 +1,8 @@
+🚽 Diamond include: both a and b cook the same shared module — must not double-define it.
+#cooked "cooked_diamond_a.brainrot"
+#cooked "cooked_diamond_b.brainrot"
+
+skibidi main {
+    yapping("%d %d", a_call(5), b_call(5));
+    bussin 0;
+}

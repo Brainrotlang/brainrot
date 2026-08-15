@@ -20,6 +20,7 @@ A Meme-Fueled Journey into Compiler Design, Internet Slang, and Skibidi Toilets
    - 7.7. User Defined Functions
    - 7.8. Pointers and Call by Reference
    - 7.9. Structs (`gang`)
+   - 7.10. Modules (`#cooked`)
 8. **Extended User Documentation**
    - 8.1. `yapping`
    - 8.2. `yappin`
@@ -437,6 +438,71 @@ Q: 10 20 0.0
 
 - Nested struct access (`p.inner.x`) is not yet supported.
 - Structs cannot be passed as function parameters or returned from functions.
+
+### 7.10. Modules (`#cooked`)
+
+`#cooked` is Brainrot's `#include`: it splices another `.brainrot` file's
+function and struct definitions into the current file at the point of the
+directive, so a program can be split across multiple files.
+
+#### Syntax
+
+```c
+#cooked "path/to/file.brainrot"
+```
+
+The directive must be alone on its line (leading whitespace is fine). Only
+the quoted form is supported — there is no `<...>` system-header equivalent,
+since stdrot's builtins are already globally available without an include.
+
+#### Path resolution
+
+A relative path is resolved relative to the directory of the file
+*containing* the `#cooked` directive (like C's quote-form `#include`), not
+the current working directory `brainrot` was invoked from. An absolute path
+is used as-is.
+
+#### What can be included
+
+A `#cooked`-included file is spliced in as top-level content, so it should
+contain only function and struct definitions — **not** its own `skibidi
+main`. (A Brainrot program has exactly one `main`; splicing in a second one
+is a parse error.)
+
+#### Include-once and circular includes
+
+Including the same file more than once (e.g. two modules that both `#cooked`
+a shared third module) is a no-op after the first time — Brainrot has no
+`#edgydef`/`#slaps` guards yet, so this is handled automatically. A file that
+`#cooked`s itself, directly or through a cycle of other files, is a compile
+error that reports the include chain instead of hanging.
+
+#### Example
+
+`mathutils.brainrot`:
+
+```c
+rizz square(rizz n) {
+    bussin n * n;
+}
+```
+
+`main.brainrot`:
+
+```c
+#cooked "mathutils.brainrot"
+
+skibidi main {
+    yapping("%d", square(6));
+    bussin 0;
+}
+```
+
+Output:
+
+```
+36
+```
 
 ## 8. Extended User Documentation
 
