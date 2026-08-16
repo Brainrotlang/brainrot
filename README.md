@@ -256,6 +256,12 @@ Current limitations include:
 - Basic error reporting
 - No support for arrays in user-defined functions
 
+## 🗺️ Roadmap
+
+Where Brainrot is headed — a native C ABI, generated library bindings (raylib
+first), threads, hashmaps and sockets — is documented in the
+[roadmap](docs/ROADMAP.md).
+
 ## 🔌 VSCode Extension
 
 Brainrot has a Visual Studio Code extension to enhance your development experience with syntax highlighting and support for the Brainrot programming language. You can find it here:
