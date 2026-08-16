@@ -384,16 +384,17 @@ problem.
 
 **Status: not started · Priority: P1 · Depends on: Phase 1**
 
-pthreads, behind slang. `yeet` launches work into the void; you `catch` it later.
+pthreads, behind slang. `yeet` launches work into the void; you get it `caught in
+4k` later.
 
-| Brainrot | C equivalent |
-| -------- | ------------ |
-| `yeet` | `pthread_create` |
-| `catch` | `pthread_join` |
-| `gatekeep` | mutex type / `pthread_mutex_lock` |
-| `letcook` | `pthread_mutex_unlock` |
-| `manifest` | `pthread_cond_wait` |
-| `notif` | `pthread_cond_signal` |
+| Brainrot | C equivalent | Mnemonic |
+| -------- | ------------ | -------- |
+| `yeet` | `pthread_create` | launch it into the void |
+| `caught in 4k` | `pthread_join` | catch what you yeeted, on camera |
+| `gatekeep` | mutex type / `pthread_mutex_lock` | nobody else gets in |
+| `letcook` | `pthread_mutex_unlock` | let the next one cook |
+| `bed rotting` | `pthread_cond_wait` | blocked, doing nothing, in bed |
+| `pick me` | `pthread_cond_signal` | wakes exactly one waiter |
 
 ```c
 skibidi worker(rizz id) {
@@ -405,11 +406,20 @@ skibidi worker(rizz id) {
 skibidi main {
     yeet t1 = yeet worker(1);
     yeet t2 = yeet worker(2);
-    catch t1;
-    catch t2;
+    caught in 4k t1;
+    caught in 4k t2;
     bussin 0;
 }
 ```
+
+`pick me` wakes one waiter, matching `pthread_cond_signal`. If we also want
+`pthread_cond_broadcast`, `ratioed` is the obvious name — everyone piles on at
+once.
+
+Multi-word keywords are already precedent: `"sigma rule"` lexes as `case` at
+[lang.l:72](../lang.l#L72), so `caught in 4k`, `bed rotting`, and `pick me` need
+no new lexer machinery. The digits in `4k` are harmless inside a quoted Flex
+pattern — longest-match means it never competes with number literals.
 
 ### The hard part is not pthreads
 
@@ -442,31 +452,35 @@ The grindset: you put things in, you get things out, it never stops. `lib/hm.c`
 already exists internally and is a plausible starting point, though it will need
 generic key/value support.
 
-| Operation | Keyword |
-| --------- | ------- |
-| declare | `grindset` |
-| insert | `stash` |
-| lookup | `fetch` |
-| membership | `sus` |
-| delete | `unalive` |
-| size | `bagsize` |
-| iterate | `flex` over a `grindset` |
+| Operation | Keyword | Mnemonic |
+| --------- | ------- | -------- |
+| declare | `grindset` | it never stops |
+| insert | `ship` | shipping = pairing two things (key + value) |
+| lookup | `clock it` | to clock something is to spot it |
+| membership | `sus` | you suspect it's in there |
+| delete | `unalive` | self-explanatory |
+| size | `bagsize` | how big is the bag |
+| iterate | `flex` over a `grindset` | reuses the existing loop keyword |
 
 ```c
 skibidi main {
     grindset<rant, rizz> scores;
 
-    stash(scores, "ohio", 100);
-    stash(scores, "skibidi", 42);
+    ship(scores, "ohio", 100);
+    ship(scores, "skibidi", 42);
 
     edgy (sus(scores, "ohio")) {
-        yapping("ohio: %d", fetch(scores, "ohio"));
+        yapping("ohio: %d", clock it(scores, "ohio"));
     }
 
     yapping("entries: %d", bagsize(scores));
     bussin 0;
 }
 ```
+
+`clock it(map, key)` reads awkwardly in call position — a fair argument that
+lookup should be a plain library function named `clock_it`, or that the whole
+map API should be. See the note at the end of Appendix A.
 
 ### Design decisions needed
 
@@ -491,23 +505,23 @@ sign-off before they touch `lang.l`.
 
 | Brainrot | C equivalent | Rationale |
 | -------- | ------------ | --------- |
-| `plug` | `socket()` | you plug in |
-| `posted` | `bind()` | posted up at an address |
+| `drip` | `socket()` | the conduit data flows through |
+| `soft launch` | `bind()` | quietly announcing yourself at an address |
 | `lurk` | `listen()` | lurking for connections |
-| `pull` | `accept()` | pulling a client |
-| `slide` | `connect()` | sliding into their DMs |
+| `snatched` | `accept()` | you snatch the incoming client |
+| `stan` | `connect()` | you stan a remote server |
 | `dm` | `send()` / `write()` | self-explanatory |
 | `peep` | `recv()` / `read()` | peep the message |
 | `ghost` | `close()` | ghosting the connection |
 
 ```c
 skibidi main {
-    rizz server = plug();
-    posted(server, 8080);
+    rizz server = drip();
+    soft launch(server, 8080);
     lurk(server, 128);
 
     goon (W) {
-        rizz client = pull(server);
+        rizz client = snatched(server);
         yeet handle(client);
     }
 }
@@ -546,7 +560,7 @@ consumer of the FFI work.
 | **M4 — Aggregates are first-class** | Phase 3b, 3c, 3e | `gang Vector2 GetMousePosition()`. |
 | **M5 — Modules** | Phase 4 | `#cooked <raylib>` means something. |
 | **M6 — Generated bindings** | Phase 5 Road B | raylib as first client; other libraries follow. |
-| **M7 — Concurrency** | Phase 6 | `yeet` / `catch`. |
+| **M7 — Concurrency** | Phase 6 | `yeet` / `caught in 4k`. |
 | **M8 — Data structures** | Phase 7 | `grindset`. |
 | **M9 — Network** | Phase 8 | Brainrot serves HTTP. |
 
@@ -570,34 +584,48 @@ Proposed additions. Nothing here conflicts with a keyword currently in `lang.l`.
 | Keyword | Meaning | Phase | Status |
 | ------- | ------- | ----- | ------ |
 | `yeet` | spawn thread | 6 | proposed |
-| `catch` | join thread | 6 | proposed |
+| `caught in 4k` | join thread | 6 | proposed |
 | `gatekeep` | mutex / lock | 6 | proposed |
 | `letcook` | unlock | 6 | proposed |
-| `manifest` | condition wait | 6 | proposed |
-| `notif` | condition signal | 6 | proposed |
+| `bed rotting` | condition wait | 6 | proposed |
+| `pick me` | condition signal | 6 | proposed |
+| `ratioed` | condition broadcast | 6 | optional |
 | `grindset` | hashmap | 7 | proposed |
-| `stash` | map insert | 7 | proposed |
-| `fetch` | map lookup | 7 | proposed |
+| `ship` | map insert | 7 | proposed |
+| `clock it` | map lookup | 7 | proposed |
 | `sus` | map contains | 7 | proposed |
 | `unalive` | map delete | 7 | proposed |
 | `bagsize` | map size | 7 | proposed |
-| `plug` | socket | 8 | proposed |
-| `posted` | bind | 8 | proposed |
+| `drip` | socket | 8 | proposed |
+| `soft launch` | bind | 8 | proposed |
 | `lurk` | listen | 8 | proposed |
-| `pull` | accept | 8 | proposed |
-| `slide` | connect | 8 | proposed |
+| `snatched` | accept | 8 | proposed |
+| `stan` | connect | 8 | proposed |
 | `dm` | send | 8 | proposed |
 | `peep` | recv | 8 | proposed |
 | `ghost` | close | 8 | proposed |
+
+None of these collide with a keyword currently in `lang.l`, with a registered
+builtin (`yapping`, `yappin`, `baka`, `bet`, `chill`, `ragequit`, `slorp`), or
+with a proposed preprocessor directive. `letcook` is deliberately one word so it
+cannot be confused with the `#cooked` directive.
 
 Per `AGENTS.md`, the README keyword table is a public compatibility surface.
 These are additive, but the table must be updated in the same PR that implements
 each keyword, and any change to an *existing* keyword needs explicit sign-off.
 
 Several of these could reasonably be library functions instead of keywords —
-`stash`/`fetch`/`dm`/`peep` in particular. Keyword status buys syntax; it costs
+`ship`/`clock it`/`dm`/`peep` in particular. Keyword status buys syntax; it costs
 grammar complexity and a reserved identifier forever. Decide per keyword, and
 default to "library function" when in doubt.
+
+The multi-word names are the sharpest version of this trade. `caught in 4k t1;`
+reads beautifully as a statement, because that is a statement-shaped operation.
+`clock it(scores, "ohio")` reads badly, because lookup is expression-shaped and
+a phrase does not sit well in call position. A reasonable rule: **phrases earn
+keyword status only where they appear in statement position**; everything
+expression-shaped becomes a snake_case library function (`clock_it`, `soft_launch`)
+and keeps the joke without fighting the grammar.
 
 ---
 
