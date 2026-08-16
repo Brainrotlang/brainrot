@@ -146,6 +146,23 @@ sudo make install
 sudo make uninstall
 ```
 
+## 🌐 WebAssembly build
+
+`make wasm` builds `brainrot.wasm` + `brainrot.mjs` using [Emscripten](https://emscripten.org/) — this is what powers the in-browser playground. Requires `emcc` on your `PATH` (install via [emsdk](https://emscripten.org/docs/getting_started/downloads.html)):
+
+```bash
+make wasm
+```
+
+The interpreter is statically linked for this target (no `libstdrot.so`, no `dlopen` — see `stdrot.c`'s `STDROT_STATIC` path), and takes its source file the same way the native binary does, via `argv[1]` written into Emscripten's in-memory filesystem before calling `callMain`.
+
+Known platform-specific differences from the native build, tracked upstream:
+
+- `sizeof(giga)` is `4`, not `8` — wasm32 uses the ILP32 data model (`long` = 4 bytes) instead of native's LP64 ([#177](https://github.com/Brainrotlang/brainrot/issues/177)).
+- A handful of harmless `Warning: Attempt to free invalid/corrupted pointer` lines can appear on stderr during interpreter teardown ([#176](https://github.com/Brainrotlang/brainrot/issues/176)). stdout is unaffected.
+
+`node tests/run_wasm_tests.mjs` runs the same fixtures as the native `pytest` suite against the wasm build (skipping the two issues above) — run it after `make wasm` to sanity-check a build.
+
 ## 💻 Usage
 
 1. Create a Brainrot source file (e.g., `hello.brainrot`):

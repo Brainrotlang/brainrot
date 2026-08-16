@@ -82,3 +82,34 @@ jobs:
           chmod +x run_valgrind_tests.sh
           ./run_valgrind_tests.sh
         working-directory: .
+
+  wasm:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install bison flex -y
+
+      - name: Set up Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.73
+
+      - name: Build brainrot.wasm
+        run: make wasm
+
+      - name: Run wasm smoke tests
+        run: node tests/run_wasm_tests.mjs
+
+      - name: Upload wasm artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: brainrot-wasm
+          path: |
+            brainrot.wasm
+            brainrot.mjs
