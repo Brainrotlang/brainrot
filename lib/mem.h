@@ -18,7 +18,18 @@
 #define ALIGNMENT sizeof(void *)
 
 // Magic number to detect buffer overruns and validate pointers
-#define MEMORY_GUARD 0xDEADBEEFDEADBEEFULL
+//
+// Cast to size_t explicitly: on an ILP32 target (e.g. wasm32, where
+// size_t is 32-bit) an uncast 0xDEADBEEFDEADBEEFULL literal is stored
+// truncated into `guard` (size_t) but compared against the full 64-bit
+// literal, so the comparison promotes `guard` back up via zero-extension
+// and never matches — safe_free() would treat every real safe_malloc
+// pointer as corrupted and skip freeing it, unconditionally, on any
+// platform where size_t is narrower than 64 bits. The cast makes both
+// the stored value and the literal used for comparison the same
+// (truncated) size_t value on such platforms, and is a no-op on 64-bit
+// platforms where size_t already holds the full pattern.
+#define MEMORY_GUARD ((size_t)0xDEADBEEFDEADBEEFULL)
 
 typedef struct
 {

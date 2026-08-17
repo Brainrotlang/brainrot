@@ -2,14 +2,29 @@
  *
  * This file is the glue between:
  *   • the AST/interpreter (understands ASTNode, ArgumentList, Variable, etc.)
- *   • libstdrot.so (pure I/O functions, zero interpreter dependency)
+ *   • the stdrot implementations (pure I/O functions, zero interpreter
+ *     dependency), reached one of two ways depending on STDROT_STATIC:
  *
- * It provides:
- *   1. Dynamic loader (stdrot_load/unload) that opens libstdrot.so and
- *      discovers all functions via stdrot_get_api()
- *   2. Thin varargs stubs (yapping/yappin/baka) that forward to the .so
+ *   STDROT_STATIC undefined (default, native build):
+ *     the stdrot sources are compiled into libstdrot.so and dlopen'd at
+ *     runtime.
+ *     1. Dynamic loader (stdrot_load/unload) that opens libstdrot.so and
+ *        discovers all functions via stdrot_get_api()
+ *     2. Thin varargs stubs (yapping/yappin/baka) and per-type slorp/
+ *        ragequit/chill stubs that dlsym their real implementation by name
+ *        on first use
+ *
+ *   STDROT_STATIC defined (wasm build, see `make wasm`):
+ *     the stdrot sources are compiled directly into the same binary —
+ *     there is no .so and no dlopen surface at all (wasm has no dynamic
+ *     loader worth using for a single-artifact build). stdrot_load() calls
+ *     stdrot_get_api() directly, and ragequit/chill/slorp_* are provided
+ *     solely by their stdrot definitions — this file only keeps the
+ *     yapping/yappin/baka varargs stubs, redirecting them straight to
+ *     v_yapping/v_yappin/v_baka instead of looking them up by name.
+ *
  *   3. AST bridge functions (execute_*_call) that evaluate arguments and
- *      call the raw implementations
+ *      call the raw implementations — identical in both modes.
  */
 
 #include "stdrot.h"
@@ -19,7 +34,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#ifndef STDROT_STATIC
 #include <dlfcn.h>
+#endif
 
 /* ── Global execution context ────────────────────────────────────────────── */
 ExecutionContext g_exec_context = {
@@ -45,11 +62,14 @@ extern bool set_double_variable(const String name, double value, TypeModifiers m
 extern bool set_short_variable(const String name, short value, TypeModifiers mods);
 extern bool set_bool_variable(const String name, bool value, TypeModifiers mods);
 
-/* ── Dynamic library state ────────────────────────────────────────────────── */
+/* ── Dynamic library state (native build only) ───────────────────────────── */
+#ifndef STDROT_STATIC
 static void *lib_handle = NULL;
+#endif
 static StdrotEntry *functions = NULL;
 static int function_count = 0;
 
+#ifndef STDROT_STATIC
 /* Symbol cache to avoid repeated dlsym calls */
 #define STDROT_CACHE_SIZE 64
 typedef struct {
@@ -59,11 +79,13 @@ typedef struct {
 
 static SymbolCache symbol_cache[STDROT_CACHE_SIZE];
 static int cache_count = 0;
+#endif
 
 /* ── Forward declarations of stub functions ──────────────────────────────── */
 void yapping(const String format, ...);
 void yappin(const String format, ...);
 void baka(const String format, ...);
+#ifndef STDROT_STATIC
 void ragequit(int exit_code);
 void chill(unsigned int seconds);
 char slorp_char(char chr);
@@ -72,6 +94,17 @@ int slorp_int(int val);
 short slorp_short(short val);
 float slorp_float(float var);
 double slorp_double(double var);
+#endif
+
+#ifdef STDROT_STATIC
+/* Statically linked in from stdrot/yapping.c and stdrot/baka.c — called
+ * directly below instead of going through dlsym-by-name.
+ * stdrot_get_api() (statically linked from stdrot/registry.c) is already
+ * declared by stdrot_api.h, included transitively via stdrot.h above. */
+extern void v_yapping(const char *fmt, va_list ap);
+extern void v_yappin(const char *fmt, va_list ap);
+extern void v_baka(const char *fmt, va_list ap);
+#else
 
 /* ── Dynamic symbol lookup with caching ──────────────────────────────────── */
 
@@ -97,11 +130,31 @@ static void *stdrot_lookup_symbol(const String symbol_name)
 
     return ptr;
 }
+#endif /* STDROT_STATIC */
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
 
 /* ── Loader ──────────────────────────────────────────────────────────────── */
+
+#ifdef STDROT_STATIC
+
+void stdrot_load(void)
+{
+    /* stdrot/registry.c is linked directly into this binary, so the
+     * function table is just a direct call away — no loader needed. */
+    StdrotAPI api = stdrot_get_api();
+    functions = api.functions;
+    function_count = api.count;
+}
+
+void stdrot_unload(void)
+{
+    functions = NULL;
+    function_count = 0;
+}
+
+#else
 
 void stdrot_load(void)
 {
@@ -109,7 +162,7 @@ void stdrot_load(void)
      * by loading the main program's symbols with RTLD_GLOBAL
      */
     dlopen(NULL, RTLD_LAZY | RTLD_GLOBAL);
-    
+
     /* Open libstdrot.so from the same directory as the binary, or LD_LIBRARY_PATH
      * Use RTLD_GLOBAL so the library can access symbols from the main binary (e.g., g_exec_context)
      */
@@ -147,6 +200,8 @@ void stdrot_unload(void)
         cache_count = 0;
     }
 }
+
+#endif /* STDROT_STATIC */
 
 /* ── Runtime query ────────────────────────────────────────────────────────── */
 
@@ -365,7 +420,35 @@ void execute_func_call(const String func_name, ArgumentList *args)
     }
 }
 
-/* ── Stub functions (thin wrappers that forward to .so) ────────────────────── */
+/* ── Stub functions (thin wrappers that forward to the implementation) ─────── */
+
+#ifdef STDROT_STATIC
+
+void yapping(const String format, ...)
+{
+    va_list ap;
+    va_start(ap, format);
+    v_yapping(format.data, ap);
+    va_end(ap);
+}
+
+void yappin(const String format, ...)
+{
+    va_list ap;
+    va_start(ap, format);
+    v_yappin(format.data, ap);
+    va_end(ap);
+}
+
+void baka(const String format, ...)
+{
+    va_list ap;
+    va_start(ap, format);
+    v_baka(format.data, ap);
+    va_end(ap);
+}
+
+#else
 
 void yapping(const String format, ...)
 {
@@ -485,5 +568,7 @@ double slorp_double(double var)
     double (*fn)(double) = (double (*)(double))stdrot_lookup_symbol(s);
     return fn ? fn(var) : var;
 }
+
+#endif /* STDROT_STATIC */
 
 #pragma GCC diagnostic pop
