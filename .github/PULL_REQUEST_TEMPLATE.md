@@ -23,6 +23,7 @@ Fixes #<issue_number>
 - [ ] I have performed a self-review of my own code
 - [ ] I have documented my changes in the code or documentation
 - [ ] I have added tests that prove my changes work (if applicable)
+- [ ] I have run `make format-check` locally (or `make format` to fix)
 - [ ] I have run the unit tests locally
 - [ ] I have run the valgrind memory tests locally
 - [ ] All new and existing tests pass
