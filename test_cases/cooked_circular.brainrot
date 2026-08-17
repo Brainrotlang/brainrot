@@ -1,0 +1,6 @@
+🚽 cooked_circular_a.brainrot and cooked_circular_b.brainrot cook each other — must error, not hang.
+#cooked "cooked_circular_a.brainrot"
+
+skibidi main {
+    bussin 0;
+}

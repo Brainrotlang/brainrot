@@ -73,5 +73,13 @@
     "bet": "Assertion passed!\n",
     "bet_int": "x is positive\n",
     "bet_fail": "Error: bet: assertion failed at line 2: this assertion must fail",
-    "gang": "Point: 3 4 5.0\nQ: 10 20 0.0\n"
+    "gang": "Point: 3 4 5.0\nQ: 10 20 0.0\n",
+    "cooked_include": "36",
+    "cooked_diamond": "11 12",
+    "cooked_circular": "Error: circular #cooked include detected:\n  cooked_circular.brainrot\n  cooked_circular_a.brainrot\n  cooked_circular_b.brainrot\n  cooked_circular_a.brainrot  <-- already included above",
+    "cooked_missing": "Error: cooked_missing.brainrot:1: cannot open #cooked file \"cooked_does_not_exist.brainrot\": No such file or directory",
+    "cooked_malformed": "Error: cooked_malformed.brainrot:1: malformed #cooked directive (expected: #cooked \"path/to/file.brainrot\")",
+    "cooked_nested": "12",
+    "cooked_self": "Error: cooked_self.brainrot:2: #cooked includes itself",
+    "cooked_syntax_error": "Error: syntax error, unexpected LBRACE at line 3\nParsing failed"
 }

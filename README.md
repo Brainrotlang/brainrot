@@ -186,6 +186,7 @@ Check out the [examples](examples/README.md):
 - [Bubble Sort](examples/bubble_sort.brainrot)
 - [One-dimensional Heat Equation Solver](examples/heat_equation_1d.brainrot)
 - [Fibonacci Sequence](examples/fibonacci.brainrot)
+- [Modules (`#cooked`)](examples/modules.brainrot)
 
 ## 🗪 Community
 
@@ -240,11 +241,17 @@ Join our community on:
 
 | Brainrot   | C Equivalent | Implemented? |
 | ---------- | ------------ | ------------ |
-| #cooked     | #include    | ❌           |
+| #cooked     | #include    | ✅           |
 | #edgydef    | #ifdef      | ❌           |
 | #edgyndef   | #ifndef     | ❌           |
 | #endedgy    | #endif      | ❌           |
 | #slaps      | #define     | ❌           |
+
+`#cooked "path/to/file.brainrot"` splices another Brainrot file's functions
+and structs into the current one, resolved relative to the including file's
+directory. See [the language reference](docs/the-brainrot-programming-language.md#710-modules-cooked)
+for details (path resolution, include-once behavior, circular-include
+detection).
 
 ### Builtin functions
 

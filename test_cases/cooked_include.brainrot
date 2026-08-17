@@ -1,0 +1,6 @@
+#cooked "cooked_module.brainrot"
+
+skibidi main {
+    yapping("%d", square(6));
+    bussin 0;
+}

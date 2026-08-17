@@ -1,0 +1,9 @@
+🚽 Small math helpers, meant to be #cooked into other Brainrot programs.
+🚽 No skibidi main here on purpose — this file is a module, not a program.
+rizz square(rizz n) {
+    bussin n * n;
+}
+
+rizz cube(rizz n) {
+    bussin n * n * n;
+}

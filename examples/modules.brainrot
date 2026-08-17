@@ -1,0 +1,8 @@
+🚽 Demonstrates #cooked (Brainrot's #include): splits a program across files.
+#cooked "mathutils.brainrot"
+
+skibidi main {
+    yapping("square(6) = %d", square(6));
+    yapping("cube(3) = %d", cube(3));
+    bussin 0;
+}
