@@ -32,9 +32,10 @@ another binding, most of it generated.
 9. [Phase 7 — Hashmaps (`grindset`)](#phase-7--hashmaps-grindset)
 10. [Phase 8 — Sockets and web servers](#phase-8--sockets-and-web-servers)
 11. [Phase 9 — Unit testing (`sussybaka`)](#phase-9--unit-testing-sussybaka)
-12. [Milestones](#milestones)
-13. [Appendix A — Reserved keywords](#appendix-a--reserved-keywords)
-14. [Appendix B — Open questions](#appendix-b--open-questions)
+12. [Phase 10 — File I/O](#phase-10--file-io)
+13. [Milestones](#milestones)
+14. [Appendix A — Reserved keywords](#appendix-a--reserved-keywords)
+15. [Appendix B — Open questions](#appendix-b--open-questions)
 
 ---
 
@@ -908,6 +909,89 @@ Nothing in Phases 1–8 depends on this, and it does not block them.
 
 ---
 
+## Phase 10 — File I/O
+
+**Status: not started · Priority: P2 · Depends on: Phase 1**
+
+`stdio.h`, rebranded. Like `sussybaka`, this is a **library, not keywords** —
+every operation here is "a call with arguments", so it belongs in `stdrot`
+alongside `yapping`, `slorp`, and `chill`, not in `lang.l`. Unlike `sussybaka`
+it is not gated behind `#cooked` — file I/O is common enough to stay globally
+available, the same way `slorp` is today. `stdrot/file.c` self-registers the
+functions below the same way `baka.c` and `yapping.c` do.
+
+**Type:** `FILE *` → **`SAUCE *`**
+
+| C | Brainrot | Why |
+| - | -------- | --- |
+| `fopen` | `crackopen` | you crack open the file |
+| `fclose` | `peaceout` | perfect opposite lifecycle |
+| `fread` | `doomscroll` | consuming data endlessly |
+| `fwrite` | `shitpost` | putting content into the file |
+| `fgets` | `skim` | silently reads a line |
+| `fputs` | `yapto` | yapping into a file |
+| `fseek` | `zoink` | literally moving through the file |
+| `ftell` | `whereami` | cursor position |
+| `rewind` | `throwback` | self-explanatory |
+| `feof` | `itsjoever` | **this one is mandatory** |
+| `ferror` | `bricked` | file operation got bricked |
+| `fflush` | `bustcache` | flush buffered output |
+
+`yapto` is deliberately distinct from raw `shitpost`: `shitpost` is
+`fwrite`-shaped (size/count, binary-safe), `yapto` is `fprintf`-shaped (a
+format string). That mirrors the existing split between `yapping` (stdout,
+formatted, newline) and `yappin` (stdout, formatted, no newline). None of
+these twelve names collide with `lockin`/`logoff` (Phase 9's sussybaka hooks)
+or `lurk` (Phase 8's `listen()`) — an earlier draft of this table did use
+those three names, which is why the family was renamed wholesale rather than
+resolved name-by-name.
+
+```c
+skibidi main {
+    SAUCE *f = crackopen("classified_lore.txt", "r");
+    edgy (!f) {
+        yapping("file got negative aura");
+        ragequit(1);
+    }
+
+    goon (!itsjoever(f)) {
+        rant line = skim(f);
+        yapping("%s", line);
+    }
+
+    peaceout(f);
+    bussin 0;
+}
+```
+
+```c
+SAUCE *manifesto = crackopen("schizo.txt", "w");
+yapto(manifesto, "aura = %d", aura);
+peaceout(manifesto);
+```
+
+### Work
+
+- A `SAUCE *handle type wrapping `FILE *`, following the same handle pattern
+  the ABI work in Phase 2 formalizes (`STDROT_HANDLE`) — this phase can ship
+  ahead of Phase 2 with a narrower, file-only handle representation and adopt
+  the general one once it lands.
+- `stdrot/file.c` implementing the twelve functions above via `STDROT_EXPORT`.
+- Since `SAUCE *f = crackopen(...)` needs the return value in an initializer,
+  this phase is blocked on Phase 1 exactly the way `sussybaka` is.
+
+### Definition of done
+
+- `test_cases/file_io.brainrot` covering open/read/write/close and the
+  `itsjoever` loop idiom above, plus a missing-file case (`crackopen`
+  returning a negative/falsy handle) exercised through `edgy (!f)`.
+- No leaked `FILE *` on any exit path — `make valgrind` is the relevant gate,
+  since an unclosed handle is exactly the kind of bug it exists to catch.
+- `docs/` reference page for the file I/O vocabulary; README keyword table
+  is **not** touched, since none of these are grammar keywords.
+
+---
+
 ## Milestones
 
 | Milestone | Contents | Unlocks |
@@ -923,9 +1007,10 @@ Nothing in Phases 1–8 depends on this, and it does not block them.
 | **M9 — Network** | Phase 8 | Brainrot serves HTTP. |
 | **M10 — Brainrot tests itself** | Phase 9a/9b | `#cooked <sussybaka>`, `npc`, `larping`, `./brainrot --sus`. |
 | **M11 — The suite is self-describing** | Phase 9c | `test_cases/` states its own expectations. |
+| **M12 — Files** | Phase 10 | `crackopen`/`peaceout`/`itsjoever` and the rest of the file I/O family. |
 
-M1–M4 are strictly ordered. M7, M8, and M10 are independent of M2–M6 and can
-proceed in parallel by anyone who wants them. M11 depends only on M10.
+M1–M4 are strictly ordered. M7, M8, M10, and M12 are independent of M2–M6 and
+can proceed in parallel by anyone who wants them. M11 depends only on M10.
 
 M10 quietly delivers two things the rest of the roadmap wants: the module search
 path that Phase 4 builds on, and the function references that Phases 5, 6, and 8
