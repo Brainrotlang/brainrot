@@ -246,6 +246,7 @@ Join our community on:
 | #edgyndef   | #ifndef     | ❌           |
 | #endedgy    | #endif      | ❌           |
 | #slaps      | #define     | ❌           |
+| #aura       | #pragma     | ❌           |
 
 `#cooked "path/to/file.brainrot"` splices another Brainrot file's functions
 and structs into the current one, resolved relative to the including file's
