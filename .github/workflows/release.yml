@@ -1,0 +1,41 @@
+name: Release wasm build
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install bison flex -y
+
+      - name: Set up Emscripten
+        # mymindstorm/setup-emsdk was transferred to emscripten-core/setup-emsdk;
+        # SHA-pinned (v14) so a retagged release can't silently change what
+        # builds the artifact this workflow publishes.
+        uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
+        with:
+          version: 3.1.73
+
+      - name: Build brainrot.wasm
+        run: make wasm
+
+      - name: Create GitHub Release
+        # SHA-pinned (v2): this step runs with contents: write.
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          generate_release_notes: true
+          files: |
+            brainrot.wasm
+            brainrot.mjs
