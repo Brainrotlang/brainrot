@@ -1,0 +1,15 @@
+---
+Language:        Cpp
+BasedOnStyle:    LLVM
+IndentWidth:     4
+ColumnLimit:     80
+UseTab:          Never
+BreakBeforeBraces: Allman
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortBlocksOnASingleLine: Never
+AllowShortFunctionsOnASingleLine: None
+AllowShortLoopsOnASingleLine: false
+SpaceBeforeParens: ControlStatements
+PointerAlignment: Right
+SortIncludes:    Never
+...

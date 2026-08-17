@@ -14,6 +14,21 @@ on:
       - "CODEOWNERS"
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install clang-format -y
+
+      - name: Check formatting
+        run: make format-check
+
   build:
     runs-on: ubuntu-latest
 
