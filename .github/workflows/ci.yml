@@ -101,7 +101,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install bison flex -y
+          sudo apt-get install bison flex libfl-dev libasan8 libubsan1 -y
 
       - name: Set up Emscripten
         uses: mymindstorm/setup-emsdk@v14
