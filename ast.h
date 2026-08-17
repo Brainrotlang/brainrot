@@ -30,7 +30,6 @@ typedef struct
     int pointer_level;
 } Declarator;
 
-
 /* Define Array Dimensions */
 typedef struct
 {
@@ -79,28 +78,30 @@ typedef enum
 } VarType;
 
 /* A single field inside a struct definition */
-typedef struct StructField {
-    String       name;
-    VarType      type;
-    int          pointer_level;
-    size_t       offset;          /* byte offset within the struct blob */
+typedef struct StructField
+{
+    String name;
+    VarType type;
+    int pointer_level;
+    size_t offset; /* byte offset within the struct blob */
     struct StructField *next;
 } StructField;
 
 /* A struct definition (the "template") */
-typedef struct StructDef {
-    String       name;
+typedef struct StructDef
+{
+    String name;
     StructField *fields;
-    size_t       total_size;      /* total byte size of one instance */
+    size_t total_size; /* total byte size of one instance */
     struct StructDef *next_def;
 } StructDef;
 
 /* AST helper functions */
-ASTNode* arena_alloc_astnode(void);
+ASTNode *arena_alloc_astnode(void);
 
 typedef struct Parameter
 {
-    String  name;
+    String name;
     VarType type;
     int pointer_level;
     TypeModifiers modifiers;
@@ -109,7 +110,7 @@ typedef struct Parameter
 
 typedef struct Function
 {
-    String  name;
+    String name;
     VarType return_type;
     int return_pointer_level;
     Parameter *parameters;
@@ -154,7 +155,7 @@ typedef struct
     bool is_array;
     int array_length; // lets keep it for now for backword compatibility
     ArrayDimensions array_dimensions;
-    String struct_name;   /* non-NULL when var_type == VAR_STRUCT */
+    String struct_name; /* non-NULL when var_type == VAR_STRUCT */
 } Variable;
 
 typedef union
@@ -281,7 +282,7 @@ struct ASTNode
     int pointer_level;
     int array_length;
     ArrayDimensions array_dimensions;
-    int line_number;               /* Line number for error reporting */
+    int line_number; /* Line number for error reporting */
     union
     {
         short svalue;
@@ -292,15 +293,17 @@ struct ASTNode
         String strvalue;
         String name;
         Array array;
-        struct {
-            String   struct_name;   /* name of the struct type */
-            String   member_name;   /* field being accessed     */
-            ASTNode *object;        /* the struct-valued expr   */
+        struct
+        {
+            String struct_name; /* name of the struct type */
+            String member_name; /* field being accessed     */
+            ASTNode *object;    /* the struct-valued expr   */
         } struct_access;
 
-        struct {
-            String       name;          /* struct tag               */
-            StructField *fields;        /* linked list of fields    */
+        struct
+        {
+            String name;         /* struct tag               */
+            StructField *fields; /* linked list of fields    */
         } struct_def;
         struct
         {
@@ -357,7 +360,7 @@ typedef struct Scope
     HashMap *variables;
     struct Scope *parent;
     bool is_function_scope;
-    String function_name;    
+    String function_name;
 } Scope;
 
 /* Global variable declarations */
@@ -368,7 +371,8 @@ extern ReturnValue current_return_value;
 extern JumpBuffer *jump_buffer;
 /* Function prototypes */
 bool set_int_variable(const String name, int value, TypeModifiers mods);
-bool set_array_variable(String name, int length, TypeModifiers mods, VarType type);
+bool set_array_variable(String name, int length, TypeModifiers mods,
+                        VarType type);
 bool set_short_variable(const String name, short value, TypeModifiers mods);
 bool set_float_variable(const String name, float value, TypeModifiers mods);
 bool set_double_variable(const String name, double value, TypeModifiers mods);
@@ -400,10 +404,12 @@ ASTNode *create_identifier_node_ex(String name, int pointer_level);
 ASTNode *create_assignment_node(String name, ASTNode *expr);
 ASTNode *create_assignment_target_node(ASTNode *target, ASTNode *expr);
 ASTNode *create_declaration_node(String name, ASTNode *expr);
-ASTNode *create_declaration_node_ex(String name, ASTNode *expr, int pointer_level);
+ASTNode *create_declaration_node_ex(String name, ASTNode *expr,
+                                    int pointer_level);
 ASTNode *create_operation_node(OperatorType op, ASTNode *left, ASTNode *right);
 ASTNode *create_unary_operation_node(OperatorType op, ASTNode *operand);
-ASTNode *create_for_statement_node(ASTNode *init, ASTNode *cond, ASTNode *incr, ASTNode *body);
+ASTNode *create_for_statement_node(ASTNode *init, ASTNode *cond, ASTNode *incr,
+                                   ASTNode *body);
 ASTNode *create_while_statement_node(ASTNode *cond, ASTNode *body);
 ASTNode *create_do_while_statement_node(ASTNode *cond, ASTNode *body);
 ASTNode *create_function_call_node(String func_name, ArgumentList *args);
@@ -412,7 +418,8 @@ ASTNode *create_print_statement_node(ASTNode *expr);
 ASTNode *create_sizeof_node(ASTNode *node);
 ASTNode *create_error_statement_node(ASTNode *expr);
 ASTNode *create_statement_list(ASTNode *statement, ASTNode *next_statement);
-ASTNode *create_if_statement_node(ASTNode *condition, ASTNode *then_branch, ASTNode *else_branch);
+ASTNode *create_if_statement_node(ASTNode *condition, ASTNode *then_branch,
+                                  ASTNode *else_branch);
 ASTNode *create_string_literal_node(String string);
 ASTNode *create_switch_statement_node(ASTNode *expression, CaseNode *cases);
 CaseNode *create_case_node(ASTNode *value, ASTNode *statements);
@@ -424,7 +431,8 @@ ASTNode *create_return_node(ASTNode *expr);
 ExpressionList *create_expression_list(ASTNode *expr);
 ExpressionList *append_expression_list(ExpressionList *list, ASTNode *expr);
 void free_expression_list(ExpressionList *list);
-void populate_multi_array_variable(String name, ExpressionList *list, int dimensions[], int num_dimensions);
+void populate_multi_array_variable(String name, ExpressionList *list,
+                                   int dimensions[], int num_dimensions);
 void free_ast(void);
 
 /* Evaluation and execution functions */
@@ -454,35 +462,49 @@ void bruh();
 size_t count_expression_list(ExpressionList *list);
 size_t handle_sizeof(ASTNode *node);
 size_t get_type_size(String name);
-size_t get_type_size_for_descriptor(VarType type, int pointer_level, TypeModifiers mods);
+size_t get_type_size_for_descriptor(VarType type, int pointer_level,
+                                    TypeModifiers mods);
 void *handle_function_call(ASTNode *node);
-ASTNode *create_multi_array_declaration_node(String name, int dimensions[], int num_dimensions, VarType type);
-bool set_multi_array_variable(const String name, int dimensions[], int num_dimensions, TypeModifiers mods, VarType type);
+ASTNode *create_multi_array_declaration_node(String name, int dimensions[],
+                                             int num_dimensions, VarType type);
+bool set_multi_array_variable(const String name, int dimensions[],
+                              int num_dimensions, TypeModifiers mods,
+                              VarType type);
 ASTNode *create_array_access_node_single(String name, ASTNode *index);
-ASTNode *create_multi_array_access_node(String name, ASTNode *indices[], int num_indices);
+ASTNode *create_multi_array_access_node(String name, ASTNode *indices[],
+                                        int num_indices);
 
 /* User-defined functions */
-Function *create_function(String name, VarType return_type, Parameter *params, ASTNode *body);
-Function *create_function_ex(String name, VarType return_type, int return_pointer_level, Parameter *params, ASTNode *body);
-Parameter *create_parameter(String name, VarType type, Parameter *next, TypeModifiers mods);
-Parameter *create_parameter_ex(String name, VarType type, int pointer_level, Parameter *next, TypeModifiers mods);
+Function *create_function(String name, VarType return_type, Parameter *params,
+                          ASTNode *body);
+Function *create_function_ex(String name, VarType return_type,
+                             int return_pointer_level, Parameter *params,
+                             ASTNode *body);
+Parameter *create_parameter(String name, VarType type, Parameter *next,
+                            TypeModifiers mods);
+Parameter *create_parameter_ex(String name, VarType type, int pointer_level,
+                               Parameter *next, TypeModifiers mods);
 void execute_function_call(const String name, ArgumentList *args);
-ASTNode *create_function_def_node(String name, VarType return_type, Parameter *params, ASTNode *body);
-ASTNode *create_function_def_node_ex(String name, VarType return_type, int return_pointer_level, Parameter *params, ASTNode *body);
+ASTNode *create_function_def_node(String name, VarType return_type,
+                                  Parameter *params, ASTNode *body);
+ASTNode *create_function_def_node_ex(String name, VarType return_type,
+                                     int return_pointer_level,
+                                     Parameter *params, ASTNode *body);
 void handle_return_statement(ASTNode *expr);
 void *handle_binary_operation(ASTNode *node);
 void free_function_table(void);
 void free_static_variable_map(void);
 
 /* Struct types */
-void      register_struct_def(StructDef *def);
+void register_struct_def(StructDef *def);
 StructDef *get_struct_def(const String name);
-void      free_struct_registry(void);
+void free_struct_registry(void);
 StructField *find_struct_field(StructDef *def, const String name);
-size_t       compute_struct_layout(StructField *fields); /* fills offsets, returns total */
+size_t
+compute_struct_layout(StructField *fields); /* fills offsets, returns total */
 ASTNode *create_struct_def_node(String name, StructField *fields);
 ASTNode *create_struct_access_node(ASTNode *object, String member);
-void    *evaluate_struct_member_address(ASTNode *node);
+void *evaluate_struct_member_address(ASTNode *node);
 void populate_struct_variable(const String name, ExpressionList *list);
 
 extern TypeModifiers current_modifiers;
@@ -501,92 +523,93 @@ extern Arena arena;
 #define SET_DATA_BOOL(node, value) ((node)->data.bvalue = (value) ? 1 : 0)
 #define SET_DATA_NAME(node, n) ((node)->data.name = ARENA_STRDUP(n))
 #define SET_SIZEOF(node, n) ((node)->data.sizeof_stmt.expr = (n))
-#define SET_DATA_OP(node, l, r, opr) \
-    do                               \
-    {                                \
-        (node)->data.op.left = (l);  \
-        (node)->data.op.right = (r); \
-        (node)->data.op.op = (opr);  \
+#define SET_DATA_OP(node, l, r, opr)                                           \
+    do                                                                         \
+    {                                                                          \
+        (node)->data.op.left = (l);                                            \
+        (node)->data.op.right = (r);                                           \
+        (node)->data.op.op = (opr);                                            \
     } while (0)
 
-#define SET_DATA_UNARY_OP(node, o, opr)   \
-    do                                    \
-    {                                     \
-        (node)->data.unary.operand = (o); \
-        (node)->data.unary.op = (opr);    \
+#define SET_DATA_UNARY_OP(node, o, opr)                                        \
+    do                                                                         \
+    {                                                                          \
+        (node)->data.unary.operand = (o);                                      \
+        (node)->data.unary.op = (opr);                                         \
     } while (0)
 
-#define SET_DATA_FOR(node, i, c, inc, b)    \
-    do                                      \
-    {                                       \
-        (node)->data.for_stmt.init = (i);   \
-        (node)->data.for_stmt.cond = (c);   \
-        (node)->data.for_stmt.incr = (inc); \
-        (node)->data.for_stmt.body = (b);   \
+#define SET_DATA_FOR(node, i, c, inc, b)                                       \
+    do                                                                         \
+    {                                                                          \
+        (node)->data.for_stmt.init = (i);                                      \
+        (node)->data.for_stmt.cond = (c);                                      \
+        (node)->data.for_stmt.incr = (inc);                                    \
+        (node)->data.for_stmt.body = (b);                                      \
     } while (0)
 
-#define SET_DATA_WHILE(node, c, b)          \
-    do                                      \
-    {                                       \
-        (node)->data.while_stmt.cond = (c); \
-        (node)->data.while_stmt.body = (b); \
+#define SET_DATA_WHILE(node, c, b)                                             \
+    do                                                                         \
+    {                                                                          \
+        (node)->data.while_stmt.cond = (c);                                    \
+        (node)->data.while_stmt.body = (b);                                    \
     } while (0)
 
-#define SET_DATA_FUNC_CALL(node, func_name, args)                      \
-    do                                                                 \
-    {                                                                  \
-        (node)->data.func_call.function_name = ARENA_STRDUP(func_name); \
-        (node)->data.func_call.arguments = (args);                     \
+#define SET_DATA_FUNC_CALL(node, func_name, args)                              \
+    do                                                                         \
+    {                                                                          \
+        (node)->data.func_call.function_name = ARENA_STRDUP(func_name);        \
+        (node)->data.func_call.arguments = (args);                             \
     } while (0)
 
 /* Macros for handling jump buffer */
-#define PUSH_JUMP_BUFFER()                        \
-    do                                            \
-    {                                             \
-        JumpBuffer *jb = SAFE_MALLOC(JumpBuffer); \
-        jb->next = jump_buffer;                   \
-        jump_buffer = jb;                         \
+#define PUSH_JUMP_BUFFER()                                                     \
+    do                                                                         \
+    {                                                                          \
+        JumpBuffer *jb = SAFE_MALLOC(JumpBuffer);                              \
+        jb->next = jump_buffer;                                                \
+        jump_buffer = jb;                                                      \
     } while (0)
 
-#define POP_JUMP_BUFFER()                \
-    do                                   \
-    {                                    \
-        JumpBuffer *jb = jump_buffer;    \
-        jump_buffer = jump_buffer->next; \
-        SAFE_FREE(jb);                   \
+#define POP_JUMP_BUFFER()                                                      \
+    do                                                                         \
+    {                                                                          \
+        JumpBuffer *jb = jump_buffer;                                          \
+        jump_buffer = jump_buffer->next;                                       \
+        SAFE_FREE(jb);                                                         \
     } while (0)
 
-#define LONGJMP()                                \
-    do                                           \
-    {                                            \
-        if (jump_buffer != NULL)                 \
-        {                                        \
-            longjmp(jump_buffer->data, 1);       \
-        }                                        \
-        else                                     \
-        {                                        \
-            yyerror("No jump buffer available"); \
-            exit(1);                             \
-        }                                        \
+#define LONGJMP()                                                              \
+    do                                                                         \
+    {                                                                          \
+        if (jump_buffer != NULL)                                               \
+        {                                                                      \
+            longjmp(jump_buffer->data, 1);                                     \
+        }                                                                      \
+        else                                                                   \
+        {                                                                      \
+            yyerror("No jump buffer available");                               \
+            exit(1);                                                           \
+        }                                                                      \
     } while (0)
 
 #define CURRENT_JUMP_BUFFER() (jump_buffer->data)
 
-#define CLEAN_JUMP_BUFFER() \
-    do                      \
-    {                       \
-        while (jump_buffer) \
-        {                    \
-            POP_JUMP_BUFFER(); \
-        }                    \
+#define CLEAN_JUMP_BUFFER()                                                    \
+    do                                                                         \
+    {                                                                          \
+        while (jump_buffer)                                                    \
+        {                                                                      \
+            POP_JUMP_BUFFER();                                                 \
+        }                                                                      \
     } while (0)
 
-#define VART_TO_NODET(var_type) \
-    ((var_type) == VAR_INT ? NODE_INT         \
-     : (var_type) == VAR_SHORT ? NODE_SHORT   \
-     : (var_type) == VAR_FLOAT ? NODE_FLOAT   \
-     : (var_type) == VAR_DOUBLE ? NODE_DOUBLE \
-     : (var_type) == VAR_BOOL ? NODE_BOOLEAN  \
-     : (var_type) == VAR_CHAR ? NODE_CHAR     \
-     : (var_type) == VAR_STRING ? NODE_STRING : (NodeType)-1)
+#define VART_TO_NODET(var_type)                                                \
+    ((var_type) == VAR_INT      ? NODE_INT                                     \
+     : (var_type) == VAR_SHORT  ? NODE_SHORT                                   \
+     : (var_type) == VAR_FLOAT  ? NODE_FLOAT                                   \
+     : (var_type) == VAR_DOUBLE ? NODE_DOUBLE                                  \
+     : (var_type) == VAR_BOOL   ? NODE_BOOLEAN                                 \
+     : (var_type) == VAR_CHAR   ? NODE_CHAR                                    \
+     : (var_type) == VAR_STRING ? NODE_STRING                                  \
+                                : (NodeType) - 1)
 #endif /* AST_H */

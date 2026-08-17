@@ -39,11 +39,7 @@
 #endif
 
 /* ── Global execution context ────────────────────────────────────────────── */
-ExecutionContext g_exec_context = {
-    0,
-    { NULL, 0 },
-    { NULL, 0 }
-};
+ExecutionContext g_exec_context = {0, {NULL, 0}, {NULL, 0}};
 
 /* ── External interpreter functions ──────────────────────────────────────── */
 extern void yyerror(const char *s);
@@ -57,10 +53,14 @@ extern Variable *get_variable(const String name);
 extern TypeModifiers get_variable_modifiers(const String name);
 extern void *evaluate_multi_array_access(ASTNode *node);
 extern bool set_int_variable(const String name, int value, TypeModifiers mods);
-extern bool set_float_variable(const String name, float value, TypeModifiers mods);
-extern bool set_double_variable(const String name, double value, TypeModifiers mods);
-extern bool set_short_variable(const String name, short value, TypeModifiers mods);
-extern bool set_bool_variable(const String name, bool value, TypeModifiers mods);
+extern bool set_float_variable(const String name, float value,
+                               TypeModifiers mods);
+extern bool set_double_variable(const String name, double value,
+                                TypeModifiers mods);
+extern bool set_short_variable(const String name, short value,
+                               TypeModifiers mods);
+extern bool set_bool_variable(const String name, bool value,
+                              TypeModifiers mods);
 
 /* ── Dynamic library state (native build only) ───────────────────────────── */
 #ifndef STDROT_STATIC
@@ -72,7 +72,8 @@ static int function_count = 0;
 #ifndef STDROT_STATIC
 /* Symbol cache to avoid repeated dlsym calls */
 #define STDROT_CACHE_SIZE 64
-typedef struct {
+typedef struct
+{
     String name;
     void *ptr;
 } SymbolCache;
@@ -110,18 +111,22 @@ extern void v_baka(const char *fmt, va_list ap);
 
 static void *stdrot_lookup_symbol(const String symbol_name)
 {
-    if (!lib_handle || !symbol_name.data) return NULL;
+    if (!lib_handle || !symbol_name.data)
+        return NULL;
 
     /* Check cache first */
-    for (int i = 0; i < cache_count; i++) {
-        if (strcmp(symbol_cache[i].name.data, symbol_name.data) == 0) {
+    for (int i = 0; i < cache_count; i++)
+    {
+        if (strcmp(symbol_cache[i].name.data, symbol_name.data) == 0)
+        {
             return symbol_cache[i].ptr;
         }
     }
 
     /* Not in cache, lookup via dlsym */
     void *ptr = dlsym(lib_handle, symbol_name.data);
-    if (ptr && cache_count < STDROT_CACHE_SIZE) {
+    if (ptr && cache_count < STDROT_CACHE_SIZE)
+    {
         symbol_cache[cache_count].name.data = symbol_name.data;
         symbol_cache[cache_count].name.len = symbol_name.len;
         symbol_cache[cache_count].ptr = ptr;
@@ -158,19 +163,22 @@ void stdrot_unload(void)
 
 void stdrot_load(void)
 {
-    /* First, make main binary symbols available to subsequently loaded libraries
-     * by loading the main program's symbols with RTLD_GLOBAL
+    /* First, make main binary symbols available to subsequently loaded
+     * libraries by loading the main program's symbols with RTLD_GLOBAL
      */
     dlopen(NULL, RTLD_LAZY | RTLD_GLOBAL);
 
-    /* Open libstdrot.so from the same directory as the binary, or LD_LIBRARY_PATH
-     * Use RTLD_GLOBAL so the library can access symbols from the main binary (e.g., g_exec_context)
+    /* Open libstdrot.so from the same directory as the binary, or
+     * LD_LIBRARY_PATH Use RTLD_GLOBAL so the library can access symbols from
+     * the main binary (e.g., g_exec_context)
      */
     lib_handle = dlopen("./libstdrot.so", RTLD_LAZY | RTLD_GLOBAL);
-    if (!lib_handle) {
+    if (!lib_handle)
+    {
         lib_handle = dlopen("libstdrot.so", RTLD_LAZY | RTLD_GLOBAL);
     }
-    if (!lib_handle) {
+    if (!lib_handle)
+    {
         fprintf(stderr, "Failed to load libstdrot.so: %s\n", dlerror());
         exit(EXIT_FAILURE);
     }
@@ -178,8 +186,10 @@ void stdrot_load(void)
     /* Get the API entrypoint */
     StdrotAPI (*get_api)(void);
     *(void **)(&get_api) = dlsym(lib_handle, "stdrot_get_api");
-    if (!get_api) {
-        fprintf(stderr, "libstdrot.so missing stdrot_get_api(): %s\n", dlerror());
+    if (!get_api)
+    {
+        fprintf(stderr, "libstdrot.so missing stdrot_get_api(): %s\n",
+                dlerror());
         dlclose(lib_handle);
         exit(EXIT_FAILURE);
     }
@@ -192,7 +202,8 @@ void stdrot_load(void)
 
 void stdrot_unload(void)
 {
-    if (lib_handle) {
+    if (lib_handle)
+    {
         dlclose(lib_handle);
         lib_handle = NULL;
         functions = NULL;
@@ -203,14 +214,18 @@ void stdrot_unload(void)
 
 #endif /* STDROT_STATIC */
 
-/* ── Runtime query ────────────────────────────────────────────────────────── */
+/* ── Runtime query ──────────────────────────────────────────────────────────
+ */
 
 bool is_builtin_function(const String func_name)
 {
-    if (!func_name.data || !functions) return false;
+    if (!func_name.data || !functions)
+        return false;
 
-    for (int i = 0; i < function_count; i++) {
-        if (strcmp(func_name.data, functions[i].name) == 0) {
+    for (int i = 0; i < function_count; i++)
+    {
+        if (strcmp(func_name.data, functions[i].name) == 0)
+        {
             return true;
         }
     }
@@ -225,9 +240,11 @@ void execute_builtin_function(const String func_name, ArgumentList *args)
 static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
 {
     out->type = STDROT_NONE;
-    if (!expr) return;
+    if (!expr)
+        return;
 
-    switch (expr->type) {
+    switch (expr->type)
+    {
     case NODE_STRING_LITERAL:
         out->type = STDROT_STRING;
         out->val.str = expr->data.name;
@@ -260,10 +277,13 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
         out->type = STDROT_INT;
         out->val.i = evaluate_expression_int(expr);
         return;
-    case NODE_IDENTIFIER: {
+    case NODE_IDENTIFIER:
+    {
         Variable *var = get_variable(expr->data.name);
-        if (!var) return;
-        switch (var->var_type) {
+        if (!var)
+            return;
+        switch (var->var_type)
+        {
         case VAR_INT:
             out->type = STDROT_INT;
             out->val.i = var->value.ivalue;
@@ -285,11 +305,14 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
             out->val.b = var->value.bvalue;
             return;
         case VAR_CHAR:
-            if (var->is_array) {
+            if (var->is_array)
+            {
                 out->type = STDROT_STRING;
                 out->val.str.data = (char *)var->value.array_data;
-                out->val.str.len  = (size_t)var->array_length;
-            } else {
+                out->val.str.len = (size_t)var->array_length;
+            }
+            else
+            {
                 out->type = STDROT_CHAR;
                 out->val.c = (char)var->value.ivalue;
             }
@@ -297,7 +320,7 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
         case VAR_STRING:
             out->type = STDROT_STRING;
             out->val.str.data = (char *)var->value.array_data;
-            out->val.str.len  = var->value.strvalue.len;
+            out->val.str.len = var->value.strvalue.len;
             return;
         default:
             return;
@@ -308,19 +331,31 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
     }
 
     /* General expression fallback */
-    if (is_expression(expr, VAR_BOOL)) {
+    if (is_expression(expr, VAR_BOOL))
+    {
         out->type = STDROT_BOOL;
         out->val.b = evaluate_expression_bool(expr);
-    } else if (is_expression(expr, VAR_SHORT)) {
+    }
+    else if (is_expression(expr, VAR_SHORT))
+    {
         out->type = STDROT_SHORT;
         out->val.s = evaluate_expression_short(expr);
-    } else if (is_expression(expr, VAR_FLOAT)) {
+    }
+    else if (is_expression(expr, VAR_FLOAT))
+    {
         out->type = STDROT_FLOAT;
         out->val.f = evaluate_expression_float(expr);
-    } else if (is_expression(expr, VAR_DOUBLE)) {
+    }
+    else if (is_expression(expr, VAR_DOUBLE))
+    {
         out->type = STDROT_DOUBLE;
         out->val.d = evaluate_expression_double(expr);
-    } else if (is_expression(expr, VAR_INT) || expr->type == NODE_ARRAY_ACCESS || expr->type == NODE_OPERATION || expr->type == NODE_UNARY_OPERATION    || expr->type == NODE_STRUCT_ACCESS) {
+    }
+    else if (is_expression(expr, VAR_INT) || expr->type == NODE_ARRAY_ACCESS ||
+             expr->type == NODE_OPERATION ||
+             expr->type == NODE_UNARY_OPERATION ||
+             expr->type == NODE_STRUCT_ACCESS)
+    {
         out->type = STDROT_INT;
         out->val.i = evaluate_expression_int(expr);
     }
@@ -328,21 +363,25 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
 
 void execute_func_call(const String func_name, ArgumentList *args)
 {
-    if (!func_name.data || !functions) {
+    if (!func_name.data || !functions)
+    {
         yyerror("Function not found");
         return;
     }
 
     /* Look up function in the registry */
     StdrotEntry *entry = NULL;
-    for (int i = 0; i < function_count; i++) {
-        if (strcmp(functions[i].name, func_name.data) == 0) {
+    for (int i = 0; i < function_count; i++)
+    {
+        if (strcmp(functions[i].name, func_name.data) == 0)
+        {
             entry = &functions[i];
             break;
         }
     }
 
-    if (!entry || !entry->fn) {
+    if (!entry || !entry->fn)
+    {
         yyerror("Unknown function");
         return;
     }
@@ -350,7 +389,8 @@ void execute_func_call(const String func_name, ArgumentList *args)
     /* Set execution context - get line number from first argument node */
     g_exec_context.function_name.data = func_name.data;
     g_exec_context.line_number = 0;
-    if (args && args->expr && args->expr->line_number > 0) {
+    if (args && args->expr && args->expr->line_number > 0)
+    {
         g_exec_context.line_number = args->expr->line_number;
     }
 
@@ -359,9 +399,11 @@ void execute_func_call(const String func_name, ArgumentList *args)
     int arg_count = 0;
 
     ArgumentList *cur = args;
-    while (cur && arg_count < 64) {
+    while (cur && arg_count < 64)
+    {
         ASTNode *expr = cur->expr;
-        if (!expr) break;
+        if (!expr)
+            break;
 
         ast_expr_to_stdrot_value(expr, &arg_values[arg_count]);
 
@@ -371,13 +413,17 @@ void execute_func_call(const String func_name, ArgumentList *args)
 
     StdrotValue result = entry->fn(arg_values, arg_count);
 
-    /* Generic write-back: if first arg is an identifier and function returned a value,
-     * write the returned value back to that variable. */
-    if (result.type != STDROT_NONE && args && args->expr && args->expr->type == NODE_IDENTIFIER) {
+    /* Generic write-back: if first arg is an identifier and function returned a
+     * value, write the returned value back to that variable. */
+    if (result.type != STDROT_NONE && args && args->expr &&
+        args->expr->type == NODE_IDENTIFIER)
+    {
         const String name = args->expr->data.name;
         Variable *var = get_variable(name);
-        if (var) {
-            switch (result.type) {
+        if (var)
+        {
+            switch (result.type)
+            {
             case STDROT_INT:
                 set_int_variable(name, result.val.i, var->modifiers);
                 break;
@@ -394,16 +440,19 @@ void execute_func_call(const String func_name, ArgumentList *args)
                 set_int_variable(name, result.val.c, var->modifiers);
                 break;
             case STDROT_STRING:
-                if (var->is_array && var->var_type == VAR_CHAR
-                        && var->array_length > 0) {
+                if (var->is_array && var->var_type == VAR_CHAR &&
+                    var->array_length > 0)
+                {
                     char *dst = (char *)var->value.array_data;
 
-                    if (result.val.str.data && result.val.str.data != dst) {
+                    if (result.val.str.data && result.val.str.data != dst)
+                    {
 
                         size_t max = var->array_length - 1;
                         size_t n = result.val.str.len;
 
-                        if (n > max) n = max;
+                        if (n > max)
+                            n = max;
 
                         memcpy(dst, result.val.str.data, n);
                         dst[n] = '\0';
@@ -420,7 +469,8 @@ void execute_func_call(const String func_name, ArgumentList *args)
     }
 }
 
-/* ── Stub functions (thin wrappers that forward to the implementation) ─────── */
+/* ── Stub functions (thin wrappers that forward to the implementation) ───────
+ */
 
 #ifdef STDROT_STATIC
 
@@ -452,119 +502,95 @@ void baka(const String format, ...)
 
 void yapping(const String format, ...)
 {
-    String s = {
-        .data = "v_yapping",
-        .len = sizeof("v_yapping") - 1
-    };
+    String s = {.data = "v_yapping", .len = sizeof("v_yapping") - 1};
     va_list ap;
     va_start(ap, format);
-    void (*fn)(const String, va_list) = (void (*)(const String, va_list))stdrot_lookup_symbol(s);
-    if (fn) fn(format, ap);
+    void (*fn)(const String, va_list) =
+        (void (*)(const String, va_list))stdrot_lookup_symbol(s);
+    if (fn)
+        fn(format, ap);
     va_end(ap);
 }
 
 void yappin(const String format, ...)
 {
-    String s = {
-        .data = "v_yappin",
-        .len = sizeof("v_yappin") - 1
-    };
+    String s = {.data = "v_yappin", .len = sizeof("v_yappin") - 1};
     va_list ap;
     va_start(ap, format);
-    void (*fn)(const String , va_list) = (void (*)(const String , va_list))stdrot_lookup_symbol(s);
-    if (fn) fn(format, ap);
+    void (*fn)(const String, va_list) =
+        (void (*)(const String, va_list))stdrot_lookup_symbol(s);
+    if (fn)
+        fn(format, ap);
     va_end(ap);
 }
 
 void baka(const String format, ...)
 {
-    String s = {
-        .data = "v_baka",
-        .len = sizeof("v_baka") - 1
-    };
+    String s = {.data = "v_baka", .len = sizeof("v_baka") - 1};
     va_list ap;
     va_start(ap, format);
-    void (*fn)(const String , va_list) = (void (*)(const String , va_list))stdrot_lookup_symbol(s);
-    if (fn) fn(format, ap);
+    void (*fn)(const String, va_list) =
+        (void (*)(const String, va_list))stdrot_lookup_symbol(s);
+    if (fn)
+        fn(format, ap);
     va_end(ap);
 }
 
 void ragequit(int exit_code)
 {
-    String s = {
-        .data = "ragequit",
-        .len = sizeof("ragequit") - 1
-    };
+    String s = {.data = "ragequit", .len = sizeof("ragequit") - 1};
     void (*fn)(int) = (void (*)(int))stdrot_lookup_symbol(s);
-    if (fn) fn(exit_code);
+    if (fn)
+        fn(exit_code);
 }
 
 void chill(unsigned int seconds)
 {
-    String s = {
-        .data = "chill",
-        .len = sizeof("chill") - 1
-    };
+    String s = {.data = "chill", .len = sizeof("chill") - 1};
     void (*fn)(unsigned int) = (void (*)(unsigned int))stdrot_lookup_symbol(s);
-    if (fn) fn(seconds);
+    if (fn)
+        fn(seconds);
 }
 
 char slorp_char(char chr)
 {
-    String s = {
-        .data = "slorp_char",
-        .len = sizeof("slorp_char") - 1
-    };
+    String s = {.data = "slorp_char", .len = sizeof("slorp_char") - 1};
     char (*fn)(char) = (char (*)(char))stdrot_lookup_symbol(s);
     return fn ? fn(chr) : chr;
 }
 
 String slorp_string(String string, size_t size)
 {
-    String s = {
-        .data = "slorp_string",
-        .len = sizeof("slorp_string") - 1
-    };
-    String (*fn)(String , size_t) = (String (*)(String , size_t))stdrot_lookup_symbol(s);
+    String s = {.data = "slorp_string", .len = sizeof("slorp_string") - 1};
+    String (*fn)(String, size_t) =
+        (String(*)(String, size_t))stdrot_lookup_symbol(s);
     return fn ? fn(string, size) : string;
 }
 
 int slorp_int(int val)
 {
-    String s = {
-        .data = "slorp_int",
-        .len = sizeof("slorp_int") - 1
-    };
+    String s = {.data = "slorp_int", .len = sizeof("slorp_int") - 1};
     int (*fn)(int) = (int (*)(int))stdrot_lookup_symbol(s);
     return fn ? fn(val) : val;
 }
 
 short slorp_short(short val)
 {
-    String s = {
-        .data = "slorp_short",
-        .len = sizeof("slorp_short") - 1
-    };
+    String s = {.data = "slorp_short", .len = sizeof("slorp_short") - 1};
     short (*fn)(short) = (short (*)(short))stdrot_lookup_symbol(s);
     return fn ? fn(val) : val;
 }
 
 float slorp_float(float var)
 {
-    String s = {
-        .data = "slorp_float",
-        .len = sizeof("slorp_float") - 1
-    };
+    String s = {.data = "slorp_float", .len = sizeof("slorp_float") - 1};
     float (*fn)(float) = (float (*)(float))stdrot_lookup_symbol(s);
     return fn ? fn(var) : var;
 }
 
 double slorp_double(double var)
 {
-    String s = {
-        .data = "slorp_double",
-        .len = sizeof("slorp_double") - 1
-    };
+    String s = {.data = "slorp_double", .len = sizeof("slorp_double") - 1};
     double (*fn)(double) = (double (*)(double))stdrot_lookup_symbol(s);
     return fn ? fn(var) : var;
 }

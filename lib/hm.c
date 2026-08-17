@@ -70,7 +70,8 @@ void hm_resize(HashMap *hm)
     if (!new_nodes)
         return; // Add error check
 
-    memset(new_nodes, 0, new_capacity * sizeof(HashMapNode *)); // Initialize to NULL
+    memset(new_nodes, 0,
+           new_capacity * sizeof(HashMapNode *)); // Initialize to NULL
 
     // Rehash existing entries
     for (size_t i = 0; i < hm->capacity; i++)
@@ -110,7 +111,8 @@ void dump(HashMap *hm)
         if (hm->nodes[i])
         {
             Variable *v = (Variable *)hm->nodes[i]->value;
-            printf("key: %p, value: %s, is_array: %s\n", hm->nodes[i]->key, v->name.data, v->is_array ? "true" : "false");
+            printf("key: %p, value: %s, is_array: %s\n", hm->nodes[i]->key,
+                   v->name.data, v->is_array ? "true" : "false");
         }
     }
 }
@@ -160,7 +162,8 @@ void *hm_get(HashMap *hm, const void *key, size_t key_size)
  * Resizes hashmap if load factor threshold would be exceeded.
  * Uses linear probing to handle collisions.
  */
-void hm_put(HashMap *hm, const void *key, size_t key_size, void *value, size_t value_size)
+void hm_put(HashMap *hm, const void *key, size_t key_size, void *value,
+            size_t value_size)
 {
     if (hm->size >= hm->capacity * LOAD_FACTOR)
     {
@@ -246,7 +249,8 @@ void hm_free(HashMap *hm)
                     free(var->value.array_data);
                     var->value.array_data = NULL;
                 }
-                else if (var->var_type == VAR_STRING && var->value.strvalue.data)
+                else if (var->var_type == VAR_STRING &&
+                         var->value.strvalue.data)
                 {
                     SAFE_FREE(var->value.strvalue);
                 }
@@ -273,14 +277,17 @@ void hm_free(HashMap *hm)
  */
 void hm_free_shallow(HashMap *hm)
 {
-    if (!hm) return;
-    
+    if (!hm)
+        return;
+
     for (size_t i = 0; i < hm->capacity; i++)
     {
         if (hm->nodes[i])
         {
             SAFE_FREE(hm->nodes[i]->key);
-            SAFE_FREE(hm->nodes[i]->value); /* Free the pointer copy, not what it points to */
+            SAFE_FREE(
+                hm->nodes[i]
+                    ->value); /* Free the pointer copy, not what it points to */
             SAFE_FREE(hm->nodes[i]);
         }
     }

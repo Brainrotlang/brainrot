@@ -29,8 +29,8 @@ merge" / "what's missing before I open a PR."
    updated together — a token added in only one layer is a half-finished
    feature.
 6. **Style pass**: 4-space indent, snake_case, Allman braces, ~80 cols
-   (`make format` should produce no diff). Check new public functions in
-   headers are documented per `CONTRIBUTING.md`.
+   (`make format-check` should pass — this is also CI's `lint` job). Check new
+   public functions in headers are documented per `CONTRIBUTING.md`.
 7. **Docs**: if a keyword/builtin's implementation status changed, check
    `README.md`'s table and `docs/the-brainrot-programming-language.md` were
    updated to match.

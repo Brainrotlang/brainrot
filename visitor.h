@@ -9,22 +9,23 @@
 typedef struct Visitor Visitor;
 
 /* Visitor interface - base class for all visitors */
-struct Visitor {
+struct Visitor
+{
     /* Expression visitors - return void* for flexibility */
-    void* (*visit_int_literal)(Visitor *self, ASTNode *node);
-    void* (*visit_float_literal)(Visitor *self, ASTNode *node);
-    void* (*visit_double_literal)(Visitor *self, ASTNode *node);
-    void* (*visit_char_literal)(Visitor *self, ASTNode *node);
-    void* (*visit_short_literal)(Visitor *self, ASTNode *node);
-    void* (*visit_boolean_literal)(Visitor *self, ASTNode *node);
-    void* (*visit_string_literal)(Visitor *self, ASTNode *node);
-    void* (*visit_identifier)(Visitor *self, ASTNode *node);
-    void* (*visit_binary_operation)(Visitor *self, ASTNode *node);
-    void* (*visit_unary_operation)(Visitor *self, ASTNode *node);
-    void* (*visit_array_access)(Visitor *self, ASTNode *node);
-    void* (*visit_function_call)(Visitor *self, ASTNode *node);
-    void* (*visit_sizeof)(Visitor *self, ASTNode *node);
-    
+    void *(*visit_int_literal)(Visitor *self, ASTNode *node);
+    void *(*visit_float_literal)(Visitor *self, ASTNode *node);
+    void *(*visit_double_literal)(Visitor *self, ASTNode *node);
+    void *(*visit_char_literal)(Visitor *self, ASTNode *node);
+    void *(*visit_short_literal)(Visitor *self, ASTNode *node);
+    void *(*visit_boolean_literal)(Visitor *self, ASTNode *node);
+    void *(*visit_string_literal)(Visitor *self, ASTNode *node);
+    void *(*visit_identifier)(Visitor *self, ASTNode *node);
+    void *(*visit_binary_operation)(Visitor *self, ASTNode *node);
+    void *(*visit_unary_operation)(Visitor *self, ASTNode *node);
+    void *(*visit_array_access)(Visitor *self, ASTNode *node);
+    void *(*visit_function_call)(Visitor *self, ASTNode *node);
+    void *(*visit_sizeof)(Visitor *self, ASTNode *node);
+
     /* Statement visitors - return void */
     void (*visit_declaration)(Visitor *self, ASTNode *node);
     void (*visit_assignment)(Visitor *self, ASTNode *node);

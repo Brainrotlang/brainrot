@@ -12,7 +12,7 @@
 #include <assert.h>
 
 // Maximum allocation size - helps prevent integer overflow
-#define MAX_ALLOC_SIZE ((size_t)-1 >> 1)
+#define MAX_ALLOC_SIZE ((size_t) - 1 >> 1)
 
 // Alignment requirement for the platform
 #define ALIGNMENT sizeof(void *)
@@ -51,7 +51,8 @@ void *safe_calloc(size_t count, size_t size);
 // Convenience macro for type-safe allocation
 #define SAFE_MALLOC(type) ((type *)safe_malloc(sizeof(type)))
 #define SAFE_CALLOC(c, type) ((type *)safe_calloc((c), sizeof(type)))
-#define SAFE_MALLOC_ARRAY(type, n) ((type *)safe_malloc_array((n), sizeof(type)))
+#define SAFE_MALLOC_ARRAY(type, n)                                             \
+    ((type *)safe_malloc_array((n), sizeof(type)))
 // Convenience macro for safer free usage
 #define SAFE_FREE(ptr) safe_free((void **)&(ptr), __FILE__, __LINE__, __func__)
 

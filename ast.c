@@ -22,7 +22,8 @@ static StructDef *struct_registry_list = NULL;
 ReturnValue current_return_value;
 Arena arena;
 
-TypeModifiers current_modifiers = {false, false, false, false, false, false, false, false};
+TypeModifiers current_modifiers = {false, false, false, false,
+                                   false, false, false, false};
 extern VarType current_var_type;
 
 Scope *current_scope;
@@ -39,16 +40,17 @@ String evaluate_expression_string(ASTNode *node);
 static String make_static_key(const String func_name, const String var_name)
 {
     static char buf[MAX_BUFFER_LEN];
-    size_t len = (size_t)snprintf(buf, sizeof(buf),
-                                  "%s::%s",
+    size_t len = (size_t)snprintf(buf, sizeof(buf), "%s::%s",
                                   func_name.data ? func_name.data : "__global",
                                   var_name.data);
-    return (String){ .data = buf, .len = len };
+    return (String){.data = buf, .len = len};
 }
 
-size_t get_type_size_for_descriptor(VarType type, int pointer_level, TypeModifiers mods)
+size_t get_type_size_for_descriptor(VarType type, int pointer_level,
+                                    TypeModifiers mods)
 {
-    if (pointer_level > 0) {
+    if (pointer_level > 0)
+    {
         return sizeof(uintptr_t);
     }
 
@@ -73,18 +75,21 @@ size_t get_type_size_for_descriptor(VarType type, int pointer_level, TypeModifie
             return sizeof(unsigned int);
         return sizeof(int);
     case VAR_STRING:
-        return sizeof(String );
+        return sizeof(String);
     case NONE:
     default:
         return 0;
     }
 }
 
-static void write_value_to_address(void *address, VarType type, int pointer_level, ASTNode *expr, TypeModifiers mods);
+static void write_value_to_address(void *address, VarType type,
+                                   int pointer_level, ASTNode *expr,
+                                   TypeModifiers mods);
 static void initialize_variable_from_expr(Variable *var, ASTNode *expr);
 
 // Symbol table functions
-bool set_variable(const String name, void *value, VarType type, TypeModifiers mods)
+bool set_variable(const String name, void *value, VarType type,
+                  TypeModifiers mods)
 {
     Variable *var = get_variable(name);
     if (var != NULL)
@@ -93,13 +98,19 @@ bool set_variable(const String name, void *value, VarType type, TypeModifiers mo
         var->modifiers = mods;
         var->var_type = type;
         switch (type)
-        
-        case VAR_INT:{
-            if (var->modifiers.is_long) {
+
+        case VAR_INT:
+        {
+            if (var->modifiers.is_long)
+            {
                 var->value.ivalue = (long long)(*(int *)value);
-            } else if (var->modifiers.is_long_long) {
+            }
+            else if (var->modifiers.is_long_long)
+            {
                 var->value.ivalue = (long)(*(int *)value);
-            } else {
+            }
+            else
+            {
                 var->value.ivalue = *(int *)value;
             }
             break;
@@ -122,21 +133,24 @@ bool set_variable(const String name, void *value, VarType type, TypeModifiers mo
             var->value.strvalue = ARENA_STRDUP(*(String *)value);
             break;
         case VAR_STRUCT:
-            /* struct blob is managed separately via array_data; nothing to copy here */
+            /* struct blob is managed separately via array_data; nothing to copy
+             * here */
             break;
         case NONE:
             break;
         }
-        return true;
+            return true;
     }
     return false; // Symbol table is full
 }
 
-bool set_multi_array_variable(const String name, int dimensions[], int num_dimensions, TypeModifiers mods, VarType type)
+bool set_multi_array_variable(const String name, int dimensions[],
+                              int num_dimensions, TypeModifiers mods,
+                              VarType type)
 {
     Variable *var = get_variable(name);
-    if(var == NULL)
-        return false; 
+    if (var == NULL)
+        return false;
 
     var->is_array = true;
     var->modifiers = mods;
@@ -151,11 +165,12 @@ bool set_multi_array_variable(const String name, int dimensions[], int num_dimen
         var->array_dimensions.dimensions[i] = dimensions[i];
         total *= dimensions[i];
     }
-    
+
     var->array_dimensions.total_size = total;
     var->array_length = total;
 
-    size_t element_size = get_type_size_for_descriptor(type, var->pointer_level, mods);
+    size_t element_size =
+        get_type_size_for_descriptor(type, var->pointer_level, mods);
     if (element_size == 0)
         element_size = sizeof(int);
 
@@ -169,30 +184,38 @@ bool set_multi_array_variable(const String name, int dimensions[], int num_dimen
     return true;
 }
 
-ASTNode *create_struct_def_node(String name, StructField *fields) {
+ASTNode *create_struct_def_node(String name, StructField *fields)
+{
     ASTNode *node = ARENA_ALLOC_ASTNODE();
     node->type = NODE_STRUCT_DEF;
-    node->data.struct_def.name   = ARENA_STRDUP(name);
-    node->data.struct_def.fields = fields; /* pointer only — registry owns memory */
+    node->data.struct_def.name = ARENA_STRDUP(name);
+    node->data.struct_def.fields =
+        fields; /* pointer only — registry owns memory */
     return node;
 }
 
-ASTNode *create_struct_access_node(ASTNode *object, String member) {
+ASTNode *create_struct_access_node(ASTNode *object, String member)
+{
     ASTNode *node = ARENA_ALLOC_ASTNODE();
     node->type = NODE_STRUCT_ACCESS;
-    node->data.struct_access.object      = object;
+    node->data.struct_access.object = object;
     node->data.struct_access.member_name = ARENA_STRDUP(member);
     /* Propagate struct_name so callers can infer the type */
-    if (object && object->type == NODE_IDENTIFIER) {
+    if (object && object->type == NODE_IDENTIFIER)
+    {
         Variable *var = get_variable(object->data.name);
-        if (var && var->var_type == VAR_STRUCT && var->struct_name.data) {
-            node->data.struct_access.struct_name = ARENA_STRDUP(var->struct_name);
+        if (var && var->var_type == VAR_STRUCT && var->struct_name.data)
+        {
+            node->data.struct_access.struct_name =
+                ARENA_STRDUP(var->struct_name);
             /* Set var_type/pointer_level based on the field */
             StructDef *def = get_struct_def(var->struct_name);
-            if (def) {
+            if (def)
+            {
                 StructField *fld = find_struct_field(def, member);
-                if (fld) {
-                    node->var_type      = fld->type;
+                if (fld)
+                {
+                    node->var_type = fld->type;
                     node->pointer_level = fld->pointer_level;
                 }
             }
@@ -201,137 +224,164 @@ ASTNode *create_struct_access_node(ASTNode *object, String member) {
     return node;
 }
 
-ASTNode *create_multi_array_declaration_node(String name, int dimensions[], int num_dimensions, VarType type) {
+ASTNode *create_multi_array_declaration_node(String name, int dimensions[],
+                                             int num_dimensions, VarType type)
+{
     ASTNode *node = ARENA_ALLOC_ASTNODE();
-    if (!node) {
+    if (!node)
+    {
         yyerror("Memory allocation failed");
         exit(EXIT_FAILURE);
     }
-    
+
     node->type = NODE_ARRAY_ACCESS;
     node->var_type = type;
     node->is_array = true;
     node->pointer_level = 0;
-    
+
     // Store dimensions in node
-    for (int i = 0; i < num_dimensions; i++) {
+    for (int i = 0; i < num_dimensions; i++)
+    {
         node->array_dimensions.dimensions[i] = dimensions[i];
     }
     node->array_dimensions.num_dimensions = num_dimensions;
-    
+
     // Calculate total size
     size_t total = 1;
-    for (int i = 0; i < num_dimensions; i++) {
+    for (int i = 0; i < num_dimensions; i++)
+    {
         total *= dimensions[i];
     }
     node->array_dimensions.total_size = total;
     node->array_length = total; // For backward compatibility
-    
+
     // Set the variable name
     node->data.name = ARENA_STRDUP(name);
 
     Variable *var = get_variable(name);
-    if (var) {
+    if (var)
+    {
         node->pointer_level = var->pointer_level;
         node->modifiers = var->modifiers;
     }
-    
+
     return node;
 }
 
-ASTNode *create_multi_array_access_node(String name, ASTNode *indices[], int num_indices) {
+ASTNode *create_multi_array_access_node(String name, ASTNode *indices[],
+                                        int num_indices)
+{
     ASTNode *node = ARENA_ALLOC_ASTNODE();
-    if (!node) {
+    if (!node)
+    {
         yyerror("Memory allocation failed");
         exit(EXIT_FAILURE);
     }
-    
+
     node->type = NODE_ARRAY_ACCESS;
-    
+
     // Store the array name
     node->data.array.name = ARENA_STRDUP(name);
-    
+
     // Store indices
     node->data.array.num_dimensions = num_indices;
-    for (int i = 0; i < num_indices; i++) {
+    for (int i = 0; i < num_indices; i++)
+    {
         node->data.array.indices[i] = indices[i];
     }
 
     Variable *var = get_variable(name);
-    if (var) {
+    if (var)
+    {
         node->var_type = var->var_type;
         node->pointer_level = var->pointer_level;
         node->modifiers = var->modifiers;
         node->is_array = var->is_array;
     }
-    
+
     return node;
-} 
+}
 
 // Function to rename the old create_array_access_node to maintain compatibility
-ASTNode *create_array_access_node_single(String name, ASTNode *index) {
-    // Create a wrapper that calls the multi-dimensional version with a single index
+ASTNode *create_array_access_node_single(String name, ASTNode *index)
+{
+    // Create a wrapper that calls the multi-dimensional version with a single
+    // index
     ASTNode *indices[1] = {index};
     return create_multi_array_access_node(name, indices, 1);
 }
 
 // Calculate the memory offset for multi-dimensional array access
-size_t calculate_array_offset(Variable *var, int indices[], int num_indices) {
+size_t calculate_array_offset(Variable *var, int indices[], int num_indices)
+{
     // TEMPORARY FIX: Skip strict dimension checking due to variable lookup bug
     // The issue is that get_variable() sometimes returns the wrong variable
-    // This is a complex memory/hash collision bug that needs deeper investigation
-    
+    // This is a complex memory/hash collision bug that needs deeper
+    // investigation
+
     // If the variable is not actually an array or dimensions don't match,
     // try to handle it gracefully instead of crashing
-    if (!var->is_array) {
+    if (!var->is_array)
+    {
         // Variable is not an array - return offset 0 for single element access
         return 0;
     }
-    
-    if (num_indices != var->array_dimensions.num_dimensions) {
-        // Dimension mismatch - for now, just use the first few indices that are available
-        // This is not ideal but prevents crashes
-        int actual_indices = (num_indices < var->array_dimensions.num_dimensions) 
-                           ? num_indices 
-                           : var->array_dimensions.num_dimensions;
-        
-        if (actual_indices <= 0) {
-            return 0;  // Fallback to first element
+
+    if (num_indices != var->array_dimensions.num_dimensions)
+    {
+        // Dimension mismatch - for now, just use the first few indices that are
+        // available This is not ideal but prevents crashes
+        int actual_indices =
+            (num_indices < var->array_dimensions.num_dimensions)
+                ? num_indices
+                : var->array_dimensions.num_dimensions;
+
+        if (actual_indices <= 0)
+        {
+            return 0; // Fallback to first element
         }
-        
+
         // Use the available indices for offset calculation
         num_indices = actual_indices;
     }
-    
+
     // Calculate the offset using row-major order
     size_t offset = 0;
-    
-    // For row-major order: offset = i0 * (d1 * d2 * ... * dn-1) + i1 * (d2 * ... * dn-1) + ... + in-1
-    for (int i = 0; i < num_indices; i++) {
+
+    // For row-major order: offset = i0 * (d1 * d2 * ... * dn-1) + i1 * (d2 *
+    // ... * dn-1) + ... + in-1
+    for (int i = 0; i < num_indices; i++)
+    {
         // Check if the index is within bounds
-        if (indices[i] < 0 || indices[i] >= var->array_dimensions.dimensions[i]) {
+        if (indices[i] < 0 || indices[i] >= var->array_dimensions.dimensions[i])
+        {
             char error_msg[MAX_BUFFER_LEN];
-            sprintf(error_msg, "Array index out of bounds: dimension %d (index=%d, size=%d)", 
-                    i + 1, indices[i], var->array_dimensions.dimensions[i]);
+            sprintf(
+                error_msg,
+                "Array index out of bounds: dimension %d (index=%d, size=%d)",
+                i + 1, indices[i], var->array_dimensions.dimensions[i]);
             yyerror(error_msg);
             exit(EXIT_FAILURE);
         }
-        
+
         // Calculate the multiplier for this dimension
         // Multiply by all dimensions to the right
         size_t multiplier = 1;
-        for (int j = i + 1; j < num_indices; j++) {
+        for (int j = i + 1; j < num_indices; j++)
+        {
             multiplier *= var->array_dimensions.dimensions[j];
         }
-        
+
         offset += indices[i] * multiplier;
     }
-    
+
     return offset;
 }
 
-void *evaluate_struct_member_address(ASTNode *node) {
-    if (!node || node->type != NODE_STRUCT_ACCESS) {
+void *evaluate_struct_member_address(ASTNode *node)
+{
+    if (!node || node->type != NODE_STRUCT_ACCESS)
+    {
         yyerror("Invalid struct member access node");
         return NULL;
     }
@@ -340,28 +390,49 @@ void *evaluate_struct_member_address(ASTNode *node) {
     const String member = node->data.struct_access.member_name;
 
     Variable *var = NULL;
-    if (obj->type == NODE_IDENTIFIER) {
+    if (obj->type == NODE_IDENTIFIER)
+    {
         var = get_variable(obj->data.name);
-    } else {
+    }
+    else
+    {
         yyerror("Nested struct access not yet supported");
         return NULL;
     }
 
-    if (!var) { yyerror("Undefined struct variable"); return NULL; }
-    if (var->var_type != VAR_STRUCT) { yyerror("Variable is not a struct"); return NULL; }
+    if (!var)
+    {
+        yyerror("Undefined struct variable");
+        return NULL;
+    }
+    if (var->var_type != VAR_STRUCT)
+    {
+        yyerror("Variable is not a struct");
+        return NULL;
+    }
 
     StructDef *def = get_struct_def(var->struct_name);
-    if (!def) { yyerror("Unknown struct type"); return NULL; }
+    if (!def)
+    {
+        yyerror("Unknown struct type");
+        return NULL;
+    }
 
     /* Lazily allocate blob if missing — handles cases where parse-time
        pointer was invalidated by hashmap resize during semantic analysis */
-    if (!var->value.array_data) {
+    if (!var->value.array_data)
+    {
         var->value.array_data = calloc(1, def->total_size);
-        if (!var->value.array_data) { yyerror("Out of memory for struct blob"); return NULL; }
+        if (!var->value.array_data)
+        {
+            yyerror("Out of memory for struct blob");
+            return NULL;
+        }
     }
 
     StructField *fld = find_struct_field(def, member);
-    if (!fld) {
+    if (!fld)
+    {
         char msg[MAX_BUFFER_LEN];
         snprintf(msg, sizeof(msg), "Struct '%s' has no member '%s'",
                  var->struct_name.data, member.data);
@@ -373,31 +444,36 @@ void *evaluate_struct_member_address(ASTNode *node) {
 }
 
 // Evaluate a multi-dimensional array access node
-void *evaluate_multi_array_access(ASTNode *node) {
+void *evaluate_multi_array_access(ASTNode *node)
+{
     // Validate the node structure
-    if (!node) {
+    if (!node)
+    {
         yyerror("Invalid array access node: null node");
         exit(EXIT_FAILURE);
     }
-    if (node->type != NODE_ARRAY_ACCESS) {
+    if (node->type != NODE_ARRAY_ACCESS)
+    {
         yyerror("Invalid node type for array access");
         exit(EXIT_FAILURE);
     }
-    
+
     // CRITICAL: Store the array name in a local copy IMMEDIATELY
-    // The array name might be corrupted if we access node->data.array.name after
-    // evaluating indices, due to union memory layout issues
+    // The array name might be corrupted if we access node->data.array.name
+    // after evaluating indices, due to union memory layout issues
     char array_name_buffer[MAX_BUFFER_LEN];
 
     const String original_array_name = node->data.array.name;
-    if (!original_array_name.data) {
+    if (!original_array_name.data)
+    {
         yyerror("Invalid array access node: missing array name");
         exit(EXIT_FAILURE);
     }
 
     size_t name_len = original_array_name.len;
 
-    if (name_len == 0 || name_len >= sizeof(array_name_buffer)) {
+    if (name_len == 0 || name_len >= sizeof(array_name_buffer))
+    {
         yyerror("Invalid array name in array access");
         exit(EXIT_FAILURE);
     }
@@ -406,75 +482,88 @@ void *evaluate_multi_array_access(ASTNode *node) {
     array_name_buffer[name_len] = '\0';
     const String array_name = {
         .data = array_name_buffer,
-        .len = original_array_name.len  // ← use the actual name length
+        .len = original_array_name.len // ← use the actual name length
     };
-            
+
     // Also store num_dimensions locally before evaluation
     int num_indices = node->data.array.num_dimensions;
-    if (num_indices <= 0) {
+    if (num_indices <= 0)
+    {
         yyerror("Invalid number of array indices");
         exit(EXIT_FAILURE);
     }
-    
+
     // Get the variable using the preserved array name
     Variable *var = get_variable(array_name);
-    if (var == NULL) {
+    if (var == NULL)
+    {
         char error_msg[MAX_BUFFER_LEN];
-        snprintf(error_msg, sizeof(error_msg), "Variable '%.100s' is not defined", array_name.data);
+        snprintf(error_msg, sizeof(error_msg),
+                 "Variable '%.100s' is not defined", array_name.data);
         yyerror(error_msg);
         exit(EXIT_FAILURE);
     }
-    if (!var->is_array) {
+    if (!var->is_array)
+    {
         char error_msg[MAX_BUFFER_LEN];
-        snprintf(error_msg, sizeof(error_msg), "Variable '%.100s' is not an array", array_name.data);
+        snprintf(error_msg, sizeof(error_msg),
+                 "Variable '%.100s' is not an array", array_name.data);
         yyerror(error_msg);
         exit(EXIT_FAILURE);
     }
-    
+
     // Extract the indices - evaluate them AFTER we've preserved the array name
     int indices[MAX_DIMENSIONS];
-    
-    // Evaluate each index expression - make sure we don't modify the array access node
-    for (int i = 0; i < num_indices; i++) {
+
+    // Evaluate each index expression - make sure we don't modify the array
+    // access node
+    for (int i = 0; i < num_indices; i++)
+    {
         ASTNode *index_node = node->data.array.indices[i];
-        if (!index_node) {
+        if (!index_node)
+        {
             char error_msg[MAX_BUFFER_LEN];
-            snprintf(error_msg, sizeof(error_msg), "Missing index %d for array '%.100s'", i, array_name.data);
+            snprintf(error_msg, sizeof(error_msg),
+                     "Missing index %d for array '%.100s'", i, array_name.data);
             yyerror(error_msg);
             exit(EXIT_FAILURE);
         }
         // Evaluate the index expression - this should return an integer value
-        // Make sure we're not accidentally treating the index as an array access
+        // Make sure we're not accidentally treating the index as an array
+        // access
         indices[i] = evaluate_expression_int(index_node);
-        
-        // After evaluating each index, verify the array name hasn't been corrupted
-        if (node->data.array.name.data != original_array_name.data) {
+
+        // After evaluating each index, verify the array name hasn't been
+        // corrupted
+        if (node->data.array.name.data != original_array_name.data)
+        {
             // Restore the original array name if it was modified
             // Note: We need to cast away const because the field is not const
-            node->data.array.name.data = (char*)original_array_name.data;
+            node->data.array.name.data = (char *)original_array_name.data;
         }
     }
-    
+
     // Calculate the offset
     size_t offset = calculate_array_offset(var, indices, num_indices);
-    
+
     // Return a pointer to the element
-    switch (var->var_type) {
-        case VAR_INT:
-            return (int*)var->value.array_data + offset;
-        case VAR_SHORT:
-            return (short*)var->value.array_data + offset;
-        case VAR_FLOAT:
-            return (float*)var->value.array_data + offset;
-        case VAR_DOUBLE:
-            return (double*)var->value.array_data + offset;
-        case VAR_BOOL:
-            return (bool*)var->value.array_data + offset;
-        case VAR_CHAR:
-            return (char*)var->value.array_data + offset;
-        default:
-            yyerror("Unknown variable type");
-            exit(EXIT_FAILURE);
+    switch (var->var_type)
+    {
+    case VAR_INT:
+        return (int *)var->value.array_data + offset;
+    case VAR_SHORT:
+        return (short *)var->value.array_data + offset;
+    case VAR_FLOAT:
+        return (float *)var->value.array_data + offset;
+    case VAR_DOUBLE:
+        return (double *)var->value.array_data + offset;
+    case VAR_BOOL:
+        return (bool *)var->value.array_data + offset;
+    case VAR_CHAR:
+        return (char *)var->value.array_data + offset;
+    default:
+        yyerror("Unknown variable type");
+        exit(EXIT_FAILURE);
     }
 }
 
@@ -488,7 +577,8 @@ bool set_char_variable(const String name, int value, TypeModifiers mods)
     return set_variable(name, &value, VAR_CHAR, mods);
 }
 
-bool set_array_variable(String name, int length, TypeModifiers mods, VarType type)
+bool set_array_variable(String name, int length, TypeModifiers mods,
+                        VarType type)
 {
     // search for an existing variable
     Variable *var = get_variable(name);
@@ -587,7 +677,6 @@ TypeModifiers get_current_modifiers(void)
     return mods;
 }
 
-
 /* Function implementations */
 
 bool check_and_mark_identifier(ASTNode *node, const String contextErrorMessage)
@@ -651,7 +740,8 @@ void execute_switch_statement(ASTNode *node)
     POP_JUMP_BUFFER();
 }
 
-static ASTNode *create_node(NodeType type, VarType var_type, TypeModifiers modifiers)
+static ASTNode *create_node(NodeType type, VarType var_type,
+                            TypeModifiers modifiers)
 {
     ASTNode *node = ARENA_ALLOC_ASTNODE();
     if (!node)
@@ -670,9 +760,11 @@ static ASTNode *create_node(NodeType type, VarType var_type, TypeModifiers modif
 }
 
 /* Helper function to allocate and zero-initialize an ASTNode */
-ASTNode* arena_alloc_astnode(void) {
+ASTNode *arena_alloc_astnode(void)
+{
     ASTNode *node = ARENA_ALLOC(ASTNode);
-    if (node) {
+    if (node)
+    {
         memset(node, 0, sizeof(ASTNode));
     }
     return node;
@@ -685,7 +777,8 @@ ASTNode *create_int_node(int value)
     return node;
 }
 
-ASTNode *create_array_declaration_node(String name, int length, VarType var_type)
+ASTNode *create_array_declaration_node(String name, int length,
+                                       VarType var_type)
 {
     ASTNode *node = ARENA_ALLOC_ASTNODE();
     if (!node)
@@ -711,8 +804,9 @@ ASTNode *create_array_access_node(String name, ASTNode *index)
     node->type = NODE_ARRAY_ACCESS;
     node->data.array.name = ARENA_STRDUP(name);
     node->data.array.index = index;
-    node->data.array.indices[0] = index;  // Also set the multi-dimensional access
-    node->data.array.num_dimensions = 1;  // Set dimension count
+    node->data.array.indices[0] =
+        index; // Also set the multi-dimensional access
+    node->data.array.num_dimensions = 1; // Set dimension count
     node->is_array = true;
 
     // Look up and set the array's type from the symbol table
@@ -763,7 +857,8 @@ ASTNode *create_identifier_node(String name)
 
 ASTNode *create_identifier_node_ex(String name, int pointer_level)
 {
-    ASTNode *node = create_node(NODE_IDENTIFIER, current_var_type, current_modifiers);
+    ASTNode *node =
+        create_node(NODE_IDENTIFIER, current_var_type, current_modifiers);
     node->pointer_level = pointer_level;
     SET_DATA_NAME(node, name);
     return node;
@@ -776,7 +871,9 @@ ASTNode *create_assignment_node(String name, ASTNode *expr)
 
 ASTNode *create_assignment_target_node(ASTNode *target, ASTNode *expr)
 {
-    ASTNode *node = create_node(NODE_ASSIGNMENT, target ? target->var_type : current_var_type, get_current_modifiers());
+    ASTNode *node = create_node(NODE_ASSIGNMENT,
+                                target ? target->var_type : current_var_type,
+                                get_current_modifiers());
     node->pointer_level = target ? target->pointer_level : 0;
     SET_DATA_OP(node, target, expr, OP_ASSIGN);
     return node;
@@ -787,11 +884,14 @@ ASTNode *create_declaration_node(String name, ASTNode *expr)
     return create_declaration_node_ex(name, expr, 0);
 }
 
-ASTNode *create_declaration_node_ex(String name, ASTNode *expr, int pointer_level)
+ASTNode *create_declaration_node_ex(String name, ASTNode *expr,
+                                    int pointer_level)
 {
-    ASTNode *node = create_node(NODE_DECLARATION, current_var_type, get_current_modifiers());
+    ASTNode *node = create_node(NODE_DECLARATION, current_var_type,
+                                get_current_modifiers());
     node->pointer_level = pointer_level;
-    SET_DATA_OP(node, create_identifier_node_ex(name, pointer_level), expr, OP_ASSIGN);
+    SET_DATA_OP(node, create_identifier_node_ex(name, pointer_level), expr,
+                OP_ASSIGN);
     return node;
 }
 
@@ -809,7 +909,8 @@ ASTNode *create_unary_operation_node(OperatorType op, ASTNode *operand)
     return node;
 }
 
-ASTNode *create_for_statement_node(ASTNode *init, ASTNode *cond, ASTNode *incr, ASTNode *body)
+ASTNode *create_for_statement_node(ASTNode *init, ASTNode *cond, ASTNode *incr,
+                                   ASTNode *body)
 {
     ASTNode *node = create_node(NODE_FOR_STATEMENT, NONE, current_modifiers);
     SET_DATA_FOR(node, init, cond, incr, body);
@@ -825,7 +926,8 @@ ASTNode *create_while_statement_node(ASTNode *cond, ASTNode *body)
 
 ASTNode *create_do_while_statement_node(ASTNode *cond, ASTNode *body)
 {
-    ASTNode *node = create_node(NODE_DO_WHILE_STATEMENT, NONE, current_modifiers);
+    ASTNode *node =
+        create_node(NODE_DO_WHILE_STATEMENT, NONE, current_modifiers);
     SET_DATA_WHILE(node, cond, body);
     return node;
 }
@@ -851,8 +953,10 @@ ASTNode *create_sizeof_node(ASTNode *expr)
     return node;
 }
 
-// @param promotion: 0 for no promotion, 1 for promotion to double 2 for promotion to float
-void *handle_identifier(ASTNode *node, const String contextErrorMessage, int promote)
+// @param promotion: 0 for no promotion, 1 for promotion to double 2 for
+// promotion to float
+void *handle_identifier(ASTNode *node, const String contextErrorMessage,
+                        int promote)
 {
     if (!check_and_mark_identifier(node, contextErrorMessage))
         ragequit(1);
@@ -975,12 +1079,14 @@ int get_expression_pointer_level(ASTNode *node)
             return get_expression_pointer_level(node->data.unary.operand) + 1;
         if (node->data.unary.op == OP_DEREFERENCE)
         {
-            int operand_level = get_expression_pointer_level(node->data.unary.operand);
+            int operand_level =
+                get_expression_pointer_level(node->data.unary.operand);
             return operand_level > 0 ? operand_level - 1 : 0;
         }
         return get_expression_pointer_level(node->data.unary.operand);
     case NODE_FUNC_CALL:
-        return get_function_return_pointer_level(node->data.func_call.function_name);
+        return get_function_return_pointer_level(
+            node->data.func_call.function_name);
     case NODE_OPERATION:
         switch (node->data.op.op)
         {
@@ -1000,20 +1106,26 @@ int get_expression_pointer_level(ASTNode *node)
             int right_level = get_expression_pointer_level(node->data.op.right);
             if (left_level > 0 && right_level == 0)
                 return left_level;
-            if (right_level > 0 && left_level == 0 && node->data.op.op == OP_PLUS)
+            if (right_level > 0 && left_level == 0 &&
+                node->data.op.op == OP_PLUS)
                 return right_level;
             return 0;
         }
         default:
             return 0;
         }
-    case NODE_STRUCT_ACCESS: {
+    case NODE_STRUCT_ACCESS:
+    {
         ASTNode *obj = node->data.struct_access.object;
         Variable *var = (obj->type == NODE_IDENTIFIER)
-                        ? get_variable(obj->data.name) : NULL;
-        if (!var || var->var_type != VAR_STRUCT) return 0;
+                            ? get_variable(obj->data.name)
+                            : NULL;
+        if (!var || var->var_type != VAR_STRUCT)
+            return 0;
         StructDef *def = get_struct_def(var->struct_name);
-        StructField *fld = def ? find_struct_field(def, node->data.struct_access.member_name) : NULL;
+        StructField *fld =
+            def ? find_struct_field(def, node->data.struct_access.member_name)
+                : NULL;
         return fld ? fld->pointer_level : 0;
     }
     default:
@@ -1048,11 +1160,12 @@ VarType get_expression_type(ASTNode *node)
         // First, get the array's base type from symbol table
         // Store the array name locally to prevent modification
         const String array_name = node->data.array.name;
-        if (!array_name.data) {
+        if (!array_name.data)
+        {
             yyerror("Invalid array access: missing array name");
             return NONE;
         }
-        
+
         Variable *var = get_variable(array_name);
         if (var != NULL && var->is_array)
         {
@@ -1102,7 +1215,8 @@ VarType get_expression_type(ASTNode *node)
     }
     case NODE_UNARY_OPERATION:
     {
-        if (node->data.unary.op == OP_ADDRESS_OF || node->data.unary.op == OP_DEREFERENCE)
+        if (node->data.unary.op == OP_ADDRESS_OF ||
+            node->data.unary.op == OP_DEREFERENCE)
         {
             return get_expression_type(node->data.unary.operand);
         }
@@ -1124,15 +1238,20 @@ VarType get_expression_type(ASTNode *node)
         yyerror("Undefined function in get_expression_type");
         return NONE;
     }
-    case NODE_STRUCT_ACCESS: {
-            ASTNode *obj = node->data.struct_access.object;
-            Variable *var = (obj->type == NODE_IDENTIFIER)
-                            ? get_variable(obj->data.name) : NULL;
-            if (!var || var->var_type != VAR_STRUCT) return NONE;
-            StructDef *def = get_struct_def(var->struct_name);
-            if (!def) return NONE;
-            StructField *fld = find_struct_field(def, node->data.struct_access.member_name);
-            return fld ? fld->type : NONE;
+    case NODE_STRUCT_ACCESS:
+    {
+        ASTNode *obj = node->data.struct_access.object;
+        Variable *var = (obj->type == NODE_IDENTIFIER)
+                            ? get_variable(obj->data.name)
+                            : NULL;
+        if (!var || var->var_type != VAR_STRUCT)
+            return NONE;
+        StructDef *def = get_struct_def(var->struct_name);
+        if (!def)
+            return NONE;
+        StructField *fld =
+            find_struct_field(def, node->data.struct_access.member_name);
+        return fld ? fld->type : NONE;
     }
     default:
         yyerror("Unknown node type in get_expression_type");
@@ -1180,27 +1299,31 @@ void *handle_binary_operation(ASTNode *node)
     case VAR_FLOAT:
         left_value = SAFE_MALLOC(float);
         right_value = SAFE_MALLOC(float);
-        *(float *)left_value = (left_type == VAR_INT)
-                                   ? (float)evaluate_expression_int(node->data.op.left)
-                                   : evaluate_expression_float(node->data.op.left);
-        *(float *)right_value = (right_type == VAR_INT)
-                                    ? (float)evaluate_expression_int(node->data.op.right)
-                                    : evaluate_expression_float(node->data.op.right);
+        *(float *)left_value =
+            (left_type == VAR_INT)
+                ? (float)evaluate_expression_int(node->data.op.left)
+                : evaluate_expression_float(node->data.op.left);
+        *(float *)right_value =
+            (right_type == VAR_INT)
+                ? (float)evaluate_expression_int(node->data.op.right)
+                : evaluate_expression_float(node->data.op.right);
         break;
 
     case VAR_DOUBLE:
         left_value = SAFE_MALLOC(double);
         right_value = SAFE_MALLOC(double);
-        *(double *)left_value = (left_type == VAR_INT)
-                                    ? (double)evaluate_expression_int(node->data.op.left)
-                                : (left_type == VAR_FLOAT)
-                                    ? (double)evaluate_expression_float(node->data.op.left)
-                                    : evaluate_expression_double(node->data.op.left);
-        *(double *)right_value = (right_type == VAR_INT)
-                                     ? (double)evaluate_expression_int(node->data.op.right)
-                                 : (right_type == VAR_FLOAT)
-                                     ? (double)evaluate_expression_float(node->data.op.right)
-                                     : evaluate_expression_double(node->data.op.right);
+        *(double *)left_value =
+            (left_type == VAR_INT)
+                ? (double)evaluate_expression_int(node->data.op.left)
+            : (left_type == VAR_FLOAT)
+                ? (double)evaluate_expression_float(node->data.op.left)
+                : evaluate_expression_double(node->data.op.left);
+        *(double *)right_value =
+            (right_type == VAR_INT)
+                ? (double)evaluate_expression_int(node->data.op.right)
+            : (right_type == VAR_FLOAT)
+                ? (double)evaluate_expression_float(node->data.op.right)
+                : evaluate_expression_double(node->data.op.right);
         break;
     case VAR_SHORT:
         left_value = SAFE_MALLOC(short);
@@ -1214,10 +1337,10 @@ void *handle_binary_operation(ASTNode *node)
         return NULL;
     }
 
-    
     // Perform the operation and allocate the result.
-    if (node->data.op.op == OP_LT || node->data.op.op == OP_GT || node->data.op.op == OP_LE ||
-        node->data.op.op == OP_GE || node->data.op.op == OP_EQ || node->data.op.op == OP_NE)
+    if (node->data.op.op == OP_LT || node->data.op.op == OP_GT ||
+        node->data.op.op == OP_LE || node->data.op.op == OP_GE ||
+        node->data.op.op == OP_EQ || node->data.op.op == OP_NE)
     {
         result = SAFE_MALLOC(int);
     }
@@ -1280,7 +1403,8 @@ void *handle_binary_operation(ASTNode *node)
             if (*(int *)right_value == 0)
             {
                 yyerror("Division by zero");
-                *(int *)result = 0; // Define a fallback behavior for int division by zero
+                *(int *)result =
+                    0; // Define a fallback behavior for int division by zero
             }
             else
             {
@@ -1300,7 +1424,8 @@ void *handle_binary_operation(ASTNode *node)
             if (*(short *)right_value == 0)
             {
                 yyerror("Division by zero");
-                *(short *)result = 0; // Define a fallback behavior for short division by zero
+                *(short *)result =
+                    0; // Define a fallback behavior for short division by zero
             }
             else
             {
@@ -1333,11 +1458,13 @@ void *handle_binary_operation(ASTNode *node)
         }
         else if (promoted_type == VAR_FLOAT)
         {
-            *(float *)result = fmod(*(float *)left_value, *(float *)right_value);
+            *(float *)result =
+                fmod(*(float *)left_value, *(float *)right_value);
         }
         else if (promoted_type == VAR_DOUBLE)
         {
-            *(double *)result = fmod(*(double *)left_value, *(double *)right_value);
+            *(double *)result =
+                fmod(*(double *)left_value, *(double *)right_value);
         }
         else if (promoted_type == VAR_SHORT)
         {
@@ -1470,10 +1597,11 @@ void *evaluate_lvalue_address(ASTNode *node)
         return evaluate_multi_array_access(node);
     case NODE_UNARY_OPERATION:
         if (node->data.unary.op == OP_DEREFERENCE)
-            return (void *)evaluate_expression_pointer(node->data.unary.operand);
+            return (void *)evaluate_expression_pointer(
+                node->data.unary.operand);
         break;
     case NODE_STRUCT_ACCESS:
-            return evaluate_struct_member_address(node);
+        return evaluate_struct_member_address(node);
     default:
         break;
     }
@@ -1510,7 +1638,8 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
         if (node->data.unary.op == OP_ADDRESS_OF)
             return (uintptr_t)evaluate_lvalue_address(node->data.unary.operand);
         if (node->data.unary.op == OP_DEREFERENCE)
-            return *(uintptr_t *)(uintptr_t)evaluate_expression_pointer(node->data.unary.operand);
+            return *(uintptr_t *)(uintptr_t)evaluate_expression_pointer(
+                node->data.unary.operand);
         break;
     case NODE_FUNC_CALL:
     {
@@ -1531,19 +1660,28 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
         {
             if (left_ptr > 0 && right_ptr == 0)
             {
-                uintptr_t base = evaluate_expression_pointer(node->data.op.left);
+                uintptr_t base =
+                    evaluate_expression_pointer(node->data.op.left);
                 ptrdiff_t offset = evaluate_expression_int(node->data.op.right);
-                size_t scale = get_type_size_for_descriptor(get_expression_type(node->data.op.left), left_ptr - 1, node->data.op.left->modifiers);
-                if (scale == 0) scale = 1;
-                return node->data.op.op == OP_PLUS ? base + (uintptr_t)(offset * (ptrdiff_t)scale)
-                                                   : base - (uintptr_t)(offset * (ptrdiff_t)scale);
+                size_t scale = get_type_size_for_descriptor(
+                    get_expression_type(node->data.op.left), left_ptr - 1,
+                    node->data.op.left->modifiers);
+                if (scale == 0)
+                    scale = 1;
+                return node->data.op.op == OP_PLUS
+                           ? base + (uintptr_t)(offset * (ptrdiff_t)scale)
+                           : base - (uintptr_t)(offset * (ptrdiff_t)scale);
             }
             if (right_ptr > 0 && left_ptr == 0 && node->data.op.op == OP_PLUS)
             {
-                uintptr_t base = evaluate_expression_pointer(node->data.op.right);
+                uintptr_t base =
+                    evaluate_expression_pointer(node->data.op.right);
                 ptrdiff_t offset = evaluate_expression_int(node->data.op.left);
-                size_t scale = get_type_size_for_descriptor(get_expression_type(node->data.op.right), right_ptr - 1, node->data.op.right->modifiers);
-                if (scale == 0) scale = 1;
+                size_t scale = get_type_size_for_descriptor(
+                    get_expression_type(node->data.op.right), right_ptr - 1,
+                    node->data.op.right->modifiers);
+                if (scale == 0)
+                    scale = 1;
                 return base + (uintptr_t)(offset * (ptrdiff_t)scale);
             }
         }
@@ -1557,7 +1695,9 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
     return (uintptr_t)0;
 }
 
-static void write_value_to_address(void *address, VarType type, int pointer_level, ASTNode *expr, TypeModifiers mods)
+static void write_value_to_address(void *address, VarType type,
+                                   int pointer_level, ASTNode *expr,
+                                   TypeModifiers mods)
 {
     if (!address)
     {
@@ -1642,7 +1782,8 @@ static void initialize_variable_from_expr(Variable *var, ASTNode *expr)
     }
 }
 
-void *handle_unary_expression(ASTNode *node, void *operand_value, int operand_type)
+void *handle_unary_expression(ASTNode *node, void *operand_value,
+                              int operand_type)
 {
     switch (node->data.unary.op)
     {
@@ -1688,28 +1829,36 @@ void *handle_unary_expression(ASTNode *node, void *operand_value, int operand_ty
         {
             int *result = SAFE_MALLOC(int);
             *result = *(int *)operand_value + 1;
-            set_int_variable(node->data.unary.operand->data.name, *result, get_variable_modifiers(node->data.unary.operand->data.name));
+            set_int_variable(
+                node->data.unary.operand->data.name, *result,
+                get_variable_modifiers(node->data.unary.operand->data.name));
             return result;
         }
         else if (operand_type == VAR_SHORT)
         {
             short *result = SAFE_MALLOC(short);
             *result = *(short *)operand_value + 1;
-            set_short_variable(node->data.unary.operand->data.name, *result, get_variable_modifiers(node->data.unary.operand->data.name));
+            set_short_variable(
+                node->data.unary.operand->data.name, *result,
+                get_variable_modifiers(node->data.unary.operand->data.name));
             return result;
         }
         else if (operand_type == VAR_FLOAT)
         {
             float *result = SAFE_MALLOC(float);
             *result = *(float *)operand_value + 1;
-            set_float_variable(node->data.unary.operand->data.name, *result, get_variable_modifiers(node->data.unary.operand->data.name));
+            set_float_variable(
+                node->data.unary.operand->data.name, *result,
+                get_variable_modifiers(node->data.unary.operand->data.name));
             return result;
         }
         else if (operand_type == VAR_DOUBLE)
         {
             double *result = SAFE_MALLOC(double);
             *result = *(double *)operand_value + 1;
-            set_double_variable(node->data.unary.operand->data.name, *result, get_variable_modifiers(node->data.unary.operand->data.name));
+            set_double_variable(
+                node->data.unary.operand->data.name, *result,
+                get_variable_modifiers(node->data.unary.operand->data.name));
             return result;
         }
         else
@@ -1722,28 +1871,36 @@ void *handle_unary_expression(ASTNode *node, void *operand_value, int operand_ty
         {
             int *result = SAFE_MALLOC(int);
             *result = *(int *)operand_value - 1;
-            set_int_variable(node->data.unary.operand->data.name, *result, get_variable_modifiers(node->data.unary.operand->data.name));
+            set_int_variable(
+                node->data.unary.operand->data.name, *result,
+                get_variable_modifiers(node->data.unary.operand->data.name));
             return result;
         }
         else if (operand_type == VAR_SHORT)
         {
             short *result = SAFE_MALLOC(short);
             *result = *(short *)operand_value - 1;
-            set_short_variable(node->data.unary.operand->data.name, *result, get_variable_modifiers(node->data.unary.operand->data.name));
+            set_short_variable(
+                node->data.unary.operand->data.name, *result,
+                get_variable_modifiers(node->data.unary.operand->data.name));
             return result;
         }
         else if (operand_type == VAR_FLOAT)
         {
             float *result = SAFE_MALLOC(float);
             *result = *(float *)operand_value - 1;
-            set_float_variable(node->data.unary.operand->data.name, *result, get_variable_modifiers(node->data.unary.operand->data.name));
+            set_float_variable(
+                node->data.unary.operand->data.name, *result,
+                get_variable_modifiers(node->data.unary.operand->data.name));
             return result;
         }
         else if (operand_type == VAR_DOUBLE)
         {
             double *result = SAFE_MALLOC(double);
             *result = *(double *)operand_value - 1;
-            set_double_variable(node->data.unary.operand->data.name, *result, get_variable_modifiers(node->data.unary.operand->data.name));
+            set_double_variable(
+                node->data.unary.operand->data.name, *result,
+                get_variable_modifiers(node->data.unary.operand->data.name));
             return result;
         }
         else
@@ -1756,28 +1913,36 @@ void *handle_unary_expression(ASTNode *node, void *operand_value, int operand_ty
         {
             int *result = SAFE_MALLOC(int);
             *result = *(int *)operand_value;
-            set_int_variable(node->data.unary.operand->data.name, *result + 1, get_variable_modifiers(node->data.unary.operand->data.name));
+            set_int_variable(
+                node->data.unary.operand->data.name, *result + 1,
+                get_variable_modifiers(node->data.unary.operand->data.name));
             return result;
         }
         else if (operand_type == VAR_SHORT)
         {
             short *result = SAFE_MALLOC(short);
             *result = *(short *)operand_value;
-            set_short_variable(node->data.unary.operand->data.name, *result + 1, get_variable_modifiers(node->data.unary.operand->data.name));
+            set_short_variable(
+                node->data.unary.operand->data.name, *result + 1,
+                get_variable_modifiers(node->data.unary.operand->data.name));
             return result;
         }
         else if (operand_type == VAR_FLOAT)
         {
             float *result = SAFE_MALLOC(float);
             *result = *(float *)operand_value;
-            set_float_variable(node->data.unary.operand->data.name, *result + 1, get_variable_modifiers(node->data.unary.operand->data.name));
+            set_float_variable(
+                node->data.unary.operand->data.name, *result + 1,
+                get_variable_modifiers(node->data.unary.operand->data.name));
             return result;
         }
         else if (operand_type == VAR_DOUBLE)
         {
             double *result = SAFE_MALLOC(double);
             *result = *(double *)operand_value;
-            set_double_variable(node->data.unary.operand->data.name, *result + 1, get_variable_modifiers(node->data.unary.operand->data.name));
+            set_double_variable(
+                node->data.unary.operand->data.name, *result + 1,
+                get_variable_modifiers(node->data.unary.operand->data.name));
             return result;
         }
         else
@@ -1790,28 +1955,36 @@ void *handle_unary_expression(ASTNode *node, void *operand_value, int operand_ty
         {
             int *result = SAFE_MALLOC(int);
             *result = *(int *)operand_value;
-            set_int_variable(node->data.unary.operand->data.name, *result - 1, get_variable_modifiers(node->data.unary.operand->data.name));
+            set_int_variable(
+                node->data.unary.operand->data.name, *result - 1,
+                get_variable_modifiers(node->data.unary.operand->data.name));
             return result;
         }
         else if (operand_type == VAR_SHORT)
         {
             short *result = SAFE_MALLOC(short);
             *result = *(short *)operand_value;
-            set_short_variable(node->data.unary.operand->data.name, *result - 1, get_variable_modifiers(node->data.unary.operand->data.name));
+            set_short_variable(
+                node->data.unary.operand->data.name, *result - 1,
+                get_variable_modifiers(node->data.unary.operand->data.name));
             return result;
         }
         else if (operand_type == VAR_FLOAT)
         {
             float *result = SAFE_MALLOC(float);
             *result = *(float *)operand_value;
-            set_float_variable(node->data.unary.operand->data.name, *result - 1, get_variable_modifiers(node->data.unary.operand->data.name));
+            set_float_variable(
+                node->data.unary.operand->data.name, *result - 1,
+                get_variable_modifiers(node->data.unary.operand->data.name));
             return result;
         }
         else if (operand_type == VAR_DOUBLE)
         {
             double *result = SAFE_MALLOC(double);
             *result = *(double *)operand_value;
-            set_double_variable(node->data.unary.operand->data.name, *result - 1, get_variable_modifiers(node->data.unary.operand->data.name));
+            set_double_variable(
+                node->data.unary.operand->data.name, *result - 1,
+                get_variable_modifiers(node->data.unary.operand->data.name));
             return result;
         }
         else
@@ -1834,11 +2007,12 @@ float evaluate_expression_float(ASTNode *node)
     {
     case NODE_ARRAY_ACCESS:
     {
-        if (get_expression_pointer_level(node) > 0) {
+        if (get_expression_pointer_level(node) > 0)
+        {
             yyerror("Cannot use pointer in float context");
             return 0.0f;
         }
-        return *(float*)evaluate_multi_array_access(node);
+        return *(float *)evaluate_multi_array_access(node);
     }
     case NODE_FLOAT:
         return node->data.fvalue;
@@ -1848,14 +2022,13 @@ float evaluate_expression_float(ASTNode *node)
         return (float)node->data.ivalue;
     case NODE_IDENTIFIER:
     {
-        if (get_expression_pointer_level(node) > 0) {
+        if (get_expression_pointer_level(node) > 0)
+        {
             yyerror("Cannot use pointer in float context");
             return 0.0f;
         }
-        String error = {
-            .data = "Undefined variable",
-            .len = sizeof("Undefined variable") - 1
-        };
+        String error = {.data = "Undefined variable",
+                        .len = sizeof("Undefined variable") - 1};
         return *(float *)handle_identifier(node, error, 2);
     }
     case NODE_OPERATION:
@@ -1863,14 +2036,14 @@ float evaluate_expression_float(ASTNode *node)
         int result_type = get_expression_type(node);
         if (result_type == VAR_BOOL)
             return (float)evaluate_expression_bool(node);
-        if (get_expression_pointer_level(node) > 0) {
+        if (get_expression_pointer_level(node) > 0)
+        {
             yyerror("Cannot use pointer in float context");
             return 0.0f;
         }
         void *result = handle_binary_operation(node);
         float result_float = 0.0f;
-        result_float = (result_type == VAR_INT)
-                           ? (float)(*(int *)result)
+        result_float = (result_type == VAR_INT) ? (float)(*(int *)result)
                        : (result_type == VAR_FLOAT)
                            ? *(float *)result
                            : (float)(*(double *)result);
@@ -1879,19 +2052,24 @@ float evaluate_expression_float(ASTNode *node)
     }
     case NODE_UNARY_OPERATION:
     {
-        if (node->data.unary.op == OP_DEREFERENCE) {
-            if (get_expression_pointer_level(node) > 0) {
+        if (node->data.unary.op == OP_DEREFERENCE)
+        {
+            if (get_expression_pointer_level(node) > 0)
+            {
                 yyerror("Cannot use pointer in float context");
                 return 0.0f;
             }
-            return *(float *)(uintptr_t)evaluate_expression_pointer(node->data.unary.operand);
+            return *(float *)(uintptr_t)evaluate_expression_pointer(
+                node->data.unary.operand);
         }
-        if (node->data.unary.op == OP_ADDRESS_OF) {
+        if (node->data.unary.op == OP_ADDRESS_OF)
+        {
             yyerror("Cannot use pointer in float context");
             return 0.0f;
         }
         float operand = evaluate_expression_float(node->data.unary.operand);
-        float *result = (float *)handle_unary_expression(node, &operand, VAR_FLOAT);
+        float *result =
+            (float *)handle_unary_expression(node, &operand, VAR_FLOAT);
         float return_val = *result;
         SAFE_FREE(result);
         return return_val;
@@ -1911,24 +2089,38 @@ float evaluate_expression_float(ASTNode *node)
         }
         return 0.0f;
     }
-    case NODE_STRUCT_ACCESS: {
+    case NODE_STRUCT_ACCESS:
+    {
         void *addr = evaluate_struct_member_address(node);
-        if (!addr) return 0;
+        if (!addr)
+            return 0;
         /* Read based on the field's type */
         ASTNode *obj = node->data.struct_access.object;
         Variable *var = get_variable(obj->data.name);
         StructDef *def = var ? get_struct_def(var->struct_name) : NULL;
-        StructField *fld = def ? find_struct_field(def, node->data.struct_access.member_name) : NULL;
-        if (!fld) return 0;
-        if (fld->pointer_level > 0) return (float)*(uintptr_t *)addr;
-        switch (fld->type) {
-            case VAR_INT:    return (float)*(int    *)addr;
-            case VAR_SHORT:  return (float)*(short  *)addr;
-            case VAR_BOOL:   return (float)*(bool   *)addr;
-            case VAR_CHAR:   return (float)*(char   *)addr;
-            case VAR_FLOAT:  return        *(float  *)addr;
-            case VAR_DOUBLE: return (float)*(double *)addr;
-            default:         return 0;
+        StructField *fld =
+            def ? find_struct_field(def, node->data.struct_access.member_name)
+                : NULL;
+        if (!fld)
+            return 0;
+        if (fld->pointer_level > 0)
+            return (float)*(uintptr_t *)addr;
+        switch (fld->type)
+        {
+        case VAR_INT:
+            return (float)*(int *)addr;
+        case VAR_SHORT:
+            return (float)*(short *)addr;
+        case VAR_BOOL:
+            return (float)*(bool *)addr;
+        case VAR_CHAR:
+            return (float)*(char *)addr;
+        case VAR_FLOAT:
+            return *(float *)addr;
+        case VAR_DOUBLE:
+            return (float)*(double *)addr;
+        default:
+            return 0;
         }
     }
     default:
@@ -1946,11 +2138,12 @@ double evaluate_expression_double(ASTNode *node)
     {
     case NODE_ARRAY_ACCESS:
     {
-        if (get_expression_pointer_level(node) > 0) {
+        if (get_expression_pointer_level(node) > 0)
+        {
             yyerror("Cannot use pointer in double context");
             return 0.0;
         }
-        return *(double*)evaluate_multi_array_access(node);
+        return *(double *)evaluate_multi_array_access(node);
     }
     case NODE_DOUBLE:
         return node->data.dvalue;
@@ -1960,14 +2153,13 @@ double evaluate_expression_double(ASTNode *node)
         return (double)node->data.ivalue;
     case NODE_IDENTIFIER:
     {
-        if (get_expression_pointer_level(node) > 0) {
+        if (get_expression_pointer_level(node) > 0)
+        {
             yyerror("Cannot use pointer in double context");
             return 0.0;
         }
-        String error = {
-            .data = "Undefined variable",
-            .len = sizeof("Undefined variable") - 1
-        };
+        String error = {.data = "Undefined variable",
+                        .len = sizeof("Undefined variable") - 1};
         return *(double *)handle_identifier(node, error, 1);
     }
     case NODE_OPERATION:
@@ -1975,14 +2167,14 @@ double evaluate_expression_double(ASTNode *node)
         int result_type = get_expression_type(node);
         if (result_type == VAR_BOOL)
             return (double)evaluate_expression_bool(node);
-        if (get_expression_pointer_level(node) > 0) {
+        if (get_expression_pointer_level(node) > 0)
+        {
             yyerror("Cannot use pointer in double context");
             return 0.0;
         }
         void *result = handle_binary_operation(node);
         double result_double = 0.0L;
-        result_double = (result_type == VAR_INT)
-                            ? (double)(*(int *)result)
+        result_double = (result_type == VAR_INT) ? (double)(*(int *)result)
                         : (result_type == VAR_FLOAT)
                             ? (double)(*(float *)result)
                             : *(double *)result;
@@ -1991,19 +2183,24 @@ double evaluate_expression_double(ASTNode *node)
     }
     case NODE_UNARY_OPERATION:
     {
-        if (node->data.unary.op == OP_DEREFERENCE) {
-            if (get_expression_pointer_level(node) > 0) {
+        if (node->data.unary.op == OP_DEREFERENCE)
+        {
+            if (get_expression_pointer_level(node) > 0)
+            {
                 yyerror("Cannot use pointer in double context");
                 return 0.0;
             }
-            return *(double *)(uintptr_t)evaluate_expression_pointer(node->data.unary.operand);
+            return *(double *)(uintptr_t)evaluate_expression_pointer(
+                node->data.unary.operand);
         }
-        if (node->data.unary.op == OP_ADDRESS_OF) {
+        if (node->data.unary.op == OP_ADDRESS_OF)
+        {
             yyerror("Cannot use pointer in double context");
             return 0.0;
         }
         double operand = evaluate_expression_double(node->data.unary.operand);
-        double *result = (double *)handle_unary_expression(node, &operand, VAR_DOUBLE);
+        double *result =
+            (double *)handle_unary_expression(node, &operand, VAR_DOUBLE);
         double return_val = *result;
         SAFE_FREE(result);
         return return_val;
@@ -2023,24 +2220,38 @@ double evaluate_expression_double(ASTNode *node)
         }
         return 0.0L;
     }
-    case NODE_STRUCT_ACCESS: {
+    case NODE_STRUCT_ACCESS:
+    {
         void *addr = evaluate_struct_member_address(node);
-        if (!addr) return 0;
+        if (!addr)
+            return 0;
         /* Read based on the field's type */
         ASTNode *obj = node->data.struct_access.object;
         Variable *var = get_variable(obj->data.name);
         StructDef *def = var ? get_struct_def(var->struct_name) : NULL;
-        StructField *fld = def ? find_struct_field(def, node->data.struct_access.member_name) : NULL;
-        if (!fld) return 0;
-        if (fld->pointer_level > 0) return (double)*(uintptr_t *)addr;
-        switch (fld->type) {
-            case VAR_INT:    return (double)*(int    *)addr;
-            case VAR_SHORT:  return (double)*(short  *)addr;
-            case VAR_BOOL:   return (double)*(bool   *)addr;
-            case VAR_CHAR:   return (double)*(char   *)addr;
-            case VAR_FLOAT:  return (double)*(float  *)addr;
-            case VAR_DOUBLE: return         *(double *)addr;
-            default:         return 0;
+        StructField *fld =
+            def ? find_struct_field(def, node->data.struct_access.member_name)
+                : NULL;
+        if (!fld)
+            return 0;
+        if (fld->pointer_level > 0)
+            return (double)*(uintptr_t *)addr;
+        switch (fld->type)
+        {
+        case VAR_INT:
+            return (double)*(int *)addr;
+        case VAR_SHORT:
+            return (double)*(short *)addr;
+        case VAR_BOOL:
+            return (double)*(bool *)addr;
+        case VAR_CHAR:
+            return (double)*(char *)addr;
+        case VAR_FLOAT:
+            return (double)*(float *)addr;
+        case VAR_DOUBLE:
+            return *(double *)addr;
+        default:
+            return 0;
         }
     }
     default:
@@ -2053,7 +2264,8 @@ size_t get_type_size(String name)
     Variable *var = get_variable(name);
     if (var != NULL)
     {
-        size_t base = get_type_size_for_descriptor(var->var_type, var->pointer_level, var->modifiers);
+        size_t base = get_type_size_for_descriptor(
+            var->var_type, var->pointer_level, var->modifiers);
         if (base == 0)
         {
             yyerror("Undefined variable in sizeof");
@@ -2068,7 +2280,7 @@ size_t get_type_size(String name)
 size_t handle_sizeof(ASTNode *node)
 {
     ASTNode *expr = node->data.sizeof_stmt.expr;
-    
+
     if (expr->type == NODE_IDENTIFIER)
     {
         // For identifiers, use get_type_size which looks up the variable
@@ -2081,17 +2293,23 @@ size_t handle_sizeof(ASTNode *node)
         switch (type)
         {
         case VAR_INT:
-            return get_type_size_for_descriptor(type, get_expression_pointer_level(expr), expr->modifiers);
+            return get_type_size_for_descriptor(
+                type, get_expression_pointer_level(expr), expr->modifiers);
         case VAR_FLOAT:
-            return get_type_size_for_descriptor(type, get_expression_pointer_level(expr), expr->modifiers);
+            return get_type_size_for_descriptor(
+                type, get_expression_pointer_level(expr), expr->modifiers);
         case VAR_DOUBLE:
-            return get_type_size_for_descriptor(type, get_expression_pointer_level(expr), expr->modifiers);
+            return get_type_size_for_descriptor(
+                type, get_expression_pointer_level(expr), expr->modifiers);
         case VAR_SHORT:
-            return get_type_size_for_descriptor(type, get_expression_pointer_level(expr), expr->modifiers);
+            return get_type_size_for_descriptor(
+                type, get_expression_pointer_level(expr), expr->modifiers);
         case VAR_BOOL:
-            return get_type_size_for_descriptor(type, get_expression_pointer_level(expr), expr->modifiers);
+            return get_type_size_for_descriptor(
+                type, get_expression_pointer_level(expr), expr->modifiers);
         case VAR_CHAR:
-            return get_type_size_for_descriptor(type, get_expression_pointer_level(expr), expr->modifiers);
+            return get_type_size_for_descriptor(
+                type, get_expression_pointer_level(expr), expr->modifiers);
         default:
             yyerror("Invalid type in sizeof");
             return 0;
@@ -2102,7 +2320,7 @@ size_t handle_sizeof(ASTNode *node)
 String evaluate_expression_string(ASTNode *node)
 {
     if (!node)
-        return (String){ .data = NULL, .len = 0 };
+        return (String){.data = NULL, .len = 0};
 
     switch (node->type)
     {
@@ -2111,10 +2329,8 @@ String evaluate_expression_string(ASTNode *node)
         return safe_strdup(&node->data.strvalue);
     case NODE_IDENTIFIER:
     {
-        String error = {
-            .data = "Undefined variable",
-            .len = sizeof("Undefined variable") - 1
-        };
+        String error = {.data = "Undefined variable",
+                        .len = sizeof("Undefined variable") - 1};
         return safe_strdup((String *)handle_identifier(node, error, 3));
     }
     case NODE_FUNC_CALL:
@@ -2126,11 +2342,11 @@ String evaluate_expression_string(ASTNode *node)
             SAFE_FREE(res);
             return result;
         }
-        return (String){ .data = NULL, .len = 0 };
+        return (String){.data = NULL, .len = 0};
     }
     default:
         yyerror("Invalid string expression");
-        return (String){ .data = NULL, .len = 0 };
+        return (String){.data = NULL, .len = 0};
     }
 }
 
@@ -2161,14 +2377,13 @@ short evaluate_expression_short(ASTNode *node)
     }
     case NODE_IDENTIFIER:
     {
-        if (get_expression_pointer_level(node) > 0) {
+        if (get_expression_pointer_level(node) > 0)
+        {
             yyerror("Cannot use pointer in integer context");
             return 0;
         }
-        String error = {
-            .data = "Undefined variable",
-            .len = sizeof("Undefined variable") - 1
-        };
+        String error = {.data = "Undefined variable",
+                        .len = sizeof("Undefined variable") - 1};
         return *(short *)handle_identifier(node, error, 0);
     }
     case NODE_OPERATION:
@@ -2194,16 +2409,15 @@ short evaluate_expression_short(ASTNode *node)
         int result_type = get_expression_type(node);
         if (result_type == VAR_BOOL)
             return (short)evaluate_expression_bool(node);
-        if (get_expression_pointer_level(node) > 0) {
+        if (get_expression_pointer_level(node) > 0)
+        {
             yyerror("Cannot use pointer in integer context");
             return 0;
         }
         void *result = handle_binary_operation(node);
         short result_short = 0;
-        result_short = (result_type == VAR_SHORT)
-                           ? *(short *)result
-                       : (result_type == VAR_FLOAT)
-                           ? (short)(*(float *)result)
+        result_short = (result_type == VAR_SHORT)   ? *(short *)result
+                       : (result_type == VAR_FLOAT) ? (short)(*(float *)result)
                        : (result_type == VAR_DOUBLE)
                            ? (short)(*(double *)result)
                            : (short)(*(int *)result);
@@ -2212,30 +2426,36 @@ short evaluate_expression_short(ASTNode *node)
     }
     case NODE_UNARY_OPERATION:
     {
-        if (node->data.unary.op == OP_DEREFERENCE) {
-            if (get_expression_pointer_level(node) > 0) {
+        if (node->data.unary.op == OP_DEREFERENCE)
+        {
+            if (get_expression_pointer_level(node) > 0)
+            {
                 yyerror("Cannot use pointer in integer context");
                 return 0;
             }
-            return *(short *)(uintptr_t)evaluate_expression_pointer(node->data.unary.operand);
+            return *(short *)(uintptr_t)evaluate_expression_pointer(
+                node->data.unary.operand);
         }
-        if (node->data.unary.op == OP_ADDRESS_OF) {
+        if (node->data.unary.op == OP_ADDRESS_OF)
+        {
             yyerror("Cannot use pointer in integer context");
             return 0;
         }
         short operand = evaluate_expression_short(node->data.unary.operand);
-        short *result = (short *)handle_unary_expression(node, &operand, VAR_SHORT);
+        short *result =
+            (short *)handle_unary_expression(node, &operand, VAR_SHORT);
         short return_val = *result;
         SAFE_FREE(result);
         return return_val;
     }
     case NODE_ARRAY_ACCESS:
     {
-        if (get_expression_pointer_level(node) > 0) {
+        if (get_expression_pointer_level(node) > 0)
+        {
             yyerror("Cannot use pointer in integer context");
             return 0;
         }
-        return *(short*)evaluate_multi_array_access(node);
+        return *(short *)evaluate_multi_array_access(node);
     }
     case NODE_FUNC_CALL:
     {
@@ -2248,24 +2468,38 @@ short evaluate_expression_short(ASTNode *node)
         }
         return 0;
     }
-    case NODE_STRUCT_ACCESS: {
+    case NODE_STRUCT_ACCESS:
+    {
         void *addr = evaluate_struct_member_address(node);
-        if (!addr) return 0;
+        if (!addr)
+            return 0;
         /* Read based on the field's type */
         ASTNode *obj = node->data.struct_access.object;
         Variable *var = get_variable(obj->data.name);
         StructDef *def = var ? get_struct_def(var->struct_name) : NULL;
-        StructField *fld = def ? find_struct_field(def, node->data.struct_access.member_name) : NULL;
-        if (!fld) return 0;
-        if (fld->pointer_level > 0) return (short)*(uintptr_t *)addr;
-        switch (fld->type) {
-            case VAR_INT:    return (short)*(int    *)addr;
-            case VAR_SHORT:  return        *(short  *)addr;
-            case VAR_BOOL:   return (short)*(bool   *)addr;
-            case VAR_CHAR:   return (short)*(char   *)addr;
-            case VAR_FLOAT:  return (short)*(float  *)addr;
-            case VAR_DOUBLE: return (short)*(double *)addr;
-            default:         return 0;
+        StructField *fld =
+            def ? find_struct_field(def, node->data.struct_access.member_name)
+                : NULL;
+        if (!fld)
+            return 0;
+        if (fld->pointer_level > 0)
+            return (short)*(uintptr_t *)addr;
+        switch (fld->type)
+        {
+        case VAR_INT:
+            return (short)*(int *)addr;
+        case VAR_SHORT:
+            return *(short *)addr;
+        case VAR_BOOL:
+            return (short)*(bool *)addr;
+        case VAR_CHAR:
+            return (short)*(char *)addr;
+        case VAR_FLOAT:
+            return (short)*(float *)addr;
+        case VAR_DOUBLE:
+            return (short)*(double *)addr;
+        default:
+            return 0;
         }
     }
     default:
@@ -2301,21 +2535,21 @@ int evaluate_expression_int(ASTNode *node)
     }
     case NODE_IDENTIFIER:
     {
-        if (get_expression_pointer_level(node) > 0) {
+        if (get_expression_pointer_level(node) > 0)
+        {
             yyerror("Cannot use pointer in integer context");
             return 0;
         }
-        String error = {
-            .data = "Undefined variable",
-            .len = sizeof("Undefined variable") - 1
-        };
+        String error = {.data = "Undefined variable",
+                        .len = sizeof("Undefined variable") - 1};
         return *(int *)handle_identifier(node, error, 0);
     }
     case NODE_OPERATION:
     {
         if (get_expression_type(node) == VAR_BOOL)
             return evaluate_expression_bool(node) ? 1 : 0;
-        if (get_expression_pointer_level(node) > 0) {
+        if (get_expression_pointer_level(node) > 0)
+        {
             yyerror("Cannot use pointer in integer context");
             return 0;
         }
@@ -2323,14 +2557,16 @@ int evaluate_expression_int(ASTNode *node)
         if (node->data.op.op == OP_AND)
         {
             int left = evaluate_expression_int(node->data.op.left);
-            if (!left) return 0;
+            if (!left)
+                return 0;
             int right = evaluate_expression_int(node->data.op.right);
             return left && right;
         }
         if (node->data.op.op == OP_OR)
         {
             int left = evaluate_expression_int(node->data.op.left);
-            if (left) return 1;
+            if (left)
+                return 1;
             int right = evaluate_expression_int(node->data.op.right);
             return left || right;
         }
@@ -2339,24 +2575,26 @@ int evaluate_expression_int(ASTNode *node)
         int result_type = get_expression_type(node);
         void *result = handle_binary_operation(node);
         int result_int = 0;
-        result_int = (result_type == VAR_INT)
-                         ? *(int *)result
-                     : (result_type == VAR_FLOAT)
-                         ? (int)(*(float *)result)
-                         : (int)(*(double *)result);
+        result_int = (result_type == VAR_INT)     ? *(int *)result
+                     : (result_type == VAR_FLOAT) ? (int)(*(float *)result)
+                                                  : (int)(*(double *)result);
         SAFE_FREE(result);
         return result_int;
     }
     case NODE_UNARY_OPERATION:
     {
-        if (node->data.unary.op == OP_DEREFERENCE) {
-            if (get_expression_pointer_level(node) > 0) {
+        if (node->data.unary.op == OP_DEREFERENCE)
+        {
+            if (get_expression_pointer_level(node) > 0)
+            {
                 yyerror("Cannot use pointer in integer context");
                 return 0;
             }
-            return *(int *)(uintptr_t)evaluate_expression_pointer(node->data.unary.operand);
+            return *(int *)(uintptr_t)evaluate_expression_pointer(
+                node->data.unary.operand);
         }
-        if (node->data.unary.op == OP_ADDRESS_OF) {
+        if (node->data.unary.op == OP_ADDRESS_OF)
+        {
             yyerror("Cannot use pointer in integer context");
             return 0;
         }
@@ -2368,11 +2606,12 @@ int evaluate_expression_int(ASTNode *node)
     }
     case NODE_ARRAY_ACCESS:
     {
-        if (get_expression_pointer_level(node) > 0) {
+        if (get_expression_pointer_level(node) > 0)
+        {
             yyerror("Cannot use pointer in integer context");
             return 0;
         }
-        return *(int*)evaluate_multi_array_access(node);
+        return *(int *)evaluate_multi_array_access(node);
     }
     case NODE_FUNC_CALL:
     {
@@ -2385,24 +2624,38 @@ int evaluate_expression_int(ASTNode *node)
         }
         return 0;
     }
-    case NODE_STRUCT_ACCESS: {
+    case NODE_STRUCT_ACCESS:
+    {
         void *addr = evaluate_struct_member_address(node);
-        if (!addr) return 0;
+        if (!addr)
+            return 0;
         /* Read based on the field's type */
         ASTNode *obj = node->data.struct_access.object;
         Variable *var = get_variable(obj->data.name);
         StructDef *def = var ? get_struct_def(var->struct_name) : NULL;
-        StructField *fld = def ? find_struct_field(def, node->data.struct_access.member_name) : NULL;
-        if (!fld) return 0;
-        if (fld->pointer_level > 0) return (int)*(uintptr_t *)addr;
-        switch (fld->type) {
-        case VAR_INT:    return *(int    *)addr;
-        case VAR_SHORT:  return (int)*(short  *)addr;
-        case VAR_BOOL:   return (int)*(bool   *)addr;
-        case VAR_CHAR:   return (int)*(char   *)addr;
-        case VAR_FLOAT:  return (int)*(float  *)addr;
-        case VAR_DOUBLE: return (int)*(double *)addr;
-        default:         return 0;
+        StructField *fld =
+            def ? find_struct_field(def, node->data.struct_access.member_name)
+                : NULL;
+        if (!fld)
+            return 0;
+        if (fld->pointer_level > 0)
+            return (int)*(uintptr_t *)addr;
+        switch (fld->type)
+        {
+        case VAR_INT:
+            return *(int *)addr;
+        case VAR_SHORT:
+            return (int)*(short *)addr;
+        case VAR_BOOL:
+            return (int)*(bool *)addr;
+        case VAR_CHAR:
+            return (int)*(char *)addr;
+        case VAR_FLOAT:
+            return (int)*(float *)addr;
+        case VAR_DOUBLE:
+            return (int)*(double *)addr;
+        default:
+            return 0;
         }
     }
     default:
@@ -2413,9 +2666,8 @@ int evaluate_expression_int(ASTNode *node)
 
 void *handle_function_call(ASTNode *node)
 {
-    execute_function_call(
-        node->data.func_call.function_name,
-        node->data.func_call.arguments);
+    execute_function_call(node->data.func_call.function_name,
+                          node->data.func_call.arguments);
     void *return_value = NULL;
     if (current_return_value.has_value)
     {
@@ -2451,9 +2703,10 @@ void *handle_function_call(ASTNode *node)
             return_value = SAFE_MALLOC(short);
             *(short *)return_value = current_return_value.value.svalue;
             break;
-        case VAR_STRING: 
+        case VAR_STRING:
             return_value = SAFE_MALLOC(String *);
-            *(String *)return_value = safe_strdup(&current_return_value.value.strvalue);
+            *(String *)return_value =
+                safe_strdup(&current_return_value.value.strvalue);
             break;
         case VAR_STRUCT:
             /* struct return not yet supported; fall through to NULL */
@@ -2486,33 +2739,46 @@ bool evaluate_expression_bool(ASTNode *node)
         return (bool)node->data.dvalue;
     case NODE_IDENTIFIER:
     {
-        if (get_expression_pointer_level(node) > 0) {
+        if (get_expression_pointer_level(node) > 0)
+        {
             return evaluate_expression_pointer(node) != (uintptr_t)0;
         }
-        String error = {
-            .data = "Undefined variable",
-            .len = sizeof("Undefined variable") - 1
-        };
+        String error = {.data = "Undefined variable",
+                        .len = sizeof("Undefined variable") - 1};
         return *(bool *)handle_identifier(node, error, 0);
     }
     case NODE_OPERATION:
     {
         int left_ptr_level = get_expression_pointer_level(node->data.op.left);
         int right_ptr_level = get_expression_pointer_level(node->data.op.right);
-        if (left_ptr_level > 0 || right_ptr_level > 0) {
-            uintptr_t left = left_ptr_level > 0 ? evaluate_expression_pointer(node->data.op.left)
-                                               : (uintptr_t)evaluate_expression_int(node->data.op.left);
-            uintptr_t right = right_ptr_level > 0 ? evaluate_expression_pointer(node->data.op.right)
-                                                 : (uintptr_t)evaluate_expression_int(node->data.op.right);
-            switch (node->data.op.op) {
-            case OP_EQ: return left == right;
-            case OP_NE: return left != right;
-            case OP_LT: return left < right;
-            case OP_GT: return left > right;
-            case OP_LE: return left <= right;
-            case OP_GE: return left >= right;
-            case OP_AND: return left && right;
-            case OP_OR: return left || right;
+        if (left_ptr_level > 0 || right_ptr_level > 0)
+        {
+            uintptr_t left =
+                left_ptr_level > 0
+                    ? evaluate_expression_pointer(node->data.op.left)
+                    : (uintptr_t)evaluate_expression_int(node->data.op.left);
+            uintptr_t right =
+                right_ptr_level > 0
+                    ? evaluate_expression_pointer(node->data.op.right)
+                    : (uintptr_t)evaluate_expression_int(node->data.op.right);
+            switch (node->data.op.op)
+            {
+            case OP_EQ:
+                return left == right;
+            case OP_NE:
+                return left != right;
+            case OP_LT:
+                return left < right;
+            case OP_GT:
+                return left > right;
+            case OP_LE:
+                return left <= right;
+            case OP_GE:
+                return left >= right;
+            case OP_AND:
+                return left && right;
+            case OP_OR:
+                return left || right;
             default:
                 yyerror("Invalid pointer operation");
                 return false;
@@ -2522,14 +2788,16 @@ bool evaluate_expression_bool(ASTNode *node)
         if (node->data.op.op == OP_AND)
         {
             bool left = evaluate_expression_bool(node->data.op.left);
-            if (!left) return false;
+            if (!left)
+                return false;
             bool right = evaluate_expression_bool(node->data.op.right);
             return left && right;
         }
         if (node->data.op.op == OP_OR)
         {
             bool left = evaluate_expression_bool(node->data.op.left);
-            if (left) return true;
+            if (left)
+                return true;
             bool right = evaluate_expression_bool(node->data.op.right);
             return left || right;
         }
@@ -2538,34 +2806,36 @@ bool evaluate_expression_bool(ASTNode *node)
         int result_type = get_expression_type(node);
         void *result = handle_binary_operation(node);
         bool result_bool = 0;
-        result_bool = (result_type == VAR_BOOL)
-                          ? (*(int *)result != 0)
-                      : (result_type == VAR_INT)
-                          ? (bool)(*(int *)result)
-                      : (result_type == VAR_FLOAT)
-                          ? (bool)(*(float *)result)
-                          : (bool)(*(double *)result);
+        result_bool = (result_type == VAR_BOOL)    ? (*(int *)result != 0)
+                      : (result_type == VAR_INT)   ? (bool)(*(int *)result)
+                      : (result_type == VAR_FLOAT) ? (bool)(*(float *)result)
+                                                   : (bool)(*(double *)result);
         SAFE_FREE(result);
         return result_bool;
     }
     case NODE_UNARY_OPERATION:
     {
-        if (node->data.unary.op == OP_ADDRESS_OF || get_expression_pointer_level(node) > 0)
+        if (node->data.unary.op == OP_ADDRESS_OF ||
+            get_expression_pointer_level(node) > 0)
             return evaluate_expression_pointer(node) != (uintptr_t)0;
         if (node->data.unary.op == OP_DEREFERENCE)
-            return *(bool *)(uintptr_t)evaluate_expression_pointer(node->data.unary.operand);
+            return *(bool *)(uintptr_t)evaluate_expression_pointer(
+                node->data.unary.operand);
         bool operand = evaluate_expression_bool(node->data.unary.operand);
-        bool *result = (bool *)handle_unary_expression(node, &operand, VAR_BOOL);
+        bool *result =
+            (bool *)handle_unary_expression(node, &operand, VAR_BOOL);
         bool return_val = *result;
         SAFE_FREE(result);
         return return_val;
     }
     case NODE_ARRAY_ACCESS:
     {
-        if (get_expression_pointer_level(node) > 0) {
-            return *(uintptr_t*)evaluate_multi_array_access(node) != (uintptr_t)0;
+        if (get_expression_pointer_level(node) > 0)
+        {
+            return *(uintptr_t *)evaluate_multi_array_access(node) !=
+                   (uintptr_t)0;
         }
-        return *(bool*)evaluate_multi_array_access(node);
+        return *(bool *)evaluate_multi_array_access(node);
     }
     case NODE_FUNC_CALL:
     {
@@ -2578,24 +2848,38 @@ bool evaluate_expression_bool(ASTNode *node)
         }
         return 0;
     }
-    case NODE_STRUCT_ACCESS: {
+    case NODE_STRUCT_ACCESS:
+    {
         void *addr = evaluate_struct_member_address(node);
-        if (!addr) return 0;
+        if (!addr)
+            return 0;
         /* Read based on the field's type */
         ASTNode *obj = node->data.struct_access.object;
         Variable *var = get_variable(obj->data.name);
         StructDef *def = var ? get_struct_def(var->struct_name) : NULL;
-        StructField *fld = def ? find_struct_field(def, node->data.struct_access.member_name) : NULL;
-        if (!fld) return 0;
-        if (fld->pointer_level > 0) return (bool)*(uintptr_t *)addr;
-        switch (fld->type) {
-            case VAR_INT:    return (bool)*(int    *)addr;
-            case VAR_SHORT:  return (bool)*(short  *)addr;
-            case VAR_BOOL:   return       *(bool   *)addr;
-            case VAR_CHAR:   return (bool)*(char   *)addr;
-            case VAR_FLOAT:  return (bool)*(float  *)addr;
-            case VAR_DOUBLE: return (bool)*(double *)addr;
-            default:         return 0;
+        StructField *fld =
+            def ? find_struct_field(def, node->data.struct_access.member_name)
+                : NULL;
+        if (!fld)
+            return 0;
+        if (fld->pointer_level > 0)
+            return (bool)*(uintptr_t *)addr;
+        switch (fld->type)
+        {
+        case VAR_INT:
+            return (bool)*(int *)addr;
+        case VAR_SHORT:
+            return (bool)*(short *)addr;
+        case VAR_BOOL:
+            return *(bool *)addr;
+        case VAR_CHAR:
+            return (bool)*(char *)addr;
+        case VAR_FLOAT:
+            return (bool)*(float *)addr;
+        case VAR_DOUBLE:
+            return (bool)*(double *)addr;
+        default:
+            return 0;
         }
     }
     default:
@@ -2708,7 +2992,6 @@ void check_const_assignment(const String name)
     }
 }
 
-
 bool is_expression(ASTNode *node, VarType type)
 {
     if (!node)
@@ -2728,10 +3011,8 @@ bool is_expression(ASTNode *node, VarType type)
     }
     case NODE_IDENTIFIER:
     {
-        String error = {
-            .data = "Undefined variable in type check",
-            .len = sizeof("Undefined variable in type check") - 1
-        };
+        String error = {.data = "Undefined variable in type check",
+                        .len = sizeof("Undefined variable in type check") - 1};
         if (!check_and_mark_identifier(node, error))
             ragequit(1);
         Variable *var = get_variable(node->data.name);
@@ -2749,16 +3030,19 @@ bool is_expression(ASTNode *node, VarType type)
     }
     case NODE_FUNC_CALL:
     {
-        return get_function_return_type(node->data.func_call.function_name) == type;
+        return get_function_return_type(node->data.func_call.function_name) ==
+               type;
     }
-    case NODE_STRUCT_ACCESS: {
+    case NODE_STRUCT_ACCESS:
+    {
         ASTNode *obj = node->data.struct_access.object;
         Variable *var = (obj && obj->type == NODE_IDENTIFIER)
-                        ? get_variable(obj->data.name) : NULL;
+                            ? get_variable(obj->data.name)
+                            : NULL;
         StructDef *def = var ? get_struct_def(var->struct_name) : NULL;
-        StructField *fld = def
-            ? find_struct_field(def, node->data.struct_access.member_name)
-            : NULL;
+        StructField *fld =
+            def ? find_struct_field(def, node->data.struct_access.member_name)
+                : NULL;
         return fld ? (fld->type == type) : false;
     }
     default:
@@ -2768,13 +3052,16 @@ bool is_expression(ASTNode *node, VarType type)
 
 Function *get_function(const String name)
 {
-    if (!function_map || !name.data) {
+    if (!function_map || !name.data)
+    {
         return NULL;
     }
-    
+
     size_t name_len = name.len;
-    Function **func_ptr = (Function **)hm_get(function_map, name.data, name_len);
-    if (func_ptr) {
+    Function **func_ptr =
+        (Function **)hm_get(function_map, name.data, name_len);
+    if (func_ptr)
+    {
         return *func_ptr;
     }
     return NULL;
@@ -2801,7 +3088,6 @@ static int get_function_return_pointer_level(const String name)
     yyerror("Undefined function in type check");
     return 0;
 }
-
 
 int evaluate_expression(ASTNode *node)
 {
@@ -2852,12 +3138,18 @@ void execute_assignment(ASTNode *node)
     {
         /* Resolve type from the actual field at runtime */
         ASTNode *obj = target->data.struct_access.object;
-        if (obj && obj->type == NODE_IDENTIFIER) {
+        if (obj && obj->type == NODE_IDENTIFIER)
+        {
             Variable *var = get_variable(obj->data.name);
-            if (var && var->var_type == VAR_STRUCT) {
+            if (var && var->var_type == VAR_STRUCT)
+            {
                 StructDef *def = get_struct_def(var->struct_name);
-                StructField *fld = def ? find_struct_field(def, target->data.struct_access.member_name) : NULL;
-                if (fld) {
+                StructField *fld =
+                    def ? find_struct_field(
+                              def, target->data.struct_access.member_name)
+                        : NULL;
+                if (fld)
+                {
                     target_type = fld->type;
                     target_pointer_level = fld->pointer_level;
                 }
@@ -2866,7 +3158,8 @@ void execute_assignment(ASTNode *node)
     }
 
     void *address = evaluate_lvalue_address(target);
-    write_value_to_address(address, target_type, target_pointer_level, value_node, mods);
+    write_value_to_address(address, target_type, target_pointer_level,
+                           value_node, mods);
 }
 
 void execute_statement(ASTNode *node)
@@ -2884,16 +3177,24 @@ void execute_statement(ASTNode *node)
         var->modifiers = node->modifiers;
 
         /* Check if it's static and already initialized */
-        if (node->modifiers.is_static) {
+        if (node->modifiers.is_static)
+        {
             String func_name = {NULL, 0};
             Scope *s = current_scope;
-            while (s) {
-                if (s->is_function_scope) { func_name= s->function_name; break; }
+            while (s)
+            {
+                if (s->is_function_scope)
+                {
+                    func_name = s->function_name;
+                    break;
+                }
                 s = s->parent;
             }
             String static_key = make_static_key(func_name, name);
-            Variable *existing = hm_get(static_variable_map, static_key.data, MAX_BUFFER_LEN);
-            if (existing) {
+            Variable *existing =
+                hm_get(static_variable_map, static_key.data, MAX_BUFFER_LEN);
+            if (existing)
+            {
                 SAFE_FREE(var);
                 break; /* Already initialized — skip assignment entirely */
             }
@@ -2934,22 +3235,23 @@ void execute_statement(ASTNode *node)
     case NODE_IDENTIFIER:
         evaluate_expression(node);
         break;
-    case NODE_FUNC_CALL: {
+    case NODE_FUNC_CALL:
+    {
         // Set execution context with current line number
         extern ExecutionContext g_exec_context;
         g_exec_context.line_number = node->line_number;
         g_exec_context.function_name = node->data.func_call.function_name;
-        
+
         // Use the stdrot built-in function system
         if (is_builtin_function(node->data.func_call.function_name))
         {
-            execute_builtin_function(node->data.func_call.function_name, node->data.func_call.arguments);
+            execute_builtin_function(node->data.func_call.function_name,
+                                     node->data.func_call.arguments);
         }
         else
         {
-            execute_function_call(
-                node->data.func_call.function_name,
-                node->data.func_call.arguments);
+            execute_function_call(node->data.func_call.function_name,
+                                  node->data.func_call.arguments);
         }
         break;
     }
@@ -2967,18 +3269,12 @@ void execute_statement(ASTNode *node)
         ASTNode *expr = node->data.op.left;
         if (expr->type == NODE_STRING_LITERAL)
         {
-            String s = {
-                .data = "%s\n",
-                .len = sizeof("%s\n") - 1
-            };
+            String s = {.data = "%s\n", .len = sizeof("%s\n") - 1};
             yapping(s, expr->data.name);
         }
         else
         {
-            String s = {
-                .data = "%d\n",
-                .len = sizeof("%d\n") - 1
-            }; 
+            String s = {.data = "%d\n", .len = sizeof("%d\n") - 1};
             int value = evaluate_expression(expr);
             yapping(s, value);
         }
@@ -2989,18 +3285,12 @@ void execute_statement(ASTNode *node)
         ASTNode *expr = node->data.op.left;
         if (expr->type == NODE_STRING_LITERAL)
         {
-            String s = {
-                .data = "%s\n",
-                .len = sizeof("%s\n") - 1
-            };
+            String s = {.data = "%s\n", .len = sizeof("%s\n") - 1};
             baka(s, expr->data.name);
         }
         else
         {
-            String s = {
-                .data = "%d\n",
-                .len = sizeof("%d\n") - 1
-            }; 
+            String s = {.data = "%d\n", .len = sizeof("%d\n") - 1};
             int value = evaluate_expression(expr);
             baka(s, value);
         }
@@ -3031,10 +3321,8 @@ void execute_statement(ASTNode *node)
     case NODE_FUNCTION_DEF:
     {
         Function *func = create_function(
-            node->data.function_def.name,
-            node->data.function_def.return_type,
-            node->data.function_def.parameters,
-            node->data.function_def.body);
+            node->data.function_def.name, node->data.function_def.return_type,
+            node->data.function_def.parameters, node->data.function_def.body);
         if (!func)
         {
             yyerror("Failed to create function");
@@ -3117,7 +3405,8 @@ void execute_while_statement(ASTNode *node)
 {
     PUSH_JUMP_BUFFER();
     enter_scope();
-    while (evaluate_expression(node->data.while_stmt.cond) && setjmp(CURRENT_JUMP_BUFFER()) == 0)
+    while (evaluate_expression(node->data.while_stmt.cond) &&
+           setjmp(CURRENT_JUMP_BUFFER()) == 0)
     {
         enter_scope();
         execute_statement(node->data.while_stmt.body);
@@ -3136,12 +3425,14 @@ void execute_do_while_statement(ASTNode *node)
         enter_scope();
         execute_statement(node->data.while_stmt.body);
         exit_scope();
-    } while (evaluate_expression(node->data.while_stmt.cond) && setjmp(CURRENT_JUMP_BUFFER()) == 0);
+    } while (evaluate_expression(node->data.while_stmt.cond) &&
+             setjmp(CURRENT_JUMP_BUFFER()) == 0);
     exit_scope();
     POP_JUMP_BUFFER();
 }
 
-ASTNode *create_if_statement_node(ASTNode *condition, ASTNode *then_branch, ASTNode *else_branch)
+ASTNode *create_if_statement_node(ASTNode *condition, ASTNode *then_branch,
+                                  ASTNode *else_branch)
 {
     ASTNode *node = ARENA_ALLOC_ASTNODE();
     node->type = NODE_IF_STATEMENT;
@@ -3179,7 +3470,8 @@ CaseNode *create_case_node(ASTNode *value, ASTNode *statements)
 
 CaseNode *create_default_case_node(ASTNode *statements)
 {
-    return create_case_node(NULL, statements); // NULL value indicates default case
+    return create_case_node(NULL,
+                            statements); // NULL value indicates default case
 }
 
 CaseNode *append_case_list(CaseNode *list, CaseNode *case_node)
@@ -3222,11 +3514,9 @@ ASTNode *create_default_node(VarType var_type)
         return create_char_node('\0');
     case VAR_BOOL:
         return create_boolean_node(0);
-    case VAR_STRING: {
-        String s = {
-            .data = "\0",
-            .len = sizeof("\0") - 1
-        };
+    case VAR_STRING:
+    {
+        String s = {.data = "\0", .len = sizeof("\0") - 1};
         return create_string_literal_node(s);
     }
     default:
@@ -3234,7 +3524,6 @@ ASTNode *create_default_node(VarType var_type)
         exit(1);
     }
 }
-
 
 ExpressionList *create_expression_list(ASTNode *expr)
 {
@@ -3302,27 +3591,48 @@ void free_expression_list(ExpressionList *list)
     SAFE_FREE(list);
 }
 
-void populate_struct_variable(const String name, ExpressionList *list) {
+void populate_struct_variable(const String name, ExpressionList *list)
+{
     Variable *var = get_variable(name);
-    if (!var || var->var_type != VAR_STRUCT) return;
+    if (!var || var->var_type != VAR_STRUCT)
+        return;
     StructDef *def = get_struct_def(var->struct_name);
-    if (!def) return;
+    if (!def)
+        return;
 
     StructField *fld = def->fields;
     ExpressionList *cur = list;
-    while (fld && cur) {
+    while (fld && cur)
+    {
         void *addr = (char *)var->value.array_data + fld->offset;
-        if (fld->pointer_level > 0) {
+        if (fld->pointer_level > 0)
+        {
             *(uintptr_t *)addr = evaluate_expression_pointer(cur->expr);
-        } else {
-            switch (fld->type) {
-            case VAR_INT:    *(int    *)addr = evaluate_expression_int(cur->expr);    break;
-            case VAR_SHORT:  *(short  *)addr = evaluate_expression_short(cur->expr);  break;
-            case VAR_FLOAT:  *(float  *)addr = evaluate_expression_float(cur->expr);  break;
-            case VAR_DOUBLE: *(double *)addr = evaluate_expression_double(cur->expr); break;
-            case VAR_BOOL:   *(bool   *)addr = evaluate_expression_bool(cur->expr);   break;
-            case VAR_CHAR:   *(char   *)addr = (char)evaluate_expression_int(cur->expr); break;
-            default: break;
+        }
+        else
+        {
+            switch (fld->type)
+            {
+            case VAR_INT:
+                *(int *)addr = evaluate_expression_int(cur->expr);
+                break;
+            case VAR_SHORT:
+                *(short *)addr = evaluate_expression_short(cur->expr);
+                break;
+            case VAR_FLOAT:
+                *(float *)addr = evaluate_expression_float(cur->expr);
+                break;
+            case VAR_DOUBLE:
+                *(double *)addr = evaluate_expression_double(cur->expr);
+                break;
+            case VAR_BOOL:
+                *(bool *)addr = evaluate_expression_bool(cur->expr);
+                break;
+            case VAR_CHAR:
+                *(char *)addr = (char)evaluate_expression_int(cur->expr);
+                break;
+            default:
+                break;
             }
         }
         fld = fld->next;
@@ -3330,66 +3640,77 @@ void populate_struct_variable(const String name, ExpressionList *list) {
     }
 }
 
-void populate_multi_array_variable(String name, ExpressionList *list, int dimensions[], int num_dimensions) {
+void populate_multi_array_variable(String name, ExpressionList *list,
+                                   int dimensions[], int num_dimensions)
+{
     Variable *var = get_variable(name);
-    if (var == NULL || !var->is_array) {
+    if (var == NULL || !var->is_array)
+    {
         yyerror("Cannot initialize: not an array");
         return;
     }
-    
+
     // Calculate total elements
     size_t total_elements = 1;
-    for (int i = 0; i < num_dimensions; i++) {
+    for (int i = 0; i < num_dimensions; i++)
+    {
         total_elements *= dimensions[i];
     }
-    
+
     // Check if we have enough initializers
     size_t initializer_count = count_expression_list(list);
-    if (initializer_count > total_elements) {
+    if (initializer_count > total_elements)
+    {
         yyerror("Too many initializers for array");
         return;
     }
-    
+
     // Initialize the array elements
     size_t index = 0;
     ExpressionList *current = list;
-    
-    while (current != NULL && index < total_elements) {
-        switch (var->var_type) {
-            case VAR_INT: {
-                int *array = (int*)var->value.array_data;
-                array[index] = evaluate_expression_int(current->expr);
-                break;
-            }
-            case VAR_SHORT: {
-                short *array = (short*)var->value.array_data;
-                array[index] = evaluate_expression_short(current->expr);
-                break;
-            }
-            case VAR_FLOAT: {
-                float *array = (float*)var->value.array_data;
-                array[index] = evaluate_expression_float(current->expr);
-                break;
-            }
-            case VAR_DOUBLE: {
-                double *array = (double*)var->value.array_data;
-                array[index] = evaluate_expression_double(current->expr);
-                break;
-            }
-            case VAR_BOOL: {
-                bool *array = (bool*)var->value.array_data;
-                array[index] = evaluate_expression_bool(current->expr);
-                break;
-            }
-            default:
-                yyerror("Unsupported array type for initialization");
-                return;
+
+    while (current != NULL && index < total_elements)
+    {
+        switch (var->var_type)
+        {
+        case VAR_INT:
+        {
+            int *array = (int *)var->value.array_data;
+            array[index] = evaluate_expression_int(current->expr);
+            break;
         }
-        
+        case VAR_SHORT:
+        {
+            short *array = (short *)var->value.array_data;
+            array[index] = evaluate_expression_short(current->expr);
+            break;
+        }
+        case VAR_FLOAT:
+        {
+            float *array = (float *)var->value.array_data;
+            array[index] = evaluate_expression_float(current->expr);
+            break;
+        }
+        case VAR_DOUBLE:
+        {
+            double *array = (double *)var->value.array_data;
+            array[index] = evaluate_expression_double(current->expr);
+            break;
+        }
+        case VAR_BOOL:
+        {
+            bool *array = (bool *)var->value.array_data;
+            array[index] = evaluate_expression_bool(current->expr);
+            break;
+        }
+        default:
+            yyerror("Unsupported array type for initialization");
+            return;
+        }
+
         current = current->next;
         index++;
     }
-    
 }
 void free_statement_list(StatementList *list)
 {
@@ -3428,16 +3749,26 @@ Scope *create_scope(Scope *parent)
 Variable *get_variable(const String name)
 {
     /* Check static store first */
-    if (static_variable_map) {
+    if (static_variable_map)
+    {
         String func_name = {NULL, 0};
         Scope *s = current_scope;
-        while (s) {
-            if (s->is_function_scope) { func_name = s->function_name; break; }
+        while (s)
+        {
+            if (s->is_function_scope)
+            {
+                func_name = s->function_name;
+                break;
+            }
             s = s->parent;
         }
         String static_key = make_static_key(func_name, name);
-        Variable *var = hm_get(static_variable_map, static_key.data, static_key.len);
-        if (var) { return var; }
+        Variable *var =
+            hm_get(static_variable_map, static_key.data, static_key.len);
+        if (var)
+        {
+            return var;
+        }
     }
 
     Scope *scope = current_scope;
@@ -3498,42 +3829,53 @@ Variable *variable_new(String name)
 
 void add_variable_to_scope(const String name, Variable *var)
 {
-    if (!current_scope) {
+    if (!current_scope)
+    {
         yyerror("No scope to add variable to");
         exit(1);
     }
 
     /* Static variables go to the static store, not the scope */
-    if (var->modifiers.is_static) {
+    if (var->modifiers.is_static)
+    {
         if (!static_variable_map)
             static_variable_map = hm_new();
 
         /* Find nearest function scope to namespace the key */
         String func_name = {NULL, 0};
         Scope *s = current_scope;
-        while (s) {
-            if (s->is_function_scope) { func_name = s->function_name; break; }
+        while (s)
+        {
+            if (s->is_function_scope)
+            {
+                func_name = s->function_name;
+                break;
+            }
             s = s->parent;
         }
 
         String static_key = make_static_key(func_name, name);
-        Variable *existing = hm_get(static_variable_map, static_key.data, static_key.len);
+        Variable *existing =
+            hm_get(static_variable_map, static_key.data, static_key.len);
         if (!existing)
-            hm_put(static_variable_map, static_key.data, static_key.len, var, sizeof(Variable));
+            hm_put(static_variable_map, static_key.data, static_key.len, var,
+                   sizeof(Variable));
 
-        return;  /* <-- always return here, never fall through to normal scope */
+        return; /* <-- always return here, never fall through to normal scope */
     }
 
     /* Normal (non-static) path — unchanged from your original */
     size_t name_len = name.len;
     Variable *existing = hm_get(current_scope->variables, name.data, name_len);
-    if (existing) {
+    if (existing)
+    {
         yyerror("Variable already exists in current scope");
         SAFE_FREE(var);
         exit(1);
     }
 
-    hm_put(current_scope->variables, name.data, name_len, var, sizeof(Variable));
+    hm_put(current_scope->variables, name.data, name_len, var,
+           sizeof(Variable));
 }
 
 ASTNode *create_return_node(ASTNode *expr)
@@ -3549,14 +3891,18 @@ ASTNode *create_return_node(ASTNode *expr)
     return node;
 }
 
-Function *create_function_ex(String name, VarType return_type, int return_pointer_level, Parameter *params, ASTNode *body)
+Function *create_function_ex(String name, VarType return_type,
+                             int return_pointer_level, Parameter *params,
+                             ASTNode *body)
 {
-    /* Check if function already exists - if so, just return it (parse + execute causes double creation) */
+    /* Check if function already exists - if so, just return it (parse + execute
+     * causes double creation) */
     Function *existing = get_function(name);
-    if (existing) {
+    if (existing)
+    {
         return existing;
     }
-    
+
     Function *func = SAFE_MALLOC(Function);
     if (!func)
     {
@@ -3571,7 +3917,8 @@ Function *create_function_ex(String name, VarType return_type, int return_pointe
     func->body = body;
 
     /* Initialize hash map if needed and add function for O(1) lookups */
-    if (!function_map) {
+    if (!function_map)
+    {
         function_map = hm_new();
     }
     size_t name_len = name.len;
@@ -3580,7 +3927,8 @@ Function *create_function_ex(String name, VarType return_type, int return_pointe
     return func;
 }
 
-Function *create_function(String name, VarType return_type, Parameter *params, ASTNode *body)
+Function *create_function(String name, VarType return_type, Parameter *params,
+                          ASTNode *body)
 {
     return create_function_ex(name, return_type, 0, params, body);
 }
@@ -3604,17 +3952,22 @@ void execute_function_call(const String name, ArgumentList *args)
     PUSH_JUMP_BUFFER();
     if (setjmp(CURRENT_JUMP_BUFFER()) == 0)
     {
-        /* Use visitor pattern instead of old AST execution for function bodies */
-        extern Interpreter* current_interpreter;
-        if (current_interpreter) {
-            ast_accept(func->body, (Visitor*)current_interpreter);
-        } else {
+        /* Use visitor pattern instead of old AST execution for function bodies
+         */
+        extern Interpreter *current_interpreter;
+        if (current_interpreter)
+        {
+            ast_accept(func->body, (Visitor *)current_interpreter);
+        }
+        else
+        {
             /* Fallback to old system if no current interpreter */
             execute_statement(func->body);
         }
-        
+
         // If we reach here without an explicit return, clean up function scope
-        if (current_scope && current_scope->is_function_scope) {
+        if (current_scope && current_scope->is_function_scope)
+        {
             exit_scope(); // exit function scope
         }
     }
@@ -3628,34 +3981,40 @@ void handle_return_statement(ASTNode *expr)
     {
         if (current_return_value.pointer_level > 0)
         {
-            current_return_value.value.pvalue = evaluate_expression_pointer(expr);
+            current_return_value.value.pvalue =
+                evaluate_expression_pointer(expr);
         }
         else
         {
-        switch (current_return_value.type)
-        {
-        case VAR_INT:
-            current_return_value.value.ivalue = evaluate_expression_int(expr);
-            break;
-        case VAR_FLOAT:
-            current_return_value.value.fvalue = evaluate_expression_float(expr);
-            break;
-        case VAR_DOUBLE:
-            current_return_value.value.dvalue = evaluate_expression_double(expr);
-            break;
-        case VAR_BOOL:
-            current_return_value.value.bvalue = evaluate_expression_bool(expr);
-            break;
-        case VAR_SHORT:
-            current_return_value.value.svalue = evaluate_expression_short(expr);
-            break;
-        case NONE:
-            /* void/skibidi return type: ignore expression value */
-            break;
-        default:
-            yyerror("Unsupported return type");
-            exit(1);
-        }
+            switch (current_return_value.type)
+            {
+            case VAR_INT:
+                current_return_value.value.ivalue =
+                    evaluate_expression_int(expr);
+                break;
+            case VAR_FLOAT:
+                current_return_value.value.fvalue =
+                    evaluate_expression_float(expr);
+                break;
+            case VAR_DOUBLE:
+                current_return_value.value.dvalue =
+                    evaluate_expression_double(expr);
+                break;
+            case VAR_BOOL:
+                current_return_value.value.bvalue =
+                    evaluate_expression_bool(expr);
+                break;
+            case VAR_SHORT:
+                current_return_value.value.svalue =
+                    evaluate_expression_short(expr);
+                break;
+            case NONE:
+                /* void/skibidi return type: ignore expression value */
+                break;
+            default:
+                yyerror("Unsupported return type");
+                exit(1);
+            }
         }
     }
     // Clean up all scopes until we reach the function scope
@@ -3665,13 +4024,15 @@ void handle_return_statement(ASTNode *expr)
     }
 
     // skibidi main function do not have jump buffer
-    if (jump_buffer){
+    if (jump_buffer)
+    {
         exit_scope(); // exit current function scope
         LONGJMP();
     }
 }
 
-Parameter *create_parameter_ex(String name, VarType type, int pointer_level, Parameter *next, TypeModifiers mods)
+Parameter *create_parameter_ex(String name, VarType type, int pointer_level,
+                               Parameter *next, TypeModifiers mods)
 {
     Parameter *param = ARENA_ALLOC(Parameter);
     if (!param)
@@ -3689,12 +4050,15 @@ Parameter *create_parameter_ex(String name, VarType type, int pointer_level, Par
     return param;
 }
 
-Parameter *create_parameter(String name, VarType type, Parameter *next, TypeModifiers mods)
+Parameter *create_parameter(String name, VarType type, Parameter *next,
+                            TypeModifiers mods)
 {
     return create_parameter_ex(name, type, 0, next, mods);
 }
 
-ASTNode *create_function_def_node_ex(String name, VarType return_type, int return_pointer_level, Parameter *params, ASTNode *body)
+ASTNode *create_function_def_node_ex(String name, VarType return_type,
+                                     int return_pointer_level,
+                                     Parameter *params, ASTNode *body)
 {
     ASTNode *node = ARENA_ALLOC_ASTNODE();
     if (!node)
@@ -3716,14 +4080,16 @@ ASTNode *create_function_def_node_ex(String name, VarType return_type, int retur
     return node;
 }
 
-ASTNode *create_function_def_node(String name, VarType return_type, Parameter *params, ASTNode *body)
+ASTNode *create_function_def_node(String name, VarType return_type,
+                                  Parameter *params, ASTNode *body)
 {
     return create_function_def_node_ex(name, return_type, 0, params, body);
 }
 
 void free_static_variable_map(void)
 {
-    if (static_variable_map) {
+    if (static_variable_map)
+    {
         hm_free(static_variable_map);
         static_variable_map = NULL;
     }
@@ -3731,10 +4097,11 @@ void free_static_variable_map(void)
 
 void free_function_table(void)
 {
-    if (!function_map) {
+    if (!function_map)
+    {
         return;
     }
-    
+
     /* Iterate through hash map and free all functions */
     for (size_t i = 0; i < function_map->capacity; i++)
     {
@@ -3744,19 +4111,20 @@ void free_function_table(void)
             if (func_ptr && *func_ptr)
             {
                 Function *f = *func_ptr;
-                
-                // Free function name (it's a separate safe_strdup from the AST's name)
+
+                // Free function name (it's a separate safe_strdup from the
+                // AST's name)
                 SAFE_FREE(f->name);
-                
+
                 // DO NOT free f->parameters or f->body here,
                 // because those pointers belong to the AST and
                 // are already freed in free_ast(root).
-                
+
                 SAFE_FREE(f);
             }
         }
     }
-    
+
     /* Free the hash map using shallow free */
     hm_free_shallow(function_map);
     function_map = NULL;
@@ -3791,7 +4159,8 @@ void enter_function_scope(Function *func, ArgumentList *args)
         arg_values[arg_count].pointer_level = curr_param->pointer_level;
         if (curr_param->pointer_level > 0)
         {
-            arg_values[arg_count].pvalue = evaluate_expression_pointer(curr_arg->expr);
+            arg_values[arg_count].pvalue =
+                evaluate_expression_pointer(curr_arg->expr);
             curr_arg = curr_arg->next;
             curr_param = curr_param->next;
             arg_count++;
@@ -3801,19 +4170,24 @@ void enter_function_scope(Function *func, ArgumentList *args)
         {
         case VAR_INT:
         case VAR_CHAR:
-            arg_values[arg_count].ivalue = evaluate_expression_int(curr_arg->expr);
+            arg_values[arg_count].ivalue =
+                evaluate_expression_int(curr_arg->expr);
             break;
         case VAR_FLOAT:
-            arg_values[arg_count].fvalue = evaluate_expression_float(curr_arg->expr);
+            arg_values[arg_count].fvalue =
+                evaluate_expression_float(curr_arg->expr);
             break;
         case VAR_DOUBLE:
-            arg_values[arg_count].dvalue = evaluate_expression_double(curr_arg->expr);
+            arg_values[arg_count].dvalue =
+                evaluate_expression_double(curr_arg->expr);
             break;
         case VAR_BOOL:
-            arg_values[arg_count].bvalue = evaluate_expression_bool(curr_arg->expr);
+            arg_values[arg_count].bvalue =
+                evaluate_expression_bool(curr_arg->expr);
             break;
         case VAR_SHORT:
-            arg_values[arg_count].svalue = evaluate_expression_short(curr_arg->expr);
+            arg_values[arg_count].svalue =
+                evaluate_expression_short(curr_arg->expr);
             break;
         case VAR_STRING:
             yyerror("String parameters are not supported");
@@ -3897,28 +4271,36 @@ void enter_function_scope(Function *func, ArgumentList *args)
     reverse_parameter_list(&func->parameters);
 }
 
-void register_struct_def(StructDef *def) {
-    if (!struct_registry) struct_registry = hm_new();
+void register_struct_def(StructDef *def)
+{
+    if (!struct_registry)
+        struct_registry = hm_new();
     size_t len = def->name.len;
     hm_put(struct_registry, def->name.data, len, def, sizeof(StructDef));
     def->next_def = struct_registry_list;
     struct_registry_list = def;
 }
 
-StructDef *get_struct_def(const String name) {
-    if (!struct_registry || !name.data) return NULL;
+StructDef *get_struct_def(const String name)
+{
+    if (!struct_registry || !name.data)
+        return NULL;
     return (StructDef *)hm_get(struct_registry, name.data, name.len);
 }
 
-void free_struct_registry(void) {
-    if (struct_registry) {
+void free_struct_registry(void)
+{
+    if (struct_registry)
+    {
         hm_free_shallow(struct_registry);
         struct_registry = NULL;
     }
     StructDef *def = struct_registry_list;
-    while (def) {
+    while (def)
+    {
         StructField *f = def->fields;
-        while (f) {
+        while (f)
+        {
             StructField *nxt = f->next;
             SAFE_FREE(f->name);
             SAFE_FREE(f);
@@ -3932,11 +4314,15 @@ void free_struct_registry(void) {
     struct_registry_list = NULL;
 }
 
-StructField *find_struct_field(StructDef *def, const String name) {
-    if (!def || !name.data) return NULL;
+StructField *find_struct_field(StructDef *def, const String name)
+{
+    if (!def || !name.data)
+        return NULL;
     StructField *f = def->fields;
-    while (f) {
-        if (strcmp(f->name.data, name.data) == 0) return f;
+    while (f)
+    {
+        if (strcmp(f->name.data, name.data) == 0)
+            return f;
         f = f->next;
     }
     return NULL;
@@ -3945,18 +4331,24 @@ StructField *find_struct_field(StructDef *def, const String name) {
 /* Walk the field list, assign natural-alignment offsets, return total size.
    We use simple sequential layout (no padding) to keep it straightforward;
    add alignment rounding here if needed later. */
-size_t compute_struct_layout(StructField *fields) {
+size_t compute_struct_layout(StructField *fields)
+{
     size_t off = 0;
     StructField *f = fields;
-    while (f) {
+    while (f)
+    {
         f->offset = off;
         size_t fsz;
-        if (f->pointer_level > 0) {
+        if (f->pointer_level > 0)
+        {
             fsz = sizeof(uintptr_t);
-        } else {
+        }
+        else
+        {
             TypeModifiers m = {0};
             fsz = get_type_size_for_descriptor(f->type, 0, m);
-            if (fsz == 0) fsz = sizeof(int);
+            if (fsz == 0)
+                fsz = sizeof(int);
         }
         off += fsz;
         f = f->next;

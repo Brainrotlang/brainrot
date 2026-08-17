@@ -36,7 +36,8 @@ typedef enum
 } input_status;
 
 /**
- * Clears the remaining input in stdin to prevent it from affecting subsequent reads.
+ * Clears the remaining input in stdin to prevent it from affecting subsequent
+ * reads.
  */
 void clear_stdin_buffer(void);
 

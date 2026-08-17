@@ -19,6 +19,7 @@ By participating in this project, you are expected to uphold our Code of Conduct
 - C compiler (gcc recommended)
 - Flex and Bison
 - Valgrind
+- clang-format
 - Make
 
 ### Building the Project
@@ -49,6 +50,19 @@ Run:
 ```bash
 ./run_valgrind_tests.sh
 ```
+
+### Formatting
+
+The CI `lint` job enforces the style in `.clang-format` via `make
+format-check` (fails on any diff, doesn't modify files). Before opening a PR:
+
+```bash
+make format-check   # verify only
+make format          # apply formatting in-place
+```
+
+`make format-check`/`make format` never touch generated Flex/Bison output
+(`lang.tab.c`, `lang.tab.h`, `lex.yy.c`).
 
 ## Project Structure
 
@@ -113,6 +127,8 @@ Fixes #<issue_number>
 - Constants use UPPER_SNAKE_CASE
 - Add comments for complex logic
 - Include parameter documentation for functions
+- Enforced by `.clang-format` (Allman braces) — run `make format` before
+  committing; CI's `lint` job rejects unformatted code
 
 ### Grammar Style
 

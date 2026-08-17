@@ -7,7 +7,8 @@
 #include "input.h"
 
 /**
- * Clears the remaining input in stdin to prevent it from affecting subsequent reads.
+ * Clears the remaining input in stdin to prevent it from affecting subsequent
+ * reads.
  */
 void clear_stdin_buffer(void)
 {
@@ -87,7 +88,7 @@ input_status input_string(char *buffer, size_t buffer_size, size_t *chars_read)
 
     // Check if the input was truncated (no newline found)
     size_t len = strnlen(buffer, buffer_size);
-    if(len == buffer_size && buffer[len - 1] != '\n')
+    if (len == buffer_size && buffer[len - 1] != '\n')
     {
         clear_stdin_buffer();
         return INPUT_BUFFER_OVERFLOW;

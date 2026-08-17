@@ -5,16 +5,18 @@
 #include "string_value.h"
 
 // Default region size 4KB or 1 page of memory
-#define DEFAULT_REGION_SIZE (4 * 1024) 
+#define DEFAULT_REGION_SIZE (4 * 1024)
 
-typedef struct Region {
+typedef struct Region
+{
     struct Region *next;
     size_t count;
     size_t capacity;
     uintptr_t data[];
 } Region;
 
-typedef struct Arena {
+typedef struct Arena
+{
     Region *start, *end;
 } Arena;
 

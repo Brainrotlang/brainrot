@@ -12,6 +12,7 @@ make            # regenerates lang.tab.c/lex.yy.c, builds libstdrot.so + ./brain
 make test       # build, then run tests/test_brainrot.py against test_cases/*.brainrot
 make valgrind   # build, then run run_valgrind_tests.sh over every test_cases/*.brainrot
 make format     # clang-format all .c/.h files
+make format-check # check formatting without modifying files (what CI's `lint` job runs)
 make clean      # remove build artifacts (does NOT touch source)
 ```
 
@@ -33,7 +34,9 @@ Run one pytest case: `cd tests && pytest -v -k <test_case_name>`.
 ## Code Style
 
 4-space indent, snake_case functions/vars, UPPER_SNAKE_CASE constants, ~80 col
-lines, brace-on-own-line (Allman), enforced by `make format` (clang-format).
+lines, brace-on-own-line (Allman), enforced by `make format` (clang-format) and
+gated in CI by the `lint` job (`make format-check`); never hand-format the
+gitignored `lang.tab.c`/`lang.tab.h`/`lex.yy.c`.
 
 ```c
 static int semantic_check_binop(ASTNode *node, SymbolTable *scope)
@@ -63,6 +66,8 @@ Issue, Type of Change, Checklist) — fill it in, don't strip it out.
 ## Boundaries
 
 - **Always**: run `make test` and `make valgrind` before calling a change done.
+- **Always**: run `make format-check` (or `make format` to fix) before opening
+  a PR — the CI `lint` job blocks on any diff.
 - **Always**: fill out `.github/PULL_REQUEST_TEMPLATE.md` in full when opening a PR.
 - **Ask first**: changing existing keyword syntax/semantics in `lang.l`/`lang.y`
   (README's keyword table is a public compatibility surface).

@@ -1,6 +1,6 @@
 #include "arena.h"
 
-/* 
+/*
  * @brref Create a new arena with a given size.
  * @param size The size of the arena.
  * @return The new arena.
@@ -15,7 +15,7 @@ Region *region_new(size_t size)
     return region;
 }
 
-/* 
+/*
  * @brref free the region.
  * @param region The region to free.
  */
@@ -24,7 +24,7 @@ void region_free(Region *region)
     free(region);
 }
 
-/* 
+/*
  * @brief allocate memory from the arena.
  * @param arena The arena to allocate from.
  * @param size_bytes The size of the memory to allocate.
@@ -32,23 +32,25 @@ void region_free(Region *region)
  */
 void *arena_alloc(Arena *arena, size_t size_bytes)
 {
-    if(arena == NULL)
+    if (arena == NULL)
     {
-        arena = (Arena*)malloc(sizeof(struct Arena));
+        arena = (Arena *)malloc(sizeof(struct Arena));
         arena->start = NULL;
         arena->end = NULL;
     }
-    size_t size = (size_bytes + sizeof(uintptr_t) - 1)/sizeof(uintptr_t);
+    size_t size = (size_bytes + sizeof(uintptr_t) - 1) / sizeof(uintptr_t);
     if (arena->end == NULL)
     {
         assert(arena->start == NULL);
         size_t capacity = DEFAULT_REGION_SIZE;
-        if (size > capacity) capacity = size;
+        if (size > capacity)
+            capacity = size;
         arena->end = region_new(capacity);
         arena->start = arena->end;
     }
 
-    while (arena->end->count + size > arena->end->capacity && arena->end->next != NULL)
+    while (arena->end->count + size > arena->end->capacity &&
+           arena->end->next != NULL)
     {
         arena->end = arena->end->next;
     }
@@ -57,7 +59,8 @@ void *arena_alloc(Arena *arena, size_t size_bytes)
     {
         assert(arena->end->next == NULL);
         size_t cap = DEFAULT_REGION_SIZE;
-        if (size > cap) cap = size;
+        if (size > cap)
+            cap = size;
         arena->end->next = region_new(cap);
         arena->end = arena->end->next;
     }
@@ -67,8 +70,7 @@ void *arena_alloc(Arena *arena, size_t size_bytes)
     return result;
 }
 
-
-/* 
+/*
  * @brief make a copy of a string in the arena.
  * @param arena The arena to allocate from.
  * @param str The string to copy.
@@ -86,7 +88,7 @@ String arena_strdup(Arena *arena, String str)
     return out;
 }
 
-/* 
+/*
  * @brief reset the arena.
  * @param arena The arena to reset.
  */
@@ -103,13 +105,14 @@ void arena_reset(Arena *arena)
     arena->end->count = 0;
 }
 
-/* 
+/*
  * @brief free the arena.
  * @param arena The arena to free.
  */
 void arena_free(Arena *arena)
 {
-    if (arena == NULL) return;  // Prevent NULL pointer dereference
+    if (arena == NULL)
+        return; // Prevent NULL pointer dereference
 
     Region *current = arena->start;
     while (current != NULL)
@@ -123,4 +126,3 @@ void arena_free(Arena *arena)
     arena->start = NULL;
     arena->end = NULL;
 }
-
