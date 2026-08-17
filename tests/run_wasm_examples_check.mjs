@@ -49,7 +49,12 @@ const exampleFiles = readdirSync(examplesDir).filter((f) => f.endsWith(".brainro
 // example gets against native, just not diffed against native's directly.
 const KNOWN_NATIVE_ONLY_STDERR = new Set(["sieve_of_eras.brainrot"]);
 
-async function runWasm(sourcePath) {
+// #cooked (Brainrot's #include) resolves relative to the including file's
+// own directory (see resolve_cooked_path in lang.l) — modules.brainrot
+// #cookeds mathutils.brainrot as a sibling, so the whole examples/ directory,
+// not just the one file under test, needs to exist in the virtual FS at the
+// same relative layout for that lookup to succeed.
+async function runWasm(file) {
   const stdoutChunks = [];
   const stderrChunks = [];
   const mod = await createBrainrotModule({
@@ -57,9 +62,13 @@ async function runWasm(sourcePath) {
     printErr: (text) => stderrChunks.push(text),
     noInitialRun: true,
   });
-  mod.FS.writeFile("/prog.brainrot", readFileSync(sourcePath));
+  const vfsRoot = "/examples";
+  mod.FS.mkdirTree(vfsRoot);
+  for (const name of exampleFiles) {
+    mod.FS.writeFile(`${vfsRoot}/${name}`, readFileSync(path.join(examplesDir, name)));
+  }
   try {
-    mod.callMain(["/prog.brainrot"]);
+    mod.callMain([`${vfsRoot}/${file}`]);
   } catch (e) {
     if (!(e && typeof e.status === "number")) throw e;
   }
@@ -79,7 +88,7 @@ let failures = 0;
 for (const file of exampleFiles) {
   const sourcePath = path.join(examplesDir, file);
   const native = runNative(sourcePath);
-  const wasm = await runWasm(sourcePath);
+  const wasm = await runWasm(file);
 
   const nativeOut = native.stdout.trim();
   const wasmOut = wasm.stdout.trim();
