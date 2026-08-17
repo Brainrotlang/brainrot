@@ -36,6 +36,13 @@ void baka(const String format, ...);
 void ragequit(int exit_code);
 void chill(unsigned int seconds);
 char slorp_char(char chr);
+/* NOTE: this declared signature does not match stdrot/slorp.c's actual
+ * `char *slorp_string(char *, size_t)`. Nothing currently calls
+ * slorp_string() — the `slorp` builtin goes through the generic
+ * StdrotFn registry (stdrot_slorp in stdrot/slorp.c) instead — so this
+ * has never been linked/exercised under either build mode. If you add a
+ * caller, fix the signature mismatch first (native's dlsym-cast path has
+ * the same latent bug, just harder to see there). */
 String slorp_string(String string, size_t size);
 int slorp_int(int val);
 short slorp_short(short val);

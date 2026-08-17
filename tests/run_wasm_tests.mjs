@@ -6,10 +6,10 @@
 // binary, and applies the same comparison rules, so the wasm target is held
 // to the same bar as the native one rather than a separate, looser one.
 //
-// A small, explicitly documented set of fixtures (KNOWN_FAILURES below) is
-// skipped rather than deleted or silently passed — each one is a real,
-// wasm-specific divergence from native with its own tracking issue. See the
-// comments next to KNOWN_FAILURES for what and why.
+// Two fixtures (WASM_EXPECTED_OVERRIDES below) get a wasm-specific expected
+// value instead of native's — see the comment next to it for why. They are
+// still run and still asserted on, just against a different, equally exact
+// string, so a regression in either one still fails this harness.
 //
 // Usage: node tests/run_wasm_tests.mjs   (run from the repo root, after `make wasm`)
 
@@ -46,28 +46,16 @@ function stdinFor(example) {
   return hit ? hit[1] : "";
 }
 
-// Known, tracked wasm-specific divergences from the native build — not
-// regressions in this harness. Every entry here needs an open issue.
-const KNOWN_FAILURES = {
-  // stdrot/lib/mem.c's safe_free() guard rejects a handful of pointers
-  // during interpreter teardown under wasm's allocator (never happens
-  // natively); the warning text lands on stderr, which is these fixtures'
-  // only output channel, so it breaks the exact-match comparison even
-  // though stdout (and every fixture that has real stdout) is unaffected.
-  // https://github.com/Brainrotlang/brainrot/issues/176
-  output_error: 176,
-  "func-modifier": 176,
-  semantic_error_const: 176,
-  semantic_error_function_redef: 176,
-  semantic_error_scope: 176,
-  semantic_error_pointer_deref: 176,
-  bet_fail: 176,
-  // wasm32 uses ILP32 (long = 4 bytes) vs native's LP64 (long = 8 bytes),
-  // so sizeof(giga) genuinely differs. Inherent to the wasm32 target, not
-  // a bug in Brainrot's sizeof logic.
-  // https://github.com/Brainrotlang/brainrot/issues/177
-  giga: 177,
-  giga_array: 177,
+// wasm32 uses the ILP32 data model (long = 4 bytes) vs native's LP64
+// (long = 8 bytes), so sizeof(giga) genuinely differs — inherent to the
+// wasm32 target, not a bug in Brainrot's sizeof logic (see ast.c's use of
+// the real C sizeof(long)). These fixtures still run; they're just checked
+// against the wasm-correct value instead of native's, so a real regression
+// (wrong output, not just "still doesn't match native") still fails here.
+// https://github.com/Brainrotlang/brainrot/issues/177
+const WASM_EXPECTED_OVERRIDES = {
+  giga: "4\n4",
+  giga_array: "1\n2\n3\n12",
 };
 
 // Runs one program in a fresh module instance — the interpreter has global
@@ -111,14 +99,11 @@ async function runOne(sourcePath, stdin) {
 
 let failures = 0;
 let passed = 0;
-let skipped = 0;
+let overridden = 0;
 
-for (const [example, expectedOutput] of Object.entries(expectedResults)) {
-  if (example in KNOWN_FAILURES) {
-    skipped++;
-    console.log(`- ${example} (skipped, tracked in #${KNOWN_FAILURES[example]})`);
-    continue;
-  }
+for (const [example, nativeExpectedOutput] of Object.entries(expectedResults)) {
+  const expectedOutput = WASM_EXPECTED_OVERRIDES[example] ?? nativeExpectedOutput;
+  if (example in WASM_EXPECTED_OVERRIDES) overridden++;
 
   const sourcePath = path.join(repoRoot, "test_cases", `${example}.brainrot`);
   const stdin = stdinFor(example);
@@ -159,6 +144,6 @@ for (const [example, expectedOutput] of Object.entries(expectedResults)) {
 }
 
 console.log(
-  `\n${passed} passed, ${failures} failed, ${skipped} skipped (${Object.keys(expectedResults).length} total)`,
+  `\n${passed} passed, ${failures} failed (${overridden} against a wasm-specific expected value) (${Object.keys(expectedResults).length} total)`,
 );
 process.exit(failures > 0 ? 1 : 0);

@@ -7,13 +7,11 @@ on:
     paths-ignore:
       - "**/*.md"
       - "CODEOWNERS"
-      - "Makefile"
   pull_request:
     branches: ["main"]
     paths-ignore:
       - "**/*.md"
       - "CODEOWNERS"
-      - "Makefile"
 
 jobs:
   build:
@@ -85,10 +83,20 @@ jobs:
 
   wasm:
     runs-on: ubuntu-latest
+    needs: build
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Download native Brainrot artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: brainrot
+          path: .
+
+      - name: Grant execute permissions to native Brainrot
+        run: chmod +x brainrot
 
       - name: Install build dependencies
         run: |
@@ -105,6 +113,9 @@ jobs:
 
       - name: Run wasm smoke tests
         run: node tests/run_wasm_tests.mjs
+
+      - name: Compare wasm output against native for examples/
+        run: node tests/run_wasm_examples_check.mjs
 
       - name: Upload wasm artifacts
         uses: actions/upload-artifact@v4

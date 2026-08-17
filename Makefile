@@ -32,12 +32,32 @@ FLEX_OUTPUT := lex.yy.c
 # wasm has no dynamic loader worth using for a single-artifact build.
 WASM_TARGET := brainrot.wasm
 WASM_JS := brainrot.mjs
-WASM_CFLAGS := -Wall -Wextra -Wpedantic -O2 -DSTDROT_STATIC
+# -Wno-strict-prototypes: emcc's clang enables -Wstrict-prototypes under
+# -Wextra (gcc's -Wextra does not), which fires on this codebase's existing
+# K&R-style `void foo();` declarations (ast.h, lib/hm.h, lang.y). Fixing
+# those is a mechanical but wide-reaching cleanup across shared headers,
+# out of scope for adding a build target; suppressed here rather than
+# silently dropping -Werror for the whole target.
+#
+# -Wno-tautological-negation-compare: clang (not gcc, so native -Werror
+# never caught it) flags `if (matched || !matched)` in
+# execute_switch_statement (ast.c) as always-true. It's real — `based`
+# placed before a matching numbered case fires unconditionally instead of
+# only as a true fallthrough/default — but it's a switch/default
+# *semantics* bug, not a build-target issue; fixing it is a behavior
+# change to the interpreter that needs its own test_cases fixture and
+# review, not something to fold into -Werror for a build target. See
+# issue #179.
+WASM_CFLAGS := -Wall -Wextra -Wpedantic -Werror -O2 -DSTDROT_STATIC \
+	-Wno-strict-prototypes -Wno-tautological-negation-compare
+# MAXIMUM_MEMORY caps how far ALLOW_MEMORY_GROWTH can grow a single
+# module instance — defense in depth against a runaway Brainrot program
+# (e.g. an unbounded array) in a browser tab.
 WASM_LDFLAGS := -lm \
 	-sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createBrainrotModule \
 	-sINVOKE_RUN=0 -sEXIT_RUNTIME=1 \
 	-sEXPORTED_RUNTIME_METHODS=callMain,FS \
-	-sALLOW_MEMORY_GROWTH=1
+	-sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=256MB
 
 # Default target
 .PHONY: all

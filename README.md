@@ -156,12 +156,11 @@ make wasm
 
 The interpreter is statically linked for this target (no `libstdrot.so`, no `dlopen` — see `stdrot.c`'s `STDROT_STATIC` path), and takes its source file the same way the native binary does, via `argv[1]` written into Emscripten's in-memory filesystem before calling `callMain`.
 
-Known platform-specific differences from the native build, tracked upstream:
+Known platform-specific difference from the native build: `sizeof(giga)` is `4`, not `8` — wasm32 uses the ILP32 data model (`long` = 4 bytes) instead of native's LP64 ([#177](https://github.com/Brainrotlang/brainrot/issues/177)). Everything else, including stderr, matches native exactly.
 
-- `sizeof(giga)` is `4`, not `8` — wasm32 uses the ILP32 data model (`long` = 4 bytes) instead of native's LP64 ([#177](https://github.com/Brainrotlang/brainrot/issues/177)).
-- A handful of harmless `Warning: Attempt to free invalid/corrupted pointer` lines can appear on stderr during interpreter teardown ([#176](https://github.com/Brainrotlang/brainrot/issues/176)). stdout is unaffected.
+`node tests/run_wasm_tests.mjs` runs the same fixtures as the native `pytest` suite against the wasm build (checking the one difference above against its wasm-correct value instead of native's), and `node tests/run_wasm_examples_check.mjs` diffs every `examples/*.brainrot` program's stdout against a real native run. Run both after `make && make wasm` to sanity-check a build.
 
-`node tests/run_wasm_tests.mjs` runs the same fixtures as the native `pytest` suite against the wasm build (skipping the two issues above) — run it after `make wasm` to sanity-check a build.
+`chill()` calls `sleep()` under the hood, which blocks the JS thread it runs on rather than yielding — fine in a short-lived CLI run, but something a browser embedder (e.g. a playground) should account for (run in a Worker, expect the tab to be unresponsive for the duration) rather than assume it behaves like an async delay.
 
 ## 💻 Usage
 
@@ -272,6 +271,7 @@ Current limitations include:
 - Limited support for complex expressions
 - Basic error reporting
 - No support for arrays in user-defined functions
+- `ohio`/`based` (switch/default): `based` fires as soon as the interpreter's scan reaches it, so its position among the `sigma rule` cases matters — placing it before a case that would otherwise match currently pre-empts that match ([#179](https://github.com/Brainrotlang/brainrot/issues/179))
 
 ## 🔌 VSCode Extension
 
