@@ -1,4 +1,5 @@
-/* stdrot/stdrot_api.h – Public contract between libstdrot.so and the main binary.
+/* stdrot/stdrot_api.h – Public contract between libstdrot.so and the main
+ * binary.
  *
  * This is the ONLY header shared between the two compilation units.
  * It contains plain C types with zero dependency on the interpreter or AST.
@@ -35,7 +36,8 @@
  * Set by the main binary before calling stdlib functions
  * Allows functions to report line numbers and context
  */
-typedef struct {
+typedef struct
+{
     int line_number;
     String function_name;
     String condition_text;
@@ -45,7 +47,8 @@ extern ExecutionContext g_exec_context;
 
 /* ── Pre-evaluated argument / return value ──────────────────────────────── */
 
-typedef enum {
+typedef enum
+{
     STDROT_INT,
     STDROT_FLOAT,
     STDROT_DOUBLE,
@@ -53,18 +56,20 @@ typedef enum {
     STDROT_BOOL,
     STDROT_CHAR,
     STDROT_STRING,
-    STDROT_NONE   /* void return */
+    STDROT_NONE /* void return */
 } StdrotType;
 
-typedef struct {
+typedef struct
+{
     StdrotType type;
-    union {
-        int    i;
-        float  f;
+    union
+    {
+        int i;
+        float f;
         double d;
-        short  s;
-        bool   b;
-        char   c;
+        short s;
+        bool b;
+        char c;
         String str;
     } val;
 } StdrotValue;
@@ -83,9 +88,10 @@ typedef StdrotValue (*StdrotFn)(StdrotValue *args, int argc);
  *
  * fn != NULL  →  generic function, called with pre-evaluated StdrotValue args
  */
-typedef struct {
+typedef struct
+{
     const char *name;
-    StdrotFn    fn;
+    StdrotFn fn;
 } StdrotEntry;
 
 /* ── Self-registration via linker section ────────────────────────────────── *
@@ -97,20 +103,22 @@ typedef struct {
  */
 
 #if defined(__GNUC__) || defined(__clang__)
-    #define STDROT_CONCAT_IMPL(x, y) x##y
-    #define STDROT_CONCAT(x, y) STDROT_CONCAT_IMPL(x, y)
-    #define STDROT_EXPORT(name_str, func_ptr) \
-        __attribute__((used, section("stdrot_exports"))) \
-        static const StdrotEntry STDROT_CONCAT(__stdrot_export_, __LINE__) = { name_str, func_ptr }
+#define STDROT_CONCAT_IMPL(x, y) x##y
+#define STDROT_CONCAT(x, y) STDROT_CONCAT_IMPL(x, y)
+#define STDROT_EXPORT(name_str, func_ptr)                                      \
+    __attribute__((used, section("stdrot_exports"))) static const StdrotEntry  \
+    STDROT_CONCAT(__stdrot_export_, __LINE__) = {name_str, func_ptr}
 #else
-    #error "Linker sections not supported on this compiler. Add registry.c fallback."
+#error                                                                         \
+    "Linker sections not supported on this compiler. Add registry.c fallback."
 #endif
 
 /* ── API discovery entrypoint ────────────────────────────────────────────── *
  * libstdrot.so MUST export this function.
  * Returns pointer to the function table and count.
  */
-typedef struct {
+typedef struct
+{
     StdrotEntry *functions;
     int count;
 } StdrotAPI;

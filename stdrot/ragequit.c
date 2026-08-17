@@ -20,9 +20,12 @@ void chill(unsigned int seconds)
 static StdrotValue stdrot_ragequit(StdrotValue *args, int argc)
 {
     int code = 0;
-    if (argc > 0) {
-        if (args[0].type == STDROT_INT) code = args[0].val.i;
-        else if (args[0].type == STDROT_SHORT) code = args[0].val.s;
+    if (argc > 0)
+    {
+        if (args[0].type == STDROT_INT)
+            code = args[0].val.i;
+        else if (args[0].type == STDROT_SHORT)
+            code = args[0].val.s;
     }
     ragequit(code);
     return (StdrotValue){STDROT_NONE, {0}};
@@ -31,9 +34,12 @@ static StdrotValue stdrot_ragequit(StdrotValue *args, int argc)
 static StdrotValue stdrot_chill(StdrotValue *args, int argc)
 {
     unsigned int seconds = 0;
-    if (argc > 0) {
-        if (args[0].type == STDROT_INT) seconds = (unsigned int)args[0].val.i;
-        else if (args[0].type == STDROT_SHORT) seconds = (unsigned int)args[0].val.s;
+    if (argc > 0)
+    {
+        if (args[0].type == STDROT_INT)
+            seconds = (unsigned int)args[0].val.i;
+        else if (args[0].type == STDROT_SHORT)
+            seconds = (unsigned int)args[0].val.s;
     }
     chill(seconds);
     return (StdrotValue){STDROT_NONE, {0}};

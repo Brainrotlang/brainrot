@@ -5,11 +5,12 @@
 
 #define MAX_BUFFER_LEN 512
 
-typedef struct {
+typedef struct
+{
     char *data;
     size_t len;
 } String;
 
-#define STRING_LITERAL(s) ((String){ .data = (s), .len = sizeof(s) - 1 })
+#define STRING_LITERAL(s) ((String){.data = (s), .len = sizeof(s) - 1})
 
 #endif
