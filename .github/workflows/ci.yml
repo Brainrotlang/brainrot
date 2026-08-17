@@ -104,7 +104,10 @@ jobs:
           sudo apt-get install bison flex libfl-dev libasan8 libubsan1 -y
 
       - name: Set up Emscripten
-        uses: mymindstorm/setup-emsdk@v14
+        # mymindstorm/setup-emsdk was transferred to emscripten-core/setup-emsdk;
+        # SHA-pinned (v14) so a retagged release can't silently change what
+        # builds the artifact the playground will consume.
+        uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
         with:
           version: 3.1.73
 

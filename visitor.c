@@ -95,7 +95,8 @@ void ast_accept(ASTNode *node, Visitor *visitor) {
                 visitor->visit_sizeof(visitor, node);
             break;
             
-        case NODE_DECLARATION: ;
+        case NODE_DECLARATION:
+        {
             // For declarations with side-effect operations on the right, skip auto-visit to prevent double evaluation
             bool skip_decl_right_visit = false;
             if (node->data.op.right && node->data.op.right->type == NODE_UNARY_OPERATION) {
@@ -104,15 +105,17 @@ void ast_accept(ASTNode *node, Visitor *visitor) {
                     skip_decl_right_visit = true;
                 }
             }
-            
+
             // Visit the initializer expression first (unless it's a side-effect operation)
             if (!skip_decl_right_visit && node->data.op.right)
                 ast_accept(node->data.op.right, visitor);
             if (visitor->visit_declaration)
                 visitor->visit_declaration(visitor, node);
             break;
-            
-        case NODE_ASSIGNMENT: ;
+        }
+
+        case NODE_ASSIGNMENT:
+        {
             // For assignments with side-effect operations on the right, skip auto-visit to prevent double evaluation
             bool skip_right_visit = false;
             if (node->data.op.right && node->data.op.right->type == NODE_UNARY_OPERATION) {
@@ -121,13 +124,14 @@ void ast_accept(ASTNode *node, Visitor *visitor) {
                     skip_right_visit = true;
                 }
             }
-            
+
             // Visit right side first (unless it's a side-effect operation)
             if (!skip_right_visit && node->data.op.right)
                 ast_accept(node->data.op.right, visitor);
             if (visitor->visit_assignment)
                 visitor->visit_assignment(visitor, node);
             break;
+        }
             
         case NODE_IF_STATEMENT:
             // Let the visitor handle the if statement logic
