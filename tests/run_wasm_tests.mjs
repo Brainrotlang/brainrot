@@ -13,13 +13,14 @@
 //
 // Usage: node tests/run_wasm_tests.mjs   (run from the repo root, after `make wasm`)
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
 const wasmJsPath = path.join(repoRoot, "brainrot.mjs");
+const testCasesDir = path.join(repoRoot, "test_cases");
 
 if (!existsSync(wasmJsPath)) {
   console.error(`brainrot.mjs not found at ${wasmJsPath} — run "make wasm" first.`);
@@ -30,6 +31,28 @@ const createBrainrotModule = (await import(wasmJsPath)).default;
 const expectedResults = JSON.parse(
   readFileSync(path.join(scriptDir, "expected_results.json"), "utf8"),
 );
+
+// #cooked (Brainrot's #include) resolves relative to the including file's
+// own directory and echoes that file's basename in diagnostics (see
+// resolve_cooked_path/basename_copy in lang.l). A handful of fixtures
+// (cooked_*) rely on sibling files under test_cases/ being reachable that
+// way, so the whole directory — not just the one file under test — needs to
+// exist in each module's virtual FS, at the same relative layout, for those
+// lookups and error messages to match native.
+function listFilesRecursive(dir, base = dir) {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...listFilesRecursive(full, base));
+    } else {
+      out.push(path.relative(base, full));
+    }
+  }
+  return out;
+}
+
+const testCaseFiles = listFilesRecursive(testCasesDir);
 
 // Mirrors the stdin fixtures test_brainrot.py feeds via `echo '...' | brainrot`.
 const STDIN_BY_PREFIX = [
@@ -62,7 +85,7 @@ const WASM_EXPECTED_OVERRIDES = {
 // state (current_scope, arena allocations, stdrot's symbol table) that is
 // not designed to be re-entered, so each run gets its own instance exactly
 // like each native run gets its own process.
-async function runOne(sourcePath, stdin) {
+async function runOne(example, stdin) {
   const stdoutChunks = [];
   const stderrChunks = [];
   let stdinPos = 0;
@@ -74,11 +97,20 @@ async function runOne(sourcePath, stdin) {
     noInitialRun: true,
   });
 
-  mod.FS.writeFile("/prog.brainrot", readFileSync(sourcePath));
+  const vfsRoot = "/test_cases";
+  mod.FS.mkdirTree(vfsRoot);
+  for (const rel of testCaseFiles) {
+    const vfsRel = rel.split(path.sep).join("/");
+    const vfsPath = `${vfsRoot}/${vfsRel}`;
+    const vfsDir = path.posix.dirname(vfsPath);
+    if (vfsDir !== vfsRoot) mod.FS.mkdirTree(vfsDir);
+    mod.FS.writeFile(vfsPath, readFileSync(path.join(testCasesDir, rel)));
+  }
 
+  const vfsSourcePath = `${vfsRoot}/${example}.brainrot`;
   let exitCode = 0;
   try {
-    exitCode = mod.callMain(["/prog.brainrot"]);
+    exitCode = mod.callMain([vfsSourcePath]);
   } catch (e) {
     // Emscripten throws ExitStatus for a clean exit(); anything else is a
     // real crash and should fail the test loudly rather than being folded
@@ -105,12 +137,11 @@ for (const [example, nativeExpectedOutput] of Object.entries(expectedResults)) {
   const expectedOutput = WASM_EXPECTED_OVERRIDES[example] ?? nativeExpectedOutput;
   if (example in WASM_EXPECTED_OVERRIDES) overridden++;
 
-  const sourcePath = path.join(repoRoot, "test_cases", `${example}.brainrot`);
   const stdin = stdinFor(example);
 
   let result;
   try {
-    result = await runOne(sourcePath, stdin);
+    result = await runOne(example, stdin);
   } catch (e) {
     failures++;
     console.error(`✗ ${example}: threw ${e}`);
