@@ -4,7 +4,7 @@ Welcome to Brainrot! We're excited that you want to contribute. This document pr
 
 ## Code of Conduct
 
-By participating in this project, you are expected to uphold our Code of Conduct (follows standard open source practices).
+By participating in this project, you are expected to uphold our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Getting Started
 
