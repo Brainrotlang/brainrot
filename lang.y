@@ -70,6 +70,10 @@ static Interpreter *global_interpreter = NULL;
     EnumConstant *econst;
 }
 
+/* Free heap-allocated strings when bison discards symbols during parse error recovery */
+%destructor { SAFE_FREE($$.data); } <strval>
+%destructor { SAFE_FREE($$.name.data); } <declarator>
+
 /* Define token types */
 %token SKIBIDI RIZZ YAP BAKA MAIN BUSSIN FLEX CAP RANT
 %token PLUS MINUS TIMES DIVIDE MOD SEMICOLON COLON COMMA

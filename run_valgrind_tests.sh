@@ -1,5 +1,7 @@
 #!/bin/bash
 
+TARGET="${1:-./brainrot}"
+
 for f in test_cases/*.brainrot; do
     echo "Running Valgrind on $f..."
     base=$(basename "$f" .brainrot)
@@ -22,9 +24,9 @@ for f in test_cases/*.brainrot; do
     esac
 
     if [[ -n "$input" ]]; then
-        echo "$input" | valgrind --leak-check=full --error-exitcode=100 ./brainrot "$f"
+        echo "$input" | valgrind --leak-check=full --error-exitcode=100 "$TARGET" "$f"
     else
-        valgrind --track-origins=yes --leak-check=full --error-exitcode=100 ./brainrot "$f"
+        valgrind --leak-check=full --error-exitcode=100 "$TARGET" "$f"
     fi
 
     valgrind_exit_code=$?  # Capture only valgrind’s exit code
