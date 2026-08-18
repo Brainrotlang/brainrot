@@ -20,6 +20,9 @@ skibidi main {
     yapping("%lu", maxxing(l.start));   🚽 struct-typed field
     yapping("%lu", maxxing(l.start.x)); 🚽 nested scalar field
 
+    gang Point *q = &p;
+    yapping("%lu", maxxing(*q));        🚽 dereferenced struct pointer
+
     chungus Blob b;
     yapping("%lu", maxxing(b));         🚽 union identifier
 }

@@ -2322,7 +2322,7 @@ size_t get_type_size(String name)
             if (def != NULL)
                 return var->is_array ? def->total_size * var->array_length
                                      : def->total_size;
-            yyerror("Undefined variable in sizeof");
+            yyerror("Unknown struct or union type");
             return 0;
         }
         size_t base = get_type_size_for_descriptor(
@@ -2387,6 +2387,21 @@ size_t handle_sizeof(ASTNode *node)
                 if (resolve_struct_access(expr, &def, &base, &fld, false))
                 {
                     StructDef *sdef = get_struct_def(fld->struct_name);
+                    if (sdef != NULL)
+                        return sdef->total_size;
+                }
+            }
+            /* A dereferenced struct/union pointer (e.g. `*q`) — resolve the
+               operand's variable and return the pointed-to layout size. */
+            if (expr->type == NODE_UNARY_OPERATION &&
+                expr->data.unary.op == OP_DEREFERENCE &&
+                expr->data.unary.operand->type == NODE_IDENTIFIER)
+            {
+                Variable *var =
+                    get_variable(expr->data.unary.operand->data.name);
+                if (var != NULL && var->var_type == VAR_STRUCT)
+                {
+                    StructDef *sdef = get_struct_def(var->struct_name);
                     if (sdef != NULL)
                         return sdef->total_size;
                 }
