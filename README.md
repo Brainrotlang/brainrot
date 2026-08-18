@@ -228,7 +228,7 @@ Join our community on:
 | salty      | static       | ✅           |
 | gang       | struct       | ✅           |
 | ohio       | switch       | ✅           |
-| chungus    | union        | ❌           |
+| chungus    | union        | ✅           |
 | nonut      | unsigned     | ✅           |
 | schizo     | volatile     | ✅           |
 | W          | true         | ✅           |

@@ -87,12 +87,14 @@ typedef struct StructField
     struct StructField *next;
 } StructField;
 
-/* A struct definition (the "template") */
+/* A struct/union definition (the "template"). Struct and union tags share
+   this same registry, matching C's tag-namespace rules. */
 typedef struct StructDef
 {
     String name;
     StructField *fields;
     size_t total_size; /* total byte size of one instance */
+    bool is_union;     /* true: fields overlap at offset 0 (chungus/union) */
     struct StructDef *next_def;
 } StructDef;
 
@@ -302,8 +304,10 @@ struct ASTNode
 
         struct
         {
-            String name;         /* struct tag               */
-            StructField *fields; /* linked list of fields    */
+            String name;           /* struct tag               */
+            StructField *fields;   /* linked list of fields    */
+            int initializer_count; /* -1: no braced initializer;
+                                       else count of values given */
         } struct_def;
         struct
         {
@@ -502,6 +506,8 @@ void free_struct_registry(void);
 StructField *find_struct_field(StructDef *def, const String name);
 size_t
 compute_struct_layout(StructField *fields); /* fills offsets, returns total */
+size_t compute_union_layout(
+    StructField *fields); /* offset 0 for all fields, returns max size */
 ASTNode *create_struct_def_node(String name, StructField *fields);
 ASTNode *create_struct_access_node(ASTNode *object, String member);
 void *evaluate_struct_member_address(ASTNode *node);
