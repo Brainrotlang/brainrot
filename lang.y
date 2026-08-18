@@ -275,6 +275,12 @@ struct_field
 function_def
     : type declarator LPAREN params RPAREN LBRACE statements RBRACE
         { $$ = create_function_def_node_ex($2.name, $1, $2.pointer_level, $4, $7); SAFE_FREE($2.name); }
+    | struct_or_union IDENTIFIER declarator LPAREN params RPAREN LBRACE statements RBRACE
+        {
+            $$ = create_function_def_node_struct($3.name, $2, $3.pointer_level, $5, $8);
+            SAFE_FREE($2);
+            SAFE_FREE($3.name);
+        }
     ;
 
 params
@@ -286,12 +292,26 @@ params
 
 param_list
     : optional_modifiers type declarator
-        { 
-            $$ = create_parameter_ex($3.name, $2, $3.pointer_level, NULL, get_current_modifiers()); 
-            SAFE_FREE($3.name); 
+        {
+            $$ = create_parameter_ex($3.name, $2, $3.pointer_level, NULL, get_current_modifiers());
+            SAFE_FREE($3.name);
         }
-    | param_list COMMA optional_modifiers type declarator 
+    | param_list COMMA optional_modifiers type declarator
         { $$ = create_parameter_ex($5.name, $4, $5.pointer_level, $1, get_current_modifiers()); SAFE_FREE($5.name); }
+    | optional_modifiers struct_or_union IDENTIFIER declarator
+        {
+            $$ = create_parameter_ex($4.name, VAR_STRUCT, $4.pointer_level, NULL, get_current_modifiers());
+            $$->struct_name = ARENA_STRDUP($3);
+            SAFE_FREE($3);
+            SAFE_FREE($4.name);
+        }
+    | param_list COMMA optional_modifiers struct_or_union IDENTIFIER declarator
+        {
+            $$ = create_parameter_ex($6.name, VAR_STRUCT, $6.pointer_level, $1, get_current_modifiers());
+            $$->struct_name = ARENA_STRDUP($5);
+            SAFE_FREE($5);
+            SAFE_FREE($6.name);
+        }
     ;
 
 pointer_stars:
@@ -402,42 +422,27 @@ declaration:
         }
     | optional_modifiers type declarator dimensions
         {
-            Variable *var = variable_new($3.name);
-            var->pointer_level = $3.pointer_level;
-            add_variable_to_scope($3.name, var);
-            if (!set_multi_array_variable($3.name, $4.dimensions, $4.num_dimensions, get_current_modifiers(), $2)) {
-                yyerror("Failed to create array");
-                SAFE_FREE($3.name);
-                YYABORT;
-            }
+            /* Storage is allocated at runtime by the declaration visitor
+               (see interpreter_visit_declaration), not here -- see the
+               comment in create_multi_array_declaration_node(). */
             $$ = create_multi_array_declaration_node($3.name, $4.dimensions, $4.num_dimensions, $2);
             $$->pointer_level = $3.pointer_level;
+            $$->modifiers = get_current_modifiers();
             SAFE_FREE($3.name);
-            SAFE_FREE(var);
         }
     | optional_modifiers type declarator dimensions EQUALS array_init
         {
-            Variable *var = variable_new($3.name);
-            var->pointer_level = $3.pointer_level;
-            add_variable_to_scope($3.name, var);
-            set_multi_array_variable($3.name, $4.dimensions, $4.num_dimensions, get_current_modifiers(), $2);
-            // Handle initialization with proper dimension checks
-            populate_multi_array_variable($3.name, $6, $4.dimensions, $4.num_dimensions);
             $$ = create_multi_array_declaration_node($3.name, $4.dimensions, $4.num_dimensions, $2);
             $$->pointer_level = $3.pointer_level;
+            $$->modifiers = get_current_modifiers();
+            set_declaration_pending_initializer($$, $6);
             SAFE_FREE($3.name);
-            SAFE_FREE(var);
-            free_expression_list($6);
         }
     | optional_modifiers type declarator dimensions_or_unsized EQUALS array_init
         {
-            Variable *var = variable_new($3.name);
-            var->pointer_level = $3.pointer_level;
-            add_variable_to_scope($3.name, var);
             ArrayDimensions dims = $4;
             if (dims.num_dimensions == 0) {
                 size_t n = count_expression_list($6);
-                if (n <= 0 || n > MAX_DIMENSIONS ? 0 : 0) { /* keep structure, no-op */ }
                 dims.dimensions[0] = (int)n;
                 dims.num_dimensions = 1;
             } else if (dims.dimensions[0] == 0 && dims.num_dimensions >= 2) {
@@ -452,27 +457,20 @@ declaration:
             }
             int tmp_dims[MAX_DIMENSIONS];
             for (int i = 0; i < dims.num_dimensions; i++) tmp_dims[i] = dims.dimensions[i];
-            set_multi_array_variable($3.name, tmp_dims, dims.num_dimensions, get_current_modifiers(), $2);
-            populate_multi_array_variable($3.name, $6, tmp_dims, dims.num_dimensions);
             $$ = create_multi_array_declaration_node($3.name, tmp_dims, dims.num_dimensions, $2);
             $$->pointer_level = $3.pointer_level;
+            $$->modifiers = get_current_modifiers();
+            set_declaration_pending_initializer($$, $6);
             SAFE_FREE($3.name);
-            SAFE_FREE(var);
-            free_expression_list($6);
         }
     | optional_modifiers struct_or_union IDENTIFIER declarator
         {
-            Variable *var = variable_new($4.name);
-            var->var_type    = VAR_STRUCT;
-            var->struct_name = safe_strdup(&$3);
-            add_variable_to_scope($4.name, var);
-            SAFE_FREE(var);
-
-            Variable *scope_var = get_variable($4.name);
+            /* Variable creation + blob allocation happens at runtime, in
+               interpreter_visit_declaration, in whatever scope is current
+               at execution time -- see the comment on
+               create_multi_array_declaration_node() for why (the exact
+               same reasoning applies to struct/union locals). */
             StructDef *def = get_struct_def($3);
-            if (scope_var && def) {
-                scope_var->value.array_data = calloc(1, def->total_size);
-            }
 
             $$ = create_declaration_node_ex($4.name,
                      create_struct_def_node($3, def ? def->fields : NULL),
@@ -485,19 +483,12 @@ declaration:
         }
     | optional_modifiers struct_or_union IDENTIFIER declarator EQUALS LBRACE struct_initializer_list RBRACE
         {
-            Variable *var = variable_new($4.name);
-            var->var_type    = VAR_STRUCT;
-            var->struct_name = safe_strdup(&$3);
-            add_variable_to_scope($4.name, var);
-            SAFE_FREE(var);
-
-            /* Fetch the scope-owned copy, allocate blob, then populate */
-            Variable *scope_var = get_variable($4.name);
             StructDef *def = get_struct_def($3);
-            if (scope_var && def) {
-                scope_var->value.array_data = calloc(1, def->total_size);
-                populate_struct_variable($4.name, $7);
-            }
+            /* Shape-only check (bare value vs. `{ ... }` for a nested
+               struct/union field); needs no runtime storage, so it can
+               still run here at parse time, unlike the actual value
+               population which is deferred (see pending_initializer). */
+            validate_struct_initializer_shape(def, $7);
 
             $$ = create_declaration_node_ex($4.name,
                      create_struct_def_node($3, def ? def->fields : NULL),
@@ -508,9 +499,28 @@ declaration:
                 $$->data.op.right->data.struct_def.initializer_count =
                     (int)count_expression_list($7);
             }
+            set_declaration_pending_initializer($$, $7);
             SAFE_FREE($3);
             SAFE_FREE($4.name);
-            free_expression_list($7);
+        }
+    | optional_modifiers struct_or_union IDENTIFIER declarator EQUALS expression
+        {
+            /* Plain-expression struct initializer: a function call
+               returning a struct by value (e.g. `gang Point r =
+               make_point(1, 2);`) or another struct variable to copy-init
+               from. Evaluated at runtime by interpreter_visit_declaration
+               once storage exists -- see struct_init_expr. */
+            StructDef *def = get_struct_def($3);
+
+            $$ = create_declaration_node_ex($4.name,
+                     create_struct_def_node($3, def ? def->fields : NULL),
+                     $4.pointer_level);
+            $$->var_type = VAR_STRUCT;
+            if ($$->data.op.right)
+                $$->data.op.right->data.name = ARENA_STRDUP($3);
+            $$->struct_init_expr = $6;
+            SAFE_FREE($3);
+            SAFE_FREE($4.name);
         }
     ;
 

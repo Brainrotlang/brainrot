@@ -1,0 +1,22 @@
+🚽 Test case: returning a struct of the wrong type must be rejected right
+🚽 at the return statement (clear error, no leak), not just later when the
+🚽 caller happens to check the destination type
+gang Small {
+    rizz x;
+};
+
+gang Point {
+    rizz a;
+    rizz b;
+};
+
+gang Point wrong_return() {
+    gang Small s;
+    s.x = 1;
+    bussin s;
+}
+
+skibidi main {
+    gang Point p = wrong_return();
+    bussin 0;
+}

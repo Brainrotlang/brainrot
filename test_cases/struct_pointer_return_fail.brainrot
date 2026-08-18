@@ -1,0 +1,17 @@
+🚽 Test case: a function declared to return a struct *pointer* must be
+🚽 rejected outright (not yet supported), rather than silently dropping the
+🚽 `*` and treating the function as a by-value struct return
+gang Point {
+    rizz x;
+};
+
+gang Point *get_ptr() {
+    gang Point p;
+    p.x = 5;
+    bussin p;
+}
+
+skibidi main {
+    gang Point r = get_ptr();
+    bussin 0;
+}

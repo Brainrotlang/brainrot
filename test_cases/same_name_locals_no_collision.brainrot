@@ -1,0 +1,18 @@
+🚽 Test case: two functions each declare a local array with the same name;
+🚽 they must not collide or share storage
+rizz foo() {
+    rizz arr[2];
+    arr[0] = 100;
+    bussin arr[0];
+}
+
+rizz bar() {
+    rizz arr[2];
+    arr[0] = 200;
+    bussin arr[0];
+}
+
+skibidi main {
+    yapping("%d %d", foo(), bar());
+    bussin 0;
+}

@@ -301,6 +301,12 @@ void *interpreter_visit_function_call(Visitor *self, ASTNode *node)
         /* Handle user-defined functions directly without return value
          * allocation */
         execute_function_call(func_name, args);
+
+        /* A call in statement position discards its result -- if that
+         * result was a struct, free the blob handle_return_statement
+         * allocated for it rather than leaving it to a later call's
+         * cleanup (or leaking it, if this was the last call). */
+        free_pending_struct_return_value();
     }
 
     return NULL;
@@ -327,8 +333,48 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
         return;
 
     String name = node->data.op.left->data.name;
-    /* Struct declarations: set up blob now (at runtime, after hashmap is
-     * stable) */
+
+    /* Array declarations: create + populate storage here, at runtime, in
+     * whatever scope is current for this execution -- a function's own
+     * scope when this statement is inside a function body, or the shared
+     * global scope at top level. Doing this at runtime (instead of once at
+     * parse time, into whatever scope happened to be active while parsing)
+     * is what gives each call its own array instance and makes a
+     * function-local array visible inside the function that declares it. */
+    if (node->is_array && node->var_type != VAR_STRUCT)
+    {
+        if (node->modifiers.is_static && get_variable(name))
+            return;
+
+        Variable *var = variable_new(name);
+        var->pointer_level = node->pointer_level;
+        var->modifiers = node->modifiers;
+        add_variable_to_scope(name, var);
+        SAFE_FREE(var);
+
+        int dims[MAX_DIMENSIONS];
+        int num_dims = node->array_dimensions.num_dimensions;
+        for (int i = 0; i < num_dims; i++)
+            dims[i] = node->array_dimensions.dimensions[i];
+
+        if (!set_multi_array_variable(name, dims, num_dims, node->modifiers,
+                                      node->var_type))
+        {
+            yyerror("Failed to create array");
+            return;
+        }
+
+        if (node->pending_initializer)
+        {
+            populate_multi_array_variable(name, node->pending_initializer, dims,
+                                          num_dims);
+        }
+        return;
+    }
+
+    /* Struct/union declarations: same reasoning as arrays above -- create
+     * the Variable and its data blob here, at runtime, in the current
+     * scope, instead of at parse time. */
     if (node->var_type == VAR_STRUCT ||
         (node->data.op.right && node->data.op.right->type == NODE_STRUCT_DEF))
     {
@@ -337,13 +383,80 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
                                 : (String){.data = NULL, .len = 0};
         if (!struct_type.data)
             return;
+
+        if (node->modifiers.is_static && get_variable(name))
+            return;
+
+        Variable *var = variable_new(name);
+        var->var_type = VAR_STRUCT;
+        var->pointer_level = node->pointer_level;
+        var->modifiers = node->modifiers;
+        var->struct_name = safe_strdup(&struct_type);
+        add_variable_to_scope(name, var);
+        SAFE_FREE(var);
+
         Variable *sv = get_variable(name);
-        if (sv && sv->var_type == VAR_STRUCT && !sv->value.array_data)
+        StructDef *def = get_struct_def(struct_type);
+        if (sv && def && !sv->value.array_data)
         {
-            StructDef *def = get_struct_def(
-                sv->struct_name.data ? sv->struct_name : struct_type);
-            if (def)
-                sv->value.array_data = calloc(1, def->total_size);
+            sv->value.array_data = calloc(1, def->total_size);
+            if (node->pending_initializer)
+                populate_struct_variable(name, node->pending_initializer);
+            else if (node->struct_init_expr)
+            {
+                ASTNode *src_expr = node->struct_init_expr;
+                if (src_expr->type == NODE_FUNC_CALL)
+                {
+                    execute_function_call(
+                        src_expr->data.func_call.function_name,
+                        src_expr->data.func_call.arguments);
+                    if (current_return_value.has_value &&
+                        current_return_value.type == VAR_STRUCT)
+                    {
+                        void *blob = (void *)current_return_value.value.pvalue;
+                        /* Guard against copying a differently-shaped struct
+                           into this blob (e.g. `gang Big b = make_small();`)
+                           -- struct_name identifies the *declared* return
+                           type, which the semantic analyzer should already
+                           have rejected if it mismatches struct_type, but
+                           this is the last line of defense against an
+                           out-of-bounds memcpy. */
+                        if (blob && sv->value.array_data &&
+                            current_return_value.struct_name.data &&
+                            strcmp(current_return_value.struct_name.data,
+                                   struct_type.data) == 0)
+                        {
+                            memcpy(sv->value.array_data, blob, def->total_size);
+                        }
+                        else if (blob)
+                        {
+                            yyerror("Struct return type does not match "
+                                    "declared type");
+                        }
+                        /* Ownership transfers to us on return; always free
+                           our copy of the temporary, whether or not the
+                           type check above allowed the memcpy. */
+                        free_pending_struct_return_value();
+                    }
+                }
+                else if (src_expr->type == NODE_IDENTIFIER)
+                {
+                    Variable *src = get_variable(src_expr->data.name);
+                    if (src && src->var_type == VAR_STRUCT &&
+                        src->value.array_data && sv->value.array_data &&
+                        src->struct_name.data &&
+                        strcmp(src->struct_name.data, struct_type.data) == 0)
+                    {
+                        memcpy(sv->value.array_data, src->value.array_data,
+                               def->total_size);
+                    }
+                    else if (src && src->var_type == VAR_STRUCT)
+                    {
+                        yyerror("Cannot copy-initialize from a struct "
+                                "variable of a different type");
+                    }
+                }
+            }
         }
         return;
     }
@@ -624,6 +737,23 @@ void interpreter_visit_function_definition(Visitor *self, ASTNode *node)
     (void)self;
     if (!node)
         return;
+
+    if (node->data.function_def.return_type == VAR_STRUCT &&
+        node->pointer_level > 0)
+    {
+        /* Pointer-to-struct returns are rejected at parse time (see
+           create_function_def_node_struct) and deliberately left
+           unregistered there. create_function()/create_function_ex()
+           below have no knowledge of that rejection and would happily
+           register the function anyway -- the unconditional call a few
+           lines down registers it with return_pointer_level 0 regardless,
+           and the pointer_level > 0 branch after it would then "fix" that
+           up to the real pointer_level, undoing the rejection and letting
+           the function run with a silently-wrong by-value return. Skip
+           registration entirely so get_function() stays NULL and any call
+           site reports a clear "Undefined function" instead. */
+        return;
+    }
 
     Function *func = create_function(
         node->data.function_def.name, node->data.function_def.return_type,

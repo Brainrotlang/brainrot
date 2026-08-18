@@ -59,6 +59,7 @@ SemanticAnalyzer *semantic_analyzer_new(void)
     analyzer->error_count = 0;
     analyzer->is_collecting_phase = false;
     analyzer->scope_depth = 0;
+    analyzer->current_function_name = (String){0};
 
     return analyzer;
 }
@@ -892,7 +893,8 @@ void semantic_visit_function_definition(Visitor *self, ASTNode *node)
 /* Symbol table management functions */
 void add_symbol(SemanticAnalyzer *analyzer, const String name, VarType type,
                 int pointer_level, bool is_const, bool is_function,
-                VarType return_type, int return_pointer_level, int line_number)
+                VarType return_type, int return_pointer_level, int line_number,
+                const String struct_name)
 {
     if (!analyzer || !name.data)
         return;
@@ -910,6 +912,11 @@ void add_symbol(SemanticAnalyzer *analyzer, const String name, VarType type,
     entry->return_pointer_level = return_pointer_level;
     entry->line_number = line_number;
     entry->scope_depth = analyzer->scope_depth;
+    entry->struct_name =
+        struct_name.data ? safe_strdup(&struct_name) : (String){0};
+    entry->function_name = analyzer->current_function_name.data
+                               ? safe_strdup(&analyzer->current_function_name)
+                               : (String){0};
     entry->next = analyzer->symbol_table;
 
     analyzer->symbol_table = entry;
@@ -924,10 +931,27 @@ SymbolEntry *find_symbol(SemanticAnalyzer *analyzer, const String name)
 
     while (entry)
     {
-        if (strcmp(entry->name.data, name.data) == 0)
+        if (strcmp(entry->name.data, name.data) == 0 &&
+            entry->scope_depth <= analyzer->scope_depth)
         {
-            /* Check if this symbol is accessible from current scope */
-            if (entry->scope_depth <= analyzer->scope_depth)
+            /* scope_depth alone isn't enough: it resets to 0 for every
+               function, so without also checking function_name, a local
+               in function A would look "accessible" while analyzing
+               function B's body at the same depth (both entries satisfy
+               scope_depth <= analyzer->scope_depth simultaneously, and
+               this list only grows -- entries from a function already
+               fully analyzed are never removed). Global entries (function
+               names, and top-level skibidi main declarations, both tagged
+               with function_name == {0}) stay visible everywhere;
+               everything else must belong to the function currently being
+               analyzed. */
+            bool is_global = !entry->function_name.data;
+            bool same_function =
+                entry->function_name.data &&
+                analyzer->current_function_name.data &&
+                strcmp(entry->function_name.data,
+                       analyzer->current_function_name.data) == 0;
+            if (is_global || same_function)
             {
                 return entry; /* Symbol is accessible */
             }
@@ -944,6 +968,10 @@ void free_symbol_table(SymbolEntry *symbols)
     {
         SymbolEntry *next = symbols->next;
         SAFE_FREE(symbols->name);
+        if (symbols->struct_name.data)
+            SAFE_FREE(symbols->struct_name);
+        if (symbols->function_name.data)
+            SAFE_FREE(symbols->function_name);
         SAFE_FREE(symbols);
         symbols = next;
     }
@@ -972,10 +1000,16 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
             const String var_name = node->data.op.left->data.name;
             VarType var_type = node->var_type;
             bool is_const = node->modifiers.is_const;
+            const String struct_name =
+                node->data.op.right &&
+                        node->data.op.right->type == NODE_STRUCT_DEF
+                    ? node->data.op.right->data.struct_def.name
+                    : (String){0};
 
             add_symbol(analyzer, var_name, var_type, node->pointer_level,
                        is_const, false, NONE, 0,
-                       node->line_number > 0 ? node->line_number : 1);
+                       node->line_number > 0 ? node->line_number : 1,
+                       struct_name);
         }
         if (node->data.op.right)
         {
@@ -1004,27 +1038,36 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
                 add_symbol(analyzer, node->data.function_def.name, NONE, 0,
                            false, true, node->data.function_def.return_type,
                            node->pointer_level,
-                           node->line_number > 0 ? node->line_number : 1);
+                           node->line_number > 0 ? node->line_number : 1,
+                           (String){0});
             }
         }
 
         analyzer->scope_depth++;
 
-        Parameter *param = node->data.function_def.parameters;
-        while (param)
         {
-            if (param->name.data)
-            {
-                add_symbol(analyzer, param->name, param->type,
-                           param->pointer_level, false, false, NONE, 0,
-                           node->line_number > 0 ? node->line_number : 1);
-            }
-            param = param->next;
-        }
+            String outer_function_name = analyzer->current_function_name;
+            analyzer->current_function_name = node->data.function_def.name;
 
-        if (node->data.function_def.body)
-        {
-            collect_declarations(analyzer, node->data.function_def.body);
+            Parameter *param = node->data.function_def.parameters;
+            while (param)
+            {
+                if (param->name.data)
+                {
+                    add_symbol(analyzer, param->name, param->type,
+                               param->pointer_level, false, false, NONE, 0,
+                               node->line_number > 0 ? node->line_number : 1,
+                               param->struct_name);
+                }
+                param = param->next;
+            }
+
+            if (node->data.function_def.body)
+            {
+                collect_declarations(analyzer, node->data.function_def.body);
+            }
+
+            analyzer->current_function_name = outer_function_name;
         }
 
         analyzer->scope_depth--;
@@ -1144,6 +1187,8 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
     {
         /* Enter function scope */
         analyzer->scope_depth++;
+        String outer_function_name = analyzer->current_function_name;
+        analyzer->current_function_name = node->data.function_def.name;
 
         /* Process function body */
         if (node->data.function_def.body)
@@ -1153,6 +1198,7 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         }
 
         /* Exit function scope */
+        analyzer->current_function_name = outer_function_name;
         analyzer->scope_depth--;
         break;
     }
@@ -1340,10 +1386,16 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
     {
         /* Check the object is a known struct/union — either a variable or
            a nested member access, e.g. the `a.b` in `a.b.c` — with that
-           field. obj->var_type / obj->data.struct_access.struct_name are
-           populated at parse time by create_struct_access_node(), which
-           resolves chains recursively, so this naturally handles any
-           chain depth without re-deriving addresses here. */
+           field. Resolved here (bottom-up: the object is analyzed first,
+           just above) using the analyzer's own symbol table rather than
+           runtime Variables, since no runtime storage exists yet at
+           semantic-analysis time -- struct/array locals are now allocated
+           by the interpreter's declaration visitor when their declaration
+           statement actually executes (see interpreter_visit_declaration),
+           not at parse time. On success this node's var_type /
+           pointer_level / struct_access.struct_name are populated so an
+           outer .field one level up can consume them the same way,
+           handling any chain depth. */
         ASTNode *obj = node->data.struct_access.object;
         if (obj)
             semantic_analyze_with_scope_tracking(analyzer, obj);
@@ -1353,12 +1405,25 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
 
         if (obj && obj->type == NODE_IDENTIFIER)
         {
-            Variable *var = get_variable(obj->data.name);
-            if (!var)
-                break; /* undefined variable is reported elsewhere */
-            parent_is_struct_typed = (var->var_type == VAR_STRUCT);
+            VarType obj_type = NONE;
+            String obj_struct_name = {0};
+            SymbolEntry *symbol = find_symbol(analyzer, obj->data.name);
+            if (symbol)
+            {
+                obj_type = symbol->type;
+                obj_struct_name = symbol->struct_name;
+            }
+            else
+            {
+                Variable *var = get_variable(obj->data.name);
+                if (!var)
+                    break; /* undefined variable is reported elsewhere */
+                obj_type = var->var_type;
+                obj_struct_name = var->struct_name;
+            }
+            parent_is_struct_typed = (obj_type == VAR_STRUCT);
             if (parent_is_struct_typed)
-                parent_def = get_struct_def(var->struct_name);
+                parent_def = get_struct_def(obj_struct_name);
         }
         else if (obj && obj->type == NODE_STRUCT_ACCESS)
         {
@@ -1401,8 +1466,12 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
             break;
         }
 
-        if (parent_def && !find_struct_field(
-                              parent_def, node->data.struct_access.member_name))
+        if (!parent_def)
+            break; /* unknown struct/union type; nothing more to check */
+
+        StructField *fld =
+            find_struct_field(parent_def, node->data.struct_access.member_name);
+        if (!fld)
         {
             char msg[MAX_BUFFER_LEN];
             snprintf(msg, sizeof(msg), "%s '%s' has no member '%s'",
@@ -1412,7 +1481,13 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
             add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
                                STRING_LITERAL(msg),
                                node->line_number > 0 ? node->line_number : 1);
+            break;
         }
+
+        node->var_type = fld->type;
+        node->pointer_level = fld->pointer_level;
+        if (fld->type == VAR_STRUCT && fld->struct_name.data)
+            node->data.struct_access.struct_name = fld->struct_name;
         break;
     }
 

@@ -128,6 +128,8 @@ typedef struct Function
     String name;
     VarType return_type;
     int return_pointer_level;
+    String return_struct_name; /* struct/union tag; set when
+                                   return_type == VAR_STRUCT */
     Parameter *parameters;
     ASTNode *body;
 } Function;
@@ -147,6 +149,11 @@ typedef struct
     } value;
     VarType type;
     int pointer_level;
+    /* struct/union tag, set when type == VAR_STRUCT; value.pvalue then
+       points at a heap blob (malloc'd fresh in handle_return_statement,
+       NOT scope-owned) that the caller must copy out of and free -- see
+       the comment on handle_return_statement's VAR_STRUCT case. */
+    String struct_name;
 } ReturnValue;
 
 /* Symbol table structure */
@@ -298,6 +305,20 @@ struct ASTNode
     int array_length;
     ArrayDimensions array_dimensions;
     int line_number; /* Line number for error reporting */
+    /* Array/struct declaration initializer values (e.g. the `{1, 2, 3}` in
+       `rizz arr[3] = {1, 2, 3};`), carried from parse time to the runtime
+       declaration visitor -- which allocates and populates storage in
+       whatever scope is current at execution time, not parse time -- so
+       function-local arrays/structs get their own per-call storage. NULL
+       when the declaration has no braced initializer. Owned by a registry
+       freed once in free_ast(); not owned by this node. */
+    ExpressionList *pending_initializer;
+    /* A struct declaration's initializer when it's a plain expression
+       rather than a `{ ... }` list (e.g. the `make_point(1, 2)` in
+       `gang Point r = make_point(1, 2);`, or another struct variable for
+       copy-init) -- evaluated at runtime by the declaration visitor. NULL
+       for the no-initializer and braced-initializer declaration forms. */
+    ASTNode *struct_init_expr;
     union
     {
         short svalue;
@@ -365,6 +386,8 @@ struct ASTNode
         {
             String name;
             VarType return_type;
+            String return_struct_name; /* struct/union tag; set when
+                                           return_type == VAR_STRUCT */
             Parameter *parameters;
             ASTNode *body;
         } function_def;
@@ -398,7 +421,12 @@ void reset_modifiers(void);
 TypeModifiers get_current_modifiers(void);
 Variable *get_variable(const String name);
 Scope *create_scope(Scope *parent);
-void enter_function_scope(Function *func, ArgumentList *args);
+/* Returns false (and reports an error via yyerror) if argument binding
+   failed -- mismatched arg count, an unsupported parameter type, or a
+   struct argument that isn't a plain same-typed struct variable -- in
+   which case no scope was left behind (any partially-created one is torn
+   down) and the caller must not execute the function body. */
+bool enter_function_scope(Function *func, ArgumentList *args);
 void exit_scope();
 void enter_scope();
 void free_scope(Scope *scope);
@@ -459,6 +487,11 @@ ExpressionList *append_expression_list_node(ExpressionList *list,
 void free_expression_list(ExpressionList *list);
 void populate_multi_array_variable(String name, ExpressionList *list,
                                    int dimensions[], int num_dimensions);
+/* Attaches a braced initializer to an array/struct declaration node so the
+   runtime declaration visitor can populate storage once it exists (see
+   ASTNode.pending_initializer). Takes ownership of `list` via an internal
+   registry freed in free_ast(); callers must not free it themselves. */
+void set_declaration_pending_initializer(ASTNode *node, ExpressionList *list);
 void free_ast(void);
 
 /* Evaluation and execution functions */
@@ -516,7 +549,22 @@ ASTNode *create_function_def_node(String name, VarType return_type,
 ASTNode *create_function_def_node_ex(String name, VarType return_type,
                                      int return_pointer_level,
                                      Parameter *params, ASTNode *body);
+/* Like create_function_def_node_ex(), for a struct/union-by-value return
+   type (e.g. `gang Point make_point(...) { ... }`), which needs a tag name
+   rather than a VarType. pointer_level > 0 (`gang Point *make_point()`) is
+   rejected with a clear error -- see the comment in the implementation. */
+ASTNode *create_function_def_node_struct(String name, String struct_name,
+                                         int pointer_level, Parameter *params,
+                                         ASTNode *body);
 void handle_return_statement(ASTNode *expr);
+/* Frees current_return_value's struct blob/tag (see handle_return_statement's
+   VAR_STRUCT case) if one is pending and unconsumed, and clears the slot.
+   Idempotent -- safe to call whether or not there's anything to free. Must
+   be called by whichever consumes or discards a struct-returning call's
+   result: interpreter_visit_declaration's struct_init_expr handling,
+   execute_function_call (for a leftover from a previous call), and any
+   context that gets a struct return but has nowhere to put it. */
+void free_pending_struct_return_value(void);
 void *handle_binary_operation(ASTNode *node);
 void free_function_table(void);
 void free_static_variable_map(void);
@@ -534,6 +582,10 @@ ASTNode *create_struct_def_node(String name, StructField *fields);
 ASTNode *create_struct_access_node(ASTNode *object, String member);
 void *evaluate_struct_member_address(ASTNode *node);
 void populate_struct_variable(const String name, ExpressionList *list);
+/* Checks a struct/union initializer's shape (bare value vs. `{ ... }`
+   sub-initializer) against `def`, without needing any Variable/storage to
+   exist yet -- safe to call at parse time. See its definition in ast.c. */
+void validate_struct_initializer_shape(StructDef *def, ExpressionList *list);
 /* Resolve a NODE_STRUCT_ACCESS node — including a chain such as `a.b.c`,
    via recursion — to the StructDef/base-address/field describing the
    *object* being accessed (i.e. `*field_out` is the field named by this

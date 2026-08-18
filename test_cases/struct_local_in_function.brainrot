@@ -1,0 +1,17 @@
+🚽 Test case: struct declared and fully used inside a non-main function
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+rizz make_and_read() {
+    gang Point p;
+    p.x = 7;
+    p.y = 8;
+    bussin p.x;
+}
+
+skibidi main {
+    yapping("%d", make_and_read());
+    bussin 0;
+}

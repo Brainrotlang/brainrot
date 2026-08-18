@@ -1,0 +1,25 @@
+🚽 Test case: passing a struct argument of the wrong type must be rejected
+🚽 at the call, not memcpy'd into a differently-sized parameter blob, and
+🚽 the callee must not run with an unbound/invalid parameter
+gang Small {
+    rizz x;
+};
+
+gang Big {
+    rizz a;
+    rizz b;
+    rizz c;
+    rizz d;
+};
+
+rizz take(gang Big b) {
+    yapping("should not run");
+    bussin b.a;
+}
+
+skibidi main {
+    gang Small s;
+    s.x = 1;
+    take(s);
+    bussin 0;
+}

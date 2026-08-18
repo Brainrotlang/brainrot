@@ -50,7 +50,15 @@ typedef struct SymbolEntry
     VarType return_type; /* For functions */
     int return_pointer_level;
     int line_number;
-    int scope_depth; /* Track which scope level this was declared in */
+    int scope_depth;    /* Track which scope level this was declared in */
+    String struct_name; /* struct/union tag; set when type == VAR_STRUCT */
+    /* Name of the function this symbol was declared inside, or {0} for a
+       top-level (skibidi main) symbol. scope_depth alone can't tell two
+       functions' locals apart -- it resets to 0 for every function, so a
+       flat "scope_depth <= current" comparison would happily match a
+       same-named local belonging to a *different*, unrelated function.
+       See find_symbol(). */
+    String function_name;
     struct SymbolEntry *next;
 } SymbolEntry;
 
@@ -65,6 +73,12 @@ typedef struct
     int error_count;              /* Number of errors found */
     bool is_collecting_phase;     /* Flag for collection vs analysis phase */
     int scope_depth;              /* Current scope depth */
+    /* Name of the function currently being walked, or {0} at top level;
+       tagged onto every SymbolEntry added while set (see add_symbol) and
+       used by find_symbol to keep one function's locals from leaking into
+       another's lookup. Maintained by both collect_declarations and
+       semantic_analyze_with_scope_tracking around NODE_FUNCTION_DEF. */
+    String current_function_name;
 } SemanticAnalyzer;
 
 /* Create and destroy semantic analyzer */
@@ -77,7 +91,8 @@ bool semantic_analyze(ASTNode *root);
 /* Symbol table management */
 void add_symbol(SemanticAnalyzer *analyzer, const String name, VarType type,
                 int pointer_level, bool is_const, bool is_function,
-                VarType return_type, int return_pointer_level, int line_number);
+                VarType return_type, int return_pointer_level, int line_number,
+                const String struct_name);
 SymbolEntry *find_symbol(SemanticAnalyzer *analyzer, const String name);
 void free_symbol_table(SymbolEntry *symbols);
 
