@@ -1,0 +1,38 @@
+name: Question
+description: Ask a question about using or contributing to Brainrot
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check existing issues and `CONTRIBUTING.md` first — your
+        question may already be answered there.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like to know?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: >
+        What are you trying to do? Include relevant `.brainrot` code, error
+        output, or links if applicable.
+      render: c
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: help-wanted
+    attributes:
+      label: Looking for implementation help?
+      description: Tag this if you'd like guidance on implementing something yourself.
+      options:
+        - label: "[HELP WANTED] I'd like guidance on implementing this myself"
+          required: false
