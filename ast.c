@@ -199,6 +199,7 @@ ASTNode *create_struct_access_node(ASTNode *object, String member)
 {
     ASTNode *node = ARENA_ALLOC_ASTNODE();
     node->type = NODE_STRUCT_ACCESS;
+    node->line_number = yylineno;
     node->data.struct_access.object = object;
     node->data.struct_access.member_name = ARENA_STRDUP(member);
     /* Propagate struct_name so callers can infer the type */

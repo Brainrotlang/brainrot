@@ -77,7 +77,7 @@
     "gang": "Point: 3 4 5.0\nQ: 10 20 0.0\n",
     "chungus": "As int: 1067614182\nReinterpreted as float: 1.27\nSingle-member init: 99\n",
     "chungus_init_fail": "Error: Union initializer must have exactly one value at line 8",
-    "semantic_error_chungus_unknown_member": "Error: Union 'Data' has no member 'nope' at line 1",
+    "semantic_error_chungus_unknown_member": "Error: Union 'Data' has no member 'nope' at line 8",
     "cooked_include": "36",
     "cooked_diamond": "11 12",
     "cooked_circular": "Error: circular #cooked include detected:\n  cooked_circular.brainrot\n  cooked_circular_a.brainrot\n  cooked_circular_b.brainrot\n  cooked_circular_a.brainrot  <-- already included above",
