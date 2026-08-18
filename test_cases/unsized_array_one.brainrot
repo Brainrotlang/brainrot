@@ -1,0 +1,7 @@
+🚽 Regression: unsized 1D array with a single initializer must infer length 1
+skibidi main {
+    rizz arr[] = {5};
+    rizz n = maxxing(arr) / maxxing(arr[0]);
+    yapping("%d", arr[0]);
+    yapping("%d", n);
+}

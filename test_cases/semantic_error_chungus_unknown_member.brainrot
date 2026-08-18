@@ -1,0 +1,9 @@
+🚽 Test case: accessing an undefined union member must error
+chungus Data {
+    rizz i;
+};
+
+skibidi main {
+    chungus Data d;
+    yapping("%d", d.nope);
+}

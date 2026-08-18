@@ -1371,7 +1371,7 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                          def->is_union ? "Union" : "Struct",
                          var->struct_name.data,
                          node->data.struct_access.member_name.data);
-                add_semantic_error(analyzer, SEMANTIC_ERROR_UNDEFINED_VARIABLE,
+                add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
                                    STRING_LITERAL(msg),
                                    node->line_number > 0 ? node->line_number
                                                          : 1);
