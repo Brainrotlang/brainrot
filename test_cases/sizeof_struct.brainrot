@@ -1,0 +1,28 @@
+🚽 maxxing (sizeof) on struct/union-typed operands — regression for #195
+gang Point {
+    rizz x;
+    rizz y;
+};
+gang Line {
+    gang Point start;
+};
+chungus Blob {
+    rizz i;
+    gigachad d;
+};
+
+skibidi main {
+    gang Point p;
+    yapping("%lu", maxxing(p));         🚽 struct identifier
+    yapping("%lu", maxxing(p.x));       🚽 scalar field still works
+
+    gang Line l;
+    yapping("%lu", maxxing(l.start));   🚽 struct-typed field
+    yapping("%lu", maxxing(l.start.x)); 🚽 nested scalar field
+
+    gang Point *q = &p;
+    yapping("%lu", maxxing(*q));        🚽 dereferenced struct pointer
+
+    chungus Blob b;
+    yapping("%lu", maxxing(b));         🚽 union identifier
+}
