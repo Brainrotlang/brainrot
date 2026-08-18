@@ -191,6 +191,7 @@ ASTNode *create_struct_def_node(String name, StructField *fields)
     node->data.struct_def.name = ARENA_STRDUP(name);
     node->data.struct_def.fields =
         fields; /* pointer only — registry owns memory */
+    node->data.struct_def.initializer_count = -1;
     return node;
 }
 
@@ -402,19 +403,19 @@ void *evaluate_struct_member_address(ASTNode *node)
 
     if (!var)
     {
-        yyerror("Undefined struct variable");
+        yyerror("Undefined struct or union variable");
         return NULL;
     }
     if (var->var_type != VAR_STRUCT)
     {
-        yyerror("Variable is not a struct");
+        yyerror("Variable is not a struct or union");
         return NULL;
     }
 
     StructDef *def = get_struct_def(var->struct_name);
     if (!def)
     {
-        yyerror("Unknown struct type");
+        yyerror("Unknown struct or union type");
         return NULL;
     }
 
@@ -425,7 +426,7 @@ void *evaluate_struct_member_address(ASTNode *node)
         var->value.array_data = calloc(1, def->total_size);
         if (!var->value.array_data)
         {
-            yyerror("Out of memory for struct blob");
+            yyerror("Out of memory for struct/union blob");
             return NULL;
         }
     }
@@ -434,8 +435,9 @@ void *evaluate_struct_member_address(ASTNode *node)
     if (!fld)
     {
         char msg[MAX_BUFFER_LEN];
-        snprintf(msg, sizeof(msg), "Struct '%s' has no member '%s'",
-                 var->struct_name.data, member.data);
+        snprintf(msg, sizeof(msg), "%s '%s' has no member '%s'",
+                 def->is_union ? "Union" : "Struct", var->struct_name.data,
+                 member.data);
         yyerror(msg);
         return NULL;
     }
@@ -3569,11 +3571,11 @@ size_t count_expression_list(ExpressionList *list)
         return 0;
     size_t count = 1;
     ExpressionList *current = list->next;
-    do
+    while (current != list)
     {
         count++;
         current = current->next;
-    } while (current != list);
+    }
     return count;
 }
 
@@ -3600,6 +3602,8 @@ void populate_struct_variable(const String name, ExpressionList *list)
     if (!def)
         return;
 
+    /* Union fields overlap at offset 0: only the first member is
+       initialized, mirroring C's brace-init rule for unions. */
     StructField *fld = def->fields;
     ExpressionList *cur = list;
     while (fld && cur)
@@ -3635,6 +3639,8 @@ void populate_struct_variable(const String name, ExpressionList *list)
                 break;
             }
         }
+        if (def->is_union)
+            break;
         fld = fld->next;
         cur = cur->next;
     }
@@ -4354,4 +4360,31 @@ size_t compute_struct_layout(StructField *fields)
         f = f->next;
     }
     return off; /* total bytes */
+}
+
+/* Union fields all share offset 0; total size is the largest member. */
+size_t compute_union_layout(StructField *fields)
+{
+    size_t max_size = 0;
+    StructField *f = fields;
+    while (f)
+    {
+        f->offset = 0;
+        size_t fsz;
+        if (f->pointer_level > 0)
+        {
+            fsz = sizeof(uintptr_t);
+        }
+        else
+        {
+            TypeModifiers m = {0};
+            fsz = get_type_size_for_descriptor(f->type, 0, m);
+            if (fsz == 0)
+                fsz = sizeof(int);
+        }
+        if (fsz > max_size)
+            max_size = fsz;
+        f = f->next;
+    }
+    return max_size;
 }

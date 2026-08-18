@@ -1,0 +1,15 @@
+🚽 Example: union with overlapping storage
+chungus Data {
+    rizz i;
+    chad f;
+};
+
+skibidi main {
+    chungus Data d;
+    d.i = 1067614182;
+    yapping("As int: %d", d.i);
+    yapping("Reinterpreted as float: %.2f", d.f);
+
+    chungus Data e = {99};
+    yapping("Single-member init: %d", e.i);
+}

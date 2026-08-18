@@ -734,6 +734,21 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node)
 
     const String var_name = node->data.op.left->data.name;
 
+    if (node->data.op.right && node->data.op.right->type == NODE_STRUCT_DEF)
+    {
+        StructDef *def =
+            get_struct_def(node->data.op.right->data.struct_def.name);
+        int init_count = node->data.op.right->data.struct_def.initializer_count;
+        if (def && def->is_union && init_count >= 0 && init_count != 1)
+        {
+            add_semantic_error(
+                analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                STRING_LITERAL("Union initializer must have exactly one value"),
+                node->line_number > 0 ? node->line_number : 1);
+        }
+        return;
+    }
+
     if (node->data.op.right)
     {
         VarType declared_type = node->var_type;
@@ -1342,7 +1357,8 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
             {
                 add_semantic_error(
                     analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
-                    STRING_LITERAL("Member access on non-struct variable"),
+                    STRING_LITERAL(
+                        "Member access on non-struct/union variable"),
                     node->line_number > 0 ? node->line_number : 1);
                 break;
             }
@@ -1351,7 +1367,8 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                 !find_struct_field(def, node->data.struct_access.member_name))
             {
                 char msg[MAX_BUFFER_LEN];
-                snprintf(msg, sizeof(msg), "Struct '%s' has no member '%s'",
+                snprintf(msg, sizeof(msg), "%s '%s' has no member '%s'",
+                         def->is_union ? "Union" : "Struct",
                          var->struct_name.data,
                          node->data.struct_access.member_name.data);
                 add_semantic_error(analyzer, SEMANTIC_ERROR_UNDEFINED_VARIABLE,

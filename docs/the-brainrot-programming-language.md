@@ -20,7 +20,8 @@ A Meme-Fueled Journey into Compiler Design, Internet Slang, and Skibidi Toilets
    - 7.7. User Defined Functions
    - 7.8. Pointers and Call by Reference
    - 7.9. Structs (`gang`)
-   - 7.10. Modules (`#cooked`)
+   - 7.10. Unions (`chungus`)
+   - 7.11. Modules (`#cooked`)
 8. **Extended User Documentation**
    - 8.1. `yapping`
    - 8.2. `yappin`
@@ -439,7 +440,72 @@ Q: 10 20 0.0
 - Nested struct access (`p.inner.x`) is not yet supported.
 - Structs cannot be passed as function parameters or returned from functions.
 
-### 7.10. Modules (`#cooked`)
+### 7.10. Unions (`chungus`)
+
+Use **`chungus`** to define a union type and declare union variables. Like a
+C union, all fields of a `chungus` share the same storage — writing one field
+and reading another reinterprets the same underlying bytes.
+
+#### Union Definition
+
+Define a union at the top level, outside of any function:
+
+```c
+chungus Data {
+    rizz i;
+    chad f;
+};
+```
+
+- **`chungus TypeName { ... };`**: Defines a new union type.
+- Fields are declared using any supported type keyword, same as `gang`.
+- The definition must end with `};`.
+- Struct and union tags share the same namespace, so a `gang` and a `chungus`
+  cannot use the same name.
+
+#### Union Declaration
+
+Declare a union variable inside a function body:
+
+```c
+chungus Data d;
+```
+
+The storage is zero-initialized by default.
+
+#### Initializer Syntax
+
+Unlike `gang`, a `chungus` initializer must have **exactly one value** —
+it initializes the first member, and the rest overlap it in memory:
+
+```c
+chungus Data d = {42};
+```
+
+Providing more than one value is an error:
+
+```c
+chungus Data d = {1, 2.0};  🚽 Error: Union initializer must have exactly one value
+```
+
+#### Member Access
+
+Use `.` to read or write fields, same as `gang`. Since all fields overlap,
+writing one field and reading another reinterprets the stored bytes:
+
+```c
+chungus Data d;
+d.i = 1067614182;
+yapping("As int: %d", d.i);
+yapping("Reinterpreted as float: %.2f", d.f);
+```
+
+#### Current Limitations
+
+- Nested union access (`d.inner.x`) is not yet supported.
+- Unions cannot be passed as function parameters or returned from functions.
+
+### 7.11. Modules (`#cooked`)
 
 `#cooked` is Brainrot's `#include`: it splices another `.brainrot` file's
 function and struct definitions into the current file at the point of the

@@ -76,6 +76,7 @@ static Interpreter *global_interpreter = NULL;
 %token DOT
 %type <node>  struct_def struct_access
 %type <param> struct_field_list struct_field   /* reuse Parameter as field carrier */
+%type <ival>  struct_or_union
 
 /* Declare types for non-terminals */
 %type <ival> type
@@ -142,8 +143,13 @@ function_def_list
         { $$ = $1; (void)$2; }
     ;
 
+struct_or_union
+    : STRUCT { $$ = 0; }
+    | UNION  { $$ = 1; }
+    ;
+
 struct_def
-    : STRUCT IDENTIFIER LBRACE struct_field_list RBRACE SEMICOLON
+    : struct_or_union IDENTIFIER LBRACE struct_field_list RBRACE SEMICOLON
         {
             /* Build StructField list from Parameter list */
             StructField *fields = NULL, *tail = NULL;
@@ -159,11 +165,14 @@ struct_def
                 else        { tail->next = f; tail = f; }
                 p = p->next;
             }
-            size_t total = compute_struct_layout(fields);
+            bool is_union = $1 != 0;
+            size_t total = is_union ? compute_union_layout(fields)
+                                    : compute_struct_layout(fields);
             StructDef *def = SAFE_MALLOC(StructDef);
             def->name       = safe_strdup(&$2);
             def->fields     = fields;
             def->total_size = total;
+            def->is_union   = is_union;
             register_struct_def(def);
             $$ = create_struct_def_node($2, fields);
             SAFE_FREE($2);
@@ -380,7 +389,7 @@ declaration:
             SAFE_FREE(var);
             free_expression_list($6);
         }
-    | optional_modifiers STRUCT IDENTIFIER declarator
+    | optional_modifiers struct_or_union IDENTIFIER declarator
         {
             Variable *var = variable_new($4.name);
             var->var_type    = VAR_STRUCT;
@@ -403,7 +412,7 @@ declaration:
             SAFE_FREE($3);
             SAFE_FREE($4.name);
         }
-    | optional_modifiers STRUCT IDENTIFIER declarator EQUALS LBRACE initializer_list RBRACE
+    | optional_modifiers struct_or_union IDENTIFIER declarator EQUALS LBRACE initializer_list RBRACE
         {
             Variable *var = variable_new($4.name);
             var->var_type    = VAR_STRUCT;
@@ -423,8 +432,11 @@ declaration:
                      create_struct_def_node($3, def ? def->fields : NULL),
                      $4.pointer_level);
             $$->var_type = VAR_STRUCT;
-            if ($$->data.op.right)
+            if ($$->data.op.right) {
                 $$->data.op.right->data.name = ARENA_STRDUP($3);
+                $$->data.op.right->data.struct_def.initializer_count =
+                    (int)count_expression_list($7);
+            }
             SAFE_FREE($3);
             SAFE_FREE($4.name);
             free_expression_list($7);
