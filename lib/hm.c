@@ -244,8 +244,13 @@ void hm_free(HashMap *hm)
                 {
                     SAFE_FREE(var->value.array_data);
                 }
-                else if (var->var_type == VAR_STRUCT && var->value.array_data)
+                else if (var->var_type == VAR_STRUCT &&
+                         var->pointer_level == 0 && var->value.array_data)
                 {
+                    /* Only by-value structs own their blob. A pointer-typed
+                       struct var holds a borrowed address in value.pvalue
+                       (same union slot) -- freeing it would be an invalid
+                       free of storage owned by the pointed-at variable. */
                     free(var->value.array_data);
                     var->value.array_data = NULL;
                 }

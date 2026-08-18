@@ -463,6 +463,18 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
 
         Variable *sv = get_variable(name);
         StructDef *def = get_struct_def(struct_type);
+        if (sv && sv->pointer_level > 0)
+        {
+            /* Pointer-to-struct/union: there's nothing to point at yet, so
+               don't allocate a blob. Store the address the initializer
+               yields in value.pvalue (shares storage with array_data),
+               same as any other pointer variable. Member access
+               dereferences this in resolve_struct_access. */
+            if (node->struct_init_expr)
+                sv->value.pvalue =
+                    evaluate_expression_pointer(node->struct_init_expr);
+            return;
+        }
         if (sv && def && !sv->value.array_data)
         {
             sv->value.array_data = calloc(1, def->total_size);
