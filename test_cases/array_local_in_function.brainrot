@@ -1,0 +1,19 @@
+🚽 Test case: array declared and fully used inside a non-main function
+rizz sum_array() {
+    rizz arr[5];
+    rizz i;
+    rizz total;
+    flex (i = 0; i < 5; i = i + 1) {
+        arr[i] = i + 1;
+    }
+    total = 0;
+    flex (i = 0; i < 5; i = i + 1) {
+        total = total + arr[i];
+    }
+    bussin total;
+}
+
+skibidi main {
+    yapping("%d", sum_array());
+    bussin 0;
+}

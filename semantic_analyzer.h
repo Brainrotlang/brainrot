@@ -50,7 +50,8 @@ typedef struct SymbolEntry
     VarType return_type; /* For functions */
     int return_pointer_level;
     int line_number;
-    int scope_depth; /* Track which scope level this was declared in */
+    int scope_depth;    /* Track which scope level this was declared in */
+    String struct_name; /* struct/union tag; set when type == VAR_STRUCT */
     struct SymbolEntry *next;
 } SymbolEntry;
 
@@ -77,7 +78,8 @@ bool semantic_analyze(ASTNode *root);
 /* Symbol table management */
 void add_symbol(SemanticAnalyzer *analyzer, const String name, VarType type,
                 int pointer_level, bool is_const, bool is_function,
-                VarType return_type, int return_pointer_level, int line_number);
+                VarType return_type, int return_pointer_level, int line_number,
+                const String struct_name);
 SymbolEntry *find_symbol(SemanticAnalyzer *analyzer, const String name);
 void free_symbol_table(SymbolEntry *symbols);
 

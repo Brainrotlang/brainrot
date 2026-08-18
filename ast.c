@@ -235,7 +235,16 @@ ASTNode *create_multi_array_declaration_node(String name, int dimensions[],
         exit(EXIT_FAILURE);
     }
 
-    node->type = NODE_ARRAY_ACCESS;
+    /* Declaration only: storage is allocated later, at runtime, by the
+       interpreter's declaration visitor (see interpreter_visit_declaration)
+       in whatever scope is current at execution time -- not here at parse
+       time. That's what lets an array declared inside a function body get
+       its own storage inside that function's runtime scope, instead of
+       leaking into (and colliding across) the single global scope that
+       exists throughout parsing. Callers (lang.y) set pointer_level and
+       modifiers on the returned node afterwards, and attach any braced
+       initializer via set_declaration_pending_initializer(). */
+    node->type = NODE_DECLARATION;
     node->var_type = type;
     node->is_array = true;
     node->pointer_level = 0;
@@ -256,15 +265,8 @@ ASTNode *create_multi_array_declaration_node(String name, int dimensions[],
     node->array_dimensions.total_size = total;
     node->array_length = total; // For backward compatibility
 
-    // Set the variable name
-    node->data.name = ARENA_STRDUP(name);
-
-    Variable *var = get_variable(name);
-    if (var)
-    {
-        node->pointer_level = var->pointer_level;
-        node->modifiers = var->modifiers;
-    }
+    node->data.op.left = create_identifier_node(name);
+    node->data.op.right = NULL;
 
     return node;
 }
@@ -3617,31 +3619,70 @@ void free_expression_list(ExpressionList *list)
     SAFE_FREE(list);
 }
 
-/* Shared by populate_struct_variable and, recursively, by itself for
-   nested struct/union fields initialized with a braced sub-list
-   (e.g. `Outer o = { {1, 2}, 3 };`). */
-static void populate_struct_fields(StructDef *def, void *base,
-                                   ExpressionList *list)
+/* Registry of ExpressionLists handed to array/struct declaration nodes via
+   set_declaration_pending_initializer(). A declaration statement's AST
+   node is visited once per execution (once per call, for a function-local
+   declaration) but must keep reusing the same initializer values every
+   time, so the list can't be freed after first use the way a one-shot
+   parse-time consumer (e.g. the old struct/array initializer handling)
+   used to. Instead every registered list is freed exactly once here, at
+   program teardown. */
+typedef struct PendingInitializerNode
 {
-    if (!def || !base)
+    ExpressionList *list;
+    struct PendingInitializerNode *next;
+} PendingInitializerNode;
+
+static PendingInitializerNode *pending_initializer_registry = NULL;
+
+void set_declaration_pending_initializer(ASTNode *node, ExpressionList *list)
+{
+    if (!node || !list)
         return;
 
-    /* Union fields overlap at offset 0: only the first member is
-       initialized, mirroring C's brace-init rule for unions. */
+    node->pending_initializer = list;
+
+    PendingInitializerNode *entry = SAFE_MALLOC(PendingInitializerNode);
+    entry->list = list;
+    entry->next = pending_initializer_registry;
+    pending_initializer_registry = entry;
+}
+
+static void free_pending_initializer_registry(void)
+{
+    while (pending_initializer_registry)
+    {
+        PendingInitializerNode *next = pending_initializer_registry->next;
+        free_expression_list(pending_initializer_registry->list);
+        SAFE_FREE(pending_initializer_registry);
+        pending_initializer_registry = next;
+    }
+}
+
+/* Validates only the *shape* of a struct/union initializer against its
+   StructDef -- a bare value vs. a `{ ... }` sub-initializer for each field
+   -- without writing anything. This is the same check populate_struct_fields()
+   does below, split out so it can still run at parse time (right after the
+   struct_initializer_list is parsed) even though the actual value-writing
+   in populate_struct_fields() no longer can: it needs a real Variable's
+   data blob, which now (see interpreter_visit_declaration) is only
+   allocated once the declaration statement actually executes, in whatever
+   scope is current then -- not at parse time. Keeping this specific check
+   at parse time preserves its existing behavior of gating main()'s
+   struct_def_had_error check, so a malformed initializer is still reported
+   before any interpretation starts (see the comment on that global). */
+void validate_struct_initializer_shape(StructDef *def, ExpressionList *list)
+{
+    if (!def)
+        return;
+
     StructField *fld = def->fields;
     ExpressionList *cur = list;
     while (fld && cur)
     {
-        void *addr = (char *)base + fld->offset;
         bool is_nested_aggregate =
             (fld->type == VAR_STRUCT && fld->pointer_level == 0);
 
-        /* Catch a shape mismatch between the initializer item and the
-           field before evaluating anything: a braced sub-initializer for
-           a scalar/pointer field, or a bare value for a nested
-           struct/union field, would otherwise be silently misapplied
-           (evaluate_expression_*(NULL) for a missing expr, or the sublist
-           just being dropped) instead of reported. */
         if (is_nested_aggregate != (cur->sublist != NULL))
         {
             char msg[MAX_BUFFER_LEN];
@@ -3658,6 +3699,53 @@ static void populate_struct_fields(StructDef *def, void *base,
                          fld->name.data ? fld->name.data : "?");
             yyerror(msg);
             struct_def_had_error = true;
+        }
+        else if (is_nested_aggregate)
+        {
+            validate_struct_initializer_shape(get_struct_def(fld->struct_name),
+                                              cur->sublist);
+        }
+
+        if (def->is_union)
+            break;
+        fld = fld->next;
+        cur = cur->next;
+    }
+}
+
+/* Shared by populate_struct_variable and, recursively, by itself for
+   nested struct/union fields initialized with a braced sub-list
+   (e.g. `Outer o = { {1, 2}, 3 };`). Shape mismatches are no longer
+   reported here -- validate_struct_initializer_shape() already gated this
+   from ever running on a malformed initializer (see its comment) -- but
+   the check is kept as a defensive no-write skip in case that ever
+   changes. */
+static void populate_struct_fields(StructDef *def, void *base,
+                                   ExpressionList *list)
+{
+    if (!def || !base)
+        return;
+
+    /* Union fields overlap at offset 0: only the first member is
+       initialized, mirroring C's brace-init rule for unions. */
+    StructField *fld = def->fields;
+    ExpressionList *cur = list;
+    while (fld && cur)
+    {
+        void *addr = (char *)base + fld->offset;
+        bool is_nested_aggregate =
+            (fld->type == VAR_STRUCT && fld->pointer_level == 0);
+
+        /* A shape mismatch here (braced sub-initializer for a scalar
+           field, or a bare value for a nested struct/union field) would
+           otherwise be silently misapplied (evaluate_expression_*(NULL)
+           for a missing expr, or the sublist just being dropped) --
+           already reported by validate_struct_initializer_shape() at
+           parse time, which halts main() before this ever runs, but
+           skipped defensively here too rather than assumed unreachable. */
+        if (is_nested_aggregate != (cur->sublist != NULL))
+        {
+            /* unreachable in practice; see comment above */
         }
         else if (is_nested_aggregate)
         {
@@ -3801,6 +3889,7 @@ void free_statement_list(StatementList *list)
 
 void free_ast()
 {
+    free_pending_initializer_registry();
     arena_free(&arena);
 }
 
@@ -4048,6 +4137,35 @@ void execute_function_call(const String name, ArgumentList *args)
 
 void handle_return_statement(ASTNode *expr)
 {
+    /* current_return_value is a single global slot, overwritten by every
+       function call (see execute_function_call) -- including any call
+       made from within this function's own body before control reaches
+       this return statement. Re-derive type/pointer_level fresh from
+       whichever function is actually executing right now, rather than
+       trusting whatever a nested call left behind: without this, e.g.
+       `bussin 0;` in skibidi main right after calling a struct-returning
+       function would find current_return_value.type still set to
+       VAR_STRUCT from that call. */
+    Scope *scope = current_scope;
+    while (scope && !scope->is_function_scope)
+        scope = scope->parent;
+    if (scope)
+    {
+        Function *func = get_function(scope->function_name);
+        if (func)
+        {
+            current_return_value.type = func->return_type;
+            current_return_value.pointer_level = func->return_pointer_level;
+        }
+    }
+    else
+    {
+        /* Not inside any function -- this is skibidi main, which has no
+           declared return type. */
+        current_return_value.type = NONE;
+        current_return_value.pointer_level = 0;
+    }
+
     current_return_value.has_value = true;
     if (expr)
     {
@@ -4083,6 +4201,40 @@ void handle_return_statement(ASTNode *expr)
             case NONE:
                 /* void/skibidi return type: ignore expression value */
                 break;
+            case VAR_STRUCT:
+            {
+                /* Only a plain struct variable is supported as the return
+                   expression (matching the same constraint on struct
+                   arguments -- see enter_function_scope). The blob is
+                   copied into a fresh, heap-owned allocation *before* the
+                   scope cleanup below runs: that cleanup frees this
+                   function's own scope, which is where the source
+                   variable's blob lives, so evaluating lazily (e.g. from
+                   the caller, after this function returns) would read
+                   freed memory. The caller is responsible for copying out
+                   of current_return_value.value.pvalue and freeing it --
+                   see interpreter_visit_declaration's struct_init_expr
+                   handling. */
+                Variable *src = NULL;
+                if (expr->type == NODE_IDENTIFIER)
+                    src = get_variable(expr->data.name);
+                if (!src || src->var_type != VAR_STRUCT)
+                {
+                    yyerror("Return expression is not a struct variable");
+                    break;
+                }
+                StructDef *def = get_struct_def(src->struct_name);
+                if (def)
+                {
+                    void *blob = calloc(1, def->total_size);
+                    if (blob && src->value.array_data)
+                        memcpy(blob, src->value.array_data, def->total_size);
+                    current_return_value.value.pvalue = (uintptr_t)blob;
+                    current_return_value.struct_name =
+                        safe_strdup(&src->struct_name);
+                }
+                break;
+            }
             default:
                 yyerror("Unsupported return type");
                 exit(1);
@@ -4157,6 +4309,31 @@ ASTNode *create_function_def_node(String name, VarType return_type,
                                   Parameter *params, ASTNode *body)
 {
     return create_function_def_node_ex(name, return_type, 0, params, body);
+}
+
+ASTNode *create_function_def_node_struct(String name, String struct_name,
+                                         Parameter *params, ASTNode *body)
+{
+    ASTNode *node = ARENA_ALLOC_ASTNODE();
+    if (!node)
+    {
+        yyerror("Failed to allocate memory for function definition node");
+        return NULL;
+    }
+
+    node->type = NODE_FUNCTION_DEF;
+    node->data.function_def.name = ARENA_STRDUP(name);
+    node->data.function_def.return_type = VAR_STRUCT;
+    node->data.function_def.return_struct_name = ARENA_STRDUP(struct_name);
+    node->pointer_level = 0;
+    node->data.function_def.parameters = params;
+    node->data.function_def.body = body;
+
+    Function *func = create_function_ex(name, VAR_STRUCT, 0, params, body);
+    if (func)
+        func->return_struct_name = ARENA_STRDUP(struct_name);
+
+    return node;
 }
 
 void free_static_variable_map(void)
@@ -4266,8 +4443,28 @@ void enter_function_scope(Function *func, ArgumentList *args)
             yyerror("String parameters are not supported");
             return;
         case VAR_STRUCT:
-            yyerror("Struct parameters are not yet supported");
-            return;
+        {
+            /* By-value struct argument: only a plain struct variable is
+               supported as the source (matching what's actually needed --
+               a struct-valued sub-expression, e.g. a function call
+               returning a struct, isn't a thing here yet). Stash the
+               source blob pointer now, while still in the caller's scope
+               -- evaluating it after create_scope() below would resolve
+               against the callee's (still-empty) scope instead. */
+            if (curr_arg->expr->type != NODE_IDENTIFIER)
+            {
+                yyerror("Struct argument must be a plain struct variable");
+                return;
+            }
+            Variable *src = get_variable(curr_arg->expr->data.name);
+            if (!src || src->var_type != VAR_STRUCT)
+            {
+                yyerror("Struct argument is not a struct variable");
+                return;
+            }
+            arg_values[arg_count].pvalue = (uintptr_t)src->value.array_data;
+            break;
+        }
         case NONE:
             break;
         }
@@ -4334,8 +4531,23 @@ void enter_function_scope(Function *func, ArgumentList *args)
             yyerror("String parameters are not supported");
             return;
         case VAR_STRUCT:
-            yyerror("Struct parameters are not yet supported");
-            return;
+        {
+            /* Deep-copy: give the parameter its own blob (C struct-by-value
+               semantics) rather than aliasing the caller's, using the
+               source blob pointer captured above before this scope
+               existed. */
+            Variable *bound = get_variable(curr_param->name);
+            StructDef *def = get_struct_def(curr_param->struct_name);
+            if (bound && def)
+            {
+                bound->struct_name = safe_strdup(&curr_param->struct_name);
+                bound->value.array_data = calloc(1, def->total_size);
+                void *src_blob = (void *)arg_values[i].pvalue;
+                if (bound->value.array_data && src_blob)
+                    memcpy(bound->value.array_data, src_blob, def->total_size);
+            }
+            break;
+        }
         case NONE:
             break;
         }

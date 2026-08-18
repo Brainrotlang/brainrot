@@ -128,6 +128,8 @@ typedef struct Function
     String name;
     VarType return_type;
     int return_pointer_level;
+    String return_struct_name; /* struct/union tag; set when
+                                   return_type == VAR_STRUCT */
     Parameter *parameters;
     ASTNode *body;
 } Function;
@@ -147,6 +149,11 @@ typedef struct
     } value;
     VarType type;
     int pointer_level;
+    /* struct/union tag, set when type == VAR_STRUCT; value.pvalue then
+       points at a heap blob (malloc'd fresh in handle_return_statement,
+       NOT scope-owned) that the caller must copy out of and free -- see
+       the comment on handle_return_statement's VAR_STRUCT case. */
+    String struct_name;
 } ReturnValue;
 
 /* Symbol table structure */
@@ -298,6 +305,20 @@ struct ASTNode
     int array_length;
     ArrayDimensions array_dimensions;
     int line_number; /* Line number for error reporting */
+    /* Array/struct declaration initializer values (e.g. the `{1, 2, 3}` in
+       `rizz arr[3] = {1, 2, 3};`), carried from parse time to the runtime
+       declaration visitor -- which allocates and populates storage in
+       whatever scope is current at execution time, not parse time -- so
+       function-local arrays/structs get their own per-call storage. NULL
+       when the declaration has no braced initializer. Owned by a registry
+       freed once in free_ast(); not owned by this node. */
+    ExpressionList *pending_initializer;
+    /* A struct declaration's initializer when it's a plain expression
+       rather than a `{ ... }` list (e.g. the `make_point(1, 2)` in
+       `gang Point r = make_point(1, 2);`, or another struct variable for
+       copy-init) -- evaluated at runtime by the declaration visitor. NULL
+       for the no-initializer and braced-initializer declaration forms. */
+    ASTNode *struct_init_expr;
     union
     {
         short svalue;
@@ -365,6 +386,8 @@ struct ASTNode
         {
             String name;
             VarType return_type;
+            String return_struct_name; /* struct/union tag; set when
+                                           return_type == VAR_STRUCT */
             Parameter *parameters;
             ASTNode *body;
         } function_def;
@@ -459,6 +482,11 @@ ExpressionList *append_expression_list_node(ExpressionList *list,
 void free_expression_list(ExpressionList *list);
 void populate_multi_array_variable(String name, ExpressionList *list,
                                    int dimensions[], int num_dimensions);
+/* Attaches a braced initializer to an array/struct declaration node so the
+   runtime declaration visitor can populate storage once it exists (see
+   ASTNode.pending_initializer). Takes ownership of `list` via an internal
+   registry freed in free_ast(); callers must not free it themselves. */
+void set_declaration_pending_initializer(ASTNode *node, ExpressionList *list);
 void free_ast(void);
 
 /* Evaluation and execution functions */
@@ -516,6 +544,11 @@ ASTNode *create_function_def_node(String name, VarType return_type,
 ASTNode *create_function_def_node_ex(String name, VarType return_type,
                                      int return_pointer_level,
                                      Parameter *params, ASTNode *body);
+/* Like create_function_def_node_ex(), for a struct/union-by-value return
+   type (e.g. `gang Point make_point(...) { ... }`), which needs a tag name
+   rather than a VarType. */
+ASTNode *create_function_def_node_struct(String name, String struct_name,
+                                         Parameter *params, ASTNode *body);
 void handle_return_statement(ASTNode *expr);
 void *handle_binary_operation(ASTNode *node);
 void free_function_table(void);
@@ -534,6 +567,10 @@ ASTNode *create_struct_def_node(String name, StructField *fields);
 ASTNode *create_struct_access_node(ASTNode *object, String member);
 void *evaluate_struct_member_address(ASTNode *node);
 void populate_struct_variable(const String name, ExpressionList *list);
+/* Checks a struct/union initializer's shape (bare value vs. `{ ... }`
+   sub-initializer) against `def`, without needing any Variable/storage to
+   exist yet -- safe to call at parse time. See its definition in ast.c. */
+void validate_struct_initializer_shape(StructDef *def, ExpressionList *list);
 /* Resolve a NODE_STRUCT_ACCESS node — including a chain such as `a.b.c`,
    via recursion — to the StructDef/base-address/field describing the
    *object* being accessed (i.e. `*field_out` is the field named by this
