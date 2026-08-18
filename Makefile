@@ -130,16 +130,26 @@ valgrind: ensure-stdrot $(TARGET)
 	@echo "Valgrind check done. If anything was sus, it'll show up with a non-zero exit code. No cap."
 
 # Install target
+# libstdrot.so is dlopen'd by bare filename at runtime (see stdrot.c), so it
+# must live somewhere the dynamic linker searches by default. /usr/local/lib
+# is on that search path (see /etc/ld.so.conf.d/libc.conf); ldconfig refreshes
+# the cache so the plain dlopen("libstdrot.so", ...) fallback finds it from
+# any working directory, not just the build tree (whose ./libstdrot.so is
+# tried first).
 .PHONY: install
 install: ensure-stdrot $(TARGET)
-	install -d /usr/local/bin
+	install -d /usr/local/bin /usr/local/lib
 	install -m 755 $(TARGET) /usr/local/bin/
+	install -m 755 $(STDROT_LIB) /usr/local/lib/
+	ldconfig
 	@echo "$(TARGET) installed successfully. You're goated with the sauce!"
 
 # Uninstall target
 .PHONY: uninstall
 uninstall:
 	rm -f /usr/local/bin/$(TARGET)
+	rm -f /usr/local/lib/$(STDROT_LIB)
+	ldconfig
 	@echo "$(TARGET) uninstalled successfully. Back to the grind."
 
 # Check dependencies
