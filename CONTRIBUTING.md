@@ -98,24 +98,9 @@ make format          # apply formatting in-place
 4. Update CHANGELOG.md if applicable
 5. Reference any related issues
 
-Example PR format:
-
-```markdown
-## Description
-
-Brief description of changes
-
-## Related Issue
-
-Fixes #<issue_number>
-
-## Type of Change
-
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Documentation update
-- [ ] Performance improvement
-```
+Every PR must use `.github/PULL_REQUEST_TEMPLATE.md` — GitHub pre-fills it
+automatically when you open a PR. Fill in every section (Description, Related
+Issue, Type of Change, Checklist) rather than deleting or stripping it out.
 
 ## Style Guide
 
