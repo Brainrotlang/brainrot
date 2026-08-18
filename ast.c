@@ -4967,6 +4967,12 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             {
                 bound->pointer_level = curr_param->pointer_level;
                 bound->value.pvalue = arg_values[i].pvalue;
+                /* Carry the struct/union tag onto the bound pointer so
+                   member access through it can resolve the type -- the
+                   by-value path below does the same via safe_strdup. */
+                if (curr_param->type == VAR_STRUCT &&
+                    curr_param->struct_name.data)
+                    bound->struct_name = safe_strdup(&curr_param->struct_name);
             }
             curr_param = curr_param->next;
             continue;
