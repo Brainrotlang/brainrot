@@ -1,0 +1,17 @@
+🚽 Example: a struct nested inside a union
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+chungus Shape {
+    gang Point pt;
+    rizz raw;
+};
+
+skibidi main {
+    chungus Shape s;
+    s.pt.x = 7;
+    s.pt.y = 9;
+    yapping("%d %d", s.pt.x, s.pt.y);
+}

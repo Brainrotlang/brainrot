@@ -1,0 +1,17 @@
+🚽 Example: a union nested inside a struct
+chungus Number {
+    rizz i;
+    chad f;
+};
+
+gang Wrapper {
+    chungus Number n;
+    yap tag;
+};
+
+skibidi main {
+    gang Wrapper w;
+    w.n.i = 1067614182;
+    yapping("%d", w.n.i);
+    yapping("%.2f", w.n.f);
+}

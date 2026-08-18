@@ -1,0 +1,21 @@
+🚽 Example: three levels of nesting, read/write and a fully nested initializer
+gang Inner {
+    rizz v;
+};
+
+gang Mid {
+    gang Inner inner;
+};
+
+gang Outer {
+    gang Mid mid;
+};
+
+skibidi main {
+    gang Outer o;
+    o.mid.inner.v = 42;
+    yapping("%d", o.mid.inner.v);
+
+    gang Outer p = { { { 7 } } };
+    yapping("%d", p.mid.inner.v);
+}

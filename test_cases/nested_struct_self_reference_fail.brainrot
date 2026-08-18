@@ -1,0 +1,8 @@
+🚽 Test case: a struct embedding itself by value has no finite size
+gang Bad {
+    gang Bad x;
+};
+
+skibidi main {
+    yapping("unreachable");
+}

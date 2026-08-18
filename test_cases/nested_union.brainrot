@@ -1,0 +1,17 @@
+🚽 Example: a union nested inside another union
+chungus Inner {
+    rizz i;
+    chad f;
+};
+
+chungus Outer {
+    chungus Inner in;
+    rizz raw;
+};
+
+skibidi main {
+    chungus Outer o;
+    o.in.i = 1067614182;
+    yapping("%d", o.in.i);
+    yapping("%.2f", o.in.f);
+}

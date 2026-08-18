@@ -371,7 +371,7 @@ gang Point {
 ```
 
 - **`gang TypeName { ... };`**: Defines a new struct type.
-- Fields are declared using any supported type keyword (`rizz`, `chad`, `gigachad`, `smol`, `cap`, `yap`).
+- Fields are declared using any supported type keyword (`rizz`, `chad`, `gigachad`, `smol`, `cap`, `yap`), or another already-defined `gang`/`chungus` type name for a nested field (see [Nesting](#nesting) below).
 - The definition must end with `};`.
 
 #### Struct Declaration
@@ -405,6 +405,51 @@ p.magnitude = 5.0;
 yapping("Point: %d %d %f", p.x, p.y, p.magnitude);
 ```
 
+#### Nesting
+
+A struct field can itself be another already-defined `gang` or `chungus`
+type — structs and unions can nest inside each other in any combination,
+to any depth:
+
+```c
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+gang Line {
+    gang Point start;   🚽 a struct field
+    gang Point end;
+};
+
+skibidi main {
+    gang Line l;
+    l.start.x = 1;      🚽 chained member access
+    l.start.y = 2;
+    l.end.x = 10;
+    l.end.y = 20;
+
+    🚽 brace-init supports nested sub-initializers too
+    gang Line m = { {5, 6}, {7, 8} };
+}
+```
+
+Notes and limitations on nesting:
+
+- The nested type must already be defined above the point where it's used
+  as a field — there's no forward declaration.
+- A struct/union **cannot embed itself by value** (`gang Foo { gang Foo x; };`
+  is a compile-time error, same as C — it has no finite size). A
+  self-referential **pointer** field (`gang Node { gang Node *next; };`) is
+  allowed to declare, but chained `.` access through a pointer-typed
+  struct/union field (e.g. `a.ptr.b`) is not yet supported — dereference it
+  explicitly first.
+- A nested struct/union field's brace-initializer must itself be a braced
+  sub-initializer, matching the shape of the type — `gang Line m = { {5, 6},
+  {7, 8} };`, **not** the flattened `gang Line m = {5, 6, 7, 8};`. The
+  reverse (a braced sub-initializer for a plain scalar field) is likewise
+  an error.
+
 #### Full Example
 
 ```c
@@ -437,7 +482,8 @@ Q: 10 20 0.0
 
 #### Current Limitations
 
-- Nested struct access (`p.inner.x`) is not yet supported.
+- Chained access through a pointer-typed struct/union field (`a.ptr.b`) is
+  not yet supported.
 - Structs cannot be passed as function parameters or returned from functions.
 
 ### 7.10. Unions (`chungus`)
@@ -458,7 +504,9 @@ chungus Data {
 ```
 
 - **`chungus TypeName { ... };`**: Defines a new union type.
-- Fields are declared using any supported type keyword, same as `gang`.
+- Fields are declared using any supported type keyword, same as `gang`,
+  including another already-defined `gang`/`chungus` type for a nested
+  field — see [Nesting](#nesting-1) below.
 - The definition must end with `};`.
 - Struct and union tags share the same namespace, so a `gang` and a `chungus`
   cannot use the same name.
@@ -500,9 +548,38 @@ yapping("As int: %d", d.i);
 yapping("Reinterpreted as float: %.2f", d.f);
 ```
 
+#### Nesting
+
+Like `gang`, a `chungus` field can be another already-defined `gang` or
+`chungus` type, and structs/unions can nest inside each other in any
+combination:
+
+```c
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+chungus Shape {
+    gang Point pt;   🚽 struct nested inside a union
+    rizz raw;
+};
+
+skibidi main {
+    chungus Shape s;
+    s.pt.x = 7;
+    s.pt.y = 9;
+}
+```
+
+The same rules as [`gang` nesting](#nesting) apply: the nested type must
+already be defined, a union can't embed itself by value, and chained access
+through a pointer-typed field isn't yet supported.
+
 #### Current Limitations
 
-- Nested union access (`d.inner.x`) is not yet supported.
+- Chained access through a pointer-typed struct/union field (`a.ptr.b`) is
+  not yet supported.
 - Unions cannot be passed as function parameters or returned from functions.
 
 ### 7.11. Modules (`#cooked`)

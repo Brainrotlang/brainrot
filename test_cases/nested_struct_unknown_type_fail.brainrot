@@ -1,0 +1,8 @@
+🚽 Test case: a nested field referencing a struct/union tag that was never defined
+gang Bad {
+    gang Ghost x;
+};
+
+skibidi main {
+    yapping("unreachable");
+}

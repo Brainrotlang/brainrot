@@ -1,0 +1,14 @@
+🚽 Test case: accessing an undefined member through a nested struct chain must error
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+gang Line {
+    gang Point start;
+};
+
+skibidi main {
+    gang Line l;
+    yapping("%d", l.start.z);
+}

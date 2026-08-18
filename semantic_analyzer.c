@@ -468,18 +468,12 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
 
     case NODE_STRUCT_ACCESS:
     {
-        ASTNode *obj = node->data.struct_access.object;
-        Variable *var = (obj->type == NODE_IDENTIFIER)
-                            ? get_variable(obj->data.name)
-                            : NULL;
-        if (!var || var->var_type != VAR_STRUCT)
+        StructDef *def = NULL;
+        void *base = NULL;
+        StructField *fld = NULL;
+        if (!resolve_struct_access(node, &def, &base, &fld, false))
             return NONE;
-        StructDef *def = get_struct_def(var->struct_name);
-        if (!def)
-            return NONE;
-        StructField *fld =
-            find_struct_field(def, node->data.struct_access.member_name);
-        return fld ? fld->type : NONE;
+        return fld->type;
     }
 
     default:
@@ -1344,38 +1338,80 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
 
     case NODE_STRUCT_ACCESS:
     {
-        /* Check the object is a known struct variable with that field */
+        /* Check the object is a known struct/union — either a variable or
+           a nested member access, e.g. the `a.b` in `a.b.c` — with that
+           field. obj->var_type / obj->data.struct_access.struct_name are
+           populated at parse time by create_struct_access_node(), which
+           resolves chains recursively, so this naturally handles any
+           chain depth without re-deriving addresses here. */
         ASTNode *obj = node->data.struct_access.object;
         if (obj)
             semantic_analyze_with_scope_tracking(analyzer, obj);
+
+        StructDef *parent_def = NULL;
+        bool parent_is_struct_typed = false;
+
         if (obj && obj->type == NODE_IDENTIFIER)
         {
             Variable *var = get_variable(obj->data.name);
             if (!var)
-                break;
-            if (var->var_type != VAR_STRUCT)
+                break; /* undefined variable is reported elsewhere */
+            parent_is_struct_typed = (var->var_type == VAR_STRUCT);
+            if (parent_is_struct_typed)
+                parent_def = get_struct_def(var->struct_name);
+        }
+        else if (obj && obj->type == NODE_STRUCT_ACCESS)
+        {
+            if (obj->var_type == NONE)
+                break; /* obj's own access already failed and was reported */
+            parent_is_struct_typed = (obj->var_type == VAR_STRUCT);
+            if (parent_is_struct_typed && obj->pointer_level > 0)
             {
+                /* obj is a pointer-typed struct/union field (e.g. the
+                   `n.next` in `n.next.v` where `next` is `gang Node *`).
+                   Chaining `.` through it isn't supported (see
+                   resolve_struct_access's doc comment) — catch it here so
+                   interpretation never starts, rather than letting every
+                   runtime evaluator independently hit and report the same
+                   failure. */
                 add_semantic_error(
-                    analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                    analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
                     STRING_LITERAL(
-                        "Member access on non-struct/union variable"),
+                        "Chained member access through a pointer-typed "
+                        "struct/union field is not supported"),
                     node->line_number > 0 ? node->line_number : 1);
                 break;
             }
-            StructDef *def = get_struct_def(var->struct_name);
-            if (def &&
-                !find_struct_field(def, node->data.struct_access.member_name))
-            {
-                char msg[MAX_BUFFER_LEN];
-                snprintf(msg, sizeof(msg), "%s '%s' has no member '%s'",
-                         def->is_union ? "Union" : "Struct",
-                         var->struct_name.data,
-                         node->data.struct_access.member_name.data);
-                add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
-                                   STRING_LITERAL(msg),
-                                   node->line_number > 0 ? node->line_number
-                                                         : 1);
-            }
+            if (parent_is_struct_typed &&
+                obj->data.struct_access.struct_name.data)
+                parent_def =
+                    get_struct_def(obj->data.struct_access.struct_name);
+        }
+        else
+        {
+            break;
+        }
+
+        if (!parent_is_struct_typed)
+        {
+            add_semantic_error(
+                analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                STRING_LITERAL("Member access on non-struct/union value"),
+                node->line_number > 0 ? node->line_number : 1);
+            break;
+        }
+
+        if (parent_def && !find_struct_field(
+                              parent_def, node->data.struct_access.member_name))
+        {
+            char msg[MAX_BUFFER_LEN];
+            snprintf(msg, sizeof(msg), "%s '%s' has no member '%s'",
+                     parent_def->is_union ? "Union" : "Struct",
+                     parent_def->name.data ? parent_def->name.data : "?",
+                     node->data.struct_access.member_name.data);
+            add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                               STRING_LITERAL(msg),
+                               node->line_number > 0 ? node->line_number : 1);
         }
         break;
     }

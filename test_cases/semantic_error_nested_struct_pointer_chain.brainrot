@@ -1,0 +1,13 @@
+🚽 Test case: chaining `.` through a pointer-typed struct/union field
+🚽 (a self-referential pointer field is legal to declare, per nested_struct
+🚽 docs, but dereferencing it via chained member access is not supported)
+gang Node {
+    rizz val;
+    gang Node *next;
+};
+
+skibidi main {
+    gang Node n;
+    n.val = 3;
+    yapping("%d", n.next.val);
+}
