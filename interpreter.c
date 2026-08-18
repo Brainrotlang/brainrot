@@ -301,6 +301,12 @@ void *interpreter_visit_function_call(Visitor *self, ASTNode *node)
         /* Handle user-defined functions directly without return value
          * allocation */
         execute_function_call(func_name, args);
+
+        /* A call in statement position discards its result -- if that
+         * result was a struct, free the blob handle_return_statement
+         * allocated for it rather than leaving it to a later call's
+         * cleanup (or leaking it, if this was the last call). */
+        free_pending_struct_return_value();
     }
 
     return NULL;
@@ -408,23 +414,46 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
                         current_return_value.type == VAR_STRUCT)
                     {
                         void *blob = (void *)current_return_value.value.pvalue;
-                        if (blob)
+                        /* Guard against copying a differently-shaped struct
+                           into this blob (e.g. `gang Big b = make_small();`)
+                           -- struct_name identifies the *declared* return
+                           type, which the semantic analyzer should already
+                           have rejected if it mismatches struct_type, but
+                           this is the last line of defense against an
+                           out-of-bounds memcpy. */
+                        if (blob && sv->value.array_data &&
+                            current_return_value.struct_name.data &&
+                            strcmp(current_return_value.struct_name.data,
+                                   struct_type.data) == 0)
                         {
                             memcpy(sv->value.array_data, blob, def->total_size);
-                            free(blob);
                         }
-                        if (current_return_value.struct_name.data)
-                            SAFE_FREE(current_return_value.struct_name);
+                        else if (blob)
+                        {
+                            yyerror("Struct return type does not match "
+                                    "declared type");
+                        }
+                        /* Ownership transfers to us on return; always free
+                           our copy of the temporary, whether or not the
+                           type check above allowed the memcpy. */
+                        free_pending_struct_return_value();
                     }
                 }
                 else if (src_expr->type == NODE_IDENTIFIER)
                 {
                     Variable *src = get_variable(src_expr->data.name);
                     if (src && src->var_type == VAR_STRUCT &&
-                        src->value.array_data)
+                        src->value.array_data && sv->value.array_data &&
+                        src->struct_name.data &&
+                        strcmp(src->struct_name.data, struct_type.data) == 0)
                     {
                         memcpy(sv->value.array_data, src->value.array_data,
                                def->total_size);
+                    }
+                    else if (src && src->var_type == VAR_STRUCT)
+                    {
+                        yyerror("Cannot copy-initialize from a struct "
+                                "variable of a different type");
                     }
                 }
             }

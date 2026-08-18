@@ -2746,7 +2746,10 @@ void *handle_function_call(ASTNode *node)
                 safe_strdup(&current_return_value.value.strvalue);
             break;
         case VAR_STRUCT:
-            /* struct return not yet supported; fall through to NULL */
+            /* A struct return has no meaningful representation in this
+               generic scalar-expression context; discard it (freeing the
+               blob handle_return_statement allocated) rather than leak. */
+            free_pending_struct_return_value();
             break;
         case NONE:
             return NULL;
@@ -4105,10 +4108,24 @@ void execute_function_call(const String name, ArgumentList *args)
         return;
     }
 
-    enter_function_scope(func, args);
+    /* A previous call's struct return value (see handle_return_statement's
+       VAR_STRUCT case) may still be sitting unconsumed in the global
+       current_return_value slot -- e.g. it was returned from a call used
+       as a bare statement, which has nowhere to put it. Free it now,
+       before this call overwrites the slot. */
+    free_pending_struct_return_value();
+
     current_return_value.type = func->return_type;
     current_return_value.pointer_level = func->return_pointer_level;
     current_return_value.has_value = false;
+
+    if (!enter_function_scope(func, args))
+    {
+        /* Argument binding failed (already reported via yyerror) -- no
+           scope was left behind, and there's no valid parameter state to
+           run the body against, so don't. */
+        return;
+    }
 
     PUSH_JUMP_BUFFER();
     if (setjmp(CURRENT_JUMP_BUFFER()) == 0)
@@ -4133,6 +4150,21 @@ void execute_function_call(const String name, ArgumentList *args)
         }
     }
     POP_JUMP_BUFFER();
+}
+
+void free_pending_struct_return_value(void)
+{
+    if (current_return_value.type == VAR_STRUCT &&
+        current_return_value.value.pvalue)
+    {
+        free((void *)current_return_value.value.pvalue);
+        current_return_value.value.pvalue = 0;
+    }
+    if (current_return_value.struct_name.data)
+    {
+        SAFE_FREE(current_return_value.struct_name);
+        current_return_value.struct_name = (String){0};
+    }
 }
 
 void handle_return_statement(ASTNode *expr)
@@ -4312,7 +4344,8 @@ ASTNode *create_function_def_node(String name, VarType return_type,
 }
 
 ASTNode *create_function_def_node_struct(String name, String struct_name,
-                                         Parameter *params, ASTNode *body)
+                                         int pointer_level, Parameter *params,
+                                         ASTNode *body)
 {
     ASTNode *node = ARENA_ALLOC_ASTNODE();
     if (!node)
@@ -4325,9 +4358,24 @@ ASTNode *create_function_def_node_struct(String name, String struct_name,
     node->data.function_def.name = ARENA_STRDUP(name);
     node->data.function_def.return_type = VAR_STRUCT;
     node->data.function_def.return_struct_name = ARENA_STRDUP(struct_name);
-    node->pointer_level = 0;
+    node->pointer_level = pointer_level;
     node->data.function_def.parameters = params;
     node->data.function_def.body = body;
+
+    if (pointer_level > 0)
+    {
+        /* By-value struct returns are copied (see handle_return_statement's
+           VAR_STRUCT case); a pointer-to-struct return would need its own,
+           not-yet-implemented handling (interpreter_visit_declaration
+           always allocates a fresh blob for a struct-typed variable,
+           which is wrong for one that should just hold an address).
+           Refuse to register the function rather than silently drop the
+           `*` and treat this as by-value -- get_function() returning NULL
+           at any call site gives a clear "Undefined function" instead of
+           a confusing runtime type error. */
+        yyerror("Struct pointer return types are not yet supported");
+        return node;
+    }
 
     Function *func = create_function_ex(name, VAR_STRUCT, 0, params, body);
     if (func)
@@ -4393,7 +4441,7 @@ void reverse_parameter_list(Parameter **head)
     *head = prev;
 }
 
-void enter_function_scope(Function *func, ArgumentList *args)
+bool enter_function_scope(Function *func, ArgumentList *args)
 {
     ArgumentList *curr_arg = args;
     Value arg_values[MAX_ARGUMENTS];
@@ -4441,7 +4489,8 @@ void enter_function_scope(Function *func, ArgumentList *args)
             break;
         case VAR_STRING:
             yyerror("String parameters are not supported");
-            return;
+            reverse_parameter_list(&func->parameters);
+            return false;
         case VAR_STRUCT:
         {
             /* By-value struct argument: only a plain struct variable is
@@ -4454,13 +4503,23 @@ void enter_function_scope(Function *func, ArgumentList *args)
             if (curr_arg->expr->type != NODE_IDENTIFIER)
             {
                 yyerror("Struct argument must be a plain struct variable");
-                return;
+                reverse_parameter_list(&func->parameters);
+                return false;
             }
             Variable *src = get_variable(curr_arg->expr->data.name);
             if (!src || src->var_type != VAR_STRUCT)
             {
                 yyerror("Struct argument is not a struct variable");
-                return;
+                reverse_parameter_list(&func->parameters);
+                return false;
+            }
+            if (!src->struct_name.data ||
+                strcmp(src->struct_name.data, curr_param->struct_name.data) !=
+                    0)
+            {
+                yyerror("Struct argument type does not match parameter type");
+                reverse_parameter_list(&func->parameters);
+                return false;
             }
             arg_values[arg_count].pvalue = (uintptr_t)src->value.array_data;
             break;
@@ -4477,7 +4536,8 @@ void enter_function_scope(Function *func, ArgumentList *args)
     if (curr_arg || curr_param)
     {
         yyerror("Mismatched number of arguments and parameters");
-        return;
+        reverse_parameter_list(&func->parameters);
+        return false;
     }
 
     // Create function scope after evaluating arguments
@@ -4529,13 +4589,16 @@ void enter_function_scope(Function *func, ArgumentList *args)
             break;
         case VAR_STRING:
             yyerror("String parameters are not supported");
-            return;
+            exit_scope();
+            reverse_parameter_list(&func->parameters);
+            return false;
         case VAR_STRUCT:
         {
             /* Deep-copy: give the parameter its own blob (C struct-by-value
                semantics) rather than aliasing the caller's, using the
                source blob pointer captured above before this scope
-               existed. */
+               existed. Type already validated in the argument-evaluation
+               pass above, so def's size matches the source blob's. */
             Variable *bound = get_variable(curr_param->name);
             StructDef *def = get_struct_def(curr_param->struct_name);
             if (bound && def)
@@ -4554,6 +4617,7 @@ void enter_function_scope(Function *func, ArgumentList *args)
         curr_param = curr_param->next;
     }
     reverse_parameter_list(&func->parameters);
+    return true;
 }
 
 void register_struct_def(StructDef *def)

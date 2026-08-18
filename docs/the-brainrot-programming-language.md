@@ -484,7 +484,10 @@ Q: 10 20 0.0
 
 - Chained access through a pointer-typed struct/union field (`a.ptr.b`) is
   not yet supported.
-- Structs cannot be passed as function parameters or returned from functions.
+- A struct can be passed as a function parameter or returned from a
+  function, but only as a plain struct variable of the exact matching type
+  — not a sub-expression like a chained call or a member access. Arguments
+  and return values are deep-copied (C by-value semantics), never aliased.
 
 ### 7.10. Unions (`chungus`)
 
@@ -580,7 +583,9 @@ through a pointer-typed field isn't yet supported.
 
 - Chained access through a pointer-typed struct/union field (`a.ptr.b`) is
   not yet supported.
-- Unions cannot be passed as function parameters or returned from functions.
+- A union can be passed as a function parameter or returned from a
+  function under the same rules as a struct (see [§7.9](#79-structs-gang)) —
+  plain variable of the exact matching type, deep-copied.
 
 ### 7.11. Modules (`#cooked`)
 
@@ -794,7 +799,9 @@ The program terminates immediately when a `bet` fails, preventing further execut
 - No built-in support for increment/decrement (`++`, `--`).
 - Functions other than `skibidi main` not fully supported (unless you add them).
 - Complex data structures beyond basic structs, and advanced memory management are not fully supported.
-- Struct function parameters and return values are not yet implemented.
+- Struct/union function parameters and return values must be a plain
+  variable of the exact matching type (see [§7.9](#79-structs-gang)); arrays
+  can't be passed or returned by value at all, only via a pointer parameter.
 - Error reporting is minimal, typically halting on the first serious parse error.
 
 ---

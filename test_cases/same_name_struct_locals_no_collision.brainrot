@@ -1,0 +1,27 @@
+🚽 Test case: two functions each declare a local struct with the same name
+🚽 but different types; semantic analysis must not confuse one function's
+🚽 local with the other's when resolving member access
+gang Point {
+    rizz x;
+};
+
+gang Color {
+    rizz r;
+};
+
+rizz foo() {
+    gang Point p;
+    p.x = 1;
+    bussin p.x;
+}
+
+rizz bar() {
+    gang Color p;
+    p.r = 2;
+    bussin p.r;
+}
+
+skibidi main {
+    yapping("%d %d", foo(), bar());
+    bussin 0;
+}

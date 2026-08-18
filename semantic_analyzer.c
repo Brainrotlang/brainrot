@@ -59,6 +59,7 @@ SemanticAnalyzer *semantic_analyzer_new(void)
     analyzer->error_count = 0;
     analyzer->is_collecting_phase = false;
     analyzer->scope_depth = 0;
+    analyzer->current_function_name = (String){0};
 
     return analyzer;
 }
@@ -913,6 +914,9 @@ void add_symbol(SemanticAnalyzer *analyzer, const String name, VarType type,
     entry->scope_depth = analyzer->scope_depth;
     entry->struct_name =
         struct_name.data ? safe_strdup(&struct_name) : (String){0};
+    entry->function_name = analyzer->current_function_name.data
+                               ? safe_strdup(&analyzer->current_function_name)
+                               : (String){0};
     entry->next = analyzer->symbol_table;
 
     analyzer->symbol_table = entry;
@@ -927,10 +931,27 @@ SymbolEntry *find_symbol(SemanticAnalyzer *analyzer, const String name)
 
     while (entry)
     {
-        if (strcmp(entry->name.data, name.data) == 0)
+        if (strcmp(entry->name.data, name.data) == 0 &&
+            entry->scope_depth <= analyzer->scope_depth)
         {
-            /* Check if this symbol is accessible from current scope */
-            if (entry->scope_depth <= analyzer->scope_depth)
+            /* scope_depth alone isn't enough: it resets to 0 for every
+               function, so without also checking function_name, a local
+               in function A would look "accessible" while analyzing
+               function B's body at the same depth (both entries satisfy
+               scope_depth <= analyzer->scope_depth simultaneously, and
+               this list only grows -- entries from a function already
+               fully analyzed are never removed). Global entries (function
+               names, and top-level skibidi main declarations, both tagged
+               with function_name == {0}) stay visible everywhere;
+               everything else must belong to the function currently being
+               analyzed. */
+            bool is_global = !entry->function_name.data;
+            bool same_function =
+                entry->function_name.data &&
+                analyzer->current_function_name.data &&
+                strcmp(entry->function_name.data,
+                       analyzer->current_function_name.data) == 0;
+            if (is_global || same_function)
             {
                 return entry; /* Symbol is accessible */
             }
@@ -949,6 +970,8 @@ void free_symbol_table(SymbolEntry *symbols)
         SAFE_FREE(symbols->name);
         if (symbols->struct_name.data)
             SAFE_FREE(symbols->struct_name);
+        if (symbols->function_name.data)
+            SAFE_FREE(symbols->function_name);
         SAFE_FREE(symbols);
         symbols = next;
     }
@@ -1022,22 +1045,29 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
 
         analyzer->scope_depth++;
 
-        Parameter *param = node->data.function_def.parameters;
-        while (param)
         {
-            if (param->name.data)
-            {
-                add_symbol(analyzer, param->name, param->type,
-                           param->pointer_level, false, false, NONE, 0,
-                           node->line_number > 0 ? node->line_number : 1,
-                           param->struct_name);
-            }
-            param = param->next;
-        }
+            String outer_function_name = analyzer->current_function_name;
+            analyzer->current_function_name = node->data.function_def.name;
 
-        if (node->data.function_def.body)
-        {
-            collect_declarations(analyzer, node->data.function_def.body);
+            Parameter *param = node->data.function_def.parameters;
+            while (param)
+            {
+                if (param->name.data)
+                {
+                    add_symbol(analyzer, param->name, param->type,
+                               param->pointer_level, false, false, NONE, 0,
+                               node->line_number > 0 ? node->line_number : 1,
+                               param->struct_name);
+                }
+                param = param->next;
+            }
+
+            if (node->data.function_def.body)
+            {
+                collect_declarations(analyzer, node->data.function_def.body);
+            }
+
+            analyzer->current_function_name = outer_function_name;
         }
 
         analyzer->scope_depth--;
@@ -1157,6 +1187,8 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
     {
         /* Enter function scope */
         analyzer->scope_depth++;
+        String outer_function_name = analyzer->current_function_name;
+        analyzer->current_function_name = node->data.function_def.name;
 
         /* Process function body */
         if (node->data.function_def.body)
@@ -1166,6 +1198,7 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         }
 
         /* Exit function scope */
+        analyzer->current_function_name = outer_function_name;
         analyzer->scope_depth--;
         break;
     }

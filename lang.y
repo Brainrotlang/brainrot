@@ -277,7 +277,7 @@ function_def
         { $$ = create_function_def_node_ex($2.name, $1, $2.pointer_level, $4, $7); SAFE_FREE($2.name); }
     | struct_or_union IDENTIFIER declarator LPAREN params RPAREN LBRACE statements RBRACE
         {
-            $$ = create_function_def_node_struct($3.name, $2, $5, $8);
+            $$ = create_function_def_node_struct($3.name, $2, $3.pointer_level, $5, $8);
             SAFE_FREE($2);
             SAFE_FREE($3.name);
         }

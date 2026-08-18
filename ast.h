@@ -421,7 +421,12 @@ void reset_modifiers(void);
 TypeModifiers get_current_modifiers(void);
 Variable *get_variable(const String name);
 Scope *create_scope(Scope *parent);
-void enter_function_scope(Function *func, ArgumentList *args);
+/* Returns false (and reports an error via yyerror) if argument binding
+   failed -- mismatched arg count, an unsupported parameter type, or a
+   struct argument that isn't a plain same-typed struct variable -- in
+   which case no scope was left behind (any partially-created one is torn
+   down) and the caller must not execute the function body. */
+bool enter_function_scope(Function *func, ArgumentList *args);
 void exit_scope();
 void enter_scope();
 void free_scope(Scope *scope);
@@ -546,10 +551,20 @@ ASTNode *create_function_def_node_ex(String name, VarType return_type,
                                      Parameter *params, ASTNode *body);
 /* Like create_function_def_node_ex(), for a struct/union-by-value return
    type (e.g. `gang Point make_point(...) { ... }`), which needs a tag name
-   rather than a VarType. */
+   rather than a VarType. pointer_level > 0 (`gang Point *make_point()`) is
+   rejected with a clear error -- see the comment in the implementation. */
 ASTNode *create_function_def_node_struct(String name, String struct_name,
-                                         Parameter *params, ASTNode *body);
+                                         int pointer_level, Parameter *params,
+                                         ASTNode *body);
 void handle_return_statement(ASTNode *expr);
+/* Frees current_return_value's struct blob/tag (see handle_return_statement's
+   VAR_STRUCT case) if one is pending and unconsumed, and clears the slot.
+   Idempotent -- safe to call whether or not there's anything to free. Must
+   be called by whichever consumes or discards a struct-returning call's
+   result: interpreter_visit_declaration's struct_init_expr handling,
+   execute_function_call (for a leftover from a previous call), and any
+   context that gets a struct return but has nowhere to put it. */
+void free_pending_struct_return_value(void);
 void *handle_binary_operation(ASTNode *node);
 void free_function_table(void);
 void free_static_variable_map(void);

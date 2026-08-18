@@ -1,0 +1,19 @@
+🚽 Test case: copy-initializing a struct variable from one of a different
+🚽 type must be rejected, not blindly memcpy'd (which would read/write past
+🚽 the smaller struct's blob when the types differ in size)
+gang Small {
+    rizz x;
+};
+
+gang Big {
+    rizz a;
+    rizz b;
+    rizz c;
+    rizz d;
+};
+
+skibidi main {
+    gang Small s;
+    gang Big b = s;
+    bussin 0;
+}
