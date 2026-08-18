@@ -13,6 +13,7 @@
     "fizz_buzz_short": "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n",
     "hello_world": "Hello, World!\n",
     "sizeof": "4\n4\n1\n2\n4\n8\n12\n",
+    "sizeof_struct": "8\n4\n8\n4\n8\n",
     "char": "c\n",
     "float": "3.141592\n",
     "modulo": "2\n",

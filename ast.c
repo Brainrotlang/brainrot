@@ -2313,6 +2313,18 @@ size_t get_type_size(String name)
     Variable *var = get_variable(name);
     if (var != NULL)
     {
+        /* A struct/union value has no primitive size; look up its
+           definition and use the computed layout size instead. Pointers
+           to structs fall through to the descriptor path (pointer size). */
+        if (var->var_type == VAR_STRUCT && var->pointer_level == 0)
+        {
+            StructDef *def = get_struct_def(var->struct_name);
+            if (def != NULL)
+                return var->is_array ? def->total_size * var->array_length
+                                     : def->total_size;
+            yyerror("Undefined variable in sizeof");
+            return 0;
+        }
         size_t base = get_type_size_for_descriptor(
             var->var_type, var->pointer_level, var->modifiers);
         if (base == 0)
@@ -2359,6 +2371,29 @@ size_t handle_sizeof(ASTNode *node)
         case VAR_CHAR:
             return get_type_size_for_descriptor(
                 type, get_expression_pointer_level(expr), expr->modifiers);
+        case VAR_STRUCT:
+        {
+            int plevel = get_expression_pointer_level(expr);
+            if (plevel > 0)
+                return get_type_size_for_descriptor(type, plevel,
+                                                    expr->modifiers);
+            /* A struct/union-typed field access (e.g. `l.start`) — resolve
+               it to the field's definition and return its layout size. */
+            if (expr->type == NODE_STRUCT_ACCESS)
+            {
+                StructDef *def = NULL;
+                void *base = NULL;
+                StructField *fld = NULL;
+                if (resolve_struct_access(expr, &def, &base, &fld, false))
+                {
+                    StructDef *sdef = get_struct_def(fld->struct_name);
+                    if (sdef != NULL)
+                        return sdef->total_size;
+                }
+            }
+            yyerror("Invalid type in sizeof");
+            return 0;
+        }
         default:
             yyerror("Invalid type in sizeof");
             return 0;
