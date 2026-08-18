@@ -4181,13 +4181,15 @@ void handle_return_statement(ASTNode *expr)
     Scope *scope = current_scope;
     while (scope && !scope->is_function_scope)
         scope = scope->parent;
+    Function *current_func = NULL;
     if (scope)
     {
-        Function *func = get_function(scope->function_name);
-        if (func)
+        current_func = get_function(scope->function_name);
+        if (current_func)
         {
-            current_return_value.type = func->return_type;
-            current_return_value.pointer_level = func->return_pointer_level;
+            current_return_value.type = current_func->return_type;
+            current_return_value.pointer_level =
+                current_func->return_pointer_level;
         }
     }
     else
@@ -4253,6 +4255,28 @@ void handle_return_statement(ASTNode *expr)
                 if (!src || src->var_type != VAR_STRUCT)
                 {
                     yyerror("Return expression is not a struct variable");
+                    /* value.pvalue may hold a stale bit pattern left over
+                       from a previous, differently-typed return sharing
+                       this union -- has_value=false is what tells the
+                       caller (interpreter_visit_declaration's
+                       struct_init_expr handling) there's nothing usable
+                       to read out of it. */
+                    current_return_value.has_value = false;
+                    break;
+                }
+                /* Catch a type mismatch here, at the return statement,
+                   rather than leaving it to be caught later by the
+                   caller's own destination-type check (still correct, but
+                   the error would point at the call site instead of this
+                   return). */
+                if (current_func && current_func->return_struct_name.data &&
+                    (!src->struct_name.data ||
+                     strcmp(src->struct_name.data,
+                            current_func->return_struct_name.data) != 0))
+                {
+                    yyerror("Return expression type does not match declared "
+                            "return type");
+                    current_return_value.has_value = false;
                     break;
                 }
                 StructDef *def = get_struct_def(src->struct_name);
@@ -4513,7 +4537,7 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                 reverse_parameter_list(&func->parameters);
                 return false;
             }
-            if (!src->struct_name.data ||
+            if (!src->struct_name.data || !curr_param->struct_name.data ||
                 strcmp(src->struct_name.data, curr_param->struct_name.data) !=
                     0)
             {

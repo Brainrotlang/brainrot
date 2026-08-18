@@ -738,6 +738,23 @@ void interpreter_visit_function_definition(Visitor *self, ASTNode *node)
     if (!node)
         return;
 
+    if (node->data.function_def.return_type == VAR_STRUCT &&
+        node->pointer_level > 0)
+    {
+        /* Pointer-to-struct returns are rejected at parse time (see
+           create_function_def_node_struct) and deliberately left
+           unregistered there. create_function()/create_function_ex()
+           below have no knowledge of that rejection and would happily
+           register the function anyway -- the unconditional call a few
+           lines down registers it with return_pointer_level 0 regardless,
+           and the pointer_level > 0 branch after it would then "fix" that
+           up to the real pointer_level, undoing the rejection and letting
+           the function run with a silently-wrong by-value return. Skip
+           registration entirely so get_function() stays NULL and any call
+           site reports a clear "Undefined function" instead. */
+        return;
+    }
+
     Function *func = create_function(
         node->data.function_def.name, node->data.function_def.return_type,
         node->data.function_def.parameters, node->data.function_def.body);

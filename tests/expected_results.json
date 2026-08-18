@@ -103,8 +103,10 @@
     "same_name_locals_no_collision": "100 200\n",
     "struct_param_by_value": "999\n3\n",
     "struct_return_by_value": "3 4\n3 999\n",
-    "same_name_struct_locals_no_collision": "1 2\n",
+    "same_name_struct_locals_no_collision": "1\n2\n",
     "struct_type_mismatch_copy_fail": "Error: Cannot copy-initialize from a struct variable of a different type at line 19",
     "struct_type_mismatch_param_fail": "Error: Struct argument type does not match parameter type at line 25",
-    "initialized_locals_in_function": "6\n7 8\n99\n"
+    "initialized_locals_in_function": "6\n7 8\n99\n",
+    "struct_pointer_return_fail": "Error: Struct pointer return types are not yet supported at line 11\nError: Undefined function at line 17",
+    "struct_return_type_mismatch_fail": "Error: Return expression type does not match declared return type at line 22"
 }

@@ -1,6 +1,9 @@
 🚽 Test case: two functions each declare a local struct with the same name
 🚽 but different types; semantic analysis must not confuse one function's
-🚽 local with the other's when resolving member access
+🚽 local with the other's when resolving member access. Uses yapping (not
+🚽 bussin) for the member access: NODE_RETURN's expression isn't walked by
+🚽 the semantic analyzer, so a `bussin p.x` here wouldn't actually exercise
+🚽 find_symbol during analysis, while a function-call argument does.
 gang Point {
     rizz x;
 };
@@ -12,16 +15,19 @@ gang Color {
 rizz foo() {
     gang Point p;
     p.x = 1;
-    bussin p.x;
+    yapping("%d", p.x);
+    bussin 0;
 }
 
 rizz bar() {
     gang Color p;
     p.r = 2;
-    bussin p.r;
+    yapping("%d", p.r);
+    bussin 0;
 }
 
 skibidi main {
-    yapping("%d %d", foo(), bar());
+    foo();
+    bar();
     bussin 0;
 }
