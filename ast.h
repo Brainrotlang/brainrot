@@ -59,7 +59,8 @@ typedef struct JumpBuffer
 
 typedef struct ExpressionList
 {
-    ASTNode *expr;
+    ASTNode *expr;                  /* scalar item; NULL when sublist is used */
+    struct ExpressionList *sublist; /* nested brace-init, e.g. { {1,2}, 3 } */
     struct ExpressionList *next;
     struct ExpressionList *prev;
 } ExpressionList;
@@ -82,6 +83,8 @@ typedef struct StructField
 {
     String name;
     VarType type;
+    String struct_name; /* nested struct/union tag; only set when
+                            type == VAR_STRUCT and pointer_level == 0 */
     int pointer_level;
     size_t offset; /* byte offset within the struct blob */
     struct StructField *next;
@@ -105,6 +108,8 @@ typedef struct Parameter
 {
     String name;
     VarType type;
+    String struct_name; /* nested struct/union tag; only set when
+                            type == VAR_STRUCT and pointer_level == 0 */
     int pointer_level;
     TypeModifiers modifiers;
     struct Parameter *next;
@@ -434,6 +439,9 @@ ASTNode *create_default_node(VarType var_type);
 ASTNode *create_return_node(ASTNode *expr);
 ExpressionList *create_expression_list(ASTNode *expr);
 ExpressionList *append_expression_list(ExpressionList *list, ASTNode *expr);
+ExpressionList *create_expression_sublist(ExpressionList *sub);
+ExpressionList *append_expression_list_node(ExpressionList *list,
+                                            ExpressionList *node);
 void free_expression_list(ExpressionList *list);
 void populate_multi_array_variable(String name, ExpressionList *list,
                                    int dimensions[], int num_dimensions);
@@ -512,6 +520,8 @@ ASTNode *create_struct_def_node(String name, StructField *fields);
 ASTNode *create_struct_access_node(ASTNode *object, String member);
 void *evaluate_struct_member_address(ASTNode *node);
 void populate_struct_variable(const String name, ExpressionList *list);
+bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
+                           StructField **field_out, bool report_errors);
 
 extern TypeModifiers current_modifiers;
 

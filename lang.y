@@ -32,6 +32,19 @@ void cooked_cleanup(void);
 /* Root of the AST */
 ASTNode *root = NULL;
 
+/* Tag of the struct/union currently being defined, used to reject direct
+   self-embedding (e.g. `gang Foo { gang Foo x; };`). Empty when not inside
+   a struct_def. Struct/union bodies never nest syntactically, so a single
+   slot is sufficient. */
+static String current_struct_def_name = {0};
+
+/* Set when a struct/union field declaration is invalid (self-embedding by
+   value, or an unknown nested type) in a way that made the layout just
+   computed for that struct/union meaningless. We don't YYABORT for this
+   (see struct_field's comment for why) — parsing finishes normally and
+   main() treats this exactly like a hard parse failure afterward. */
+static bool struct_def_had_error = false;
+
 /* Global interpreter for cleanup */
 static Interpreter *global_interpreter = NULL;
 %}
@@ -77,6 +90,7 @@ static Interpreter *global_interpreter = NULL;
 %type <node>  struct_def struct_access
 %type <param> struct_field_list struct_field   /* reuse Parameter as field carrier */
 %type <ival>  struct_or_union
+%type <expr_list> struct_initializer_list struct_initializer_item
 
 /* Declare types for non-terminals */
 %type <ival> type
@@ -149,15 +163,23 @@ struct_or_union
     ;
 
 struct_def
-    : struct_or_union IDENTIFIER LBRACE struct_field_list RBRACE SEMICOLON
+    : struct_or_union IDENTIFIER
+        {
+            /* Mid-rule: remember the tag being defined so struct_field can
+               reject direct self-embedding while the body is parsed. */
+            SAFE_FREE(current_struct_def_name.data);
+            current_struct_def_name = safe_strdup(&$2);
+        }
+      LBRACE struct_field_list RBRACE SEMICOLON
         {
             /* Build StructField list from Parameter list */
             StructField *fields = NULL, *tail = NULL;
-            Parameter *p = $4;
+            Parameter *p = $5;
             while (p) {
                 StructField *f = SAFE_MALLOC(StructField);
                 f->name          = safe_strdup(&p->name);
                 f->type          = p->type;
+                f->struct_name   = safe_strdup(&p->struct_name);
                 f->pointer_level = p->pointer_level;
                 f->offset        = 0; /* filled by compute_struct_layout */
                 f->next          = NULL;
@@ -176,6 +198,8 @@ struct_def
             register_struct_def(def);
             $$ = create_struct_def_node($2, fields);
             SAFE_FREE($2);
+            SAFE_FREE(current_struct_def_name.data);
+            current_struct_def_name = (String){0};
         }
     ;
 
@@ -198,6 +222,51 @@ struct_field
             $$ = create_parameter_ex($2.name, $1, $2.pointer_level, NULL,
                                      (TypeModifiers){0});
             SAFE_FREE($2.name);
+        }
+    | struct_or_union IDENTIFIER declarator SEMICOLON
+        {
+            /* A struct/union embedding itself BY VALUE has no finite size
+               (offset/self-check is only meaningful here, synchronously
+               with layout computation — deferring it to semantic analysis
+               would let a forward-referenced field's *layout* be silently
+               wrong even once the error is reported). A self-referential
+               POINTER field is fine (linked-list pattern) since its size
+               (sizeof(uintptr_t)) doesn't depend on the pointee being
+               complete yet.
+
+               Note: we deliberately don't YYABORT here. Aborting mid-way
+               through the still-open outer struct_def rule would strand
+               that rule's own pending IDENTIFIER token on the parser value
+               stack un-freed (this grammar has no %destructor entries), so
+               instead we record the error and let parsing finish normally;
+               main() checks struct_def_had_error after yyparse() and exits
+               the same way it does for a hard parse failure. */
+            bool is_self = current_struct_def_name.data &&
+                          strcmp($2.data, current_struct_def_name.data) == 0;
+            if (is_self && $3.pointer_level == 0)
+            {
+                yyerror("A struct/union cannot contain itself by value "
+                       "(use a pointer field instead)");
+                struct_def_had_error = true;
+            }
+            else if (!is_self && !get_struct_def($2))
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg),
+                         "Unknown struct/union type '%s'", $2.data);
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
+            $$ = create_parameter_ex($3.name, VAR_STRUCT, $3.pointer_level,
+                                     NULL, (TypeModifiers){0});
+            /* Parameter is arena-allocated like its other String fields
+               (see create_parameter_ex's ARENA_STRDUP(name)); use the arena
+               here too so this copy is reclaimed in bulk instead of leaking
+               (StructField, built from this Parameter below, makes its own
+               heap-owned safe_strdup copy that free_struct_registry frees). */
+            $$->struct_name = ARENA_STRDUP($2);
+            SAFE_FREE($3.name);
+            SAFE_FREE($2);
         }
     ;
 
@@ -412,7 +481,7 @@ declaration:
             SAFE_FREE($3);
             SAFE_FREE($4.name);
         }
-    | optional_modifiers struct_or_union IDENTIFIER declarator EQUALS LBRACE initializer_list RBRACE
+    | optional_modifiers struct_or_union IDENTIFIER declarator EQUALS LBRACE struct_initializer_list RBRACE
         {
             Variable *var = variable_new($4.name);
             var->var_type    = VAR_STRUCT;
@@ -488,6 +557,25 @@ initializer_list:
         { $$ = create_expression_list($1); }
     | initializer_list COMMA expression
         { $$ = append_expression_list($1, $3); }
+    ;
+
+/* Struct/union initializers get their own list nonterminal (rather than
+   reusing initializer_list) so a braced item can denote a nested
+   struct/union sub-initializer without creating a grammar ambiguity with
+   array_init's row_list (2D array literals), which also wraps
+   initializer_list in LBRACE...RBRACE. */
+struct_initializer_list:
+    struct_initializer_item
+        { $$ = $1; }
+    | struct_initializer_list COMMA struct_initializer_item
+        { $$ = append_expression_list_node($1, $3); }
+    ;
+
+struct_initializer_item:
+    expression
+        { $$ = create_expression_list($1); }
+    | LBRACE struct_initializer_list RBRACE
+        { $$ = create_expression_sublist($2); }
     ;
 
 row_list:
@@ -781,7 +869,7 @@ int main(int argc, char *argv[]) {
     stdrot_load();
 
     /* Phase 1: Parse the source code to build AST */
-    if (yyparse() != 0) {
+    if (yyparse() != 0 || struct_def_had_error) {
         fprintf(stderr, "Parsing failed\n");
         return 1;
     }
