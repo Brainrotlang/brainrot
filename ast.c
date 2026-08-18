@@ -19,6 +19,8 @@ HashMap *function_map = NULL;
 static HashMap *static_variable_map = NULL;
 static HashMap *struct_registry = NULL;
 static StructDef *struct_registry_list = NULL;
+static HashMap *enum_registry = NULL;
+static EnumDef *enum_registry_list = NULL;
 bool struct_def_had_error = false;
 ReturnValue current_return_value;
 Arena arena;
@@ -77,6 +79,8 @@ size_t get_type_size_for_descriptor(VarType type, int pointer_level,
         return sizeof(int);
     case VAR_STRING:
         return sizeof(String);
+    case VAR_ENUM:
+        return sizeof(int);
     case NONE:
     default:
         return 0;
@@ -136,6 +140,9 @@ bool set_variable(const String name, void *value, VarType type,
         case VAR_STRUCT:
             /* struct blob is managed separately via array_data; nothing to copy
              * here */
+            break;
+        case VAR_ENUM:
+            var->value.ivalue = *(int *)value;
             break;
         case NONE:
             break;
@@ -762,6 +769,11 @@ bool check_and_mark_identifier(ASTNode *node, const String contextErrorMessage)
         Variable *var = get_variable(node->data.name);
         if (var != NULL)
             node->is_valid_symbol = true;
+        /* Not a variable -- fall back to the enum-constant namespace (e.g.
+           bare `RED` from `gyatt Color { RED, ... };`), matching C's
+           unscoped enum constants. */
+        else if (find_global_enum_constant(node->data.name) != NULL)
+            node->is_valid_symbol = true;
 
         if (!node->is_valid_symbol)
         {
@@ -1058,6 +1070,7 @@ void *handle_identifier(ASTNode *node, const String contextErrorMessage,
                 promoted_value.dvalue = (double)var->value.fvalue;
                 return &promoted_value;
             case VAR_INT:
+            case VAR_ENUM:
                 promoted_value.dvalue = (double)var->value.ivalue;
                 return &promoted_value;
             case VAR_CHAR:
@@ -1084,6 +1097,7 @@ void *handle_identifier(ASTNode *node, const String contextErrorMessage,
             case VAR_FLOAT:
                 return &var->value.fvalue;
             case VAR_INT:
+            case VAR_ENUM:
                 promoted_value.fvalue = (float)var->value.ivalue;
                 return &promoted_value.fvalue;
             case VAR_CHAR:
@@ -1109,6 +1123,7 @@ void *handle_identifier(ASTNode *node, const String contextErrorMessage,
             case VAR_FLOAT:
                 return &var->value.fvalue;
             case VAR_INT:
+            case VAR_ENUM:
                 return &var->value.ivalue;
             case VAR_CHAR:
             case VAR_SHORT:
@@ -1122,6 +1137,26 @@ void *handle_identifier(ASTNode *node, const String contextErrorMessage,
                 return NULL;
             }
         }
+    }
+    /* Not a variable -- fall back to the enum-constant namespace (bare
+       `RED`-style usage). Enumerators have type int in C, so every promote
+       mode here mirrors its VAR_INT arm above. */
+    EnumConstant *econst = find_global_enum_constant(name);
+    if (econst != NULL)
+    {
+        static Value promoted_value;
+        if (promote == 1)
+        {
+            promoted_value.dvalue = (double)econst->value;
+            return &promoted_value;
+        }
+        if (promote == 2)
+        {
+            promoted_value.fvalue = (float)econst->value;
+            return &promoted_value.fvalue;
+        }
+        promoted_value.ivalue = econst->value;
+        return &promoted_value.ivalue;
     }
     yyerror("Undefined variable");
     return NULL;
@@ -1251,6 +1286,11 @@ VarType get_expression_type(ASTNode *node)
         if (var != NULL)
         {
             return var->var_type;
+        }
+        /* Not a variable -- an enum constant has type int in C. */
+        if (find_global_enum_constant(array_name) != NULL)
+        {
+            return VAR_INT;
         }
         yyerror("Undefined variable in get_expression_type");
         return NONE;
@@ -1649,6 +1689,8 @@ void *evaluate_lvalue_address(ASTNode *node)
             return &var->value.ivalue;
         case VAR_STRING:
             return &var->value.strvalue;
+        case VAR_ENUM:
+            return &var->value.ivalue;
         default:
             yyerror("Unsupported lvalue type");
             return NULL;
@@ -1795,6 +1837,9 @@ static void write_value_to_address(void *address, VarType type,
     case VAR_STRING:
         *(String *)address = evaluate_expression_string(expr);
         break;
+    case VAR_ENUM:
+        *(int *)address = evaluate_expression_int(expr);
+        break;
     case NONE:
     default:
         yyerror("Unsupported assignment type");
@@ -1836,6 +1881,9 @@ static void initialize_variable_from_expr(Variable *var, ASTNode *expr)
         break;
     case VAR_STRING:
         var->value.strvalue = evaluate_expression_string(expr);
+        break;
+    case VAR_ENUM:
+        var->value.ivalue = evaluate_expression_int(expr);
         break;
     case NONE:
     default:
@@ -2163,6 +2211,7 @@ float evaluate_expression_float(ASTNode *node)
         switch (fld->type)
         {
         case VAR_INT:
+        case VAR_ENUM:
             return (float)*(int *)addr;
         case VAR_SHORT:
             return (float)*(short *)addr;
@@ -2288,6 +2337,7 @@ double evaluate_expression_double(ASTNode *node)
         switch (fld->type)
         {
         case VAR_INT:
+        case VAR_ENUM:
             return (double)*(int *)addr;
         case VAR_SHORT:
             return (double)*(short *)addr;
@@ -2334,6 +2384,12 @@ size_t get_type_size(String name)
         }
         return var->is_array ? base * var->array_length : base;
     }
+    /* Not a variable -- a bare enum constant (e.g. `maxxing(RED)`) has type
+       int in C. */
+    if (find_global_enum_constant(name) != NULL)
+    {
+        return sizeof(int);
+    }
     yyerror("Undefined variable in sizeof");
     return 0;
 }
@@ -2369,6 +2425,9 @@ size_t handle_sizeof(ASTNode *node)
             return get_type_size_for_descriptor(
                 type, get_expression_pointer_level(expr), expr->modifiers);
         case VAR_CHAR:
+            return get_type_size_for_descriptor(
+                type, get_expression_pointer_level(expr), expr->modifiers);
+        case VAR_ENUM:
             return get_type_size_for_descriptor(
                 type, get_expression_pointer_level(expr), expr->modifiers);
         case VAR_STRUCT:
@@ -2580,6 +2639,7 @@ short evaluate_expression_short(ASTNode *node)
         switch (fld->type)
         {
         case VAR_INT:
+        case VAR_ENUM:
             return (short)*(int *)addr;
         case VAR_SHORT:
             return *(short *)addr;
@@ -2730,6 +2790,7 @@ int evaluate_expression_int(ASTNode *node)
         switch (fld->type)
         {
         case VAR_INT:
+        case VAR_ENUM:
             return *(int *)addr;
         case VAR_SHORT:
             return (int)*(short *)addr;
@@ -2800,6 +2861,10 @@ void *handle_function_call(ASTNode *node)
                generic scalar-expression context; discard it (freeing the
                blob handle_return_statement allocated) rather than leak. */
             free_pending_struct_return_value();
+            break;
+        case VAR_ENUM:
+            return_value = SAFE_MALLOC(int);
+            *(int *)return_value = current_return_value.value.ivalue;
             break;
         case NONE:
             return NULL;
@@ -2951,6 +3016,7 @@ bool evaluate_expression_bool(ASTNode *node)
         switch (fld->type)
         {
         case VAR_INT:
+        case VAR_ENUM:
             return (bool)*(int *)addr;
         case VAR_SHORT:
             return (bool)*(short *)addr;
@@ -3104,6 +3170,11 @@ bool is_expression(ASTNode *node, VarType type)
         {
             return var->var_type == type;
         }
+        /* Not a variable -- an enum constant has type int in C. */
+        if (find_global_enum_constant(node->data.name) != NULL)
+        {
+            return type == VAR_INT;
+        }
         yyerror("Undefined variable in type check");
         return false;
     }
@@ -3114,8 +3185,15 @@ bool is_expression(ASTNode *node, VarType type)
     }
     case NODE_FUNC_CALL:
     {
-        return get_function_return_type(node->data.func_call.function_name) ==
-               type;
+        VarType ret =
+            get_function_return_type(node->data.func_call.function_name);
+        /* An enum return has type int in C -- treat it as such here so
+           general int-context callers (e.g. ast_expr_to_stdrot_value's
+           varargs marshalling) recognize it without needing a VAR_ENUM
+           case of their own. */
+        if (type == VAR_INT && ret == VAR_ENUM)
+            return true;
+        return ret == type;
     }
     case NODE_STRUCT_ACCESS:
     {
@@ -3582,6 +3660,8 @@ ASTNode *create_default_node(VarType var_type)
         String s = {.data = "\0", .len = sizeof("\0") - 1};
         return create_string_literal_node(s);
     }
+    case VAR_ENUM:
+        return create_int_node(0);
     default:
         yyerror("Unsupported type for default node");
         exit(1);
@@ -3814,6 +3894,7 @@ static void populate_struct_fields(StructDef *def, void *base,
             switch (fld->type)
             {
             case VAR_INT:
+            case VAR_ENUM:
                 *(int *)addr = evaluate_expression_int(cur->expr);
                 break;
             case VAR_SHORT:
@@ -4282,6 +4363,10 @@ void handle_return_statement(ASTNode *expr)
                 current_return_value.value.svalue =
                     evaluate_expression_short(expr);
                 break;
+            case VAR_ENUM:
+                current_return_value.value.ivalue =
+                    evaluate_expression_int(expr);
+                break;
             case NONE:
                 /* void/skibidi return type: ignore expression value */
                 break;
@@ -4374,6 +4459,7 @@ Parameter *create_parameter_ex(String name, VarType type, int pointer_level,
     param->name = ARENA_STRDUP(name);
     param->type = type;
     param->struct_name = (String){0};
+    param->enum_name = (String){0};
     param->pointer_level = pointer_level;
     param->next = next;
     param->modifiers = mods;
@@ -4454,6 +4540,27 @@ ASTNode *create_function_def_node_struct(String name, String struct_name,
     Function *func = create_function_ex(name, VAR_STRUCT, 0, params, body);
     if (func)
         func->return_struct_name = ARENA_STRDUP(struct_name);
+
+    return node;
+}
+
+ASTNode *create_function_def_node_enum(String name, String enum_name,
+                                       int pointer_level, Parameter *params,
+                                       ASTNode *body)
+{
+    /* An enum return is a plain int at runtime, so unlike the struct
+       variant above, no pointer_level restriction is needed here -- the
+       generic VAR_INT-shaped path (handle_return_statement, handle_
+       function_call, interpreter_visit_declaration) already handles any
+       pointer_level correctly. */
+    ASTNode *node = create_function_def_node_ex(name, VAR_ENUM, pointer_level,
+                                                params, body);
+    if (node)
+        node->data.function_def.return_enum_name = ARENA_STRDUP(enum_name);
+
+    Function *func = get_function(name);
+    if (func)
+        func->return_enum_name = ARENA_STRDUP(enum_name);
 
     return node;
 }
@@ -4542,6 +4649,7 @@ bool enter_function_scope(Function *func, ArgumentList *args)
         {
         case VAR_INT:
         case VAR_CHAR:
+        case VAR_ENUM:
             arg_values[arg_count].ivalue =
                 evaluate_expression_int(curr_arg->expr);
             break;
@@ -4685,6 +4793,19 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             }
             break;
         }
+        case VAR_ENUM:
+        {
+            /* Not routed through set_int_variable() (unlike VAR_INT/
+               VAR_CHAR above) because that would force var_type back to
+               VAR_INT, losing the enum tag set on `var` a few lines up. */
+            Variable *bound = get_variable(curr_param->name);
+            if (bound)
+            {
+                bound->value.ivalue = arg_values[i].ivalue;
+                bound->enum_name = safe_strdup(&curr_param->enum_name);
+            }
+            break;
+        }
         case NONE:
             break;
         }
@@ -4806,4 +4927,114 @@ size_t compute_union_layout(StructField *fields)
         f = f->next;
     }
     return max_size;
+}
+
+void register_enum_def(EnumDef *def)
+{
+    if (!enum_registry)
+        enum_registry = hm_new();
+    hm_put(enum_registry, def->name.data, def->name.len, def, sizeof(EnumDef));
+    def->next_def = enum_registry_list;
+    enum_registry_list = def;
+}
+
+EnumDef *get_enum_def(const String name)
+{
+    if (!enum_registry || !name.data)
+        return NULL;
+    return (EnumDef *)hm_get(enum_registry, name.data, name.len);
+}
+
+void free_enum_registry(void)
+{
+    if (enum_registry)
+    {
+        hm_free_shallow(enum_registry);
+        enum_registry = NULL;
+    }
+    EnumDef *def = enum_registry_list;
+    while (def)
+    {
+        EnumConstant *c = def->constants;
+        while (c)
+        {
+            EnumConstant *nxt = c->next;
+            SAFE_FREE(c->name);
+            SAFE_FREE(c);
+            c = nxt;
+        }
+        SAFE_FREE(def->name);
+        EnumDef *nxt = def->next_def;
+        SAFE_FREE(def);
+        def = nxt;
+    }
+    enum_registry_list = NULL;
+}
+
+EnumConstant *find_global_enum_constant(const String name)
+{
+    if (!name.data)
+        return NULL;
+    EnumDef *def = enum_registry_list;
+    while (def)
+    {
+        EnumConstant *c = def->constants;
+        while (c)
+        {
+            if (strcmp(c->name.data, name.data) == 0)
+                return c;
+            c = c->next;
+        }
+        def = def->next_def;
+    }
+    return NULL;
+}
+
+bool finalize_enum_constants(EnumDef *def)
+{
+    bool ok = true;
+    int next_value = 0;
+    EnumConstant *c = def->constants;
+    while (c)
+    {
+        if (c->has_explicit_value)
+            next_value = c->value;
+        else
+            c->value = next_value;
+
+        EnumConstant *prev = def->constants;
+        while (prev != c)
+        {
+            if (strcmp(prev->name.data, c->name.data) == 0)
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg),
+                         "Duplicate enum constant '%s' in '%s'", c->name.data,
+                         def->name.data);
+                yyerror(msg);
+                ok = false;
+                break;
+            }
+            prev = prev->next;
+        }
+        if (ok && find_global_enum_constant(c->name))
+        {
+            char msg[MAX_BUFFER_LEN];
+            snprintf(msg, sizeof(msg), "Enum constant '%s' is already defined",
+                     c->name.data);
+            yyerror(msg);
+            ok = false;
+        }
+
+        next_value = c->value + 1;
+        c = c->next;
+    }
+    return ok;
+}
+
+ASTNode *create_enum_def_node(String name)
+{
+    ASTNode *node = create_node(NODE_ENUM_DEF, NONE, current_modifiers);
+    node->data.name = ARENA_STRDUP(name);
+    return node;
 }

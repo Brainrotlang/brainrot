@@ -156,6 +156,8 @@ const char *vartype_to_string(VarType type)
         return "char";
     case VAR_STRING:
         return "string";
+    case VAR_ENUM:
+        return "enum";
     case NONE:
         return "void";
     default:
@@ -278,11 +280,15 @@ bool check_type_compatibility_ex(VarType expected, int expected_pointer_level,
     if (expected == actual)
         return true;
 
-    /* Allow implicit conversions between numeric types */
+    /* Allow implicit conversions between numeric types. An enum variable
+       is included here (rather than requiring an exact VAR_ENUM match) to
+       match C, where enum constants/variables freely interconvert with
+       int without a cast. */
     if ((expected == VAR_INT || expected == VAR_SHORT ||
-         expected == VAR_FLOAT || expected == VAR_DOUBLE) &&
+         expected == VAR_FLOAT || expected == VAR_DOUBLE ||
+         expected == VAR_ENUM) &&
         (actual == VAR_INT || actual == VAR_SHORT || actual == VAR_FLOAT ||
-         actual == VAR_DOUBLE))
+         actual == VAR_DOUBLE || actual == VAR_ENUM))
     {
         return true;
     }
@@ -397,6 +403,11 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
         if (var)
         {
             return var->var_type;
+        }
+        /* Not a variable -- an enum constant has type int in C. */
+        if (find_global_enum_constant(node->data.name))
+        {
+            return VAR_INT;
         }
         return NONE;
     }
@@ -533,9 +544,11 @@ bool validate_binary_operation(ASTNode *left, ASTNode *right, OperatorType op,
     case OP_MOD:
         /* Arithmetic operations require numeric types */
         if ((left_type == VAR_INT || left_type == VAR_SHORT ||
-             left_type == VAR_FLOAT || left_type == VAR_DOUBLE) &&
+             left_type == VAR_FLOAT || left_type == VAR_DOUBLE ||
+             left_type == VAR_ENUM) &&
             (right_type == VAR_INT || right_type == VAR_SHORT ||
-             right_type == VAR_FLOAT || right_type == VAR_DOUBLE))
+             right_type == VAR_FLOAT || right_type == VAR_DOUBLE ||
+             right_type == VAR_ENUM))
         {
             return true;
         }
@@ -579,9 +592,11 @@ bool validate_binary_operation(ASTNode *left, ASTNode *right, OperatorType op,
         }
         /* Relational comparisons require numeric types */
         if ((left_type == VAR_INT || left_type == VAR_SHORT ||
-             left_type == VAR_FLOAT || left_type == VAR_DOUBLE) &&
+             left_type == VAR_FLOAT || left_type == VAR_DOUBLE ||
+             left_type == VAR_ENUM) &&
             (right_type == VAR_INT || right_type == VAR_SHORT ||
-             right_type == VAR_FLOAT || right_type == VAR_DOUBLE))
+             right_type == VAR_FLOAT || right_type == VAR_DOUBLE ||
+             right_type == VAR_ENUM))
         {
             return true;
         }
@@ -661,7 +676,8 @@ void *semantic_visit_identifier(Visitor *self, ASTNode *node)
             Variable *var = get_variable(name);
             if (!var)
             {
-                if (!is_builtin_function(name))
+                if (!is_builtin_function(name) &&
+                    !find_global_enum_constant(name))
                 {
                     char error_msg[MAX_BUFFER_LEN];
                     snprintf(error_msg, sizeof(error_msg),
@@ -1564,8 +1580,9 @@ void semantic_analyze_node(SemanticAnalyzer *analyzer, ASTNode *node)
 
         if (!find_semantic_variable(analyzer, name, &symbol))
         {
-            /* Check if it's a built-in function or keyword */
-            if (!is_builtin_function(name))
+            /* Check if it's a built-in function/keyword, or an unscoped
+               enum constant (e.g. bare `RED`). */
+            if (!is_builtin_function(name) && !find_global_enum_constant(name))
             {
                 char error_msg[MAX_BUFFER_LEN];
                 snprintf(error_msg, sizeof(error_msg),

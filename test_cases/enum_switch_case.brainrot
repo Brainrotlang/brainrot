@@ -1,0 +1,24 @@
+🚽 Test case: enum constants used as ohio (switch)/sigma rule (case) labels
+gyatt Color {
+    RED,
+    GREEN,
+    BLUE
+};
+
+skibidi main {
+    gyatt Color favorite;
+    favorite = GREEN;
+
+    ohio (favorite) {
+        sigma rule RED:
+            yapping("its red");
+            bruh;
+        sigma rule GREEN:
+            yapping("its green");
+            bruh;
+        based:
+            yapping("dunno");
+    }
+
+    bussin 0;
+}

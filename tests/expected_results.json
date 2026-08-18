@@ -60,7 +60,7 @@
     "matrix_init_simple": "1\n9\n6\n",
     "grid_bfs": "8",
     "grid_bfs_1d": "8",
-    "rant":"hello, world!",
+    "rant": "hello, world!",
     "semantic_error_const": "Error: Cannot modify const variable at line 4",
     "semantic_error_function_redef": "Error: Function redefinition at line 1",
     "semantic_error_scope": "Error: Variable out of scope at line 8",
@@ -109,5 +109,18 @@
     "struct_type_mismatch_param_fail": "Error: Struct argument type does not match parameter type at line 25",
     "initialized_locals_in_function": "6\n7 8\n99\n",
     "struct_pointer_return_fail": "Error: Struct pointer return types are not yet supported at line 11\nError: Undefined function at line 17",
-    "struct_return_type_mismatch_fail": "Error: Return expression type does not match declared return type at line 22"
+    "struct_return_type_mismatch_fail": "Error: Return expression type does not match declared return type at line 22",
+    "enum_basic": "1\n0 1 2\n2",
+    "enum_explicit_values": "0 5 6",
+    "enum_in_struct": "2 4",
+    "enum_in_union": "1\n1",
+    "enum_local_in_function": "1",
+    "enum_param_by_value": "1\n0",
+    "enum_return_by_value": "0\n2",
+    "sizeof_enum": "4\n4",
+    "enum_switch_case": "its green",
+    "enum_duplicate_constant_fail": "Error: Duplicate enum constant 'RED' in 'Color' at line 4\nParsing failed",
+    "enum_redefinition_fail": "Error: Enum 'Color' is already defined at line 9\nParsing failed",
+    "enum_unknown_type_fail": "Error: Unknown enum type 'Ghost' at line 2\nParsing failed",
+    "enum_duplicate_across_enums_fail": "Error: Enum constant 'RED' is already defined at line 10\nParsing failed"
 }

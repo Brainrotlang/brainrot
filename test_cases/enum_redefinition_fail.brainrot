@@ -1,0 +1,14 @@
+🚽 Test case: redefining an already-defined enum tag
+gyatt Color {
+    RED,
+    GREEN
+};
+
+gyatt Color {
+    A,
+    B
+};
+
+skibidi main {
+    bussin 0;
+}

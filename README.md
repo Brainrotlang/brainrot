@@ -218,7 +218,7 @@ Join our community on:
 | sigma rule | case         | ✅           |
 | based      | default      | ✅           |
 | mewing     | do           | ✅           |
-| gyatt      | enum         | ❌           |
+| gyatt      | enum         | ✅           |
 | whopper    | extern       | ❌           |
 | cringe     | goto         | ❌           |
 | giga       | long         | ✅           |

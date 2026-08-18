@@ -1,0 +1,21 @@
+🚽 Test case: enum-typed function return value
+gyatt Color {
+    RED,
+    GREEN,
+    BLUE
+};
+
+gyatt Color pick(rizz n) {
+    edgy (n == 0) {
+        bussin RED;
+    }
+    bussin BLUE;
+}
+
+skibidi main {
+    gyatt Color a = pick(0);
+    gyatt Color b = pick(1);
+    yapping("%d", a);
+    yapping("%d", b);
+    bussin 0;
+}

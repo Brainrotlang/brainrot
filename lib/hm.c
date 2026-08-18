@@ -258,6 +258,10 @@ void hm_free(HashMap *hm)
                 {
                     SAFE_FREE(var->struct_name);
                 }
+                if (var->enum_name.data)
+                {
+                    SAFE_FREE(var->enum_name);
+                }
             }
 
             SAFE_FREE(hm->nodes[i]->value);
