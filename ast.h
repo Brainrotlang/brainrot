@@ -83,8 +83,12 @@ typedef struct StructField
 {
     String name;
     VarType type;
-    String struct_name; /* nested struct/union tag; only set when
-                            type == VAR_STRUCT and pointer_level == 0 */
+    String struct_name; /* nested struct/union tag; set whenever
+                            type == VAR_STRUCT, including pointer-typed
+                            fields (pointer_level > 0) — e.g. a
+                            self-referential `gang Node *next;` field still
+                            needs its tag recorded even though chaining `.`
+                            through it isn't supported yet */
     int pointer_level;
     size_t offset; /* byte offset within the struct blob */
     struct StructField *next;
@@ -108,8 +112,12 @@ typedef struct Parameter
 {
     String name;
     VarType type;
-    String struct_name; /* nested struct/union tag; only set when
-                            type == VAR_STRUCT and pointer_level == 0 */
+    String struct_name; /* nested struct/union tag; set whenever
+                            type == VAR_STRUCT, including pointer-typed
+                            fields (pointer_level > 0) — e.g. a
+                            self-referential `gang Node *next;` field still
+                            needs its tag recorded even though chaining `.`
+                            through it isn't supported yet */
     int pointer_level;
     TypeModifiers modifiers;
     struct Parameter *next;
@@ -439,7 +447,13 @@ ASTNode *create_default_node(VarType var_type);
 ASTNode *create_return_node(ASTNode *expr);
 ExpressionList *create_expression_list(ASTNode *expr);
 ExpressionList *append_expression_list(ExpressionList *list, ASTNode *expr);
+/* Wrap an already-built ExpressionList as a single circular-list-of-one
+   node whose `sublist` (not `expr`) holds it — used for a braced nested
+   initializer item, e.g. the `{1, 2}` in `Outer o = { {1, 2}, 3 };`. */
 ExpressionList *create_expression_sublist(ExpressionList *sub);
+/* Like append_expression_list(), but splices an already-built node
+   (typically from create_expression_list() or create_expression_sublist())
+   onto the end of `list` instead of allocating one from a raw ASTNode. */
 ExpressionList *append_expression_list_node(ExpressionList *list,
                                             ExpressionList *node);
 void free_expression_list(ExpressionList *list);
@@ -520,8 +534,25 @@ ASTNode *create_struct_def_node(String name, StructField *fields);
 ASTNode *create_struct_access_node(ASTNode *object, String member);
 void *evaluate_struct_member_address(ASTNode *node);
 void populate_struct_variable(const String name, ExpressionList *list);
+/* Resolve a NODE_STRUCT_ACCESS node — including a chain such as `a.b.c`,
+   via recursion — to the StructDef/base-address/field describing the
+   *object* being accessed (i.e. `*field_out` is the field named by this
+   node's own member_name; `(char *)*base_out + (*field_out)->offset` is
+   its address). Returns false on any resolution failure (undefined
+   variable, wrong type, unknown member, or chaining through a
+   pointer-typed struct/union field, which isn't supported). When
+   `report_errors` is true, failures are also reported via yyerror();
+   pass false for speculative/best-effort callers (e.g. type inference)
+   that shouldn't surface parse- or runtime-time diagnostics of their own. */
 bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                            StructField **field_out, bool report_errors);
+/* Set when parsing produced a struct/union that's unusable (self-embedding
+   by value, an unknown nested type, or — see populate_struct_fields() —
+   a scalar/flattened value where a nested struct/union sub-initializer
+   was required). main() checks this after yyparse() and, if set, exits the
+   same way it does for a hard parse failure; see lang.y's struct_field
+   for why we don't YYABORT for these instead. */
+extern bool struct_def_had_error;
 
 extern TypeModifiers current_modifiers;
 

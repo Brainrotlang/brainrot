@@ -1,0 +1,16 @@
+🚽 Test case: a flattened (C-style) initializer for a nested struct field
+🚽 must error instead of silently leaving the field zero-initialized
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+gang Line {
+    gang Point start;
+    gang Point end;
+};
+
+skibidi main {
+    gang Line m = {1, 2, 10, 20};
+    yapping("unreachable");
+}

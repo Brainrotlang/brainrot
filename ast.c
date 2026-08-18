@@ -19,6 +19,7 @@ HashMap *function_map = NULL;
 static HashMap *static_variable_map = NULL;
 static HashMap *struct_registry = NULL;
 static StructDef *struct_registry_list = NULL;
+bool struct_def_had_error = false;
 ReturnValue current_return_value;
 Arena arena;
 
@@ -1188,7 +1189,7 @@ int get_expression_pointer_level(ASTNode *node)
         StructDef *def = NULL;
         void *base = NULL;
         StructField *fld = NULL;
-        if (!resolve_struct_access(node, &def, &base, &fld, true))
+        if (!resolve_struct_access(node, &def, &base, &fld, false))
             return 0;
         return fld->pointer_level;
     }
@@ -1307,7 +1308,7 @@ VarType get_expression_type(ASTNode *node)
         StructDef *def = NULL;
         void *base = NULL;
         StructField *fld = NULL;
-        if (!resolve_struct_access(node, &def, &base, &fld, true))
+        if (!resolve_struct_access(node, &def, &base, &fld, false))
             return NONE;
         return fld->type;
     }
@@ -3066,7 +3067,7 @@ bool is_expression(ASTNode *node, VarType type)
         StructDef *def = NULL;
         void *base = NULL;
         StructField *fld = NULL;
-        if (!resolve_struct_access(node, &def, &base, &fld, true))
+        if (!resolve_struct_access(node, &def, &base, &fld, false))
             return false;
         return fld->type == type;
     }
@@ -3632,15 +3633,40 @@ static void populate_struct_fields(StructDef *def, void *base,
     while (fld && cur)
     {
         void *addr = (char *)base + fld->offset;
-        if (fld->pointer_level > 0)
+        bool is_nested_aggregate =
+            (fld->type == VAR_STRUCT && fld->pointer_level == 0);
+
+        /* Catch a shape mismatch between the initializer item and the
+           field before evaluating anything: a braced sub-initializer for
+           a scalar/pointer field, or a bare value for a nested
+           struct/union field, would otherwise be silently misapplied
+           (evaluate_expression_*(NULL) for a missing expr, or the sublist
+           just being dropped) instead of reported. */
+        if (is_nested_aggregate != (cur->sublist != NULL))
+        {
+            char msg[MAX_BUFFER_LEN];
+            if (is_nested_aggregate)
+                snprintf(msg, sizeof(msg),
+                         "Field '%s' is a nested struct/union and needs a "
+                         "braced sub-initializer (e.g. '{ ... }'), not a "
+                         "plain value",
+                         fld->name.data ? fld->name.data : "?");
+            else
+                snprintf(msg, sizeof(msg),
+                         "Field '%s' is not a nested struct/union and can't "
+                         "be initialized with a braced sub-initializer",
+                         fld->name.data ? fld->name.data : "?");
+            yyerror(msg);
+            struct_def_had_error = true;
+        }
+        else if (is_nested_aggregate)
+        {
+            populate_struct_fields(get_struct_def(fld->struct_name), addr,
+                                   cur->sublist);
+        }
+        else if (fld->pointer_level > 0)
         {
             *(uintptr_t *)addr = evaluate_expression_pointer(cur->expr);
-        }
-        else if (fld->type == VAR_STRUCT)
-        {
-            if (cur->sublist)
-                populate_struct_fields(get_struct_def(fld->struct_name), addr,
-                                       cur->sublist);
         }
         else
         {

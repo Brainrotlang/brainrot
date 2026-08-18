@@ -444,6 +444,11 @@ Notes and limitations on nesting:
   allowed to declare, but chained `.` access through a pointer-typed
   struct/union field (e.g. `a.ptr.b`) is not yet supported — dereference it
   explicitly first.
+- A nested struct/union field's brace-initializer must itself be a braced
+  sub-initializer, matching the shape of the type — `gang Line m = { {5, 6},
+  {7, 8} };`, **not** the flattened `gang Line m = {5, 6, 7, 8};`. The
+  reverse (a braced sub-initializer for a plain scalar field) is likewise
+  an error.
 
 #### Full Example
 

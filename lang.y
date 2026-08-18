@@ -38,12 +38,14 @@ ASTNode *root = NULL;
    slot is sufficient. */
 static String current_struct_def_name = {0};
 
-/* Set when a struct/union field declaration is invalid (self-embedding by
+/* struct_def_had_error (declared extern in ast.h, defined in ast.c) is set
+   when a struct/union field declaration is invalid (self-embedding by
    value, or an unknown nested type) in a way that made the layout just
-   computed for that struct/union meaningless. We don't YYABORT for this
-   (see struct_field's comment for why) — parsing finishes normally and
-   main() treats this exactly like a hard parse failure afterward. */
-static bool struct_def_had_error = false;
+   computed for that struct/union meaningless — or, from
+   populate_struct_fields() in ast.c, when a nested struct/union field's
+   initializer wasn't itself a braced sub-initializer. We don't YYABORT for
+   this (see struct_field's comment for why) — parsing finishes normally
+   and main() treats it exactly like a hard parse failure afterward. */
 
 /* Global interpreter for cleanup */
 static Interpreter *global_interpreter = NULL;

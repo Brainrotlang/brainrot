@@ -1365,6 +1365,23 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
             if (obj->var_type == NONE)
                 break; /* obj's own access already failed and was reported */
             parent_is_struct_typed = (obj->var_type == VAR_STRUCT);
+            if (parent_is_struct_typed && obj->pointer_level > 0)
+            {
+                /* obj is a pointer-typed struct/union field (e.g. the
+                   `n.next` in `n.next.v` where `next` is `gang Node *`).
+                   Chaining `.` through it isn't supported (see
+                   resolve_struct_access's doc comment) — catch it here so
+                   interpretation never starts, rather than letting every
+                   runtime evaluator independently hit and report the same
+                   failure. */
+                add_semantic_error(
+                    analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                    STRING_LITERAL(
+                        "Chained member access through a pointer-typed "
+                        "struct/union field is not supported"),
+                    node->line_number > 0 ? node->line_number : 1);
+                break;
+            }
             if (parent_is_struct_typed &&
                 obj->data.struct_access.struct_name.data)
                 parent_def =
