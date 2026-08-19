@@ -153,6 +153,22 @@ for (const [example, nativeExpectedOutput] of Object.entries(expectedResults)) {
     continue;
   }
 
+  // "ExitCode:N" mirrors test_brainrot.py's convention: asserts only the
+  // exit code, for fixtures whose only observable behavior *is* the exit
+  // code (e.g. ragequit/chill have no return value to print).
+  if (expectedOutput.startsWith("ExitCode:")) {
+    const expectedCode = Number(expectedOutput.split(":", 2)[1]);
+    if (result.exitCode !== expectedCode) {
+      failures++;
+      console.error(
+        `✗ ${example}: expected exit ${expectedCode}, got ${result.exitCode}`,
+      );
+      continue;
+    }
+    passed++;
+    continue;
+  }
+
   const stdoutTrimmed = result.stdout.trim();
   const stderrTrimmed = result.stderr.trim();
   let actualOutput = stdoutTrimmed || stderrTrimmed;
