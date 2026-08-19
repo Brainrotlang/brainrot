@@ -122,7 +122,7 @@ jobs:
         # mymindstorm/setup-emsdk was transferred to emscripten-core/setup-emsdk;
         # SHA-pinned (v14) so a retagged release can't silently change what
         # builds the artifact the playground will consume.
-        uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
+        uses: emscripten-core/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
         with:
           version: 3.1.73
 
