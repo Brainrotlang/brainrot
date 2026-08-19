@@ -56,20 +56,23 @@ StdrotValue stdrot_bet(StdrotValue *args, int argc)
 
     bet(condition, message);
 
-    // Return empty value (assertion succeeded)
+    // bet() above exit()s on failure, so reaching here means the assertion
+    // held -- return a real W (true), matching the declared cap return
+    // type instead of a placeholder int.
     StdrotValue result = {0};
-    result.type = STDROT_INT;
-    result.val.i = 0;
+    result.type = STDROT_BOOL;
+    result.val.b = true;
     return result;
 }
 
-// bet(cap, [const char *]) -> cap: message is an optional second argument,
-// so the fixed/checked prefix is just the condition and the rest is left
-// variadic rather than modelling an "optional param" concept.
+// bet(cap, [const char *]) -> cap: the condition is mandatory (min_args=1),
+// the message is optional but still checked as a string when present
+// (param_count=2), and there's no further unchecked tail (is_variadic=false).
 static const StdrotParam bet_params[] = {
     {STDROT_BOOL, NULL, 0},
+    {STDROT_STRING, NULL, 0},
 };
 
 // Register with auto-export macro
 STDROT_EXPORT_SIG("bet", stdrot_bet, ((StdrotParam){STDROT_BOOL, NULL, 0}),
-                  bet_params, 1, true);
+                  bet_params, 2, 1, false);

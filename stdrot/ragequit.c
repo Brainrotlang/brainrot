@@ -53,7 +53,7 @@ static const StdrotParam seconds_params[] = {
 };
 
 STDROT_EXPORT_SIG("ragequit", stdrot_ragequit,
-                  ((StdrotParam){STDROT_NONE, NULL, 0}), exit_code_params, 1,
+                  ((StdrotParam){STDROT_NONE, NULL, 0}), exit_code_params, 1, 1,
                   false);
 STDROT_EXPORT_SIG("chill", stdrot_chill, ((StdrotParam){STDROT_NONE, NULL, 0}),
-                  seconds_params, 1, false);
+                  seconds_params, 1, 1, false);

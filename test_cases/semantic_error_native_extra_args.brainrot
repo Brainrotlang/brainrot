@@ -1,0 +1,6 @@
+🚽 Test case: a non-variadic native call (ragequit takes exactly one exit
+🚽 code) rejects extra arguments statically.
+skibidi main {
+    ragequit(0, 1);
+    bussin 0;
+}

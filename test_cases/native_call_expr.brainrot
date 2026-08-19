@@ -19,10 +19,11 @@ skibidi main
     🚽 argument: a native call passed as an argument to another native call
     yapping("argument: %d", bet(W));
 
-    🚽 binary operand: a native call combined with a user-defined function's
-    🚽 result
-    rizz combined = bet(W) + addOne(10);
-    yapping("combined: %d", combined);
+    🚽 binary operand: a native call's cap result combined, via a
+    🚽 logical operator (cap doesn't arithmetically mix with rizz), with a
+    🚽 comparison against a user-defined function's result
+    cap combined = bet(W) && (addOne(10) == 11);
+    yapping("combined: %b", combined);
 
     bussin 0;
 }

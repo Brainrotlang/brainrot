@@ -18,7 +18,7 @@
  *        };
  *        STDROT_EXPORT_SIG("myfunc", stdrot_myfunc,
  *                          ((StdrotParam){STDROT_BOOL, NULL, 0}),
- *                          myfunc_params, 1, false);
+ *                          myfunc_params, 1, 1, false);
  *
  *      Or, for an unchecked/untyped export: STDROT_EXPORT("myfunc",
  *      stdrot_myfunc); -- arity and types are then left unchecked.
@@ -125,10 +125,13 @@ typedef StdrotValue (*StdrotFn)(StdrotValue *args, int argc);
  * fn != NULL  →  generic function, called with pre-evaluated StdrotValue args
  *
  * return_type / params describe the signature for the semantic analyzer.
- * params covers only the fixed/checked prefix of the argument list --
- * is_variadic == true means "arity >= param_count, remaining args
- * unchecked" (used for format-string builtins and for legacy/untyped
- * exports, where param_count is 0).
+ * params holds param_count entries, each checked (type + pointer_level)
+ * whenever the caller actually supplies that argument -- min_args of them
+ * are mandatory (arity error below that), the rest (min_args..param_count)
+ * are optional-but-typed, e.g. bet's trailing message string. is_variadic
+ * == true additionally allows args beyond param_count, left completely
+ * unchecked (format-string tails, legacy/untyped exports, where
+ * param_count and min_args are both 0).
  */
 typedef struct
 {
@@ -136,6 +139,7 @@ typedef struct
     StdrotParam return_type;
     const StdrotParam *params;
     int param_count;
+    int min_args;
     bool is_variadic;
     StdrotFn fn;
 } StdrotEntry;
@@ -147,7 +151,8 @@ typedef struct
  * ret is a StdrotParam compound literal, e.g. ((StdrotParam){STDROT_BOOL,
  * NULL, 0}). params_ptr is NULL or a `static const StdrotParam foo[] = {...}`
  * declared above the STDROT_EXPORT_SIG call, covering the first pcount
- * arguments; anything beyond that is unchecked when variadic is true.
+ * arguments (min_count of which are mandatory, the rest optional-but-typed);
+ * anything beyond pcount is unchecked when variadic is true.
  *
  * STDROT_EXPORT(name, fn) is the untyped legacy form: signature unknown,
  * arity unchecked, return type STDROT_ANY. Use fn == NULL for core
@@ -166,14 +171,14 @@ typedef struct
  * sizeof(StdrotEntry) and registry.c's (stop-start)/sizeof(StdrotEntry)
  * undercounts/overcounts entries -- corrupting the registry. */
 #define STDROT_EXPORT_SIG(name_str, func_ptr, ret, params_ptr, pcount,         \
-                          variadic)                                            \
+                          min_count, variadic)                                 \
     __attribute__((used, section("stdrot_exports"),                            \
                    aligned(_Alignof(StdrotEntry)))) static const StdrotEntry   \
     STDROT_CONCAT(__stdrot_export_, __LINE__) = {                              \
-        name_str, ret, params_ptr, pcount, variadic, func_ptr}
+        name_str, ret, params_ptr, pcount, min_count, variadic, func_ptr}
 #define STDROT_EXPORT(name_str, func_ptr)                                      \
     STDROT_EXPORT_SIG(name_str, func_ptr,                                      \
-                      ((StdrotParam){STDROT_ANY, NULL, 0}), NULL, 0, true)
+                      ((StdrotParam){STDROT_ANY, NULL, 0}), NULL, 0, 0, true)
 #else
 #error                                                                         \
     "Linker sections not supported on this compiler. Add registry.c fallback."

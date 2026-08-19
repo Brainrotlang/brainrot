@@ -171,4 +171,4 @@ static const StdrotParam slorp_params[] = {
 };
 
 STDROT_EXPORT_SIG("slorp", stdrot_slorp, ((StdrotParam){STDROT_ANY, NULL, 0}),
-                  slorp_params, 1, false);
+                  slorp_params, 1, 1, false);

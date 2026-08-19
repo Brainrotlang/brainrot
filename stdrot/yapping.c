@@ -209,8 +209,8 @@ static const StdrotParam format_params[] = {
 };
 
 STDROT_EXPORT_SIG("yapping", stdrot_yapping,
-                  ((StdrotParam){STDROT_NONE, NULL, 0}), format_params, 1,
+                  ((StdrotParam){STDROT_NONE, NULL, 0}), format_params, 1, 1,
                   true);
 STDROT_EXPORT_SIG("yappin", stdrot_yappin,
-                  ((StdrotParam){STDROT_NONE, NULL, 0}), format_params, 1,
+                  ((StdrotParam){STDROT_NONE, NULL, 0}), format_params, 1, 1,
                   true);

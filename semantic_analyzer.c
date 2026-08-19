@@ -710,18 +710,15 @@ void *semantic_visit_identifier(Visitor *self, ASTNode *node)
 }
 
 /* Type-checks a native call's fixed/checked argument prefix against its
-   registered StdrotEntry -- arity plus, for each checked parameter, that
-   the argument's inferred type is compatible. STDROT_ANY parameters (e.g.
-   slorp's) accept anything. Arguments beyond param_count are only reached
-   when is_variadic is true, and are left unchecked (format-string tails,
-   legacy/untyped exports). */
+   registered StdrotEntry -- arity plus, for each checked parameter actually
+   supplied, that the argument's inferred type is compatible. STDROT_ANY
+   parameters (e.g. slorp's) accept anything. Arguments beyond param_count
+   are only reached when is_variadic is true, and are left unchecked
+   (format-string tails, legacy/untyped exports). */
 static void semantic_check_native_call(SemanticAnalyzer *analyzer,
-                                       ASTNode *node)
+                                       ASTNode *node, const StdrotEntry *entry)
 {
     const String func_name = node->data.func_call.function_name;
-    const StdrotEntry *entry = get_native_function(func_name);
-    if (!entry)
-        return;
 
     int arg_count = 0;
     ArgumentList *cur = node->data.func_call.arguments;
@@ -733,19 +730,34 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
 
     int line = node->line_number > 0 ? node->line_number : 1;
 
-    bool arity_ok = entry->is_variadic ? arg_count >= entry->param_count
-                                       : arg_count == entry->param_count;
+    bool arity_ok = entry->is_variadic ? arg_count >= entry->min_args
+                                       : (arg_count >= entry->min_args &&
+                                          arg_count <= entry->param_count);
     if (!arity_ok)
     {
         char error_msg[MAX_BUFFER_LEN];
-        snprintf(error_msg, sizeof(error_msg),
-                 "'%s' expects %s%d argument%s, got %d", func_name.data,
-                 entry->is_variadic ? "at least " : "", entry->param_count,
-                 entry->param_count == 1 ? "" : "s", arg_count);
+        if (entry->is_variadic || entry->min_args == entry->param_count)
+        {
+            int n = entry->is_variadic ? entry->min_args : entry->param_count;
+            snprintf(error_msg, sizeof(error_msg),
+                     "'%s' expects %s%d argument%s, got %d", func_name.data,
+                     entry->is_variadic ? "at least " : "", n,
+                     n == 1 ? "" : "s", arg_count);
+        }
+        else
+        {
+            snprintf(error_msg, sizeof(error_msg),
+                     "'%s' expects between %d and %d arguments, got %d",
+                     func_name.data, entry->min_args, entry->param_count,
+                     arg_count);
+        }
         add_semantic_error(analyzer, SEMANTIC_ERROR_ARITY_MISMATCH,
                            STRING_LITERAL(error_msg), line);
         return;
     }
+
+    if (entry->param_count > 0 && !entry->params)
+        return;
 
     cur = node->data.func_call.arguments;
     for (int i = 0; i < entry->param_count && cur; i++, cur = cur->next)
@@ -776,6 +788,51 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
     }
 }
 
+/* Finds and checks every native call anywhere in an expression subtree
+   (nested calls, calls buried in a binary/unary operand, ...) -- e.g. the
+   inner bet() in `cap ok = bet(bet());` or the bet() in `rizz x = bet() +
+   1;`. Deliberately its own small walk rather than reusing
+   semantic_analyze_with_scope_tracking(): that walker's NODE_OPERATION
+   case visits both operands itself and then calls
+   semantic_visit_binary_operation(), which visits them *again* via
+   ast_accept() (a pre-existing double-walk -- reproducible on main with
+   plain `rizz x = undefined_var + 1;`, which already double-reports
+   "Undefined variable" today). Reusing it here would double-report every
+   native-call arity/type error the same way. */
+static void semantic_check_native_calls_in_expr(SemanticAnalyzer *analyzer,
+                                                ASTNode *node)
+{
+    if (!node)
+        return;
+
+    switch (node->type)
+    {
+    case NODE_FUNC_CALL:
+    {
+        semantic_visit_function_call((Visitor *)analyzer, node);
+        for (ArgumentList *arg = node->data.func_call.arguments; arg;
+             arg = arg->next)
+        {
+            semantic_check_native_calls_in_expr(analyzer, arg->expr);
+        }
+        break;
+    }
+    case NODE_OPERATION:
+        semantic_check_native_calls_in_expr(analyzer, node->data.op.left);
+        semantic_check_native_calls_in_expr(analyzer, node->data.op.right);
+        break;
+    case NODE_UNARY_OPERATION:
+        semantic_check_native_calls_in_expr(analyzer, node->data.unary.operand);
+        break;
+    case NODE_STRUCT_ACCESS:
+        semantic_check_native_calls_in_expr(analyzer,
+                                            node->data.struct_access.object);
+        break;
+    default:
+        break;
+    }
+}
+
 void *semantic_visit_function_call(Visitor *self, ASTNode *node)
 {
     SemanticAnalyzer *analyzer = (SemanticAnalyzer *)self;
@@ -784,10 +841,11 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
         return NULL;
 
     const String func_name = node->data.func_call.function_name;
+    const StdrotEntry *native_entry = get_native_function(func_name);
 
-    if (is_builtin_function(func_name))
+    if (native_entry)
     {
-        semantic_check_native_call(analyzer, node);
+        semantic_check_native_call(analyzer, node, native_entry);
     }
     else
     {
@@ -850,13 +908,11 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node)
     {
         /* Unlike semantic_visit_assignment, this function type-checks the
            initializer via infer_expression_type() rather than dispatching
-           through ast_accept(), so a NODE_FUNC_CALL initializer (e.g. `cap
-           ok = bet(W);`, straight from the roadmap example) never reaches
-           semantic_visit_function_call() on its own -- check it directly. */
-        if (node->data.op.right->type == NODE_FUNC_CALL)
-        {
-            semantic_visit_function_call(self, node->data.op.right);
-        }
+           into a walk, so a native call anywhere in the initializer (`cap
+           ok = bet(W);`, straight from the roadmap example -- but also a
+           nested `bet(bet())` or `bet() + 1`) would never reach
+           semantic_visit_function_call() on its own. */
+        semantic_check_native_calls_in_expr(analyzer, node->data.op.right);
 
         VarType declared_type = node->var_type;
         int declared_pointer_level = node->pointer_level;
