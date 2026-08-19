@@ -75,6 +75,7 @@ typedef enum
     VAR_CHAR,
     VAR_STRING,
     VAR_STRUCT,
+    VAR_ENUM,
     NONE,
 } VarType;
 
@@ -89,10 +90,30 @@ typedef struct StructField
                             self-referential `gang Node *next;` field still
                             needs its tag recorded even though chaining `.`
                             through it isn't supported yet */
+    String enum_name;   /* nested enum tag; set whenever type == VAR_ENUM */
     int pointer_level;
     size_t offset; /* byte offset within the struct blob */
     struct StructField *next;
 } StructField;
+
+/* A single named constant inside an enum body. has_explicit_value/value
+   also serve as scratch state for the auto-increment pass. */
+typedef struct EnumConstant
+{
+    String name;
+    int value;
+    bool has_explicit_value;
+    struct EnumConstant *next;
+} EnumConstant;
+
+/* An enum definition (the "template"). Enum tags get their own registry,
+   separate from struct/union's, matching C's distinct tag namespaces. */
+typedef struct EnumDef
+{
+    String name;
+    EnumConstant *constants;
+    struct EnumDef *next_def;
+} EnumDef;
 
 /* A struct/union definition (the "template"). Struct and union tags share
    this same registry, matching C's tag-namespace rules. */
@@ -118,6 +139,7 @@ typedef struct Parameter
                             self-referential `gang Node *next;` field still
                             needs its tag recorded even though chaining `.`
                             through it isn't supported yet */
+    String enum_name;   /* enum tag; set whenever type == VAR_ENUM */
     int pointer_level;
     TypeModifiers modifiers;
     struct Parameter *next;
@@ -130,6 +152,7 @@ typedef struct Function
     int return_pointer_level;
     String return_struct_name; /* struct/union tag; set when
                                    return_type == VAR_STRUCT */
+    String return_enum_name;   /* enum tag; set when return_type == VAR_ENUM */
     Parameter *parameters;
     ASTNode *body;
 } Function;
@@ -154,6 +177,7 @@ typedef struct
        NOT scope-owned) that the caller must copy out of and free -- see
        the comment on handle_return_statement's VAR_STRUCT case. */
     String struct_name;
+    String enum_name; /* enum tag, set when type == VAR_ENUM */
 } ReturnValue;
 
 /* Symbol table structure */
@@ -178,6 +202,7 @@ typedef struct
     int array_length; // lets keep it for now for backword compatibility
     ArrayDimensions array_dimensions;
     String struct_name; /* non-NULL when var_type == VAR_STRUCT */
+    String enum_name;   /* non-NULL when var_type == VAR_ENUM */
 } Variable;
 
 typedef union
@@ -256,6 +281,7 @@ typedef enum
     NODE_RETURN,
     NODE_STRUCT_DEF,
     NODE_STRUCT_ACCESS,
+    NODE_ENUM_DEF,
 } NodeType;
 
 typedef struct
@@ -319,6 +345,9 @@ struct ASTNode
        copy-init) -- evaluated at runtime by the declaration visitor. NULL
        for the no-initializer and braced-initializer declaration forms. */
     ASTNode *struct_init_expr;
+    /* Enum tag for a NODE_DECLARATION node with var_type == VAR_ENUM; not
+       in the union below since it carries no blob/fields to go with it. */
+    String enum_name;
     union
     {
         short svalue;
@@ -388,6 +417,8 @@ struct ASTNode
             VarType return_type;
             String return_struct_name; /* struct/union tag; set when
                                            return_type == VAR_STRUCT */
+            String return_enum_name;   /* enum tag; set when
+                                           return_type == VAR_ENUM */
             Parameter *parameters;
             ASTNode *body;
         } function_def;
@@ -556,6 +587,11 @@ ASTNode *create_function_def_node_ex(String name, VarType return_type,
 ASTNode *create_function_def_node_struct(String name, String struct_name,
                                          int pointer_level, Parameter *params,
                                          ASTNode *body);
+/* Enum-by-value return type. Unlike the struct variant above, no
+   pointer_level restriction is needed -- an enum return is just an int. */
+ASTNode *create_function_def_node_enum(String name, String enum_name,
+                                       int pointer_level, Parameter *params,
+                                       ASTNode *body);
 void handle_return_statement(ASTNode *expr);
 /* Frees current_return_value's struct blob/tag (see handle_return_statement's
    VAR_STRUCT case) if one is pending and unconsumed, and clears the slot.
@@ -605,6 +641,20 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
    same way it does for a hard parse failure; see lang.y's struct_field
    for why we don't YYABORT for these instead. */
 extern bool struct_def_had_error;
+
+/* Enum types (see the comment on EnumDef above for the registry split). */
+void register_enum_def(EnumDef *def);
+EnumDef *get_enum_def(const String name);
+void free_enum_registry(void);
+/* Fills in auto-incremented values and checks for a duplicate constant
+   name, within `def` and against every already-registered enum. Returns
+   false on a duplicate; `def` is still registered either way, matching
+   struct_def_had_error's handling of a malformed struct/union. */
+bool finalize_enum_constants(EnumDef *def);
+/* Fallback lookup for a bare identifier that isn't a variable -- an
+   unscoped enum constant. Returns NULL if none matches. */
+EnumConstant *find_global_enum_constant(const String name);
+ASTNode *create_enum_def_node(String name);
 
 extern TypeModifiers current_modifiers;
 

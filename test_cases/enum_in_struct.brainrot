@@ -1,0 +1,19 @@
+🚽 Test case: enum-typed field nested inside a struct
+gyatt Color {
+    RED,
+    GREEN,
+    BLUE
+};
+
+gang Shape {
+    gyatt Color c;
+    rizz sides;
+};
+
+skibidi main {
+    gang Shape s;
+    s.c = BLUE;
+    s.sides = 4;
+    yapping("%d %d", s.c, s.sides);
+    bussin 0;
+}

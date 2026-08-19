@@ -1,0 +1,21 @@
+🚽 Test case: a salty (static) enum-typed local, re-entered across multiple
+🚽 calls -- regression for an enum_name leak on every re-entry after the
+🚽 first (see interpreter_visit_declaration's static-early-return handling).
+gyatt Color {
+    RED,
+    GREEN,
+    BLUE
+};
+
+rizz counter() {
+    salty gyatt Color c;
+    c = GREEN;
+    bussin c;
+}
+
+skibidi main {
+    yapping("%d", counter());
+    yapping("%d", counter());
+    yapping("%d", counter());
+    bussin 0;
+}

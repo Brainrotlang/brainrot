@@ -1,0 +1,9 @@
+🚽 Test case: duplicate enum constant name within the same enum body
+gyatt Color {
+    RED,
+    RED
+};
+
+skibidi main {
+    bussin 0;
+}

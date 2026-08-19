@@ -1,0 +1,19 @@
+🚽 Test case: enum-typed function parameter
+gyatt Color {
+    RED,
+    GREEN,
+    BLUE
+};
+
+rizz is_red(gyatt Color c) {
+    edgy (c == RED) {
+        bussin 1;
+    }
+    bussin 0;
+}
+
+skibidi main {
+    yapping("%d", is_red(RED));
+    yapping("%d", is_red(BLUE));
+    bussin 0;
+}

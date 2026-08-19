@@ -1,0 +1,15 @@
+🚽 Test case: enum constants share one global namespace, like C -- the same
+🚽 constant name can't be reused by a second, different enum.
+gyatt Color {
+    RED,
+    GREEN
+};
+
+gyatt Status {
+    RED,
+    OK
+};
+
+skibidi main {
+    bussin 0;
+}

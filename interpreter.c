@@ -201,6 +201,12 @@ void *interpreter_visit_identifier(Visitor *self, ASTNode *node)
     Variable *var = get_variable(node->data.name);
     if (!var)
     {
+        /* Not a variable -- an unscoped enum constant (e.g. bare `GREEN`
+           on the right-hand side of `favorite = GREEN;`) is expected here,
+           not an error; the actual value is resolved separately by
+           whichever evaluate_expression_* call handles this node. */
+        if (find_global_enum_constant(node->data.name) != NULL)
+            return NULL;
         yyerror("Undefined variable");
         return NULL;
     }
@@ -476,6 +482,11 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
         }
     }
 
+    /* Must come after the static-already-exists check above: that early
+       return frees only the wrapper Variable, not enum_name's heap string. */
+    if (node->var_type == VAR_ENUM)
+        var->enum_name = safe_strdup(&node->enum_name);
+
     /* Detect struct declaration: right node is a NODE_STRUCT_DEF */
     if (node->data.op.right && node->data.op.right->type == NODE_STRUCT_DEF)
     {
@@ -559,6 +570,12 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
                 String string_value =
                     evaluate_expression_string(node->data.op.right);
                 scope_var->value.strvalue = string_value;
+                break;
+            }
+            case VAR_ENUM:
+            {
+                int int_value = evaluate_expression_int(node->data.op.right);
+                scope_var->value.ivalue = int_value;
                 break;
             }
             default:

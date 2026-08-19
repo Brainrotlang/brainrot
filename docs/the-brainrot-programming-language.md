@@ -21,7 +21,8 @@ A Meme-Fueled Journey into Compiler Design, Internet Slang, and Skibidi Toilets
    - 7.8. Pointers and Call by Reference
    - 7.9. Structs (`gang`)
    - 7.10. Unions (`chungus`)
-   - 7.11. Modules (`#cooked`)
+   - 7.11. Enums (`gyatt`)
+   - 7.12. Modules (`#cooked`)
 8. **Extended User Documentation**
    - 8.1. `yapping`
    - 8.2. `yappin`
@@ -587,7 +588,124 @@ through a pointer-typed field isn't yet supported.
   function under the same rules as a struct (see [§7.9](#79-structs-gang)) —
   plain variable of the exact matching type, deep-copied.
 
-### 7.11. Modules (`#cooked`)
+### 7.11. Enums (`gyatt`)
+
+Use **`gyatt`** to define a named set of integer constants — like a C `enum`,
+constants are unscoped, plain `int`-typed identifiers in the global
+namespace (not accessed through the enum's tag), and freely interconvert
+with `int` without a cast.
+
+#### Enum Definition
+
+Define an enum at the top level, outside of any function:
+
+```c
+gyatt Color {
+    RED,
+    GREEN,
+    BLUE
+};
+```
+
+- **`gyatt TypeName { ... };`**: Defines a new enum type and its constants.
+- Each constant either gets an explicit value (`NAME = 5`) or auto-increments
+  from the previous constant's value, starting at `0` for the first
+  constant — same rules as C.
+- Constant names share **one global namespace across every enum** in the
+  program (matching C) — two different `gyatt` types can't both declare a
+  constant with the same name, even if the enums themselves have different
+  tags.
+- The definition must end with `};`.
+
+```c
+gyatt Status {
+    OK = 0,
+    WARN = 5,
+    ERR        🚽 auto-increments to 6
+};
+```
+
+#### Enum Declaration
+
+Declare an enum-typed variable inside a function body:
+
+```c
+gyatt Color favorite;
+```
+
+Uninitialized enum variables default to `0`, same as a plain `rizz`.
+
+#### Using Enum Values
+
+A constant is just an `int`-valued expression — use it directly, assign it,
+compare it, switch on it, or print it with `%d`:
+
+```c
+skibidi main {
+    gyatt Color favorite;
+    favorite = GREEN;
+    yapping("%d", favorite);   🚽 1
+
+    ohio (favorite) {
+        sigma rule GREEN:
+            yapping("its green");
+            bruh;
+        based:
+            yapping("dunno");
+    }
+}
+```
+
+#### Nesting
+
+Like `gang`/`chungus`, an enum type can be used as a struct or union field:
+
+```c
+gang Shape {
+    gyatt Color c;
+    rizz sides;
+};
+
+skibidi main {
+    gang Shape s;
+    s.c = BLUE;
+    yapping("%d %d", s.c, s.sides);
+}
+```
+
+An enum's own body only ever holds `NAME [= INT]` constants — it can't nest
+a struct/union/another enum inside it the way `gang`/`chungus` can nest each
+other.
+
+#### Functions
+
+An enum type can be used as a function parameter or return type, passed and
+returned exactly like `rizz` (by value, no restrictions):
+
+```c
+gyatt Color pick(rizz n) {
+    edgy (n == 0) {
+        bussin RED;
+    }
+    bussin BLUE;
+}
+```
+
+#### `maxxing` (sizeof)
+
+`maxxing` on an enum-typed variable or field returns `sizeof(int)`, same as
+a `rizz`.
+
+#### Current Limitations
+
+- Enum constants are unscoped (C-style) — there's no `Color.RED`-style
+  scoped access.
+- An enum type can only be *defined* at the top level, outside of any
+  function — the same restriction `gang`/`chungus` type definitions have.
+  Declaring a *variable* of an already-defined enum type works inside a
+  function body.
+
+### 7.12. Modules (`#cooked`)
 
 `#cooked` is Brainrot's `#include`: it splices another `.brainrot` file's
 function and struct definitions into the current file at the point of the

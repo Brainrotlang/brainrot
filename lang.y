@@ -67,6 +67,7 @@ static Interpreter *global_interpreter = NULL;
     ArrayDimensions array_dims;
     Array array;
     Declarator declarator;
+    EnumConstant *econst;
 }
 
 /* Define token types */
@@ -93,6 +94,8 @@ static Interpreter *global_interpreter = NULL;
 %type <param> struct_field_list struct_field   /* reuse Parameter as field carrier */
 %type <ival>  struct_or_union
 %type <expr_list> struct_initializer_list struct_initializer_item
+%type <node>  enum_def
+%type <econst> enum_constant_list enum_constant
 
 /* Declare types for non-terminals */
 %type <ival> type
@@ -157,6 +160,8 @@ function_def_list
         { $$ = create_statement_list($2, $1); }
     | function_def_list struct_def
         { $$ = $1; (void)$2; }
+    | function_def_list enum_def
+        { $$ = $1; (void)$2; }
     ;
 
 struct_or_union
@@ -182,6 +187,7 @@ struct_def
                 f->name          = safe_strdup(&p->name);
                 f->type          = p->type;
                 f->struct_name   = safe_strdup(&p->struct_name);
+                f->enum_name     = safe_strdup(&p->enum_name);
                 f->pointer_level = p->pointer_level;
                 f->offset        = 0; /* filled by compute_struct_layout */
                 f->next          = NULL;
@@ -270,6 +276,97 @@ struct_field
             SAFE_FREE($3.name);
             SAFE_FREE($2);
         }
+    | ENUM IDENTIFIER declarator SEMICOLON
+        {
+            /* Nested enum field (e.g. `gang Foo { gyatt Color c; };`) --
+               same "must already be defined above" ordering rule as
+               struct/union fields. */
+            if (!get_enum_def($2))
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg), "Unknown enum type '%s'",
+                        $2.data);
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
+            $$ = create_parameter_ex($3.name, VAR_ENUM, $3.pointer_level,
+                                     NULL, (TypeModifiers){0});
+            $$->enum_name = ARENA_STRDUP($2);
+            SAFE_FREE($3.name);
+            SAFE_FREE($2);
+        }
+    ;
+
+/* Enum tag defined at top level. Auto-increment and duplicate-name
+   checking happen in ast.c, not inline here, same as struct layout. */
+enum_def:
+    ENUM IDENTIFIER LBRACE enum_constant_list RBRACE SEMICOLON
+        {
+            EnumDef *def = SAFE_MALLOC(EnumDef);
+            def->name = safe_strdup(&$2);
+            def->constants = $4;
+            def->next_def = NULL;
+            if (get_enum_def($2))
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg), "Enum '%s' is already defined",
+                        $2.data);
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
+            else if (!finalize_enum_constants(def))
+            {
+                struct_def_had_error = true;
+            }
+            register_enum_def(def);
+            $$ = create_enum_def_node($2);
+            SAFE_FREE($2);
+        }
+    ;
+
+enum_constant_list:
+    enum_constant
+        { $$ = $1; }
+    | enum_constant_list COMMA enum_constant
+        {
+            EnumConstant *tail = $1;
+            while (tail->next) tail = tail->next;
+            tail->next = $3;
+            $$ = $1;
+        }
+    ;
+
+enum_constant:
+    IDENTIFIER
+        {
+            EnumConstant *c = SAFE_MALLOC(EnumConstant);
+            c->name = safe_strdup(&$1);
+            c->value = 0;
+            c->has_explicit_value = false;
+            c->next = NULL;
+            $$ = c;
+            SAFE_FREE($1.data);
+        }
+    | IDENTIFIER EQUALS INT_LITERAL
+        {
+            EnumConstant *c = SAFE_MALLOC(EnumConstant);
+            c->name = safe_strdup(&$1);
+            c->value = $3;
+            c->has_explicit_value = true;
+            c->next = NULL;
+            $$ = c;
+            SAFE_FREE($1.data);
+        }
+    | IDENTIFIER EQUALS MINUS INT_LITERAL
+        {
+            EnumConstant *c = SAFE_MALLOC(EnumConstant);
+            c->name = safe_strdup(&$1);
+            c->value = -$4;
+            c->has_explicit_value = true;
+            c->next = NULL;
+            $$ = c;
+            SAFE_FREE($1.data);
+        }
     ;
 
 function_def
@@ -278,6 +375,20 @@ function_def
     | struct_or_union IDENTIFIER declarator LPAREN params RPAREN LBRACE statements RBRACE
         {
             $$ = create_function_def_node_struct($3.name, $2, $3.pointer_level, $5, $8);
+            SAFE_FREE($2);
+            SAFE_FREE($3.name);
+        }
+    | ENUM IDENTIFIER declarator LPAREN params RPAREN LBRACE statements RBRACE
+        {
+            if (!get_enum_def($2))
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg), "Unknown enum type '%s'",
+                        $2.data);
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
+            $$ = create_function_def_node_enum($3.name, $2, $3.pointer_level, $5, $8);
             SAFE_FREE($2);
             SAFE_FREE($3.name);
         }
@@ -309,6 +420,36 @@ param_list
         {
             $$ = create_parameter_ex($6.name, VAR_STRUCT, $6.pointer_level, $1, get_current_modifiers());
             $$->struct_name = ARENA_STRDUP($5);
+            SAFE_FREE($5);
+            SAFE_FREE($6.name);
+        }
+    | optional_modifiers ENUM IDENTIFIER declarator
+        {
+            if (!get_enum_def($3))
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg), "Unknown enum type '%s'",
+                        $3.data);
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
+            $$ = create_parameter_ex($4.name, VAR_ENUM, $4.pointer_level, NULL, get_current_modifiers());
+            $$->enum_name = ARENA_STRDUP($3);
+            SAFE_FREE($3);
+            SAFE_FREE($4.name);
+        }
+    | param_list COMMA optional_modifiers ENUM IDENTIFIER declarator
+        {
+            if (!get_enum_def($5))
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg), "Unknown enum type '%s'",
+                        $5.data);
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
+            $$ = create_parameter_ex($6.name, VAR_ENUM, $6.pointer_level, $1, get_current_modifiers());
+            $$->enum_name = ARENA_STRDUP($5);
             SAFE_FREE($5);
             SAFE_FREE($6.name);
         }
@@ -519,6 +660,44 @@ declaration:
             if ($$->data.op.right)
                 $$->data.op.right->data.name = ARENA_STRDUP($3);
             $$->struct_init_expr = $6;
+            SAFE_FREE($3);
+            SAFE_FREE($4.name);
+        }
+    | optional_modifiers ENUM IDENTIFIER declarator
+        {
+            /* Enum variable, e.g. `gyatt Color c;`. Unlike struct/union,
+               an enum variable is just a plain int at runtime (no blob),
+               so it's routed through the ordinary scalar declaration path
+               in interpreter_visit_declaration -- see the VAR_ENUM case
+               there. */
+            if (!get_enum_def($3))
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg), "Unknown enum type '%s'",
+                        $3.data);
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
+            $$ = create_declaration_node_ex($4.name, create_default_node(VAR_ENUM),
+                                            $4.pointer_level);
+            $$->var_type = VAR_ENUM;
+            $$->enum_name = ARENA_STRDUP($3);
+            SAFE_FREE($3);
+            SAFE_FREE($4.name);
+        }
+    | optional_modifiers ENUM IDENTIFIER declarator EQUALS expression
+        {
+            if (!get_enum_def($3))
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg), "Unknown enum type '%s'",
+                        $3.data);
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
+            $$ = create_declaration_node_ex($4.name, $6, $4.pointer_level);
+            $$->var_type = VAR_ENUM;
+            $$->enum_name = ARENA_STRDUP($3);
             SAFE_FREE($3);
             SAFE_FREE($4.name);
         }
@@ -962,6 +1141,8 @@ void cleanup() {
     free_static_variable_map();
 
     free_struct_registry();
+
+    free_enum_registry();
 
     CLEAN_JUMP_BUFFER();
     

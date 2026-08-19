@@ -281,7 +281,17 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
     {
         Variable *var = get_variable(expr->data.name);
         if (!var)
+        {
+            /* Not a variable -- an unscoped enum constant (e.g. bare
+               `RED`), which has type int in C. */
+            EnumConstant *econst = find_global_enum_constant(expr->data.name);
+            if (econst)
+            {
+                out->type = STDROT_INT;
+                out->val.i = econst->value;
+            }
             return;
+        }
         switch (var->var_type)
         {
         case VAR_INT:
@@ -321,6 +331,10 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
             out->type = STDROT_STRING;
             out->val.str.data = (char *)var->value.array_data;
             out->val.str.len = var->value.strvalue.len;
+            return;
+        case VAR_ENUM:
+            out->type = STDROT_INT;
+            out->val.i = var->value.ivalue;
             return;
         default:
             return;
