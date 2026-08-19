@@ -6,8 +6,8 @@
  * without a native that does, STDROT_PTR round-tripping (as a parameter,
  * as a return value, and the pointer_level + 1 convention documented in
  * stdrot_api.h) has no coverage at all. These exist only to be called
- * from test_cases/*.brainrot; they are not part of the language's
- * standard library surface.
+ * from .brainrot fixtures under test_cases/; they are not part of the
+ * language's standard library surface.
  */
 #include "stdrot_api.h"
 
