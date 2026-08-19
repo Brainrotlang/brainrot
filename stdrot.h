@@ -28,6 +28,27 @@ void stdrot_unload(void);
 bool is_builtin_function(const String func_name);
 void execute_builtin_function(const String func_name, ArgumentList *args);
 void execute_func_call(const String func_name, ArgumentList *args);
+/* Registry lookup for a native export's descriptor (name, return_type,
+ * params, param_count, is_variadic). Returns NULL if func_name isn't a
+ * registered native function. Used by the semantic analyzer to check
+ * native calls the way user-defined functions are checked. */
+const StdrotEntry *get_native_function(const String func_name);
+/* Shared StdrotType -> VarType mapping, used by both the interpreter
+ * (ast.c) and the semantic analyzer so the two never drift apart. */
+VarType stdrot_type_to_vartype(StdrotType type);
+
+/* ── String boundary ──────────────────────────────────────────────────────
+ * Brainrot's String is length-prefixed and not guaranteed NUL-terminated;
+ * C library functions want a NUL-terminated const char *. This is the one
+ * place that conversion happens.
+ *
+ * Ownership: the returned pointer is adapter-owned scratch, valid only for
+ * the duration of the native call -- release it with
+ * stdrot_release_cstring() once the call returns. No signature is
+ * annotated as escaping yet, so nothing may hold onto the pointer past
+ * that point. */
+const char *stdrot_string_to_cstring(String s);
+void stdrot_release_cstring(const char *p);
 /* Evaluates args and invokes the native function, returning its result
  * directly -- no write-back, no deprecation warning. This is what
  * expression-position native calls (ast.c's handle_function_call) use;

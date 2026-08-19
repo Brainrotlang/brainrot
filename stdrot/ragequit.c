@@ -45,5 +45,15 @@ static StdrotValue stdrot_chill(StdrotValue *args, int argc)
     return (StdrotValue){STDROT_NONE, {0}};
 }
 
-STDROT_EXPORT("ragequit", stdrot_ragequit);
-STDROT_EXPORT("chill", stdrot_chill);
+static const StdrotParam exit_code_params[] = {
+    {STDROT_INT, NULL, 0},
+};
+static const StdrotParam seconds_params[] = {
+    {STDROT_INT, NULL, 0},
+};
+
+STDROT_EXPORT_SIG("ragequit", stdrot_ragequit,
+                  ((StdrotParam){STDROT_NONE, NULL, 0}), exit_code_params, 1,
+                  false);
+STDROT_EXPORT_SIG("chill", stdrot_chill, ((StdrotParam){STDROT_NONE, NULL, 0}),
+                  seconds_params, 1, false);

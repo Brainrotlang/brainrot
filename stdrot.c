@@ -233,6 +233,67 @@ bool is_builtin_function(const String func_name)
     return false;
 }
 
+const StdrotEntry *get_native_function(const String func_name)
+{
+    if (!func_name.data || !functions)
+        return NULL;
+
+    for (int i = 0; i < function_count; i++)
+    {
+        if (strcmp(func_name.data, functions[i].name) == 0)
+        {
+            return &functions[i];
+        }
+    }
+    return NULL;
+}
+
+VarType stdrot_type_to_vartype(StdrotType type)
+{
+    switch (type)
+    {
+    case STDROT_INT:
+        return VAR_INT;
+    case STDROT_FLOAT:
+        return VAR_FLOAT;
+    case STDROT_DOUBLE:
+        return VAR_DOUBLE;
+    case STDROT_SHORT:
+        return VAR_SHORT;
+    case STDROT_BOOL:
+        return VAR_BOOL;
+    case STDROT_CHAR:
+        return VAR_CHAR;
+    case STDROT_STRING:
+    case STDROT_CSTRING:
+        return VAR_STRING;
+    case STDROT_ANY:
+    case STDROT_PTR:
+    case STDROT_HANDLE:
+    case STDROT_NONE:
+    default:
+        return NONE;
+    }
+}
+
+const char *stdrot_string_to_cstring(String s)
+{
+    if (!s.data)
+        return NULL;
+
+    char *out = SAFE_MALLOC_ARRAY(char, s.len + 1);
+    if (!out)
+        return NULL;
+    memcpy(out, s.data, s.len);
+    out[s.len] = '\0';
+    return out;
+}
+
+void stdrot_release_cstring(const char *p)
+{
+    SAFE_FREE(p);
+}
+
 void execute_builtin_function(const String func_name, ArgumentList *args)
 {
     execute_func_call(func_name, args);

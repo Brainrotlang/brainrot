@@ -152,7 +152,7 @@ lands. Suggested path: support both forms for one release, warn on the old one.
 
 ## Phase 2 — A typed native ABI
 
-**Status: not started · Priority: P0 · Depends on: Phase 1**
+**Status: in review · Priority: P0 · Depends on: Phase 1**
 
 Right now the semantic analyzer cannot check a single builtin argument. Making
 native exports self-describing fixes that and unlocks generated bindings.

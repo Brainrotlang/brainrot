@@ -1,0 +1,8 @@
+🚽 Test case: native call argument type mismatch (Phase 2 -- typed native ABI).
+🚽 bet's first parameter is declared cap (bool); passing a string must be
+🚽 caught statically instead of silently coercing to false at runtime.
+skibidi main {
+    cap ok = bet("not a bool");
+    yapping("%b", ok);
+    bussin 0;
+}

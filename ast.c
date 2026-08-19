@@ -131,30 +131,6 @@ static StdrotValue native_call_consume(ASTNode *node)
                                node->data.func_call.arguments);
 }
 
-static VarType stdrot_type_to_vartype(StdrotType type)
-{
-    switch (type)
-    {
-    case STDROT_INT:
-        return VAR_INT;
-    case STDROT_FLOAT:
-        return VAR_FLOAT;
-    case STDROT_DOUBLE:
-        return VAR_DOUBLE;
-    case STDROT_SHORT:
-        return VAR_SHORT;
-    case STDROT_BOOL:
-        return VAR_BOOL;
-    case STDROT_CHAR:
-        return VAR_CHAR;
-    case STDROT_STRING:
-        return VAR_STRING;
-    case STDROT_NONE:
-    default:
-        return NONE;
-    }
-}
-
 /* Helper to build a namespaced static key */
 static String make_static_key(const String func_name, const String var_name)
 {
@@ -2990,6 +2966,14 @@ static void marshal_native_return_value(ASTNode *node)
     case STDROT_STRING:
         current_return_value.value.strvalue = result.val.str;
         break;
+    case STDROT_ANY:
+    case STDROT_CSTRING:
+    case STDROT_PTR:
+    case STDROT_HANDLE:
+        /* Not yet returned by any registered native (STDROT_ANY only
+           appears in checked-but-unresolved descriptors; CSTRING/PTR/
+           HANDLE are ABI groundwork for later phases, see roadmap L5) --
+           add real marshalling once a builtin actually produces one. */
     case STDROT_NONE:
         break;
     }

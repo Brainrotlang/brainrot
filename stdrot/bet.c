@@ -63,5 +63,13 @@ StdrotValue stdrot_bet(StdrotValue *args, int argc)
     return result;
 }
 
+// bet(cap, [const char *]) -> cap: message is an optional second argument,
+// so the fixed/checked prefix is just the condition and the rest is left
+// variadic rather than modelling an "optional param" concept.
+static const StdrotParam bet_params[] = {
+    {STDROT_BOOL, NULL, 0},
+};
+
 // Register with auto-export macro
-STDROT_EXPORT("bet", stdrot_bet);
+STDROT_EXPORT_SIG("bet", stdrot_bet, ((StdrotParam){STDROT_BOOL, NULL, 0}),
+                  bet_params, 1, true);

@@ -465,7 +465,22 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
         /* Check if it's a built-in function */
         if (is_builtin_function(node->data.func_call.function_name))
         {
-            return NONE; /* Most built-in functions return void */
+            const StdrotEntry *entry =
+                get_native_function(node->data.func_call.function_name);
+            if (!entry)
+                return NONE;
+
+            if (entry->return_type.type == STDROT_ANY)
+            {
+                /* Identity-polymorphic (e.g. slorp<T>(T) -> T): the result
+                   type is whatever the first argument's type is. */
+                ArgumentList *args = node->data.func_call.arguments;
+                if (args && args->expr)
+                    return infer_expression_type(args->expr, analyzer);
+                return NONE;
+            }
+
+            return stdrot_type_to_vartype(entry->return_type.type);
         }
 
         /* Look up user-defined function */
@@ -694,6 +709,73 @@ void *semantic_visit_identifier(Visitor *self, ASTNode *node)
     return NULL;
 }
 
+/* Type-checks a native call's fixed/checked argument prefix against its
+   registered StdrotEntry -- arity plus, for each checked parameter, that
+   the argument's inferred type is compatible. STDROT_ANY parameters (e.g.
+   slorp's) accept anything. Arguments beyond param_count are only reached
+   when is_variadic is true, and are left unchecked (format-string tails,
+   legacy/untyped exports). */
+static void semantic_check_native_call(SemanticAnalyzer *analyzer,
+                                       ASTNode *node)
+{
+    const String func_name = node->data.func_call.function_name;
+    const StdrotEntry *entry = get_native_function(func_name);
+    if (!entry)
+        return;
+
+    int arg_count = 0;
+    ArgumentList *cur = node->data.func_call.arguments;
+    while (cur)
+    {
+        arg_count++;
+        cur = cur->next;
+    }
+
+    int line = node->line_number > 0 ? node->line_number : 1;
+
+    bool arity_ok = entry->is_variadic ? arg_count >= entry->param_count
+                                       : arg_count == entry->param_count;
+    if (!arity_ok)
+    {
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "'%s' expects %s%d argument%s, got %d", func_name.data,
+                 entry->is_variadic ? "at least " : "", entry->param_count,
+                 entry->param_count == 1 ? "" : "s", arg_count);
+        add_semantic_error(analyzer, SEMANTIC_ERROR_ARITY_MISMATCH,
+                           STRING_LITERAL(error_msg), line);
+        return;
+    }
+
+    cur = node->data.func_call.arguments;
+    for (int i = 0; i < entry->param_count && cur; i++, cur = cur->next)
+    {
+        const StdrotParam *param = &entry->params[i];
+        if (param->type == STDROT_ANY || !cur->expr)
+            continue;
+
+        VarType expected = stdrot_type_to_vartype(param->type);
+        VarType actual = infer_expression_type(cur->expr, analyzer);
+        int actual_pointer_level =
+            infer_expression_pointer_level(cur->expr, analyzer);
+
+        if (expected == NONE || actual == NONE)
+            continue;
+
+        if (!check_type_compatibility_ex(expected, param->pointer_level, actual,
+                                         actual_pointer_level))
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "'%s' argument %d: expected %s, got %s", func_name.data,
+                     i + 1, vartype_to_string(expected),
+                     vartype_to_string(actual));
+            add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                               STRING_LITERAL(error_msg), line);
+        }
+    }
+}
+
 void *semantic_visit_function_call(Visitor *self, ASTNode *node)
 {
     SemanticAnalyzer *analyzer = (SemanticAnalyzer *)self;
@@ -703,7 +785,11 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
 
     const String func_name = node->data.func_call.function_name;
 
-    if (!is_builtin_function(func_name))
+    if (is_builtin_function(func_name))
+    {
+        semantic_check_native_call(analyzer, node);
+    }
+    else
     {
         Function *func = get_function(func_name);
         if (!func)
@@ -762,6 +848,16 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node)
 
     if (node->data.op.right)
     {
+        /* Unlike semantic_visit_assignment, this function type-checks the
+           initializer via infer_expression_type() rather than dispatching
+           through ast_accept(), so a NODE_FUNC_CALL initializer (e.g. `cap
+           ok = bet(W);`, straight from the roadmap example) never reaches
+           semantic_visit_function_call() on its own -- check it directly. */
+        if (node->data.op.right->type == NODE_FUNC_CALL)
+        {
+            semantic_visit_function_call(self, node->data.op.right);
+        }
+
         VarType declared_type = node->var_type;
         int declared_pointer_level = node->pointer_level;
         VarType init_type =
