@@ -1,6 +1,6 @@
 #!/bin/bash
 
-TARGET="${1:-./brainrot}"
+TARGET="${1:-./brainrot-valgrind}"
 
 for f in test_cases/*.brainrot; do
     echo "Running Valgrind on $f..."
