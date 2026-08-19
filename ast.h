@@ -76,6 +76,22 @@ typedef enum
     VAR_STRING,
     VAR_STRUCT,
     VAR_ENUM,
+    /* An opaque native pointer (STDROT_PTR): a real, known expression
+       category -- "this is a pointer, its base type is intentionally
+       erased" -- not to be confused with NONE ("unknown, skip
+       checking"). Deliberately its own VarType rather than reusing NONE:
+       every existing "type == NONE, don't validate" shortcut throughout
+       this analyzer (binary-op validation, declaration/assignment type
+       checks, native-argument checks) would otherwise silently wave a
+       real pointer expression through unchecked wherever it appears, and
+       whatever consumes it downstream (a scalar evaluator, a native
+       expecting a different type) would reinterpret its raw bits as
+       whatever that context assumed instead. VAR_PTR only ever appears
+       with pointer_level > 0; check_type_compatibility_ex() treats it as
+       wildcard-compatible with any base type once pointer_level already
+       matches (matching C's void* implicitly converting to/from any
+       pointer type), not as "give up checking." */
+    VAR_PTR,
     NONE,
 } VarType;
 

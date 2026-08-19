@@ -158,6 +158,8 @@ const char *vartype_to_string(VarType type)
         return "string";
     case VAR_ENUM:
         return "enum";
+    case VAR_PTR:
+        return "pointer";
     case NONE:
         return "void";
     default:
@@ -275,15 +277,19 @@ bool check_type_compatibility_ex(VarType expected, int expected_pointer_level,
         return false;
     if (expected_pointer_level > 0)
     {
-        /* An opaque native pointer (STDROT_PTR) has no concrete base
-           VarType -- infer_expression_type() honestly reports NONE for
-           one rather than guessing at a base type it doesn't have.
-           Once the pointer *levels* already match (checked above), treat
-           that as compatible -- matching C's void* implicitly converting
-           to/from any pointer type -- rather than rejecting a legitimate
-           `rizz *p = get_ptr();`-style assignment just because neither
-           side can be pinned to a concrete VarType. */
-        if (expected == NONE || actual == NONE)
+        /* VAR_PTR (an opaque native pointer -- STDROT_PTR) has no
+           concrete base type by design, so it's wildcard-compatible with
+           any base type once pointer *levels* already match (checked
+           above) -- matching C's void* implicitly converting to/from any
+           pointer type. This makes `rizz *p = get_ptr();` type-check
+           without needing VAR_PTR to equal every possible base VarType.
+           NONE, deliberately, gets no such exception here: unlike
+           VAR_PTR it means "couldn't determine a type at all", and
+           granting it pointer-compatibility would silently accept any
+           pointer assignment whose type inference happened to fail for
+           an unrelated reason -- exactly the fail-open hole VAR_PTR
+           exists to avoid. */
+        if (expected == VAR_PTR || actual == VAR_PTR)
             return true;
         return expected == actual;
     }

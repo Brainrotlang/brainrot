@@ -1,0 +1,16 @@
+🚽 Test case: STDROT_PTR round-trips in both directions -- as a native
+🚽 parameter (poke_int/peek_int write and read through an opaque address)
+🚽 and as a native return value (test_ptr_source), including dereferencing
+🚽 a pointer a native handed back, not just one Brainrot already owned.
+skibidi main {
+    rizz value = 10;
+    poke_int(&value, 99);
+    yapping("%d", value);
+    yapping("%d", peek_int(&value));
+
+    rizz *p = test_ptr_source();
+    poke_int(p, 7);
+    yapping("%d", peek_int(p));
+    yapping("%d", *p);
+    bussin 0;
+}

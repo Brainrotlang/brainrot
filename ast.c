@@ -236,6 +236,11 @@ bool set_variable(const String name, void *value, VarType type,
         case VAR_ENUM:
             var->value.ivalue = *(int *)value;
             break;
+        case VAR_PTR:
+        /* VAR_PTR only ever appears as the *inferred type of an
+           expression* (a native call returning STDROT_PTR) -- no
+           Brainrot declaration syntax can give an actual Variable this
+           as its own var_type, so this is structurally unreachable. */
         case NONE:
             break;
         }
@@ -2309,6 +2314,11 @@ float evaluate_expression_float(ASTNode *node)
     }
     case NODE_FUNC_CALL:
     {
+        if (get_expression_pointer_level(node) > 0)
+        {
+            yyerror("Cannot use pointer in float context");
+            return 0.0f;
+        }
         float *res = (float *)handle_function_call(node);
         if (res != NULL)
         {
@@ -2435,6 +2445,11 @@ double evaluate_expression_double(ASTNode *node)
     }
     case NODE_FUNC_CALL:
     {
+        if (get_expression_pointer_level(node) > 0)
+        {
+            yyerror("Cannot use pointer in double context");
+            return 0.0L;
+        }
         double *res = (double *)handle_function_call(node);
         if (res != NULL)
         {
@@ -2613,6 +2628,18 @@ String evaluate_expression_string(ASTNode *node)
     }
     case NODE_FUNC_CALL:
     {
+        /* A pointer-level result is boxed as a uintptr_t (see
+           handle_function_call()'s VAR_INT case), not a String -- without
+           this check, the cast below would reinterpret that
+           sizeof(uintptr_t)-byte allocation as a much larger String
+           struct and read res->data/res->len straight past the end of
+           it, not just misread a value like the numeric evaluators'
+           equivalent guard, an actual out-of-bounds heap read. */
+        if (get_expression_pointer_level(node) > 0)
+        {
+            yyerror("Cannot use pointer in string context");
+            return (String){.data = NULL, .len = 0};
+        }
         String *res = (String *)handle_function_call(node);
         if (res != NULL)
         {
@@ -2743,6 +2770,11 @@ short evaluate_expression_short(ASTNode *node)
     }
     case NODE_FUNC_CALL:
     {
+        if (get_expression_pointer_level(node) > 0)
+        {
+            yyerror("Cannot use pointer in integer context");
+            return 0;
+        }
         short *res = (short *)handle_function_call(node);
         if (res != NULL)
         {
@@ -2894,6 +2926,11 @@ int evaluate_expression_int(ASTNode *node)
     }
     case NODE_FUNC_CALL:
     {
+        if (get_expression_pointer_level(node) > 0)
+        {
+            yyerror("Cannot use pointer in integer context");
+            return 0;
+        }
         int *res = (int *)handle_function_call(node);
         if (res != NULL)
         {
@@ -3085,6 +3122,14 @@ void *handle_function_call(ASTNode *node)
             return_value = SAFE_MALLOC(int);
             *(int *)return_value = current_return_value.value.ivalue;
             break;
+        case VAR_PTR:
+            /* marshal_native_return_value() always sets
+               current_return_value.type to VAR_INT (not VAR_PTR) for a
+               STDROT_PTR result, reusing the pointer-boxing case above --
+               VAR_PTR is the semantic analyzer's own static type for the
+               expression, a separate concern from this runtime value's
+               representation (see that function's comment). Structurally
+               unreachable here. */
         case NONE:
             return NULL;
         }
@@ -3213,6 +3258,23 @@ bool evaluate_expression_bool(ASTNode *node)
     }
     case NODE_FUNC_CALL:
     {
+        /* Same reasoning as NODE_IDENTIFIER/NODE_OPERATION above: a
+           pointer-level result (a STDROT_PTR-returning native call) is
+           boxed as a uintptr_t (see handle_function_call()'s VAR_INT
+           case), not a bool -- reading it through a bare `bool *` would
+           reinterpret the pointer's low byte as the whole truth value
+           instead of doing a proper != 0 comparison on the real address. */
+        if (get_expression_pointer_level(node) > 0)
+        {
+            uintptr_t *res = (uintptr_t *)handle_function_call(node);
+            if (res != NULL)
+            {
+                bool return_val = *res != (uintptr_t)0;
+                SAFE_FREE(res);
+                return return_val;
+            }
+            return 0;
+        }
         bool *res = (bool *)handle_function_call(node);
         if (res != NULL)
         {
@@ -4928,6 +4990,10 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             arg_values[arg_count].pvalue = (uintptr_t)src->value.array_data;
             break;
         }
+        case VAR_PTR:
+        /* curr_param->type is a user-defined function parameter's
+           declared type -- no Brainrot syntax can declare a parameter
+           VAR_PTR, so this is structurally unreachable. */
         case NONE:
             break;
         }
@@ -5028,6 +5094,9 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             }
             break;
         }
+        case VAR_PTR:
+        /* Same reasoning as the argument-evaluation switch above:
+           structurally unreachable for a declared parameter type. */
         case NONE:
             break;
         }

@@ -39,7 +39,7 @@ StdrotAPI stdrot_get_api(void)
     }
 
     StdrotAPI api;
-    api.functions = (StdrotEntry *const *)&__start_stdrot_exports;
+    api.functions = (const StdrotEntry *const *)&__start_stdrot_exports;
     api.count = (int)(byte_len / (ptrdiff_t)sizeof(StdrotEntry *));
     return api;
 }

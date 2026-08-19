@@ -151,5 +151,9 @@
     "enum_salty_local": "1\n1\n1",
     "enum_pointer_return": "1",
     "native_call_many_arguments": "0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69",
-    "semantic_error_native_any_pointer": "Error: 'slorp' argument 1: pointer arguments require an explicit STDROT_PTR parameter, not STDROT_ANY at line 9"
+    "semantic_error_native_any_pointer": "Error: 'slorp' argument 1: pointer arguments require an explicit STDROT_PTR parameter, not STDROT_ANY at line 9",
+    "native_ptr_param_return": "99\n99\n7\n7",
+    "semantic_error_native_ptr_wrong_depth": "Error: 'poke_int' argument 1: expected a pointer (level 1), got pointer level 2 at line 9",
+    "semantic_error_native_ptr_return_scalar_init": "Error: Type mismatch in initialization of 'x': expected int, got pointer at line 1",
+    "semantic_error_native_ptr_result_scalar_param": "Error: 'poke_int' argument 2: expected int, got pointer at line 7"
 }

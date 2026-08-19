@@ -60,10 +60,16 @@ extern ExecutionContext g_exec_context;
 
 typedef enum
 {
-    STDROT_ANY, /* unchecked: accepts/returns any type (legacy exports,
-                   identity-polymorphic builtins like slorp) -- kept as the
-                   zero value so a zero-initialized StdrotParam means
-                   "unchecked" rather than silently claiming int */
+    STDROT_ANY, /* unchecked: accepts/returns any NON-POINTER type (legacy
+                   exports, identity-polymorphic builtins like slorp) --
+                   kept as the zero value so a zero-initialized StdrotParam
+                   means "unchecked" rather than silently claiming int.
+                   Pointer-valued arguments/results are deliberately
+                   rejected even here -- a pointer's whole point is its
+                   address and level of indirection, which "any type,
+                   unchecked" can't express safely, so callers that want to
+                   pass or return a pointer must say so explicitly via
+                   STDROT_PTR below. */
     STDROT_INT,
     STDROT_FLOAT,
     STDROT_DOUBLE,
@@ -73,7 +79,15 @@ typedef enum
     STDROT_STRING,  /* Brainrot String (length-prefixed, not NUL-terminated) */
     STDROT_CSTRING, /* NUL-terminated const char *, owned by the caller for
                         the duration of the call */
-    STDROT_PTR,     /* untyped pointer / address-of result */
+    STDROT_PTR,     /* An opaque native pointer -- base type intentionally
+                        erased. A StdrotParam of {STDROT_PTR, NULL, N}
+                        describes a Brainrot-visible pointer of level N + 1
+                        (STDROT_PTR itself already represents one level of
+                        indirection, on top of whatever `pointer_level`
+                        counts) -- e.g. {STDROT_PTR, NULL, 0} is `rizz*`,
+                        {STDROT_PTR, NULL, 1} is `rizz**`, and so on. Only
+                        pointer_level is checked against the argument/
+                        return site; there is no base type to compare. */
     STDROT_HANDLE,  /* opaque native resource, see StdrotValue.val.handle */
     STDROT_NONE     /* void return */
 } StdrotType;
@@ -249,7 +263,7 @@ typedef struct
  * StdrotEntry grows to carry. */
 typedef struct
 {
-    StdrotEntry *const *functions;
+    const StdrotEntry *const *functions;
     int count;
 } StdrotAPI;
 

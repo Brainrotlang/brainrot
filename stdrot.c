@@ -67,7 +67,7 @@ extern bool set_bool_variable(const String name, bool value,
 #ifndef STDROT_STATIC
 static void *lib_handle = NULL;
 #endif
-static StdrotEntry *const *functions = NULL;
+static const StdrotEntry *const *functions = NULL;
 static int function_count = 0;
 
 #ifndef STDROT_STATIC
@@ -267,8 +267,14 @@ VarType stdrot_type_to_vartype(StdrotType type)
     case STDROT_STRING:
     case STDROT_CSTRING:
         return VAR_STRING;
-    case STDROT_ANY:
     case STDROT_PTR:
+        /* A real, known category -- "opaque pointer, base type
+           intentionally erased" -- not NONE ("unknown, skip checking").
+           See VAR_PTR's own comment in ast.h for why conflating the two
+           would silently defeat every "type == NONE, don't validate"
+           shortcut this analyzer already relies on. */
+        return VAR_PTR;
+    case STDROT_ANY:
     case STDROT_HANDLE:
     case STDROT_NONE:
     default:
@@ -488,10 +494,19 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
  * (STDROT_CSTRING conversion is the only case that does), so the caller
  * knows to release it after the call.
  */
-static bool coerce_arg_to_param(StdrotValue *value, StdrotType declared)
+/* Interconverts the numeric StdrotTypes in place (int/short/float/double
+ * -- the same group the semantic analyzer's numeric-compatibility rules
+ * accept interchangeably, see check_type_compatibility_ex()). Returns
+ * true if value->type == declared afterward (either already matched, or
+ * the conversion succeeded); false means declared isn't one of the
+ * numeric types, or value->type wasn't either, so nothing was done.
+ * Shared by coerce_arg_to_param() (argument marshalling) and
+ * execute_native_call()'s post-call return-value check (making the
+ * declared return type authoritative, not just advisory). */
+static bool coerce_numeric(StdrotValue *value, StdrotType declared)
 {
     if (value->type == declared)
-        return false;
+        return true;
 
     switch (declared)
     {
@@ -505,7 +520,7 @@ static bool coerce_arg_to_param(StdrotValue *value, StdrotType declared)
         else
             return false;
         value->type = STDROT_INT;
-        return false;
+        return true;
     case STDROT_SHORT:
         if (value->type == STDROT_INT)
             value->val.s = (short)value->val.i;
@@ -516,7 +531,7 @@ static bool coerce_arg_to_param(StdrotValue *value, StdrotType declared)
         else
             return false;
         value->type = STDROT_SHORT;
-        return false;
+        return true;
     case STDROT_FLOAT:
         if (value->type == STDROT_INT)
             value->val.f = (float)value->val.i;
@@ -527,7 +542,7 @@ static bool coerce_arg_to_param(StdrotValue *value, StdrotType declared)
         else
             return false;
         value->type = STDROT_FLOAT;
-        return false;
+        return true;
     case STDROT_DOUBLE:
         if (value->type == STDROT_INT)
             value->val.d = value->val.i;
@@ -538,7 +553,70 @@ static bool coerce_arg_to_param(StdrotValue *value, StdrotType declared)
         else
             return false;
         value->type = STDROT_DOUBLE;
+        return true;
+    default:
         return false;
+    }
+}
+
+/* Makes the native's declared return_type authoritative, not merely
+ * advisory: entry->fn() is ordinary C code, and can have the same class
+ * of bug an argument-marshalling mismatch would (see coerce_arg_to_param()'s
+ * comment) -- declare one return representation in its StdrotEntry, then
+ * actually construct a StdrotValue tagged something else. Without this,
+ * that mismatch is only discovered downstream, by whichever scalar
+ * evaluator dereferences the boxed result through the wrong C pointer
+ * type (declared double, returned int, handle_function_call() boxes an
+ * int-sized allocation, evaluate_expression_double() reads 8 bytes out of
+ * a 4-byte box). Attempts the same numeric coercion arguments get;
+ * anything still mismatched after that is a bug in the native's own C
+ * implementation, not something a Brainrot program can trigger by
+ * construction (the semantic analyzer already only approves calls whose
+ * *declared* signature type-checks), so this aborts with a diagnostic
+ * aimed at whoever wrote the binding.
+ *
+ * identity_arg, when non-NULL, is the actual marshalled argument
+ * return_like_arg pointed at (see StdrotEntry.return_like_arg) -- an
+ * identity-polymorphic native's (e.g. slorp) result must match that
+ * argument's own runtime type, not a fixed declared one. */
+static void enforce_return_type(const String func_name, StdrotValue *result,
+                                const StdrotEntry *entry,
+                                const StdrotValue *identity_arg)
+{
+    StdrotType declared =
+        identity_arg ? identity_arg->type : entry->return_type.type;
+
+    if (declared == STDROT_ANY)
+        return; /* legacy/untyped export: actual tag wins */
+
+    if (result->type == declared)
+        return;
+
+    if (coerce_numeric(result, declared))
+        return;
+
+    fprintf(stderr,
+            "stdrot: native '%s' declared to return %s but actually "
+            "returned an incompatible StdrotType (%d instead of %d) -- "
+            "this is a bug in the native binding's C implementation, not "
+            "the Brainrot program\n",
+            func_name.data,
+            identity_arg ? "the same type as its identity argument"
+                         : "a fixed type",
+            (int)result->type, (int)declared);
+    exit(1);
+}
+
+static bool coerce_arg_to_param(StdrotValue *value, StdrotType declared)
+{
+    if (value->type == declared)
+        return false;
+
+    if (coerce_numeric(value, declared))
+        return false;
+
+    switch (declared)
+    {
     case STDROT_CSTRING:
         if (value->type == STDROT_STRING)
         {
@@ -653,7 +731,15 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
 
     if (total_args == 0)
     {
-        return entry->fn(NULL, 0);
+        StdrotValue result = entry->fn(NULL, 0);
+        /* Same return-type enforcement as the general path below --
+           can't skip it just because this call happens to take no
+           arguments, or a zero-arg native's return-type bug would go
+           uncaught (see enforce_return_type()'s comment). No
+           argument-marshalling cleanup needed here since none was
+           allocated. */
+        enforce_return_type(func_name, &result, entry, NULL);
+        return result;
     }
 
     StdrotValue *arg_values = SAFE_MALLOC_ARRAY(StdrotValue, total_args);
@@ -720,6 +806,18 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
     }
 
     StdrotValue result = entry->fn(arg_values, arg_count);
+
+    /* Called before popping the pending-cleanup frame below: if this
+       finds a native ABI violation and exit()s, the frame -- and
+       arg_values/owned_string_bufs/owned_cstring_bufs it still owns --
+       must still be reachable from pending_native_call_stack for the
+       atexit handler to free, the same as any other exit() from inside
+       this call. */
+    const StdrotValue *identity_arg =
+        (entry->return_like_arg >= 0 && entry->return_like_arg < arg_count)
+            ? &arg_values[entry->return_like_arg]
+            : NULL;
+    enforce_return_type(func_name, &result, entry, identity_arg);
 
     /* Reached: entry->fn() returned normally rather than exit()ing, so
        ordinary cleanup below handles this frame, and the atexit handler
