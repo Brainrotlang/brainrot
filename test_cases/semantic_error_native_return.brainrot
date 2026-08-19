@@ -1,0 +1,12 @@
+🚽 Test case: a native call in a bussin (return) expression must be checked
+🚽 statically -- NODE_RETURN was previously unvisited by the semantic
+🚽 analyzer entirely.
+rizz f() {
+    bussin bet(2);
+}
+
+skibidi main {
+    rizz y = f();
+    yapping("%d", y);
+    bussin 0;
+}

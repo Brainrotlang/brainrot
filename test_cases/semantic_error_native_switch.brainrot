@@ -1,0 +1,10 @@
+🚽 Test case: a native call in an ohio (switch) discriminant must be checked
+🚽 statically -- NODE_SWITCH_STATEMENT was previously unvisited.
+skibidi main {
+    ohio (bet(2)) {
+        sigma rule 1:
+            yapping("one");
+            bruh;
+    }
+    bussin 0;
+}

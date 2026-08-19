@@ -472,11 +472,25 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
 
             if (entry->return_type.type == STDROT_ANY)
             {
-                /* Identity-polymorphic (e.g. slorp<T>(T) -> T): the result
-                   type is whatever the first argument's type is. */
-                ArgumentList *args = node->data.func_call.arguments;
-                if (args && args->expr)
-                    return infer_expression_type(args->expr, analyzer);
+                /* STDROT_ANY covers two different shapes that must not be
+                   conflated: an explicitly slorp-shaped signature (first
+                   checked param is also STDROT_ANY -- slorp<T>(T) -> T,
+                   where the result type is whatever the argument's type
+                   is) versus a legacy/untyped STDROT_EXPORT() (param_count
+                   == 0, no declared signature at all -- genuinely unknown,
+                   not "same type as the first argument"). Treating every
+                   STDROT_ANY return as identity-polymorphic would make an
+                   untyped export's return type whatever its first
+                   argument happened to be, producing false type errors
+                   (or false passes) unrelated to what it actually
+                   returns. */
+                if (entry->param_count > 0 && entry->params &&
+                    entry->params[0].type == STDROT_ANY)
+                {
+                    ArgumentList *args = node->data.func_call.arguments;
+                    if (args && args->expr)
+                        return infer_expression_type(args->expr, analyzer);
+                }
                 return NONE;
             }
 
@@ -788,49 +802,35 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
     }
 }
 
-/* Finds and checks every native call anywhere in an expression subtree
-   (nested calls, calls buried in a binary/unary operand, ...) -- e.g. the
-   inner bet() in `cap ok = bet(bet());` or the bet() in `rizz x = bet() +
-   1;`. Deliberately its own small walk rather than reusing
-   semantic_analyze_with_scope_tracking(): that walker's NODE_OPERATION
-   case visits both operands itself and then calls
-   semantic_visit_binary_operation(), which visits them *again* via
-   ast_accept() (a pre-existing double-walk -- reproducible on main with
-   plain `rizz x = undefined_var + 1;`, which already double-reports
-   "Undefined variable" today). Reusing it here would double-report every
-   native-call arity/type error the same way. */
-static void semantic_check_native_calls_in_expr(SemanticAnalyzer *analyzer,
-                                                ASTNode *node)
+/* Walks a braced initializer's expression list (`{1, 2, bet(2)}`, and
+   nested sublists for `{ {1, 2}, 3 }`-style matrix init), running the same
+   checks -- native-call arity/type included -- on every leaf expression as
+   semantic_analyze_with_scope_tracking() runs on any other expression. */
+static void semantic_check_expression_list(SemanticAnalyzer *analyzer,
+                                           ExpressionList *list)
 {
-    if (!node)
+    if (!list)
         return;
 
-    switch (node->type)
+    /* ExpressionList is a circular doubly-linked list (see
+       create_expression_list()/append_expression_list_node() in ast.c --
+       a single element's next/prev both point back to itself), not
+       NULL-terminated, so this has to stop on returning to the start
+       (matching count_expression_list()/free_expression_list()'s own
+       traversal), not on next == NULL. */
+    ExpressionList *current = list;
+    do
     {
-    case NODE_FUNC_CALL:
-    {
-        semantic_visit_function_call((Visitor *)analyzer, node);
-        for (ArgumentList *arg = node->data.func_call.arguments; arg;
-             arg = arg->next)
+        if (current->expr)
         {
-            semantic_check_native_calls_in_expr(analyzer, arg->expr);
+            semantic_analyze_with_scope_tracking(analyzer, current->expr);
         }
-        break;
-    }
-    case NODE_OPERATION:
-        semantic_check_native_calls_in_expr(analyzer, node->data.op.left);
-        semantic_check_native_calls_in_expr(analyzer, node->data.op.right);
-        break;
-    case NODE_UNARY_OPERATION:
-        semantic_check_native_calls_in_expr(analyzer, node->data.unary.operand);
-        break;
-    case NODE_STRUCT_ACCESS:
-        semantic_check_native_calls_in_expr(analyzer,
-                                            node->data.struct_access.object);
-        break;
-    default:
-        break;
-    }
+        else if (current->sublist)
+        {
+            semantic_check_expression_list(analyzer, current->sublist);
+        }
+        current = current->next;
+    } while (current != list);
 }
 
 void *semantic_visit_function_call(Visitor *self, ASTNode *node)
@@ -864,15 +864,21 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
     return NULL;
 }
 
+/* Type-validates a binary operation's operands. Does NOT walk them --
+   both callers (ast_accept()'s NODE_OPERATION case, via visit_children();
+   and semantic_analyze_with_scope_tracking()'s own NODE_OPERATION case)
+   already recurse into left/right themselves before calling this. This
+   used to also call ast_accept() on both operands here, which double-
+   visited them through either caller -- harmless when nothing the second
+   pass touches reports errors, but it double-reports for anything that
+   does (e.g. two "Undefined variable" errors for `undefined_var + 1`, or
+   two arity errors for a native call in an operand). */
 void *semantic_visit_binary_operation(Visitor *self, ASTNode *node)
 {
     SemanticAnalyzer *analyzer = (SemanticAnalyzer *)self;
 
     if (!node || !node->data.op.left || !node->data.op.right)
         return NULL;
-
-    ast_accept(node->data.op.left, self);
-    ast_accept(node->data.op.right, self);
 
     validate_binary_operation(node->data.op.left, node->data.op.right,
                               node->data.op.op, analyzer);
@@ -888,6 +894,23 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node)
         return;
 
     const String var_name = node->data.op.left->data.name;
+
+    /* A braced initializer (`rizz arr[1] = {bet(2)};`) lives on
+       pending_initializer, not data.op.right -- create_multi_array_
+       declaration_node() leaves data.op.right NULL. A struct's plain-
+       expression initializer (`gang Point r = make_point(1, 2);`) lives on
+       struct_init_expr; data.op.right there is a NODE_STRUCT_DEF type
+       placeholder, not the initializer, and the STRUCT_DEF branch below
+       returns before reaching the data.op.right walk. Neither is reachable
+       any other way, so both need to be walked unconditionally, up front. */
+    if (node->pending_initializer)
+    {
+        semantic_check_expression_list(analyzer, node->pending_initializer);
+    }
+    if (node->struct_init_expr)
+    {
+        semantic_analyze_with_scope_tracking(analyzer, node->struct_init_expr);
+    }
 
     if (node->data.op.right && node->data.op.right->type == NODE_STRUCT_DEF)
     {
@@ -912,7 +935,7 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node)
            ok = bet(W);`, straight from the roadmap example -- but also a
            nested `bet(bet())` or `bet() + 1`) would never reach
            semantic_visit_function_call() on its own. */
-        semantic_check_native_calls_in_expr(analyzer, node->data.op.right);
+        semantic_analyze_with_scope_tracking(analyzer, node->data.op.right);
 
         VarType declared_type = node->var_type;
         int declared_pointer_level = node->pointer_level;
@@ -1656,6 +1679,96 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         node->pointer_level = fld->pointer_level;
         if (fld->type == VAR_STRUCT && fld->struct_name.data)
             node->data.struct_access.struct_name = fld->struct_name;
+        break;
+    }
+
+    case NODE_ARRAY_ACCESS:
+    {
+        /* Mirrors ast_accept()'s NODE_ARRAY_ACCESS handling (visitor.c):
+           num_dimensions > 0 means the multi-dimensional indices[] form is
+           in use, otherwise it's the single-dimension index. Needed so an
+           index expression like `arr[bet(2)]` gets the same native-call
+           arity/type checking as any other expression. */
+        if (node->data.array.num_dimensions > 0)
+        {
+            for (int i = 0; i < node->data.array.num_dimensions; i++)
+            {
+                if (node->data.array.indices[i])
+                {
+                    semantic_analyze_with_scope_tracking(
+                        analyzer, node->data.array.indices[i]);
+                }
+            }
+        }
+        else if (node->data.array.index)
+        {
+            semantic_analyze_with_scope_tracking(analyzer,
+                                                 node->data.array.index);
+        }
+        break;
+    }
+
+    case NODE_SIZEOF:
+    {
+        if (node->data.sizeof_stmt.expr)
+        {
+            semantic_analyze_with_scope_tracking(analyzer,
+                                                 node->data.sizeof_stmt.expr);
+        }
+        break;
+    }
+
+    case NODE_RETURN:
+    {
+        if (node->data.op.left)
+        {
+            semantic_analyze_with_scope_tracking(analyzer, node->data.op.left);
+        }
+        break;
+    }
+
+    case NODE_DO_WHILE_STATEMENT:
+    {
+        /* Unlike while, the body runs before the condition is first
+           tested and its scope is still open when the condition runs
+           (`mewing { rizz i = 5; } goon (i < 10);` is legal) -- so, like
+           NODE_FOR_STATEMENT, enter the loop scope once and process both
+           body and condition inside it. */
+        analyzer->scope_depth++;
+        if (node->data.while_stmt.body)
+        {
+            semantic_analyze_with_scope_tracking(analyzer,
+                                                 node->data.while_stmt.body);
+        }
+        if (node->data.while_stmt.cond)
+        {
+            semantic_analyze_with_scope_tracking(analyzer,
+                                                 node->data.while_stmt.cond);
+        }
+        analyzer->scope_depth--;
+        break;
+    }
+
+    case NODE_SWITCH_STATEMENT:
+    {
+        if (node->data.switch_stmt.expression)
+        {
+            semantic_analyze_with_scope_tracking(
+                analyzer, node->data.switch_stmt.expression);
+        }
+        analyzer->scope_depth++;
+        for (CaseNode *c = node->data.switch_stmt.cases; c; c = c->next)
+        {
+            if (c->value)
+            {
+                semantic_analyze_with_scope_tracking(analyzer, c->value);
+            }
+            if (c->statements)
+            {
+                semantic_analyze_with_scope_tracking(analyzer, c->statements);
+            }
+        }
+        analyzer->scope_depth--;
         break;
     }
 
