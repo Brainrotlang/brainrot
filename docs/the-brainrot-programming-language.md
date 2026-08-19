@@ -772,6 +772,13 @@ Output:
 
 ## 8. Extended User Documentation
 
+Every function below is a native call, and every native call is an ordinary
+expression: it can be used in a declaration's initializer, a condition, a
+binary operand, or an argument to another call, not just as its own bare
+statement. `cap ok = bet(some_condition);` and `rizz n = slorp(n);` are both
+valid; a discarded return value in statement position (`bet(some_condition);`
+on its own line) is fine too.
+
 ### 8.1. `yapping`
 
 ```c
@@ -853,10 +860,13 @@ chill(2);
 ### 8.6. `slorp`
 
 ```c
-void slorp(var_type var_name);
+var_type slorp(var_type var_name);
 ```
 
-- Reads user input
+- Reads user input and returns it, like every other native function call
+  (see [§8](#8-extended-user-documentation)).
+- `var_name`'s current value/type is only used as a hint for what to parse
+  (int, float, string, ...); assign the result to use it.
 
 **Example**:
 
@@ -864,9 +874,25 @@ void slorp(var_type var_name);
 skibidi main {
     rizz num;
     yapping("Enter a number:");
-	slorp(num);
+    num = slorp(num);
     yapping("You typed: %d", num);
-	bussin 0;
+    bussin 0;
+}
+```
+
+**Deprecated form**: for one release, calling `slorp(var_name);` as a bare
+statement still writes the result back into `var_name` in place, matching
+the old (pre-native-calls-as-expressions) behavior -- with a deprecation
+warning on stderr pointing at the `var_name = slorp(...)` form above. This
+write-back only fires for a genuine bare statement call; `slorp(x)` used
+inside a larger expression must be assigned or consumed directly.
+
+```c
+skibidi main {
+    rizz num;
+    slorp(num);   /* deprecated: still works, warns on stderr */
+    yapping("You typed: %d", num);
+    bussin 0;
 }
 ```
 

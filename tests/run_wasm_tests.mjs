@@ -54,7 +54,8 @@ function listFilesRecursive(dir, base = dir) {
 
 const testCaseFiles = listFilesRecursive(testCasesDir);
 
-// Mirrors the stdin fixtures test_brainrot.py feeds via `echo '...' | brainrot`.
+// Mirrors the stdin fixtures test_brainrot.py feeds via `echo '...' | brainrot`
+// (and, for the native_call_* entries, `printf '...' | brainrot`).
 const STDIN_BY_PREFIX = [
   ["slorp_int", "42\n"],
   ["slorp_short", "69\n"],
@@ -62,6 +63,10 @@ const STDIN_BY_PREFIX = [
   ["slorp_double", "3.141592\n"],
   ["slorp_char", "c\n"],
   ["slorp_string", "skibidi bop bop yes yes\n"],
+  ["native_call_self_init", "42\n"],
+  ["native_call_loop", "1\n2\n3\n"],
+  ["native_call_string_arg", "skibidi\nq\n"],
+  ["native_call_do_while", "5\n50\n6\n150\n"],
 ];
 
 function stdinFor(example) {

@@ -110,7 +110,7 @@ skibidi main {
 
 ## Phase 1 — The keystone: native calls as expressions
 
-**Status: not started · Priority: P0 · Blocks: literally everything else**
+**Status: in review (#217) · Priority: P0 · Blocks: literally everything else**
 
 This is the single highest-leverage change in the entire roadmap. Until a native
 call is an ordinary expression, none of the rest is worth starting.

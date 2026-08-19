@@ -1,0 +1,18 @@
+skibidi main
+{
+    🚽 a native call directly as a mewing/goon (do-while) condition, with the
+    🚽 body ALSO reading from stdin. visitor.c's NODE_DO_WHILE_STATEMENT case
+    🚽 pre-visits the condition once before the loop body ever runs; if that
+    🚽 pre-visit executed slorp(n), it would steal the stdin line the body's
+    🚽 own slorp(count) should have read first, shifting every value read
+    🚽 afterward -- observable here because both the condition and the body
+    🚽 consume stdin, unlike a condition that only reads a plain variable.
+    rizz n = 0;
+    rizz count = 0;
+    mewing
+    {
+        count = slorp(count);
+        yapping("count=%d", count);
+    } goon (slorp(n) < 100);
+    bussin 0;
+}

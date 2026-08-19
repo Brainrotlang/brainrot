@@ -1,0 +1,12 @@
+skibidi main
+{
+    🚽 the issue's own migration example: the initializer references the
+    🚽 variable it is declaring. n must already exist by the time slorp's
+    🚽 argument is evaluated, or the argument silently evaluates to nothing
+    🚽 and this reads 0 instead of stdin (the pre-fix bug: the ast_accept
+    🚽 pre-visit ran slorp(n) before interpreter_visit_declaration had
+    🚽 created n).
+    rizz n = slorp(n);
+    yapping("n=%d", n);
+    bussin 0;
+}
