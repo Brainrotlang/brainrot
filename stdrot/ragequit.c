@@ -55,9 +55,13 @@ static StdrotValue stdrot_chill(StdrotValue *args, int argc)
         else if (args[0].type == STDROT_SHORT)
             seconds = (unsigned int)args[0].val.s;
         else if (args[0].type == STDROT_FLOAT)
-            seconds = (unsigned int)args[0].val.f;
+            /* (unsigned int)(negative float) is undefined behavior;
+               going through int first matches how a negative
+               STDROT_INT/STDROT_SHORT above is already handled (a
+               well-defined wraparound, not UB). */
+            seconds = (unsigned int)(int)args[0].val.f;
         else if (args[0].type == STDROT_DOUBLE)
-            seconds = (unsigned int)args[0].val.d;
+            seconds = (unsigned int)(int)args[0].val.d;
     }
     chill(seconds);
     return (StdrotValue){STDROT_NONE, {0}};
