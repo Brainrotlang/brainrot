@@ -67,7 +67,7 @@ extern bool set_bool_variable(const String name, bool value,
 #ifndef STDROT_STATIC
 static void *lib_handle = NULL;
 #endif
-static StdrotEntry *functions = NULL;
+static StdrotEntry *const *functions = NULL;
 static int function_count = 0;
 
 #ifndef STDROT_STATIC
@@ -225,7 +225,7 @@ bool is_builtin_function(const String func_name)
 
     for (int i = 0; i < function_count; i++)
     {
-        if (strcmp(func_name.data, functions[i].name) == 0)
+        if (strcmp(func_name.data, functions[i]->name) == 0)
         {
             return true;
         }
@@ -240,9 +240,9 @@ const StdrotEntry *get_native_function(const String func_name)
 
     for (int i = 0; i < function_count; i++)
     {
-        if (strcmp(func_name.data, functions[i].name) == 0)
+        if (strcmp(func_name.data, functions[i]->name) == 0)
         {
-            return &functions[i];
+            return functions[i];
         }
     }
     return NULL;
@@ -453,6 +453,96 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
     }
 }
 
+/* The semantic analyzer accepts int/short/float/double interchangeably for
+ * a numeric-typed native parameter (matching the language's existing
+ * numeric-coercion rules -- see check_type_compatibility_ex()), and
+ * STDROT_STRING for a STDROT_CSTRING one. That check is a promise about
+ * what the *call site* looks like, not about what union member
+ * ast_expr_to_stdrot_value() actually populated -- an int literal always
+ * arrives tagged STDROT_INT, never STDROT_DOUBLE, regardless of what the
+ * declared parameter is. Without this, a native wrapper that trusts its
+ * own declared signature and reads args[i].val.d for a statically-checked
+ * `foo(42)` call reads the wrong union member. This is the one place that
+ * reconciles the two: it converts *value* in place to whatever the
+ * signature actually promised, so entry->fn always receives the
+ * representation its own StdrotParam declared, not whatever the call site
+ * happened to spell.
+ *
+ * Returns true if a new heap buffer was allocated for this argument
+ * (STDROT_CSTRING conversion is the only case that does), so the caller
+ * knows to release it after the call.
+ */
+static bool coerce_arg_to_param(StdrotValue *value, StdrotType declared)
+{
+    if (value->type == declared)
+        return false;
+
+    switch (declared)
+    {
+    case STDROT_INT:
+        if (value->type == STDROT_SHORT)
+            value->val.i = value->val.s;
+        else if (value->type == STDROT_FLOAT)
+            value->val.i = (int)value->val.f;
+        else if (value->type == STDROT_DOUBLE)
+            value->val.i = (int)value->val.d;
+        else
+            return false;
+        value->type = STDROT_INT;
+        return false;
+    case STDROT_SHORT:
+        if (value->type == STDROT_INT)
+            value->val.s = (short)value->val.i;
+        else if (value->type == STDROT_FLOAT)
+            value->val.s = (short)value->val.f;
+        else if (value->type == STDROT_DOUBLE)
+            value->val.s = (short)value->val.d;
+        else
+            return false;
+        value->type = STDROT_SHORT;
+        return false;
+    case STDROT_FLOAT:
+        if (value->type == STDROT_INT)
+            value->val.f = (float)value->val.i;
+        else if (value->type == STDROT_SHORT)
+            value->val.f = (float)value->val.s;
+        else if (value->type == STDROT_DOUBLE)
+            value->val.f = (float)value->val.d;
+        else
+            return false;
+        value->type = STDROT_FLOAT;
+        return false;
+    case STDROT_DOUBLE:
+        if (value->type == STDROT_INT)
+            value->val.d = value->val.i;
+        else if (value->type == STDROT_SHORT)
+            value->val.d = value->val.s;
+        else if (value->type == STDROT_FLOAT)
+            value->val.d = value->val.f;
+        else
+            return false;
+        value->type = STDROT_DOUBLE;
+        return false;
+    case STDROT_CSTRING:
+        if (value->type == STDROT_STRING)
+        {
+            const char *cstr = stdrot_string_to_cstring(value->val.str);
+            value->type = STDROT_CSTRING;
+            value->val.cstr = cstr;
+            return cstr != NULL;
+        }
+        return false;
+    default:
+        /* STDROT_BOOL/STDROT_CHAR/STDROT_STRING/STDROT_ANY/STDROT_PTR/
+           STDROT_HANDLE/STDROT_NONE: either the semantic checker already
+           requires an exact match (no coercion needed), or the analyzer
+           refuses to accept a call whose signature declares these at all
+           (see semantic_check_native_call()) -- so this is unreachable
+           for a program that passed semantic analysis. */
+        return false;
+    }
+}
+
 StdrotValue execute_native_call(const String func_name, ArgumentList *args)
 {
     if (!func_name.data || !functions)
@@ -479,12 +569,22 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
 
     /* Generic function call - evaluate all arguments to StdrotValue */
     StdrotValue arg_values[64];
-    /* Only ast_expr_to_stdrot_value()'s NODE_FUNC_CALL case (a native call
-       used as an argument, e.g. `yapping("%s", slorp(buf))`) allocates a
-       fresh string to build a STDROT_STRING argument -- every other case
-       just borrows a pointer already owned by a literal or variable. Track
-       which slots own their buffer so they can be freed after the call. */
-    bool arg_owns_string[64] = {0};
+    /* Two independent reasons a slot can own a heap buffer that needs
+       freeing after the call, each into a different union member:
+         OWNS_STRING  -- ast_expr_to_stdrot_value()'s NODE_FUNC_CALL case
+                         (a native call used as an argument, e.g.
+                         `yapping("%s", slorp(buf))`) allocated a fresh
+                         val.str.data; every other case just borrows a
+                         pointer already owned by a literal or variable.
+         OWNS_CSTRING -- coerce_arg_to_param() converted a STDROT_STRING
+                         argument to STDROT_CSTRING for a native that
+                         declared that parameter, allocating val.cstr. */
+    enum
+    {
+        OWNS_NOTHING,
+        OWNS_STRING,
+        OWNS_CSTRING
+    } arg_ownership[64] = {0};
     int arg_count = 0;
 
     ArgumentList *cur = args;
@@ -495,9 +595,28 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
             break;
 
         ast_expr_to_stdrot_value(expr, &arg_values[arg_count]);
-        arg_owns_string[arg_count] =
-            expr->type == NODE_FUNC_CALL &&
-            arg_values[arg_count].type == STDROT_STRING;
+        bool owns_string = expr->type == NODE_FUNC_CALL &&
+                           arg_values[arg_count].type == STDROT_STRING;
+
+        /* Convert to whatever entry->params[arg_count] actually declared
+           -- see coerce_arg_to_param()'s comment for why this has to
+           happen here, not just at the semantic-analysis type check. */
+        if (arg_count < entry->param_count && entry->params)
+        {
+            if (coerce_arg_to_param(&arg_values[arg_count],
+                                    entry->params[arg_count].type))
+            {
+                arg_ownership[arg_count] = OWNS_CSTRING;
+            }
+            else if (owns_string)
+            {
+                arg_ownership[arg_count] = OWNS_STRING;
+            }
+        }
+        else if (owns_string)
+        {
+            arg_ownership[arg_count] = OWNS_STRING;
+        }
 
         arg_count++;
         cur = cur->next;
@@ -512,9 +631,13 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
        a pointer the caller is still holding. */
     for (int i = 0; i < arg_count; i++)
     {
-        if (arg_owns_string[i])
+        if (arg_ownership[i] == OWNS_STRING)
         {
             SAFE_FREE(arg_values[i].val.str.data);
+        }
+        else if (arg_ownership[i] == OWNS_CSTRING)
+        {
+            stdrot_release_cstring(arg_values[i].val.cstr);
         }
     }
 

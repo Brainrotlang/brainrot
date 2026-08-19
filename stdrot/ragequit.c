@@ -17,52 +17,27 @@ void chill(unsigned int seconds)
     sleep(seconds);
 }
 
-/* exit_code_params/seconds_params below declare STDROT_INT, but the
- * semantic analyzer's numeric-compatibility group (see
- * check_type_compatibility_ex()) also accepts VAR_FLOAT/VAR_DOUBLE/VAR_ENUM
- * as an rizz-typed parameter's argument -- ragequit(1.5)/chill(1.5) are
- * statically accepted, so the runtime has to actually convert them rather
- * than silently keeping the argc==0 default of 0, or a truncated exit code
- * / sleep duration disagrees with what the analyzer promised was checked.
- * Enum constants already arrive as STDROT_INT (see
- * ast_expr_to_stdrot_value()'s NODE_IDENTIFIER case), so only float/double
- * need converting here. */
+/* exit_code_params/seconds_params below declare a single STDROT_INT
+ * parameter. execute_native_call()'s coerce_arg_to_param() (stdrot.c)
+ * converts whatever numeric type the call site used (the semantic
+ * analyzer's numeric-compatibility group accepts short/float/double/enum
+ * for an rizz-typed parameter too -- see check_type_compatibility_ex())
+ * to match that declaration *before* this wrapper ever sees it, so
+ * args[0] is always STDROT_INT here for any call that passed semantic
+ * analysis -- this wrapper doesn't need its own int/short/float/double
+ * fan-out. */
 static StdrotValue stdrot_ragequit(StdrotValue *args, int argc)
 {
-    int code = 0;
-    if (argc > 0)
-    {
-        if (args[0].type == STDROT_INT)
-            code = args[0].val.i;
-        else if (args[0].type == STDROT_SHORT)
-            code = args[0].val.s;
-        else if (args[0].type == STDROT_FLOAT)
-            code = (int)args[0].val.f;
-        else if (args[0].type == STDROT_DOUBLE)
-            code = (int)args[0].val.d;
-    }
+    int code = (argc > 0 && args[0].type == STDROT_INT) ? args[0].val.i : 0;
     ragequit(code);
     return (StdrotValue){STDROT_NONE, {0}};
 }
 
 static StdrotValue stdrot_chill(StdrotValue *args, int argc)
 {
-    unsigned int seconds = 0;
-    if (argc > 0)
-    {
-        if (args[0].type == STDROT_INT)
-            seconds = (unsigned int)args[0].val.i;
-        else if (args[0].type == STDROT_SHORT)
-            seconds = (unsigned int)args[0].val.s;
-        else if (args[0].type == STDROT_FLOAT)
-            /* (unsigned int)(negative float) is undefined behavior;
-               going through int first matches how a negative
-               STDROT_INT/STDROT_SHORT above is already handled (a
-               well-defined wraparound, not UB). */
-            seconds = (unsigned int)(int)args[0].val.f;
-        else if (args[0].type == STDROT_DOUBLE)
-            seconds = (unsigned int)(int)args[0].val.d;
-    }
+    unsigned int seconds = (argc > 0 && args[0].type == STDROT_INT)
+                               ? (unsigned int)args[0].val.i
+                               : 0;
     chill(seconds);
     return (StdrotValue){STDROT_NONE, {0}};
 }

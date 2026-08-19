@@ -9,34 +9,37 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/* Linker provides these symbols marking the start/end of the section */
-extern StdrotEntry __start_stdrot_exports;
-extern StdrotEntry __stop_stdrot_exports;
+/* Linker provides these symbols marking the start/end of the section. The
+ * section holds StdrotEntry pointers (see STDROT_EXPORT_SIG in
+ * stdrot_api.h), so these are themselves pointer-typed slots -- taking
+ * their address gives the start/end of an array of StdrotEntry *. */
+extern StdrotEntry *__start_stdrot_exports;
+extern StdrotEntry *__stop_stdrot_exports;
 
 /* Entry point called by stdrot.c after dlopen() */
 StdrotAPI stdrot_get_api(void)
 {
-    /* (stop-start)/sizeof(StdrotEntry) only gives the right count if the
-       section is packed with zero gaps between entries -- true as long as
-       every STDROT_EXPORT_SIG/STDROT_EXPORT instance carries the explicit
-       aligned(_Alignof(StdrotEntry)) attribute (see stdrot_api.h). Without
-       it, the compiler's large-static-object alignment heuristic silently
-       pads entries and this count goes wrong, corrupting the whole
-       registry -- catch that immediately instead of scanning garbage. */
+    /* Every slot in the section is exactly sizeof(StdrotEntry *) --
+       there's no variable-sized-struct alignment padding to worry about
+       here, unlike when the section held StdrotEntry values directly (see
+       git history: a compiler heuristic that pads the storage alignment
+       of "large" static objects once silently corrupted that scheme's
+       entry count). The modulus check is now just a sanity check against
+       a genuinely unexpected toolchain, not a load-bearing tripwire. */
     ptrdiff_t byte_len =
         (char *)&__stop_stdrot_exports - (char *)&__start_stdrot_exports;
-    if (byte_len % (ptrdiff_t)sizeof(StdrotEntry) != 0)
+    if (byte_len % (ptrdiff_t)sizeof(StdrotEntry *) != 0)
     {
         fprintf(stderr,
                 "stdrot: corrupt native function registry (stdrot_exports "
-                "section is %td bytes, not a multiple of sizeof(StdrotEntry) "
-                "= %zu)\n",
-                byte_len, sizeof(StdrotEntry));
+                "section is %td bytes, not a multiple of sizeof(StdrotEntry "
+                "*) = %zu)\n",
+                byte_len, sizeof(StdrotEntry *));
         exit(1);
     }
 
     StdrotAPI api;
-    api.functions = &__start_stdrot_exports;
-    api.count = (int)(byte_len / (ptrdiff_t)sizeof(StdrotEntry));
+    api.functions = (StdrotEntry *const *)&__start_stdrot_exports;
+    api.count = (int)(byte_len / (ptrdiff_t)sizeof(StdrotEntry *));
     return api;
 }

@@ -80,6 +80,7 @@
     "native_call_loop": "i=0\ni=1\ni=2\n",
     "native_call_string_arg": "skibidi\nq\n",
     "native_call_do_while": "count=5\ncount=6\n",
+    "native_call_numeric_coercion": "ExitCode:3",
     "semantic_error_native_arity": "Error: 'bet' expects between 1 and 2 arguments, got 0 at line 5",
     "semantic_error_native_type": "Error: 'bet' argument 1: expected bool, got string at line 5",
     "semantic_error_native_nested_call": "Error: 'bet' expects between 1 and 2 arguments, got 0 at line 5",

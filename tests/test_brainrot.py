@@ -42,6 +42,18 @@ def test_brainrot_examples(example, expected_output):
         command = f"{brainrot_path} {example_file_path}"
 
     result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True)
+
+    # "ExitCode:N" asserts only the process's exit code -- for cases whose
+    # observable behavior *is* the exit code (e.g. ragequit(1.5) truncating
+    # to 1) and has no other way to surface a mismatch through stdout/stderr.
+    if expected_output.startswith("ExitCode:"):
+        expected_code = int(expected_output.split(":", 1)[1])
+        assert result.returncode == expected_code, (
+            f"Command for {example} exited {result.returncode}, expected {expected_code}\n"
+            f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+        )
+        return
+
     actual_output = result.stdout.strip() if result.stdout.strip() else result.stderr.strip()
 
     if "Stderr:" in expected_output and result.stdout.strip():

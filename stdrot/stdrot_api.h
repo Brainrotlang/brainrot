@@ -143,6 +143,17 @@ typedef struct
     int param_count;
     int min_args;
     bool is_variadic;
+    /* -1: return_type.type is the call's real, fixed return type (the
+       common case). >= 0: identity-polymorphic -- the call's actual
+       result type is whatever the argument at this index turned out to
+       be at the call site (slorp<T>(T) -> T is return_like_arg == 0), and
+       return_type is a placeholder (STDROT_ANY), not a real type. Set
+       explicitly via STDROT_EXPORT_SIG_IDENTITY() below -- never inferred
+       by pattern-matching return_type/params shapes, since STDROT_ANY
+       alone is also legitimately used for "legacy export, type genuinely
+       unknown" (STDROT_EXPORT()'s expansion), a completely different
+       relationship that must not be guessed at from the same shape. */
+    int return_like_arg;
     StdrotFn fn;
 } StdrotEntry;
 
@@ -156,26 +167,63 @@ typedef struct
  * arguments (min_count of which are mandatory, the rest optional-but-typed);
  * anything beyond pcount is unchecked when variadic is true.
  *
+ * STDROT_EXPORT_SIG_IDENTITY(...) is for the rare identity-polymorphic
+ * shape (currently only slorp<T>(T) -> T): no explicit return type since
+ * there isn't a fixed one -- the result type is whatever argument 0 turns
+ * out to be at the call site (see StdrotEntry.return_like_arg).
+ *
  * STDROT_EXPORT(name, fn) is the untyped legacy form: signature unknown,
- * arity unchecked, return type STDROT_ANY.
+ * arity unchecked, return type STDROT_ANY (genuinely unknown -- not to be
+ * confused with STDROT_EXPORT_SIG_IDENTITY's STDROT_ANY, a different
+ * relationship that happens to reuse the same placeholder type; the two
+ * are told apart by return_like_arg, not by any similarity in shape).
+ *
+ * All three use designated initializers so a future StdrotEntry field
+ * doesn't require touching every existing call site to add a positional
+ * argument -- new fields default to whichever zero value is a safe
+ * "does nothing extra" default.
  */
 
 #if defined(__GNUC__) || defined(__clang__)
 #define STDROT_CONCAT_IMPL(x, y) x##y
 #define STDROT_CONCAT(x, y) STDROT_CONCAT_IMPL(x, y)
-/* aligned(_Alignof(StdrotEntry)) pins each entry to its ABI-minimum
- * alignment. Without it, GCC's/Clang's heuristic that bumps the storage
- * alignment of "large" static objects (StdrotEntry is now well past the
- * old 16-byte struct) pads every entry up to the next 16-byte boundary,
- * so stdrot_exports's byte length stops being an exact multiple of
- * sizeof(StdrotEntry) and registry.c's (stop-start)/sizeof(StdrotEntry)
- * undercounts/overcounts entries -- corrupting the registry. */
+/* The StdrotEntry itself lives in ordinary static storage -- normal
+ * variable-sized-struct layout rules apply, nothing unusual about it.
+ * Only a *pointer* to it goes in the special section, so every slot
+ * registry.c walks is sizeof(StdrotEntry *), uniformly, regardless of
+ * what StdrotEntry itself contains or how the compiler chooses to align
+ * a "large" static struct. See StdrotAPI's comment in this header for why
+ * that matters. */
 #define STDROT_EXPORT_SIG(name_str, func_ptr, ret, params_ptr, pcount,         \
                           min_count, variadic)                                 \
-    __attribute__((used, section("stdrot_exports"),                            \
-                   aligned(_Alignof(StdrotEntry)))) static const StdrotEntry   \
-    STDROT_CONCAT(__stdrot_export_, __LINE__) = {                              \
-        name_str, ret, params_ptr, pcount, min_count, variadic, func_ptr}
+    static const StdrotEntry STDROT_CONCAT(__stdrot_entry_, __LINE__) = {      \
+        .name = name_str,                                                      \
+        .return_type = ret,                                                    \
+        .params = params_ptr,                                                  \
+        .param_count = pcount,                                                 \
+        .min_args = min_count,                                                 \
+        .is_variadic = variadic,                                               \
+        .return_like_arg = -1,                                                 \
+        .fn = func_ptr};                                                       \
+    __attribute__((used,                                                       \
+                   section("stdrot_exports"))) static const StdrotEntry *const \
+    STDROT_CONCAT(__stdrot_export_, __LINE__) =                                \
+        &STDROT_CONCAT(__stdrot_entry_, __LINE__)
+#define STDROT_EXPORT_SIG_IDENTITY(name_str, func_ptr, params_ptr, pcount,     \
+                                   min_count)                                  \
+    static const StdrotEntry STDROT_CONCAT(__stdrot_entry_, __LINE__) = {      \
+        .name = name_str,                                                      \
+        .return_type = ((StdrotParam){STDROT_ANY, NULL, 0}),                   \
+        .params = params_ptr,                                                  \
+        .param_count = pcount,                                                 \
+        .min_args = min_count,                                                 \
+        .is_variadic = false,                                                  \
+        .return_like_arg = 0,                                                  \
+        .fn = func_ptr};                                                       \
+    __attribute__((used,                                                       \
+                   section("stdrot_exports"))) static const StdrotEntry *const \
+    STDROT_CONCAT(__stdrot_export_, __LINE__) =                                \
+        &STDROT_CONCAT(__stdrot_entry_, __LINE__)
 #define STDROT_EXPORT(name_str, func_ptr)                                      \
     STDROT_EXPORT_SIG(name_str, func_ptr,                                      \
                       ((StdrotParam){STDROT_ANY, NULL, 0}), NULL, 0, 0, true)
@@ -187,10 +235,21 @@ typedef struct
 /* ── API discovery entrypoint ────────────────────────────────────────────── *
  * libstdrot.so MUST export this function.
  * Returns pointer to the function table and count.
- */
+ *
+ * functions is an array of *pointers* to entries, not an array of entries.
+ * The linker section holds only these uniformly pointer-sized slots; the
+ * StdrotEntry structs themselves live in ordinary static storage (see
+ * STDROT_EXPORT_SIG below). This is deliberate: a linker section of
+ * variable-content-but-fixed-declared-size structs is exactly what
+ * previously broke registry.c's entry count (a compiler heuristic padded
+ * each struct's storage alignment once StdrotEntry grew past 16 bytes,
+ * silently corrupting (stop-start)/sizeof(StdrotEntry)). A section of
+ * pointers doesn't have that failure mode at all -- every slot is
+ * sizeof(StdrotEntry *), always, regardless of how many fields
+ * StdrotEntry grows to carry. */
 typedef struct
 {
-    StdrotEntry *functions;
+    StdrotEntry *const *functions;
     int count;
 } StdrotAPI;
 

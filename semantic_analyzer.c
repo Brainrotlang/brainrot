@@ -470,27 +470,30 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
             if (!entry)
                 return NONE;
 
+            /* return_like_arg is an explicit declaration (set via
+               STDROT_EXPORT_SIG_IDENTITY(), e.g. slorp<T>(T) -> T), never
+               inferred from return_type/params happening to both say
+               STDROT_ANY -- that shape is ambiguous on its own: a legacy
+               STDROT_EXPORT() also has an STDROT_ANY return, for a
+               completely different reason (genuinely unknown, not "same
+               as this argument"). */
+            if (entry->return_like_arg >= 0)
+            {
+                int idx = 0;
+                for (ArgumentList *a = node->data.func_call.arguments; a;
+                     a = a->next, idx++)
+                {
+                    if (idx == entry->return_like_arg)
+                        return a->expr
+                                   ? infer_expression_type(a->expr, analyzer)
+                                   : NONE;
+                }
+                return NONE;
+            }
+
             if (entry->return_type.type == STDROT_ANY)
             {
-                /* STDROT_ANY covers two different shapes that must not be
-                   conflated: an explicitly slorp-shaped signature (first
-                   checked param is also STDROT_ANY -- slorp<T>(T) -> T,
-                   where the result type is whatever the argument's type
-                   is) versus a legacy/untyped STDROT_EXPORT() (param_count
-                   == 0, no declared signature at all -- genuinely unknown,
-                   not "same type as the first argument"). Treating every
-                   STDROT_ANY return as identity-polymorphic would make an
-                   untyped export's return type whatever its first
-                   argument happened to be, producing false type errors
-                   (or false passes) unrelated to what it actually
-                   returns. */
-                if (entry->param_count > 0 && entry->params &&
-                    entry->params[0].type == STDROT_ANY)
-                {
-                    ArgumentList *args = node->data.func_call.arguments;
-                    if (args && args->expr)
-                        return infer_expression_type(args->expr, analyzer);
-                }
+                /* Legacy/untyped STDROT_EXPORT(): genuinely unknown. */
                 return NONE;
             }
 
@@ -786,12 +789,55 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
         return;
     }
 
+    if (entry->return_type.type == STDROT_PTR ||
+        entry->return_type.type == STDROT_HANDLE)
+    {
+        /* STDROT_PTR/STDROT_HANDLE exist in the ABI as reserved
+           groundwork (see stdrot_api.h) but nothing in this pipeline
+           marshals a pointer/handle-valued return yet: there's no
+           pointer_level tracked for a native return, no VarType a
+           pointer-typed native result maps to (stdrot_type_to_vartype()
+           maps both to NONE), and marshal_native_return_value() (ast.c)
+           doesn't populate current_return_value.value.pvalue for them.
+           Silently treating that as "unchecked, like STDROT_ANY" would
+           make the descriptor decorative -- claim a type it can't
+           actually deliver. Reject it outright instead, until pointer
+           marshalling is implemented end to end. */
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "'%s': native pointer/handle return types are not "
+                 "marshalled yet",
+                 func_name.data);
+        add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                           STRING_LITERAL(error_msg), line);
+        return;
+    }
+
     cur = node->data.func_call.arguments;
     for (int i = 0; i < entry->param_count && cur; i++, cur = cur->next)
     {
         const StdrotParam *param = &entry->params[i];
         if (param->type == STDROT_ANY || !cur->expr)
             continue;
+
+        if (param->type == STDROT_PTR || param->type == STDROT_HANDLE)
+        {
+            /* Same reasoning as the return-type check above, for
+               arguments: nothing marshals a Brainrot pointer expression
+               into StdrotValue.val.ptr/.val.handle yet (ast_expr_to_
+               stdrot_value() never produces one), so accepting this
+               parameter unchecked would silently hand the native
+               function whatever the generic scalar fallback happened to
+               produce -- not the pointer it declared. */
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "'%s' argument %d: native pointer/handle parameters "
+                     "are not marshalled yet",
+                     func_name.data, i + 1);
+            add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                               STRING_LITERAL(error_msg), line);
+            continue;
+        }
 
         VarType expected = stdrot_type_to_vartype(param->type);
         VarType actual = infer_expression_type(cur->expr, analyzer);
@@ -1379,7 +1425,35 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
     depth--;
 }
 
-/* Scope-aware semantic analysis that tracks scope depth during traversal */
+/* Scope-aware semantic analysis that tracks scope depth during traversal.
+ *
+ * TRAVERSAL INVARIANT: this function is the sole owner of recursion into
+ * an AST node's children during semantic analysis. Every case below that
+ * has children calls itself (or a small node-specific helper, like
+ * semantic_check_expression_list() for ExpressionList) on each child
+ * exactly once; the semantic_visit_*() functions it calls out to
+ * (semantic_visit_declaration, semantic_visit_assignment,
+ * semantic_visit_function_call, semantic_visit_binary_operation,
+ * semantic_visit_identifier) validate *only* the node passed to them --
+ * none of them may call ast_accept() or semantic_analyze_with_scope_
+ * tracking() on a child this function has already visited or is about to.
+ *
+ * This isn't cosmetic. semantic_visit_binary_operation() used to call
+ * ast_accept() on both operands *in addition to* this function's own
+ * NODE_OPERATION case having already recursed into them -- every operand
+ * of every binary operation was visited twice, silently, until something
+ * that reports on the second visit (arity/type errors, "Undefined
+ * variable") made it visible as duplicate error messages. Multiple
+ * rounds of native-call-checking work then had to individually rediscover
+ * and route around node kinds this function didn't yet have a case for
+ * (array indices, sizeof, return, do-while, switch, ...), each visited
+ * exactly once nowhere. Both problems are the same root cause: no single
+ * place owned "does the child get visited, and by whom."
+ *
+ * A visitor that genuinely needs to inspect a child's shape (not walk
+ * its children) may call infer_expression_type()/infer_expression_pointer_
+ * level() -- those are pure queries, not traversal, and are safe to call
+ * as many times as needed. */
 void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                                           ASTNode *node)
 {

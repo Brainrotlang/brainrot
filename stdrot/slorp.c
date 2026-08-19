@@ -163,12 +163,16 @@ static StdrotValue stdrot_slorp(StdrotValue *args, int argc)
 }
 
 /* slorp is identity-polymorphic: slorp<T>(T) -> T, dispatching on the
- * runtime type of its one argument. STDROT_ANY tells the semantic analyzer
- * to accept any scalar/string argument and infer the call's result type
- * from that argument rather than from a fixed return type. */
+ * runtime type of its one argument. STDROT_EXPORT_SIG_IDENTITY declares
+ * that relationship explicitly (return_like_arg == 0), rather than the
+ * semantic analyzer inferring it from return_type/params happening to
+ * both say STDROT_ANY -- that shape is ambiguous on its own (a legacy
+ * STDROT_EXPORT() also has an STDROT_ANY return, for an entirely
+ * different reason: genuinely unknown, not "same as argument 0"). The
+ * STDROT_ANY on slorp_params[0] still does its usual job of accepting any
+ * scalar/string argument type. */
 static const StdrotParam slorp_params[] = {
     {STDROT_ANY, NULL, 0},
 };
 
-STDROT_EXPORT_SIG("slorp", stdrot_slorp, ((StdrotParam){STDROT_ANY, NULL, 0}),
-                  slorp_params, 1, 1, false);
+STDROT_EXPORT_SIG_IDENTITY("slorp", stdrot_slorp, slorp_params, 1, 1);
