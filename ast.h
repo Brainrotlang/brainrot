@@ -96,13 +96,9 @@ typedef struct StructField
     struct StructField *next;
 } StructField;
 
-/* A single named constant inside an enum body (e.g. `RED` in
-   `gyatt Color { RED, GREEN, BLUE };`). Enumerators live in a single global
-   namespace (matching C), resolved via find_global_enum_constant() as a
-   fallback wherever a bare identifier is evaluated as an int-valued
-   expression. has_explicit_value/value double as parse-time scratch state
-   for finalize_enum_constants()'s auto-increment fill-in and remain valid
-   (value holds the final int) after that. */
+/* A single named constant inside an enum body; enumerators share one
+   global namespace (matching C). has_explicit_value/value double as
+   scratch state for finalize_enum_constants()'s auto-increment pass. */
 typedef struct EnumConstant
 {
     String name;
@@ -111,9 +107,8 @@ typedef struct EnumConstant
     struct EnumConstant *next;
 } EnumConstant;
 
-/* An enum definition (the "template"). Enum tags live in their own
-   namespace, separate from the struct/union tag registry (matching real
-   C, where each of struct/union/enum has a distinct tag namespace). */
+/* An enum definition (the "template"). Enum tags get their own registry,
+   separate from struct/union's, matching C's distinct tag namespaces. */
 typedef struct EnumDef
 {
     String name;
@@ -351,11 +346,9 @@ struct ASTNode
        copy-init) -- evaluated at runtime by the declaration visitor. NULL
        for the no-initializer and braced-initializer declaration forms. */
     ASTNode *struct_init_expr;
-    /* Enum tag for a NODE_DECLARATION node with var_type == VAR_ENUM (e.g.
-       "Color" for `gyatt Color c;`). Unlike struct/union, an enum variable
-       needs no blob or fields list at declaration time -- it's a plain int
-       at runtime -- so this is a lone tag string rather than a dedicated
-       union arm. */
+    /* Enum tag for a NODE_DECLARATION node with var_type == VAR_ENUM. A
+       lone field rather than a union arm since an enum variable needs no
+       blob/fields list -- it's a plain int at runtime. */
     String enum_name;
     union
     {
@@ -596,10 +589,8 @@ ASTNode *create_function_def_node_ex(String name, VarType return_type,
 ASTNode *create_function_def_node_struct(String name, String struct_name,
                                          int pointer_level, Parameter *params,
                                          ASTNode *body);
-/* Like create_function_def_node_ex(), for an enum-by-value return type
-   (e.g. `gyatt Color pick(...) { ... }`). Unlike the struct variant, no
-   blob-pointer restriction applies -- an enum return is just a plain int,
-   so any pointer_level is handled by the same generic path as VAR_INT. */
+/* Enum-by-value return type. Unlike the struct variant above, no
+   pointer_level restriction is needed -- an enum return is just an int. */
 ASTNode *create_function_def_node_enum(String name, String enum_name,
                                        int pointer_level, Parameter *params,
                                        ASTNode *body);
@@ -653,25 +644,17 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
    for why we don't YYABORT for these instead. */
 extern bool struct_def_had_error;
 
-/* Enum types. Enum tags/constants live in their own registry, separate
-   from struct_registry -- see the comment on EnumDef in this header. */
+/* Enum types (see the comment on EnumDef above for the registry split). */
 void register_enum_def(EnumDef *def);
 EnumDef *get_enum_def(const String name);
 void free_enum_registry(void);
-/* Fills in auto-incremented values for constants that didn't specify one
-   explicitly, and checks for a duplicate name -- both within `def`'s own
-   constant list and against every already-registered enum's constants
-   (enum constants share a single global namespace, matching C). Returns
-   false (after reporting via yyerror()) if a duplicate was found; the
-   caller (lang.y's enum_def) still registers `def` either way, matching
-   how a malformed struct/union is still registered -- see
-   struct_def_had_error. */
+/* Fills in auto-incremented values and checks for a duplicate constant
+   name, within `def` and against every already-registered enum. Returns
+   false on a duplicate; `def` is still registered either way, matching
+   struct_def_had_error's handling of a malformed struct/union. */
 bool finalize_enum_constants(EnumDef *def);
-/* Search every registered enum's constants for `name`, in definition
-   order. This is the fallback lookup used wherever a bare identifier is
-   evaluated as an expression and isn't a variable -- see check_and_mark_
-   identifier/handle_identifier/get_expression_type in ast.c and their
-   semantic-analyzer counterparts. Returns NULL if no such constant. */
+/* Fallback lookup for a bare identifier that isn't a variable -- an
+   unscoped enum constant. Returns NULL if none matches. */
 EnumConstant *find_global_enum_constant(const String name);
 ASTNode *create_enum_def_node(String name);
 

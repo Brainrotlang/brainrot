@@ -1,0 +1,35 @@
+🚽 Test case: enum arithmetic with values outside short range (-32768..32767),
+🚽 covering var+var, struct-field+var, and call+call operands -- regression
+🚽 for enum operands being evaluated as short instead of int.
+gyatt Status {
+    A = 40000,
+    B = 50000
+};
+
+gang Box {
+    gyatt Status s;
+};
+
+gyatt Status make_a() {
+    bussin A;
+}
+
+gyatt Status make_b() {
+    bussin B;
+}
+
+skibidi main {
+    gyatt Status x;
+    gyatt Status y;
+    x = A;
+    y = B;
+    yapping("%d", x + y);
+
+    gang Box p;
+    p.s = A;
+    yapping("%d", p.s + y);
+
+    yapping("%d", make_a() + make_b());
+
+    bussin 0;
+}

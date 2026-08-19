@@ -627,7 +627,7 @@ gyatt Status {
 
 #### Enum Declaration
 
-Declare an enum-typed variable inside a function body (or at the top level):
+Declare an enum-typed variable inside a function body:
 
 ```c
 gyatt Color favorite;

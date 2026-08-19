@@ -122,5 +122,10 @@
     "enum_duplicate_constant_fail": "Error: Duplicate enum constant 'RED' in 'Color' at line 4\nParsing failed",
     "enum_redefinition_fail": "Error: Enum 'Color' is already defined at line 9\nParsing failed",
     "enum_unknown_type_fail": "Error: Unknown enum type 'Ghost' at line 2\nParsing failed",
-    "enum_duplicate_across_enums_fail": "Error: Enum constant 'RED' is already defined at line 10\nParsing failed"
+    "enum_duplicate_across_enums_fail": "Error: Enum constant 'RED' is already defined at line 10\nParsing failed",
+    "enum_negative_value": "-1 0 5",
+    "enum_param_unknown_type_fail": "Error: Unknown enum type 'Ghost' at line 1\nParsing failed",
+    "enum_return_unknown_type_fail": "Error: Unknown enum type 'Ghost' at line 3\nParsing failed",
+    "enum_arithmetic_wide_values": "90000\n90000\n90000",
+    "enum_salty_local": "1\n1\n1"
 }

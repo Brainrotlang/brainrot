@@ -1,0 +1,9 @@
+🚽 Test case: a function parameter typed with an enum tag that was never defined
+rizz foo(gyatt Ghost g) {
+    bussin g;
+}
+
+skibidi main {
+    yapping("%d", foo(1));
+    bussin 0;
+}

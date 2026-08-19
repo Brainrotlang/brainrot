@@ -470,8 +470,6 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
     var->modifiers = node->modifiers;
     var->var_type = node->var_type;
     var->pointer_level = node->pointer_level;
-    if (node->var_type == VAR_ENUM)
-        var->enum_name = safe_strdup(&node->enum_name);
 
     /* If static and already exists in static map, skip entirely */
     if (node->modifiers.is_static)
@@ -483,6 +481,13 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
             return;
         }
     }
+
+    /* Only reached on the first visit (or a non-static declaration) -- an
+       enum_name strdup'd before the static-already-exists check above
+       would leak on every re-entry, since that early return only frees
+       the wrapper Variable, not the heap string it points to. */
+    if (node->var_type == VAR_ENUM)
+        var->enum_name = safe_strdup(&node->enum_name);
 
     /* Detect struct declaration: right node is a NODE_STRUCT_DEF */
     if (node->data.op.right && node->data.op.right->type == NODE_STRUCT_DEF)

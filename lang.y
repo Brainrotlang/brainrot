@@ -187,6 +187,7 @@ struct_def
                 f->name          = safe_strdup(&p->name);
                 f->type          = p->type;
                 f->struct_name   = safe_strdup(&p->struct_name);
+                f->enum_name     = safe_strdup(&p->enum_name);
                 f->pointer_level = p->pointer_level;
                 f->offset        = 0; /* filled by compute_struct_layout */
                 f->next          = NULL;
@@ -296,10 +297,8 @@ struct_field
         }
     ;
 
-/* Enum tag being defined at top level (e.g. `gyatt Color { RED, GREEN,
-   BLUE };`). Auto-increment and duplicate-name checking are deferred to
-   finalize_enum_constants() in ast.c, mirroring how struct layout is
-   deferred out of struct_def's own action. */
+/* Enum tag defined at top level. Auto-increment and duplicate-name
+   checking happen in ast.c, not inline here, same as struct layout. */
 enum_def:
     ENUM IDENTIFIER LBRACE enum_constant_list RBRACE SEMICOLON
         {
@@ -358,6 +357,16 @@ enum_constant:
             $$ = c;
             SAFE_FREE($1.data);
         }
+    | IDENTIFIER EQUALS MINUS INT_LITERAL
+        {
+            EnumConstant *c = SAFE_MALLOC(EnumConstant);
+            c->name = safe_strdup(&$1);
+            c->value = -$4;
+            c->has_explicit_value = true;
+            c->next = NULL;
+            $$ = c;
+            SAFE_FREE($1.data);
+        }
     ;
 
 function_def
@@ -371,6 +380,14 @@ function_def
         }
     | ENUM IDENTIFIER declarator LPAREN params RPAREN LBRACE statements RBRACE
         {
+            if (!get_enum_def($2))
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg), "Unknown enum type '%s'",
+                        $2.data);
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
             $$ = create_function_def_node_enum($3.name, $2, $3.pointer_level, $5, $8);
             SAFE_FREE($2);
             SAFE_FREE($3.name);
@@ -408,6 +425,14 @@ param_list
         }
     | optional_modifiers ENUM IDENTIFIER declarator
         {
+            if (!get_enum_def($3))
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg), "Unknown enum type '%s'",
+                        $3.data);
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
             $$ = create_parameter_ex($4.name, VAR_ENUM, $4.pointer_level, NULL, get_current_modifiers());
             $$->enum_name = ARENA_STRDUP($3);
             SAFE_FREE($3);
@@ -415,6 +440,14 @@ param_list
         }
     | param_list COMMA optional_modifiers ENUM IDENTIFIER declarator
         {
+            if (!get_enum_def($5))
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg), "Unknown enum type '%s'",
+                        $5.data);
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
             $$ = create_parameter_ex($6.name, VAR_ENUM, $6.pointer_level, $1, get_current_modifiers());
             $$->enum_name = ARENA_STRDUP($5);
             SAFE_FREE($5);

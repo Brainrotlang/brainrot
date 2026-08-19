@@ -1376,6 +1376,14 @@ void *handle_binary_operation(ASTNode *node)
     int left_type = get_expression_type(node->data.op.left);
     int right_type = get_expression_type(node->data.op.right);
 
+    // An enum operand is an int in C -- normalize here so every check below
+    // (promotion, and the VAR_INT branches in the float/double paths) treats
+    // it as one, instead of falling through to the VAR_SHORT default.
+    if (left_type == VAR_ENUM)
+        left_type = VAR_INT;
+    if (right_type == VAR_ENUM)
+        right_type = VAR_INT;
+
     // Promote types if necessary (short -> int -> float -> double).
     int promoted_type = VAR_SHORT;
     if (left_type == VAR_DOUBLE || right_type == VAR_DOUBLE)
@@ -4549,10 +4557,7 @@ ASTNode *create_function_def_node_enum(String name, String enum_name,
                                        ASTNode *body)
 {
     /* An enum return is a plain int at runtime, so unlike the struct
-       variant above, no pointer_level restriction is needed here -- the
-       generic VAR_INT-shaped path (handle_return_statement, handle_
-       function_call, interpreter_visit_declaration) already handles any
-       pointer_level correctly. */
+       variant above, no pointer_level restriction is needed here. */
     ASTNode *node = create_function_def_node_ex(name, VAR_ENUM, pointer_level,
                                                 params, body);
     if (node)
@@ -4848,6 +4853,7 @@ void free_struct_registry(void)
             StructField *nxt = f->next;
             SAFE_FREE(f->name);
             SAFE_FREE(f->struct_name);
+            SAFE_FREE(f->enum_name);
             SAFE_FREE(f);
             f = nxt;
         }

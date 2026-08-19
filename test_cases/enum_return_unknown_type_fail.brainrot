@@ -1,0 +1,8 @@
+🚽 Test case: a function return type using an enum tag that was never defined
+gyatt Ghost pick() {
+    bussin 1;
+}
+
+skibidi main {
+    bussin 0;
+}
