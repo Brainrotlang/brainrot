@@ -127,5 +127,6 @@
     "enum_param_unknown_type_fail": "Error: Unknown enum type 'Ghost' at line 1\nParsing failed",
     "enum_return_unknown_type_fail": "Error: Unknown enum type 'Ghost' at line 3\nParsing failed",
     "enum_arithmetic_wide_values": "90000\n90000\n90000",
-    "enum_salty_local": "1\n1\n1"
+    "enum_salty_local": "1\n1\n1",
+    "enum_pointer_return": "1"
 }

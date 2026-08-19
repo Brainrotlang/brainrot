@@ -482,10 +482,8 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
         }
     }
 
-    /* Only reached on the first visit (or a non-static declaration) -- an
-       enum_name strdup'd before the static-already-exists check above
-       would leak on every re-entry, since that early return only frees
-       the wrapper Variable, not the heap string it points to. */
+    /* Must come after the static-already-exists check above: that early
+       return frees only the wrapper Variable, not enum_name's heap string. */
     if (node->var_type == VAR_ENUM)
         var->enum_name = safe_strdup(&node->enum_name);
 

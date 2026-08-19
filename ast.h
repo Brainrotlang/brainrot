@@ -96,9 +96,8 @@ typedef struct StructField
     struct StructField *next;
 } StructField;
 
-/* A single named constant inside an enum body; enumerators share one
-   global namespace (matching C). has_explicit_value/value double as
-   scratch state for finalize_enum_constants()'s auto-increment pass. */
+/* A single named constant inside an enum body. has_explicit_value/value
+   also serve as scratch state for the auto-increment pass. */
 typedef struct EnumConstant
 {
     String name;
@@ -346,9 +345,8 @@ struct ASTNode
        copy-init) -- evaluated at runtime by the declaration visitor. NULL
        for the no-initializer and braced-initializer declaration forms. */
     ASTNode *struct_init_expr;
-    /* Enum tag for a NODE_DECLARATION node with var_type == VAR_ENUM. A
-       lone field rather than a union arm since an enum variable needs no
-       blob/fields list -- it's a plain int at runtime. */
+    /* Enum tag for a NODE_DECLARATION node with var_type == VAR_ENUM; not
+       in the union below since it carries no blob/fields to go with it. */
     String enum_name;
     union
     {

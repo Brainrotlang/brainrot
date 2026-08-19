@@ -1,0 +1,20 @@
+🚽 Test case: a function returning a pointer to an enum-typed value --
+🚽 regression for handle_function_call's VAR_ENUM arm ignoring
+🚽 pointer_level and always reading value.ivalue instead of value.pvalue.
+gyatt Color {
+    RED,
+    GREEN,
+    BLUE
+};
+
+gyatt Color *addr(gyatt Color *p) {
+    bussin p;
+}
+
+skibidi main {
+    gyatt Color c;
+    c = GREEN;
+    gyatt Color *q = addr(&c);
+    yapping("%d", *q);
+    bussin 0;
+}

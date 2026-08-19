@@ -1376,9 +1376,8 @@ void *handle_binary_operation(ASTNode *node)
     int left_type = get_expression_type(node->data.op.left);
     int right_type = get_expression_type(node->data.op.right);
 
-    // An enum operand is an int in C -- normalize here so every check below
-    // (promotion, and the VAR_INT branches in the float/double paths) treats
-    // it as one, instead of falling through to the VAR_SHORT default.
+    // An enum operand is an int in C -- normalize here so every VAR_INT
+    // check below treats it as one too.
     if (left_type == VAR_ENUM)
         left_type = VAR_INT;
     if (right_type == VAR_ENUM)
@@ -2871,6 +2870,12 @@ void *handle_function_call(ASTNode *node)
             free_pending_struct_return_value();
             break;
         case VAR_ENUM:
+            if (current_return_value.pointer_level > 0)
+            {
+                return_value = SAFE_MALLOC(uintptr_t);
+                *(uintptr_t *)return_value = current_return_value.value.pvalue;
+                break;
+            }
             return_value = SAFE_MALLOC(int);
             *(int *)return_value = current_return_value.value.ivalue;
             break;
@@ -3195,11 +3200,13 @@ bool is_expression(ASTNode *node, VarType type)
     {
         VarType ret =
             get_function_return_type(node->data.func_call.function_name);
-        /* An enum return has type int in C -- treat it as such here so
+        /* A by-value enum return has type int in C -- treat it as such so
            general int-context callers (e.g. ast_expr_to_stdrot_value's
-           varargs marshalling) recognize it without needing a VAR_ENUM
-           case of their own. */
-        if (type == VAR_INT && ret == VAR_ENUM)
+           varargs marshalling) recognize it without a VAR_ENUM case of
+           their own. A pointer-to-enum return is not an int, though. */
+        if (type == VAR_INT && ret == VAR_ENUM &&
+            get_function_return_pointer_level(
+                node->data.func_call.function_name) == 0)
             return true;
         return ret == type;
     }
