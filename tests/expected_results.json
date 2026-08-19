@@ -93,6 +93,8 @@
     "semantic_error_native_return": "Error: 'bet' argument 1: expected bool, got int at line 5",
     "semantic_error_native_do_while": "Error: 'bet' argument 1: expected bool, got int at line 6",
     "semantic_error_native_switch": "Error: 'bet' argument 1: expected bool, got int at line 4",
+    "semantic_error_native_assignment_nested_call": "Error: 'bet' argument 1: expected bool, got int at line 10",
+    "semantic_error_native_assignment_lhs_index": "Error: 'bet' argument 1: expected bool, got int at line 5",
     "gang": "Point: 3 4 5.0\nQ: 10 20 0.0\n",
     "chungus": "As int: 1067614182\nReinterpreted as float: 1.27\nSingle-member init: 99\n",
     "chungus_init_fail": "Error: Union initializer must have exactly one value at line 8",

@@ -771,7 +771,20 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
     }
 
     if (entry->param_count > 0 && !entry->params)
+    {
+        /* A malformed STDROT_EXPORT_SIG (param_count > 0 but no params
+           array) -- reject the call outright rather than silently skipping
+           type checks on it, since accepting it unchecked would be
+           fail-open on exactly the thing this analyzer exists to catch. */
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "'%s' has an inconsistent native signature (param_count "
+                 "> 0 but no params declared)",
+                 func_name.data);
+        add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                           STRING_LITERAL(error_msg), line);
         return;
+    }
 
     cur = node->data.func_call.arguments;
     for (int i = 0; i < entry->param_count && cur; i++, cur = cur->next)
@@ -969,7 +982,14 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node)
 
     if (node->data.op.right)
     {
-        ast_accept(node->data.op.right, self);
+        /* ast_accept() alone would miss a native call nested inside
+           another call's arguments (`x = f(bet(2));`) or buried inside an
+           array index/operand -- its NODE_FUNC_CALL dispatch (visitor.c)
+           doesn't walk call arguments the way
+           semantic_analyze_with_scope_tracking()'s does. Safe here the
+           same way it's safe for declaration initializers: nothing above
+           this call has already visited node->data.op.right. */
+        semantic_analyze_with_scope_tracking(analyzer, node->data.op.right);
     }
 
     if (node->data.op.left->type == NODE_UNARY_OPERATION &&
@@ -1051,6 +1071,29 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node)
             STRING_LITERAL("Left-hand side of assignment is not assignable"),
             node->line_number > 0 ? node->line_number : 1);
         return;
+    }
+
+    /* Same reasoning as the RHS above, for whichever part of the LHS can
+       itself contain a native call: an index (`arr[bet(2)] = 1;`) or a
+       struct member's object expression. A plain identifier LHS is
+       deliberately not walked this way -- semantic_visit_identifier()
+       would re-report "Undefined variable" on top of the
+       undefined-variable check already done for it above. A dereference
+       LHS (`*p = ...;`) is already fully validated above (pointer-ness of
+       `p`); walking the whole node here would re-run that exact
+       dereference check a second time via the switch's own
+       NODE_UNARY_OPERATION case, so only its operand is walked, not the
+       dereference node itself. */
+    if (node->data.op.left->type == NODE_ARRAY_ACCESS ||
+        node->data.op.left->type == NODE_STRUCT_ACCESS)
+    {
+        semantic_analyze_with_scope_tracking(analyzer, node->data.op.left);
+    }
+    else if (node->data.op.left->type == NODE_UNARY_OPERATION &&
+             node->data.op.left->data.unary.op == OP_DEREFERENCE)
+    {
+        semantic_analyze_with_scope_tracking(
+            analyzer, node->data.op.left->data.unary.operand);
     }
 
     VarType target_type = infer_expression_type(node->data.op.left, analyzer);

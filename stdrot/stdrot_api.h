@@ -11,13 +11,15 @@
  *        StdrotValue stdrot_myfunc(StdrotValue *args, int argc) { ... }
  *
  *   2. At the bottom of myfunc.c, add a typed signature so the semantic
- *      analyzer can check arity and argument types:
+ *      analyzer can check arity and argument types -- this example
+ *      declares `myfunc(rizz) -> rizz`, one mandatory int argument,
+ *      returning an int:
  *
  *        static const StdrotParam myfunc_params[] = {
  *            {STDROT_INT, NULL, 0},
  *        };
  *        STDROT_EXPORT_SIG("myfunc", stdrot_myfunc,
- *                          ((StdrotParam){STDROT_BOOL, NULL, 0}),
+ *                          ((StdrotParam){STDROT_INT, NULL, 0}),
  *                          myfunc_params, 1, 1, false);
  *
  *      Or, for an unchecked/untyped export: STDROT_EXPORT("myfunc",
@@ -155,9 +157,7 @@ typedef struct
  * anything beyond pcount is unchecked when variadic is true.
  *
  * STDROT_EXPORT(name, fn) is the untyped legacy form: signature unknown,
- * arity unchecked, return type STDROT_ANY. Use fn == NULL for core
- * functions (yapping, baka, slorp, etc.) that need AST bridge handling in
- * stdrot.c.
+ * arity unchecked, return type STDROT_ANY.
  */
 
 #if defined(__GNUC__) || defined(__clang__)

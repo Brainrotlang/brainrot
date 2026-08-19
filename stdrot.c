@@ -461,16 +461,7 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
         return (StdrotValue){STDROT_NONE, {0}};
     }
 
-    /* Look up function in the registry */
-    StdrotEntry *entry = NULL;
-    for (int i = 0; i < function_count; i++)
-    {
-        if (strcmp(functions[i].name, func_name.data) == 0)
-        {
-            entry = &functions[i];
-            break;
-        }
-    }
+    const StdrotEntry *entry = get_native_function(func_name);
 
     if (!entry || !entry->fn)
     {

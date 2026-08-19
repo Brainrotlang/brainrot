@@ -29,9 +29,9 @@ bool is_builtin_function(const String func_name);
 void execute_builtin_function(const String func_name, ArgumentList *args);
 void execute_func_call(const String func_name, ArgumentList *args);
 /* Registry lookup for a native export's descriptor (name, return_type,
- * params, param_count, is_variadic). Returns NULL if func_name isn't a
- * registered native function. Used by the semantic analyzer to check
- * native calls the way user-defined functions are checked. */
+ * params, param_count, min_args, is_variadic). Returns NULL if func_name
+ * isn't a registered native function. Used by the semantic analyzer to
+ * check native calls the way user-defined functions are checked. */
 const StdrotEntry *get_native_function(const String func_name);
 /* Shared StdrotType -> VarType mapping, used by both the interpreter
  * (ast.c) and the semantic analyzer so the two never drift apart. */

@@ -518,7 +518,7 @@ skibidi main {
 **Prototype**
 
 ```c
-void bet(int condition, const char* message);
+cap bet(cap condition, rant message);  /* message is optional */
 ```
 
 **Key Points**
@@ -526,6 +526,9 @@ void bet(int condition, const char* message);
 - Tests a condition and terminates the program if it's false.
 - Similar to C's `assert()` macro.
 - When the condition fails, prints an error message with the line number and optional custom message.
+- On success, returns `W` -- usable directly, e.g. `cap ok = bet(x > 0);`.
+- `condition` must be `cap` and `message` (if given) must be `rant`; both are
+  checked before the program runs.
 
 ### Example
 
