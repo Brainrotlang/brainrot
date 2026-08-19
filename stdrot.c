@@ -305,6 +305,22 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
     if (!expr)
         return;
 
+    /* Checked ahead of the type-specific switch below: any expression
+       with a nonzero pointer level (a pointer variable, &x, a
+       STDROT_PTR-returning native call, pointer arithmetic, ...)
+       marshals as a raw address regardless of its base VarType -- an
+       opaque pointer parameter (STDROT_PTR) has no base type to dispatch
+       on by design (see semantic_check_native_call()'s STDROT_PTR
+       handling). A call whose semantic-checked STDROT_PTR parameter got
+       here is guaranteed pointer_level > 0 by that same check; this just
+       has to actually carry the address through. */
+    if (get_expression_pointer_level(expr) > 0)
+    {
+        out->type = STDROT_PTR;
+        out->val.ptr = (void *)evaluate_expression_pointer(expr);
+        return;
+    }
+
     switch (expr->type)
     {
     case NODE_STRING_LITERAL:
@@ -543,6 +559,62 @@ static bool coerce_arg_to_param(StdrotValue *value, StdrotType declared)
     }
 }
 
+/* A native's own C implementation can call exit() directly (bet's
+ * assertion failure, ragequit) instead of returning through entry->fn(),
+ * skipping execute_native_call()'s ordinary post-call cleanup entirely --
+ * harmless back when the argument vector and ownership-tracking arrays
+ * were fixed-size stack arrays (the OS reclaims stack and heap alike on
+ * exit()), but now that they're heap-allocated to fit the actual call
+ * (see execute_native_call()'s total_args), an exit() from inside
+ * entry->fn(), or from a nested native call being evaluated while
+ * marshalling an argument for this one, would leak them every time.
+ *
+ * Tracked as a stack (linked list), not a single slot, because native
+ * calls nest: marshalling an argument can itself invoke
+ * execute_native_call() for a nested call (e.g. `yapping("%s",
+ * slorp(buf))`), which must not clobber the outer call's still-pending
+ * allocation. Each frame is an ordinary local variable in
+ * execute_native_call() -- exit() doesn't unwind the C call stack, so
+ * every still-active frame's PendingNativeCallArgs is still valid memory
+ * for this atexit handler to walk, however deep the nesting was when
+ * exit() was called. Freed via the pending_stack pointer, not
+ * individually SAFE_FREE'd, since each frame lives in its function's own
+ * stack space rather than being heap-allocated itself. */
+typedef struct PendingNativeCallArgs
+{
+    StdrotValue *arg_values;
+    char **owned_string_bufs;
+    const char **owned_cstring_bufs;
+    int arg_count;
+    struct PendingNativeCallArgs *next;
+} PendingNativeCallArgs;
+
+static PendingNativeCallArgs *pending_native_call_stack = NULL;
+static bool native_call_cleanup_registered = false;
+
+static void free_pending_native_call_args(void)
+{
+    for (PendingNativeCallArgs *frame = pending_native_call_stack; frame;
+         frame = frame->next)
+    {
+        for (int i = 0; i < frame->arg_count; i++)
+        {
+            if (frame->owned_string_bufs && frame->owned_string_bufs[i])
+            {
+                SAFE_FREE(frame->owned_string_bufs[i]);
+            }
+            if (frame->owned_cstring_bufs && frame->owned_cstring_bufs[i])
+            {
+                stdrot_release_cstring(frame->owned_cstring_bufs[i]);
+            }
+        }
+        SAFE_FREE(frame->arg_values);
+        SAFE_FREE(frame->owned_string_bufs);
+        SAFE_FREE(frame->owned_cstring_bufs);
+    }
+    pending_native_call_stack = NULL;
+}
+
 StdrotValue execute_native_call(const String func_name, ArgumentList *args)
 {
     if (!func_name.data || !functions)
@@ -567,55 +639,80 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
         g_exec_context.line_number = args->expr->line_number;
     }
 
-    /* Generic function call - evaluate all arguments to StdrotValue */
-    StdrotValue arg_values[64];
-    /* Two independent reasons a slot can own a heap buffer that needs
-       freeing after the call, each into a different union member:
-         OWNS_STRING  -- ast_expr_to_stdrot_value()'s NODE_FUNC_CALL case
-                         (a native call used as an argument, e.g.
-                         `yapping("%s", slorp(buf))`) allocated a fresh
-                         val.str.data; every other case just borrows a
-                         pointer already owned by a literal or variable.
-         OWNS_CSTRING -- coerce_arg_to_param() converted a STDROT_STRING
-                         argument to STDROT_CSTRING for a native that
-                         declared that parameter, allocating val.cstr. */
-    enum
+    /* Count first so the argument vector is sized to the actual call --
+       no arbitrary cap silently dropping trailing arguments the semantic
+       analyzer already approved (it counts the whole list against
+       min_args/param_count/is_variadic with no limit of its own; a fixed
+       stack array here previously just stopped filling in past 64,
+       amputating any argument beyond that with no error at all). */
+    int total_args = 0;
+    for (ArgumentList *c = args; c && c->expr; c = c->next)
     {
-        OWNS_NOTHING,
-        OWNS_STRING,
-        OWNS_CSTRING
-    } arg_ownership[64] = {0};
-    int arg_count = 0;
+        total_args++;
+    }
 
+    if (total_args == 0)
+    {
+        return entry->fn(NULL, 0);
+    }
+
+    StdrotValue *arg_values = SAFE_MALLOC_ARRAY(StdrotValue, total_args);
+    /* Two independent reasons a slot can own a heap buffer that needs
+       freeing after the call -- tracked as the buffer pointer itself, not
+       just a bool, because coerce_arg_to_param() overwrites the union
+       member that held the original STDROT_STRING buffer with the new
+       STDROT_CSTRING one. A bool flag can't recover a pointer that's
+       already been overwritten out from under it by the time cleanup
+       runs; both can legitimately apply to the same slot at once (a
+       nested native call result gets both its own fresh String buffer
+       *and* a fresh C-string conversion of it), and each needs freeing
+       independently, into its own union member. */
+    char **owned_string_bufs = SAFE_MALLOC_ARRAY(char *, total_args);
+    const char **owned_cstring_bufs =
+        SAFE_MALLOC_ARRAY(const char *, total_args);
+    if (!arg_values || !owned_string_bufs || !owned_cstring_bufs)
+    {
+        SAFE_FREE(arg_values);
+        SAFE_FREE(owned_string_bufs);
+        SAFE_FREE(owned_cstring_bufs);
+        yyerror("Out of memory marshalling native call arguments");
+        return (StdrotValue){STDROT_NONE, {0}};
+    }
+
+    if (!native_call_cleanup_registered)
+    {
+        atexit(free_pending_native_call_args);
+        native_call_cleanup_registered = true;
+    }
+    PendingNativeCallArgs frame = {.arg_values = arg_values,
+                                   .owned_string_bufs = owned_string_bufs,
+                                   .owned_cstring_bufs = owned_cstring_bufs,
+                                   .arg_count = total_args,
+                                   .next = pending_native_call_stack};
+    pending_native_call_stack = &frame;
+
+    int arg_count = 0;
     ArgumentList *cur = args;
-    while (cur && arg_count < 64)
+    while (cur && cur->expr && arg_count < total_args)
     {
         ASTNode *expr = cur->expr;
-        if (!expr)
-            break;
 
         ast_expr_to_stdrot_value(expr, &arg_values[arg_count]);
-        bool owns_string = expr->type == NODE_FUNC_CALL &&
-                           arg_values[arg_count].type == STDROT_STRING;
+        owned_string_bufs[arg_count] =
+            (expr->type == NODE_FUNC_CALL &&
+             arg_values[arg_count].type == STDROT_STRING)
+                ? arg_values[arg_count].val.str.data
+                : NULL;
+        owned_cstring_bufs[arg_count] = NULL;
 
         /* Convert to whatever entry->params[arg_count] actually declared
            -- see coerce_arg_to_param()'s comment for why this has to
            happen here, not just at the semantic-analysis type check. */
-        if (arg_count < entry->param_count && entry->params)
+        if (arg_count < entry->param_count && entry->params &&
+            coerce_arg_to_param(&arg_values[arg_count],
+                                entry->params[arg_count].type))
         {
-            if (coerce_arg_to_param(&arg_values[arg_count],
-                                    entry->params[arg_count].type))
-            {
-                arg_ownership[arg_count] = OWNS_CSTRING;
-            }
-            else if (owns_string)
-            {
-                arg_ownership[arg_count] = OWNS_STRING;
-            }
-        }
-        else if (owns_string)
-        {
-            arg_ownership[arg_count] = OWNS_STRING;
+            owned_cstring_bufs[arg_count] = arg_values[arg_count].val.cstr;
         }
 
         arg_count++;
@@ -624,6 +721,13 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
 
     StdrotValue result = entry->fn(arg_values, arg_count);
 
+    /* Reached: entry->fn() returned normally rather than exit()ing, so
+       ordinary cleanup below handles this frame, and the atexit handler
+       above must not also try to (double-free) -- pop it first. Any
+       nested call's own frame already popped itself the same way before
+       returning here, so this is always exactly our own frame. */
+    pending_native_call_stack = frame.next;
+
     /* None of the registered natives return one of their own string
        arguments back out (slorp -- the one native that could reuse an
        argument buffer in its result -- only ever takes a plain identifier
@@ -631,15 +735,19 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
        a pointer the caller is still holding. */
     for (int i = 0; i < arg_count; i++)
     {
-        if (arg_ownership[i] == OWNS_STRING)
+        if (owned_string_bufs[i])
         {
-            SAFE_FREE(arg_values[i].val.str.data);
+            SAFE_FREE(owned_string_bufs[i]);
         }
-        else if (arg_ownership[i] == OWNS_CSTRING)
+        if (owned_cstring_bufs[i])
         {
-            stdrot_release_cstring(arg_values[i].val.cstr);
+            stdrot_release_cstring(owned_cstring_bufs[i]);
         }
     }
+
+    SAFE_FREE(arg_values);
+    SAFE_FREE(owned_string_bufs);
+    SAFE_FREE(owned_cstring_bufs);
 
     return result;
 }

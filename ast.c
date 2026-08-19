@@ -1284,12 +1284,22 @@ int get_expression_pointer_level(ASTNode *node)
         }
         return get_expression_pointer_level(node->data.unary.operand);
     case NODE_FUNC_CALL:
-        /* Native calls have no pointer/handle representation yet (StdrotValue
-           carries only scalars/strings -- see roadmap L5), so their pointer
-           level is always 0. This can be answered without invoking the
-           call, so it never touches the native-call memo cache. */
         if (is_builtin_function(node->data.func_call.function_name))
+        {
+            /* A native's declared signature (return_type.type/pointer_level)
+               is static data on the registered StdrotEntry -- answering
+               this from it never invokes the call, so it never touches
+               the native-call memo cache, same as before this consulted
+               STDROT_PTR at all. Only STDROT_PTR has a pointer_level to
+               report (see marshal_native_return_value()'s comment on why
+               that reuses VAR_INT + pointer_level); everything else,
+               including the unmarshalled STDROT_HANDLE, is level 0. */
+            const StdrotEntry *entry =
+                get_native_function(node->data.func_call.function_name);
+            if (entry && entry->return_type.type == STDROT_PTR)
+                return entry->return_type.pointer_level + 1;
             return 0;
+        }
         return get_function_return_pointer_level(
             node->data.func_call.function_name);
     case NODE_OPERATION:
@@ -2940,7 +2950,32 @@ static void marshal_native_return_value(ASTNode *node)
 
     current_return_value.pointer_level = 0;
     current_return_value.struct_name = (String){0};
-    current_return_value.type = stdrot_type_to_vartype(result.type);
+    /* An opaque native pointer reuses VAR_INT + pointer_level, the same
+       representation every other pointer-typed value in this interpreter
+       already uses (see e.g. handle_function_call()'s VAR_INT case, which
+       boxes current_return_value.value.pvalue as a uintptr_t whenever
+       pointer_level > 0) -- not because a raw address is semantically an
+       int, but because that's the storage convention already in place
+       for "an address with no further type information attached", and
+       reusing it means every existing consumer of a pointer-valued
+       expression (dereference, pointer arithmetic, assignment to a
+       pointer variable, ...) already knows how to handle it. The
+       semantic analyzer, separately, honestly reports NONE for this same
+       call's static type (see infer_expression_type()) -- the two don't
+       need to agree on a VarType tag, only on pointer_level and the raw
+       value. */
+    if (result.type == STDROT_PTR)
+    {
+        const StdrotEntry *entry =
+            get_native_function(node->data.func_call.function_name);
+        current_return_value.type = VAR_INT;
+        current_return_value.pointer_level =
+            (entry ? entry->return_type.pointer_level : 0) + 1;
+    }
+    else
+    {
+        current_return_value.type = stdrot_type_to_vartype(result.type);
+    }
     current_return_value.has_value = result.type != STDROT_NONE;
 
     switch (result.type)
@@ -2966,14 +3001,18 @@ static void marshal_native_return_value(ASTNode *node)
     case STDROT_STRING:
         current_return_value.value.strvalue = result.val.str;
         break;
+    case STDROT_PTR:
+        current_return_value.value.pvalue = (uintptr_t)result.val.ptr;
+        break;
     case STDROT_ANY:
     case STDROT_CSTRING:
-    case STDROT_PTR:
     case STDROT_HANDLE:
         /* Not yet returned by any registered native (STDROT_ANY only
-           appears in checked-but-unresolved descriptors; CSTRING/PTR/
-           HANDLE are ABI groundwork for later phases, see roadmap L5) --
-           add real marshalling once a builtin actually produces one. */
+           appears in checked-but-unresolved descriptors; CSTRING is ABI
+           groundwork for the argument side only so far; HANDLE needs a
+           resource-ownership model Phase 2 hasn't designed yet, see
+           roadmap Appendix B Q6) -- add real marshalling once a builtin
+           actually produces one. */
     case STDROT_NONE:
         break;
     }
