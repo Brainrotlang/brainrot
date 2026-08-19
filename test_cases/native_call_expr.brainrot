@@ -1,0 +1,28 @@
+rizz addOne(rizz x)
+{
+    bussin x + 1;
+}
+
+skibidi main
+{
+    🚽 initializer: a native call as the declaration's initializer expression
+    cap ok = bet(W);
+    yapping("initializer: %b", ok);
+
+    🚽 condition + binary operand: two native calls compared with == as the
+    🚽 if-condition
+    edgy (bet(W) == bet(W))
+    {
+        yapping("condition and binary operand: ok");
+    }
+
+    🚽 argument: a native call passed as an argument to another native call
+    yapping("argument: %d", bet(W));
+
+    🚽 binary operand: a native call combined with a user-defined function's
+    🚽 result
+    rizz combined = bet(W) + addOne(10);
+    yapping("combined: %d", combined);
+
+    bussin 0;
+}

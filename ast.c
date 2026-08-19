@@ -39,6 +39,115 @@ extern int yylineno;
 static int get_function_return_pointer_level(const String name);
 String evaluate_expression_string(ASTNode *node);
 
+/* ── Native-call memo cache ──────────────────────────────────────────────
+ * Unlike a user-defined Function, a native (stdrot) call has no static
+ * return type -- StdrotFn is fully dynamic, so the only way to know what
+ * type a call produces is to actually invoke it. Expression evaluation
+ * routinely asks that question once (e.g. handle_binary_operation peeking
+ * at operand types via get_expression_type) and then reads the real value
+ * a second time (e.g. evaluate_expression_short calling handle_function_call
+ * on the same node) -- without this cache, that would invoke the native
+ * function, and any side effects it has, twice per read. native_call_peek()
+ * answers type-probe questions from the cache without consuming it;
+ * native_call_consume(), used only by the terminal value-producing call
+ * (handle_function_call), reads it and clears it so the next syntactic
+ * visit to this call site (e.g. the next loop iteration) invokes fresh.
+ *
+ * native_call_peek() is also the fix for a second, unrelated double-
+ * invocation source: interpreter.c's generic ast_accept() walk visits a
+ * declaration/assignment/return/print/error statement's right-hand
+ * expression once for its own sake (interpreter_visit_function_call, e.g.
+ * so the semantic analyzer's identical shared walk can validate it) and
+ * then interpreter_visit_declaration (etc.) separately evaluates that same
+ * expression for real via evaluate_expression_* / handle_function_call.
+ * interpreter_visit_function_call() calls native_call_peek() instead of
+ * executing directly, so that first walk only ever primes the cache; the
+ * genuine invocation -- and, for statement-position calls, the deprecated
+ * write-back -- happens exactly once, at whichever site actually consumes
+ * the value.
+ *
+ * A binary operation with two native-call operands (e.g. `slorp(a) +
+ * slorp(b)`) peeks *both* operands (get_expression_type on each, to decide
+ * the promoted type) before either is consumed -- so this can't be a single
+ * pending slot, or peeking the second call would evict the first call's
+ * still-unconsumed entry and force a spurious re-invocation. A small table
+ * of independently-tracked entries, keyed by node identity, avoids that;
+ * expressions nest nowhere near NATIVE_CALL_CACHE_SIZE native calls deep in
+ * practice, so overflow just falls back to a fresh (safe, if redundant)
+ * invocation rather than growing unbounded. */
+#define NATIVE_CALL_CACHE_SIZE 16
+typedef struct
+{
+    ASTNode *node;
+    StdrotValue value;
+    bool valid;
+} NativeCallCacheEntry;
+static NativeCallCacheEntry native_call_cache[NATIVE_CALL_CACHE_SIZE];
+
+StdrotValue native_call_peek(ASTNode *node)
+{
+    for (int i = 0; i < NATIVE_CALL_CACHE_SIZE; i++)
+    {
+        if (native_call_cache[i].valid && native_call_cache[i].node == node)
+        {
+            return native_call_cache[i].value;
+        }
+    }
+
+    StdrotValue value = execute_native_call(node->data.func_call.function_name,
+                                            node->data.func_call.arguments);
+
+    for (int i = 0; i < NATIVE_CALL_CACHE_SIZE; i++)
+    {
+        if (!native_call_cache[i].valid)
+        {
+            native_call_cache[i].node = node;
+            native_call_cache[i].value = value;
+            native_call_cache[i].valid = true;
+            break;
+        }
+    }
+    return value;
+}
+
+static StdrotValue native_call_consume(ASTNode *node)
+{
+    for (int i = 0; i < NATIVE_CALL_CACHE_SIZE; i++)
+    {
+        if (native_call_cache[i].valid && native_call_cache[i].node == node)
+        {
+            native_call_cache[i].valid = false;
+            return native_call_cache[i].value;
+        }
+    }
+    return execute_native_call(node->data.func_call.function_name,
+                               node->data.func_call.arguments);
+}
+
+static VarType stdrot_type_to_vartype(StdrotType type)
+{
+    switch (type)
+    {
+    case STDROT_INT:
+        return VAR_INT;
+    case STDROT_FLOAT:
+        return VAR_FLOAT;
+    case STDROT_DOUBLE:
+        return VAR_DOUBLE;
+    case STDROT_SHORT:
+        return VAR_SHORT;
+    case STDROT_BOOL:
+        return VAR_BOOL;
+    case STDROT_CHAR:
+        return VAR_CHAR;
+    case STDROT_STRING:
+        return VAR_STRING;
+    case STDROT_NONE:
+    default:
+        return NONE;
+    }
+}
+
 /* Helper to build a namespaced static key */
 static String make_static_key(const String func_name, const String var_name)
 {
@@ -1192,6 +1301,12 @@ int get_expression_pointer_level(ASTNode *node)
         }
         return get_expression_pointer_level(node->data.unary.operand);
     case NODE_FUNC_CALL:
+        /* Native calls have no pointer/handle representation yet (StdrotValue
+           carries only scalars/strings -- see roadmap L5), so their pointer
+           level is always 0. This can be answered without invoking the
+           call, so it never touches the native-call memo cache. */
+        if (is_builtin_function(node->data.func_call.function_name))
+            return 0;
         return get_function_return_pointer_level(
             node->data.func_call.function_name);
     case NODE_OPERATION:
@@ -1337,6 +1452,11 @@ VarType get_expression_type(ASTNode *node)
     {
         // Look up the function in the symbol table
         const String func_name = node->data.func_call.function_name;
+        if (is_builtin_function(func_name))
+        {
+            StdrotValue value = native_call_peek(node);
+            return stdrot_type_to_vartype(value.type);
+        }
         Function *func = get_function(func_name);
         if (func != NULL)
         {
@@ -2819,10 +2939,60 @@ int evaluate_expression_int(ASTNode *node)
     }
 }
 
+/* Marshals a native call's StdrotValue result into current_return_value,
+   the same global slot execute_function_call() populates for user-defined
+   functions, so the void*-marshalling switch below (and every
+   evaluate_expression_* caller of handle_function_call) can treat native
+   and Brainrot calls identically. */
+static void marshal_native_return_value(ASTNode *node)
+{
+    free_pending_struct_return_value();
+    StdrotValue result = native_call_consume(node);
+
+    current_return_value.pointer_level = 0;
+    current_return_value.struct_name = (String){0};
+    current_return_value.type = stdrot_type_to_vartype(result.type);
+    current_return_value.has_value = result.type != STDROT_NONE;
+
+    switch (result.type)
+    {
+    case STDROT_INT:
+        current_return_value.value.ivalue = result.val.i;
+        break;
+    case STDROT_FLOAT:
+        current_return_value.value.fvalue = result.val.f;
+        break;
+    case STDROT_DOUBLE:
+        current_return_value.value.dvalue = result.val.d;
+        break;
+    case STDROT_SHORT:
+        current_return_value.value.svalue = result.val.s;
+        break;
+    case STDROT_BOOL:
+        current_return_value.value.bvalue = result.val.b;
+        break;
+    case STDROT_CHAR:
+        current_return_value.value.ivalue = result.val.c;
+        break;
+    case STDROT_STRING:
+        current_return_value.value.strvalue = result.val.str;
+        break;
+    case STDROT_NONE:
+        break;
+    }
+}
+
 void *handle_function_call(ASTNode *node)
 {
-    execute_function_call(node->data.func_call.function_name,
-                          node->data.func_call.arguments);
+    const String func_name = node->data.func_call.function_name;
+    if (is_builtin_function(func_name))
+    {
+        marshal_native_return_value(node);
+    }
+    else
+    {
+        execute_function_call(func_name, node->data.func_call.arguments);
+    }
     void *return_value = NULL;
     if (current_return_value.has_value)
     {
@@ -3198,15 +3368,19 @@ bool is_expression(ASTNode *node, VarType type)
     }
     case NODE_FUNC_CALL:
     {
-        VarType ret =
-            get_function_return_type(node->data.func_call.function_name);
+        const String func_name = node->data.func_call.function_name;
+        if (is_builtin_function(func_name))
+        {
+            StdrotValue value = native_call_peek(node);
+            return stdrot_type_to_vartype(value.type) == type;
+        }
+        VarType ret = get_function_return_type(func_name);
         /* A by-value enum return has type int in C -- treat it as such so
            general int-context callers (e.g. ast_expr_to_stdrot_value's
            varargs marshalling) recognize it without a VAR_ENUM case of
            their own. A pointer-to-enum return is not an int, though. */
         if (type == VAR_INT && ret == VAR_ENUM &&
-            get_function_return_pointer_level(
-                node->data.func_call.function_name) == 0)
+            get_function_return_pointer_level(func_name) == 0)
             return true;
         return ret == type;
     }

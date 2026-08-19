@@ -37,6 +37,7 @@ extern String evaluate_expression_string(ASTNode *node);
 extern void *evaluate_multi_array_access(ASTNode *node);
 extern void *handle_function_call(ASTNode *node);
 extern size_t handle_sizeof(ASTNode *node);
+extern StdrotValue native_call_peek(ASTNode *node);
 
 /* Global pointer to current interpreter for function calls */
 Interpreter *current_interpreter = NULL;
@@ -286,18 +287,19 @@ void *interpreter_visit_array_access(Visitor *self, ASTNode *node)
     return evaluate_multi_array_access(node);
 }
 
-void *interpreter_visit_function_call(Visitor *self, ASTNode *node)
+/* Executes a function call that is genuinely a bare statement (its own
+   entry in a statement list) -- the one unambiguous point where a call's
+   result is intentionally discarded and the deprecated native write-back
+   convention should still apply. See interpreter_visit_statement_list(),
+   the sole caller. */
+static void interpreter_execute_call_statement(ASTNode *node)
 {
-    (void)self;
     if (!node)
-        return NULL;
+        return;
 
     const String func_name = node->data.func_call.function_name;
     ArgumentList *args = node->data.func_call.arguments;
 
-    extern Scope *current_scope;
-
-    /* Handle built-in functions */
     if (is_builtin_function(func_name))
     {
         execute_builtin_function(func_name, args);
@@ -312,6 +314,39 @@ void *interpreter_visit_function_call(Visitor *self, ASTNode *node)
          * result was a struct, free the blob handle_return_statement
          * allocated for it rather than leaving it to a later call's
          * cleanup (or leaking it, if this was the last call). */
+        free_pending_struct_return_value();
+    }
+}
+
+void *interpreter_visit_function_call(Visitor *self, ASTNode *node)
+{
+    (void)self;
+    if (!node)
+        return NULL;
+
+    /* Reached only via ast_accept()'s generic pre-visit of a declaration/
+       assignment/return/print/error statement's right-hand expression (see
+       visitor.c) -- interpreter_visit_statement_list() intercepts genuine
+       bare-statement calls before they ever reach here. That pre-visit
+       exists so shared visitors (e.g. the semantic analyzer) can validate
+       the call; for this interpreter, the statement's own dedicated visitor
+       (interpreter_visit_declaration et al.) is about to evaluate this same
+       node for real via evaluate_expression_* / handle_function_call. Calling
+       a native function here as well as there would run it -- and any side
+       effects it has -- twice, so for builtins this only primes the
+       single-invocation memo cache (native_call_peek(), see ast.c); the
+       consuming evaluate_expression_*() call reads it back instead of
+       invoking again. User-defined functions don't have that cache and are
+       therefore still invoked from both places -- a pre-existing gap, not
+       introduced here, tracked separately from native-call support. */
+    if (is_builtin_function(node->data.func_call.function_name))
+    {
+        native_call_peek(node);
+    }
+    else
+    {
+        execute_function_call(node->data.func_call.function_name,
+                              node->data.func_call.arguments);
         free_pending_struct_return_value();
     }
 
@@ -801,7 +836,18 @@ void interpreter_visit_statement_list(Visitor *self, ASTNode *node)
     while (stmt)
     {
         if (stmt->statement)
-            ast_accept(stmt->statement, self);
+        {
+            /* A bare `foo();` statement is the one case where this call's
+               result is genuinely meant to be discarded -- handle it
+               directly instead of through ast_accept()/
+               interpreter_visit_function_call(), which (for builtins) only
+               primes the native-call memo cache and relies on some other
+               visitor consuming it. Nothing else will consume this one. */
+            if (stmt->statement->type == NODE_FUNC_CALL)
+                interpreter_execute_call_statement(stmt->statement);
+            else
+                ast_accept(stmt->statement, self);
+        }
         stmt = stmt->next;
     }
 }

@@ -375,12 +375,12 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
     }
 }
 
-void execute_func_call(const String func_name, ArgumentList *args)
+StdrotValue execute_native_call(const String func_name, ArgumentList *args)
 {
     if (!func_name.data || !functions)
     {
         yyerror("Function not found");
-        return;
+        return (StdrotValue){STDROT_NONE, {0}};
     }
 
     /* Look up function in the registry */
@@ -397,7 +397,7 @@ void execute_func_call(const String func_name, ArgumentList *args)
     if (!entry || !entry->fn)
     {
         yyerror("Unknown function");
-        return;
+        return (StdrotValue){STDROT_NONE, {0}};
     }
 
     /* Set execution context - get line number from first argument node */
@@ -425,10 +425,20 @@ void execute_func_call(const String func_name, ArgumentList *args)
         cur = cur->next;
     }
 
-    StdrotValue result = entry->fn(arg_values, arg_count);
+    return entry->fn(arg_values, arg_count);
+}
 
-    /* Generic write-back: if first arg is an identifier and function returned a
-     * value, write the returned value back to that variable. */
+void execute_func_call(const String func_name, ArgumentList *args)
+{
+    StdrotValue result = execute_native_call(func_name, args);
+
+    /* Deprecated write-back: if first arg is an identifier and the function
+     * returned a value, also write the returned value back to that variable.
+     * This is the pre-#204 calling convention (`slorp(x);` instead of
+     * `rizz x = slorp(...);`); it is kept working for one release, with a
+     * warning, so existing programs don't break outright. New code should
+     * consume the return value directly -- see execute_native_call() /
+     * handle_function_call(). */
     if (result.type != STDROT_NONE && args && args->expr &&
         args->expr->type == NODE_IDENTIFIER)
     {
@@ -436,6 +446,11 @@ void execute_func_call(const String func_name, ArgumentList *args)
         Variable *var = get_variable(name);
         if (var)
         {
+            fprintf(stderr,
+                    "Warning: line %d: `%s(%s, ...)` writing its result back "
+                    "into `%s` is deprecated -- use `%s = %s(...)` instead\n",
+                    g_exec_context.line_number, func_name.data, name.data,
+                    name.data, name.data, func_name.data);
             switch (result.type)
             {
             case STDROT_INT:

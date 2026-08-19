@@ -28,6 +28,12 @@ void stdrot_unload(void);
 bool is_builtin_function(const String func_name);
 void execute_builtin_function(const String func_name, ArgumentList *args);
 void execute_func_call(const String func_name, ArgumentList *args);
+/* Evaluates args and invokes the native function, returning its result
+ * directly -- no write-back, no deprecation warning. This is what
+ * expression-position native calls (ast.c's handle_function_call) use;
+ * execute_func_call() layers the deprecated write-back convention on top
+ * of this for statement-position calls. */
+StdrotValue execute_native_call(const String func_name, ArgumentList *args);
 
 /* ── Stub functions (forward declarations for use by ast.c) ──────────────── */
 void yapping(const String format, ...);
