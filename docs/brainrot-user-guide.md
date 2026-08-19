@@ -488,12 +488,18 @@ skibidi main {
 **Prototype**
 
 ```c
-void slorp(var_type var_name);
+var_type slorp(var_type var_name);
 ```
 
 **Key Points**
 
-- Reads user input (similar to C's `scanf` but safer).
+- Reads user input (similar to C's `scanf` but safer) and returns it --
+  like every native call, `slorp` is an ordinary expression: assign it,
+  compare it, pass it as an argument, and so on.
+- `var_name`'s current value/type is only used as a hint for what to parse.
+- **Deprecated**: calling `slorp(var_name);` as a bare statement still
+  writes the result back into `var_name` for one release, with a
+  deprecation warning on stderr. Prefer assigning the result directly.
 
 ### Example
 
@@ -501,7 +507,7 @@ void slorp(var_type var_name);
 skibidi main {
     rizz num;
     yapping("Enter a number:");
-    slorp(num);
+    num = slorp(num);
     yapping("You typed: %d", num);
     bussin 0;
 }

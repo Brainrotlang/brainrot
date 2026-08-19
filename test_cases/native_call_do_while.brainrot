@@ -1,0 +1,15 @@
+skibidi main
+{
+    🚽 a native call directly as a mewing/goon (do-while) condition. The
+    🚽 condition is pre-visited once before the loop body ever runs (see
+    🚽 visitor.c's NODE_DO_WHILE_STATEMENT case); that pre-visit must not
+    🚽 execute the call, or the first real check after the first iteration
+    🚽 would read a stale, pre-loop value instead of re-evaluating.
+    rizz n = 0;
+    mewing
+    {
+        n = slorp(n);
+        yapping("n=%d", n);
+    } goon (n < 100);
+    bussin 0;
+}

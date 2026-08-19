@@ -48,6 +48,7 @@ extern float evaluate_expression_float(ASTNode *node);
 extern double evaluate_expression_double(ASTNode *node);
 extern short evaluate_expression_short(ASTNode *node);
 extern bool evaluate_expression_bool(ASTNode *node);
+extern String evaluate_expression_string(ASTNode *node);
 extern bool is_expression(ASTNode *node, VarType type);
 extern Variable *get_variable(const String name);
 extern TypeModifiers get_variable_modifiers(const String name);
@@ -365,6 +366,22 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
         out->type = STDROT_DOUBLE;
         out->val.d = evaluate_expression_double(expr);
     }
+    /* Gated to NODE_FUNC_CALL specifically (a native call returning a char
+       or string, e.g. `yapping("%s", slorp(buf))`) rather than folded into
+       the general is_expression() checks above: NODE_ARRAY_ACCESS is
+       unconditionally treated as int below regardless of element type
+       (e.g. a lone `buf[0]`), and is_expression(expr, VAR_CHAR) would
+       otherwise also match that case, changing its marshalling too. */
+    else if (expr->type == NODE_FUNC_CALL && is_expression(expr, VAR_CHAR))
+    {
+        out->type = STDROT_CHAR;
+        out->val.c = (char)evaluate_expression_int(expr);
+    }
+    else if (expr->type == NODE_FUNC_CALL && is_expression(expr, VAR_STRING))
+    {
+        out->type = STDROT_STRING;
+        out->val.str = evaluate_expression_string(expr);
+    }
     else if (is_expression(expr, VAR_INT) || expr->type == NODE_ARRAY_ACCESS ||
              expr->type == NODE_OPERATION ||
              expr->type == NODE_UNARY_OPERATION ||
@@ -410,6 +427,12 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
 
     /* Generic function call - evaluate all arguments to StdrotValue */
     StdrotValue arg_values[64];
+    /* Only ast_expr_to_stdrot_value()'s NODE_FUNC_CALL case (a native call
+       used as an argument, e.g. `yapping("%s", slorp(buf))`) allocates a
+       fresh string to build a STDROT_STRING argument -- every other case
+       just borrows a pointer already owned by a literal or variable. Track
+       which slots own their buffer so they can be freed after the call. */
+    bool arg_owns_string[64] = {0};
     int arg_count = 0;
 
     ArgumentList *cur = args;
@@ -420,12 +443,30 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
             break;
 
         ast_expr_to_stdrot_value(expr, &arg_values[arg_count]);
+        arg_owns_string[arg_count] =
+            expr->type == NODE_FUNC_CALL &&
+            arg_values[arg_count].type == STDROT_STRING;
 
         arg_count++;
         cur = cur->next;
     }
 
-    return entry->fn(arg_values, arg_count);
+    StdrotValue result = entry->fn(arg_values, arg_count);
+
+    /* None of the registered natives return one of their own string
+       arguments back out (slorp -- the one native that could reuse an
+       argument buffer in its result -- only ever takes a plain identifier
+       per the grammar, never a nested call), so freeing here can't dangle
+       a pointer the caller is still holding. */
+    for (int i = 0; i < arg_count; i++)
+    {
+        if (arg_owns_string[i])
+        {
+            SAFE_FREE(arg_values[i].val.str.data);
+        }
+    }
+
+    return result;
 }
 
 void execute_func_call(const String func_name, ArgumentList *args)

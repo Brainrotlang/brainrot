@@ -1,0 +1,9 @@
+skibidi main
+{
+    🚽 the issue's own migration example: the initializer references the
+    🚽 variable it is declaring. n must not exist yet when slorp's argument
+    🚽 is evaluated, or this silently reads nothing instead of stdin.
+    rizz n = slorp(n);
+    yapping("n=%d", n);
+    bussin 0;
+}

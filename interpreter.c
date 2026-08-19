@@ -37,7 +37,6 @@ extern String evaluate_expression_string(ASTNode *node);
 extern void *evaluate_multi_array_access(ASTNode *node);
 extern void *handle_function_call(ASTNode *node);
 extern size_t handle_sizeof(ASTNode *node);
-extern StdrotValue native_call_peek(ASTNode *node);
 
 /* Global pointer to current interpreter for function calls */
 Interpreter *current_interpreter = NULL;
@@ -287,11 +286,14 @@ void *interpreter_visit_array_access(Visitor *self, ASTNode *node)
     return evaluate_multi_array_access(node);
 }
 
-/* Executes a function call that is genuinely a bare statement (its own
-   entry in a statement list) -- the one unambiguous point where a call's
-   result is intentionally discarded and the deprecated native write-back
-   convention should still apply. See interpreter_visit_statement_list(),
-   the sole caller. */
+/* Executes a function call that is genuinely a bare statement -- the one
+   unambiguous point where a call's result is intentionally discarded and
+   the deprecated native write-back convention should still apply. Used
+   directly (bypassing ast_accept()/interpreter_visit_function_call()) at
+   every site where a bare NODE_FUNC_CALL has no other visitor coming along
+   to evaluate it for real: statement-list entries, and a for-loop's own
+   init/increment clause. See interpreter_visit_statement_list() and
+   interpreter_visit_for_statement(), the two callers. */
 static void interpreter_execute_call_statement(ASTNode *node)
 {
     if (!node)
@@ -318,32 +320,36 @@ static void interpreter_execute_call_statement(ASTNode *node)
     }
 }
 
+/* ast_accept()'s generic pre-visit runs this on a NODE_FUNC_CALL reached as
+   part of a declaration/assignment/return/print/error statement's
+   right-hand expression, or (via visitor.c's NODE_DO_WHILE_STATEMENT case)
+   a do-while condition -- in every one of those cases, the statement's own
+   dedicated visitor (interpreter_visit_declaration et al., or this
+   interpreter's own per-iteration evaluate_expression_int() condition
+   check) is about to evaluate this exact node for real via
+   evaluate_expression_* / handle_function_call. That pre-visit exists so
+   shared visitors (e.g. the semantic analyzer, validating the call exists)
+   get a chance to look at it; it is not itself a place where executing the
+   call is correct. Doing so anyway is actively wrong, not just redundant:
+   for a self-referential declaration like `rizz n = slorp(n);`, the
+   pre-visit runs before interpreter_visit_declaration has created `n`, so
+   the argument silently evaluates to nothing and the (wrong) result gets
+   cached; for a do-while condition, the pre-visit runs before the loop
+   body has executed even once, so the first real check reads a stale
+   pre-loop value instead of re-evaluating. Do nothing here and let the
+   downstream evaluate_expression_*() call populate the memo cache itself,
+   at the right time. (Bare statement-position and for-loop init/incr
+   calls never reach here at all -- see interpreter_execute_call_statement()
+   above.) User-defined functions have no such cache and are still invoked
+   from both places -- a pre-existing gap, not introduced here, tracked
+   separately from native-call support. */
 void *interpreter_visit_function_call(Visitor *self, ASTNode *node)
 {
     (void)self;
     if (!node)
         return NULL;
 
-    /* Reached only via ast_accept()'s generic pre-visit of a declaration/
-       assignment/return/print/error statement's right-hand expression (see
-       visitor.c) -- interpreter_visit_statement_list() intercepts genuine
-       bare-statement calls before they ever reach here. That pre-visit
-       exists so shared visitors (e.g. the semantic analyzer) can validate
-       the call; for this interpreter, the statement's own dedicated visitor
-       (interpreter_visit_declaration et al.) is about to evaluate this same
-       node for real via evaluate_expression_* / handle_function_call. Calling
-       a native function here as well as there would run it -- and any side
-       effects it has -- twice, so for builtins this only primes the
-       single-invocation memo cache (native_call_peek(), see ast.c); the
-       consuming evaluate_expression_*() call reads it back instead of
-       invoking again. User-defined functions don't have that cache and are
-       therefore still invoked from both places -- a pre-existing gap, not
-       introduced here, tracked separately from native-call support. */
-    if (is_builtin_function(node->data.func_call.function_name))
-    {
-        native_call_peek(node);
-    }
-    else
+    if (!is_builtin_function(node->data.func_call.function_name))
     {
         execute_function_call(node->data.func_call.function_name,
                               node->data.func_call.arguments);
@@ -351,6 +357,25 @@ void *interpreter_visit_function_call(Visitor *self, ASTNode *node)
     }
 
     return NULL;
+}
+
+/* ast_accept(), but a bare NODE_FUNC_CALL is executed directly via
+   interpreter_execute_call_statement() instead of going through
+   interpreter_visit_function_call()'s pre-visit no-op. Use this at any site
+   where a bare call has no other visitor coming along afterward to
+   evaluate it for real -- currently statement-list entries and a for
+   loop's own init/increment clause. A declaration/assignment (etc.)
+   wrapping a call is unaffected: it still goes through ast_accept()
+   normally, since interpreter_visit_declaration() et al. *are* that real
+   evaluation. */
+static void interpreter_accept_or_execute_call(ASTNode *node, Visitor *self)
+{
+    if (!node)
+        return;
+    if (node->type == NODE_FUNC_CALL)
+        interpreter_execute_call_statement(node);
+    else
+        ast_accept(node, self);
 }
 
 void *interpreter_visit_sizeof(Visitor *self, ASTNode *node)
@@ -665,7 +690,7 @@ void interpreter_visit_for_statement(Visitor *self, ASTNode *node)
 
         if (node->data.for_stmt.init)
         {
-            ast_accept(node->data.for_stmt.init, self);
+            interpreter_accept_or_execute_call(node->data.for_stmt.init, self);
         }
 
         while (1)
@@ -689,7 +714,8 @@ void interpreter_visit_for_statement(Visitor *self, ASTNode *node)
 
             if (node->data.for_stmt.incr)
             {
-                ast_accept(node->data.for_stmt.incr, self);
+                interpreter_accept_or_execute_call(node->data.for_stmt.incr,
+                                                   self);
             }
             exit_scope();
         }
@@ -836,18 +862,7 @@ void interpreter_visit_statement_list(Visitor *self, ASTNode *node)
     while (stmt)
     {
         if (stmt->statement)
-        {
-            /* A bare `foo();` statement is the one case where this call's
-               result is genuinely meant to be discarded -- handle it
-               directly instead of through ast_accept()/
-               interpreter_visit_function_call(), which (for builtins) only
-               primes the native-call memo cache and relies on some other
-               visitor consuming it. Nothing else will consume this one. */
-            if (stmt->statement->type == NODE_FUNC_CALL)
-                interpreter_execute_call_statement(stmt->statement);
-            else
-                ast_accept(stmt->statement, self);
-        }
+            interpreter_accept_or_execute_call(stmt->statement, self);
         stmt = stmt->next;
     }
 }

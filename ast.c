@@ -53,28 +53,33 @@ String evaluate_expression_string(ASTNode *node);
  * (handle_function_call), reads it and clears it so the next syntactic
  * visit to this call site (e.g. the next loop iteration) invokes fresh.
  *
- * native_call_peek() is also the fix for a second, unrelated double-
- * invocation source: interpreter.c's generic ast_accept() walk visits a
- * declaration/assignment/return/print/error statement's right-hand
- * expression once for its own sake (interpreter_visit_function_call, e.g.
- * so the semantic analyzer's identical shared walk can validate it) and
- * then interpreter_visit_declaration (etc.) separately evaluates that same
- * expression for real via evaluate_expression_* / handle_function_call.
- * interpreter_visit_function_call() calls native_call_peek() instead of
- * executing directly, so that first walk only ever primes the cache; the
- * genuine invocation -- and, for statement-position calls, the deprecated
- * write-back -- happens exactly once, at whichever site actually consumes
- * the value.
+ * This is strictly a type-probe-then-consume cache within a single real
+ * evaluation. It is deliberately *not* used to paper over
+ * interpreter.c's separate generic-AST-walk pre-visit of a call embedded in
+ * a declaration/assignment/return/print/error statement (or a do-while
+ * condition) -- priming the cache from that pre-visit ran the call before
+ * its argument variables necessarily existed (e.g. `rizz n = slorp(n);`
+ * evaluated the pre-visit's `n` before interpreter_visit_declaration had
+ * created it) or before a loop body had executed once, and then fed that
+ * wrong/stale result back to the real evaluation as a cache hit. See
+ * interpreter_visit_function_call()'s comment for how that's avoided
+ * instead: the pre-visit does nothing for builtins, full stop.
  *
  * A binary operation with two native-call operands (e.g. `slorp(a) +
  * slorp(b)`) peeks *both* operands (get_expression_type on each, to decide
  * the promoted type) before either is consumed -- so this can't be a single
  * pending slot, or peeking the second call would evict the first call's
  * still-unconsumed entry and force a spurious re-invocation. A small table
- * of independently-tracked entries, keyed by node identity, avoids that;
- * expressions nest nowhere near NATIVE_CALL_CACHE_SIZE native calls deep in
- * practice, so overflow just falls back to a fresh (safe, if redundant)
- * invocation rather than growing unbounded. */
+ * of independently-tracked entries, keyed by node identity, avoids that.
+ * Expressions nest nowhere near NATIVE_CALL_CACHE_SIZE simultaneously-
+ * pending native calls deep in practice; if that bound is ever hit,
+ * native_call_peek() reports an unknown (STDROT_NONE) type rather than
+ * invoking without a slot to cache the result in -- invoking there with
+ * nowhere to store the result would make the guaranteed-single-invocation
+ * promise from native_call_consume() a lie for whichever call got evicted.
+ * The call is still invoked exactly once, for real, whenever it's actually
+ * consumed; overflow only degrades type inference for that one call, never
+ * invocation count. */
 #define NATIVE_CALL_CACHE_SIZE 16
 typedef struct
 {
@@ -84,29 +89,31 @@ typedef struct
 } NativeCallCacheEntry;
 static NativeCallCacheEntry native_call_cache[NATIVE_CALL_CACHE_SIZE];
 
-StdrotValue native_call_peek(ASTNode *node)
+static StdrotValue native_call_peek(ASTNode *node)
 {
+    int free_slot = -1;
     for (int i = 0; i < NATIVE_CALL_CACHE_SIZE; i++)
     {
         if (native_call_cache[i].valid && native_call_cache[i].node == node)
         {
             return native_call_cache[i].value;
         }
+        if (free_slot < 0 && !native_call_cache[i].valid)
+        {
+            free_slot = i;
+        }
+    }
+
+    if (free_slot < 0)
+    {
+        return (StdrotValue){STDROT_NONE, {0}};
     }
 
     StdrotValue value = execute_native_call(node->data.func_call.function_name,
                                             node->data.func_call.arguments);
-
-    for (int i = 0; i < NATIVE_CALL_CACHE_SIZE; i++)
-    {
-        if (!native_call_cache[i].valid)
-        {
-            native_call_cache[i].node = node;
-            native_call_cache[i].value = value;
-            native_call_cache[i].valid = true;
-            break;
-        }
-    }
+    native_call_cache[free_slot].node = node;
+    native_call_cache[free_slot].value = value;
+    native_call_cache[free_slot].valid = true;
     return value;
 }
 
@@ -2624,6 +2631,12 @@ String evaluate_expression_string(ASTNode *node)
         if (res != NULL)
         {
             String result = safe_strdup(res);
+            /* res is handle_function_call()'s malloc'd String* container
+               (VAR_STRING case), already itself holding a freshly
+               safe_strdup'd buffer -- free that buffer too, not just the
+               container, or it's never reachable again after this
+               function returns. */
+            SAFE_FREE(res->data);
             SAFE_FREE(res);
             return result;
         }
@@ -3029,7 +3042,7 @@ void *handle_function_call(ASTNode *node)
             *(short *)return_value = current_return_value.value.svalue;
             break;
         case VAR_STRING:
-            return_value = SAFE_MALLOC(String *);
+            return_value = SAFE_MALLOC(String);
             *(String *)return_value =
                 safe_strdup(&current_return_value.value.strvalue);
             break;
