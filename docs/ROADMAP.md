@@ -10,8 +10,8 @@ pipeline (Flex → Bison → AST → semantic analyzer → tree-walking interpre
 
 This roadmap describes how it becomes a cursed-but-genuinely-useful language:
 one that can call native C libraries, run a game loop, spawn threads, hold a
-hashmap, and serve HTTP — without any of those being one-off hacks bolted onto
-the interpreter.
+hashmap, serve HTTP, and roll cryptographically honest dice — without any of
+those being one-off hacks bolted onto the interpreter.
 
 **The organizing idea:** we do not port libraries into Brainrot. We build a good
 enough native ABI that every C library — raylib, SQLite, libcurl — becomes just
@@ -33,9 +33,10 @@ another binding, most of it generated.
 10. [Phase 8 — Sockets and web servers](#phase-8--sockets-and-web-servers)
 11. [Phase 9 — Unit testing (`sussybaka`)](#phase-9--unit-testing-sussybaka)
 12. [Phase 10 — File I/O](#phase-10--file-io)
-13. [Milestones](#milestones)
-14. [Appendix A — Reserved keywords](#appendix-a--reserved-keywords)
-15. [Appendix B — Open questions](#appendix-b--open-questions)
+13. [Phase 11 — Cryptographically safe `gamba()`](#phase-11--cryptographically-safe-gamba)
+14. [Milestones](#milestones)
+15. [Appendix A — Reserved keywords](#appendix-a--reserved-keywords)
+16. [Appendix B — Open questions](#appendix-b--open-questions)
 
 ---
 
@@ -378,7 +379,9 @@ static StdrotValue br_LoadTexture(StdrotValue *args, int argc)
 Generated C is compile-time correct and vastly easier to reason about than a
 dynamic call machine. Once this works, raylib is merely the first client: SDL,
 SQLite, libcurl, OpenSSL, PortAudio, Lua, FFmpeg, and libgit2 are the same
-problem.
+problem. Phase 11's `gamba()` is **not** that generated OpenSSL binding — it is
+a thin, hand-written `RAND_bytes` wrapper that ships earlier, the same way
+Road A ships a cursed game before Road B generates `brainray`.
 
 ---
 
@@ -992,6 +995,112 @@ peaceout(manifesto);
 
 ---
 
+## Phase 11 — Cryptographically safe `gamba()`
+
+**Status: not started · Priority: P2 · Depends on: Phase 1 · OpenSSL**
+
+C's `rand()` is not a random number generator anyone should gamble with. It is
+seeded from the clock, has a tiny state, and `rand() % n` is biased on top of
+that. Brainrot does not wrap it. `gamba()` is the CSPRNG: OpenSSL
+`RAND_bytes` under the hood, unbiased ranges, and a hard abort if the
+generator fails — never a silent `0` that looks like a roll.
+
+`gamba` is a **standard-library builtin**, in the same class as `yapping`,
+`slorp`, `bet`, `chill`, and `ragequit`. It lives in `stdrot/gamba.c`,
+self-registers through `STDROT_EXPORT` into `libstdrot.so`, and is globally
+available in every program with no `#cooked` and no extra link step. It is
+**not** a keyword (`lang.l` is untouched), **not** an optional module, and
+**not** the generated OpenSSL binding from Phase 5 Road B — it is one
+function family that happens to need `libcrypto`, the same way `yapping`
+happens to need `stdio`.
+
+Because it is stdlib, OpenSSL is a **required native build dependency** of
+`libstdrot.so`. A `#cooked <gamba>` split that keeps the default stdlib
+OpenSSL-free is out of scope.
+
+`gamba` does not collide with a keyword in `lang.l`, with a registered
+builtin (`yapping`, `yappin`, `baka`, `bet`, `chill`, `ragequit`, `slorp`),
+or with any name proposed elsewhere in this roadmap.
+
+| Form | Meaning | Why it exists |
+| ---- | ------- | ------------- |
+| `gamba()` | unbiased `rizz` in `[0, INT_MAX]` | the `rand()` shape, but honest |
+| `gamba(n)` | unbiased `rizz` in `[0, n)` | so nobody writes `gamba() % n` |
+| `gamba(lo, hi)` | unbiased `rizz` in `[lo, hi]` inclusive | dice, damage rolls, closed ranges |
+| `gamba_bytes(buf, n)` | fill `n` bytes from the CSPRNG | tokens, nonces, keys |
+
+The ranged forms are **not optional**. Shipping only the no-arg shape
+guarantees that the first game in Phase 5 will do `gamba() % 6` and throw
+the cryptographic guarantee in the trash. Rejection sampling against
+`RAND_bytes`; no modulo, no libc `rand`/`srand`/`random`, no clock seed.
+
+There is no `srand` equivalent. OpenSSL seeds itself. A `gamba_seed`
+function would be a security bug dressed as an API.
+
+```c
+skibidi main {
+    rizz roll = gamba(1, 6);
+    yapping("you rolled %d", roll);
+
+    rizz nonce = gamba();
+    yapping("nonce %d", nonce);
+    bussin 0;
+}
+```
+
+### Work
+
+- `stdrot/gamba.c` implementing the four forms via `STDROT_EXPORT` (or
+  `STDROT_EXPORT_SIG` if Phase 2 has landed), calling OpenSSL `RAND_bytes`.
+  `RAND_bytes` returning anything other than `1` is a fatal error, the same
+  way a failed `bet` is — a CSPRNG failure is not a value.
+- Unbiased range reduction. `gamba(n)` and `gamba(lo, hi)` reject `n <= 0`
+  and `hi < lo` with a semantic or runtime error, not a wrap.
+- Link `libcrypto` into the **native** `libstdrot.so`. `pkg-config
+  --libs libcrypto` (or `-lcrypto`) on the `stdrot` link line; CI installs
+  `libssl-dev`. Native `make` without OpenSSL is a failed build, not a
+  `gamba`-less interpreter — the function is part of the stdlib, so the
+  library does not ship without it.
+- **No libc fallback.** A `#ifdef` that silently swaps in `rand()` is how
+  this phase fails. Missing OpenSSL fails the link; it does not compile a
+  weaker `gamba`.
+- The wasm target (`brainrot.wasm`, issue #175) does not pick up OpenSSL.
+  `gamba` is either absent there or a documented stub that errors; do not
+  drag `libcrypto` into the browser artifact. A Web Crypto / `getentropy`
+  backend is a follow-up, not this phase.
+- Since `rizz roll = gamba(1, 6);` needs the return value in an
+  initializer, this phase is blocked on Phase 1 exactly the way file I/O
+  and `sussybaka` are.
+
+### Testing
+
+A CSPRNG cannot be string-matched against `tests/expected_results.json`
+the way `2 + 2` can. The fixtures assert properties, not values:
+
+- `gamba(1, 1)` is `1`; `gamba(5)` is in `[0, 5)`; a few hundred draws
+  of `gamba(1, 6)` are not all the same face (catches "always return 0").
+- Invalid ranges (`gamba(0)`, `gamba(5, 3)`) error.
+- No fixture stores a concrete roll as expected stdout.
+
+### Definition of done
+
+- `test_cases/gamba.brainrot` covering the no-arg, `[0, n)`, and
+  `[lo, hi]` forms, plus the "not all the same" smoke check.
+- `test_cases/gamba_range_fail.brainrot` (or a `semantic_error_*` /
+  `*_fail` sibling) for invalid ranges.
+- `gamba_bytes` covered, or explicitly deferred with a reason.
+- Native `make` fails to link `libstdrot.so` without OpenSSL rather than
+  compiling a `rand()` stub or omitting `gamba`.
+- wasm build still succeeds without OpenSSL; `gamba` is absent or errors
+  there only, because the browser artifact cannot take `libcrypto`. Native
+  stdlib always has `gamba`.
+- Documented with the other builtins in `docs/the-brainrot-programming-language.md`
+  and `docs/brainrot-user-guide.md`. README keyword table is **not**
+  touched.
+- `make test` and `make valgrind` green on native with `libssl-dev`.
+
+---
+
 ## Milestones
 
 | Milestone | Contents | Unlocks |
@@ -1008,9 +1117,10 @@ peaceout(manifesto);
 | **M10 — Brainrot tests itself** | Phase 9a/9b | `#cooked <sussybaka>`, `npc`, `larping`, `./brainrot --sus`. |
 | **M11 — The suite is self-describing** | Phase 9c | `test_cases/` states its own expectations. |
 | **M12 — Files** | Phase 10 | `crackopen`/`peaceout`/`itsjoever` and the rest of the file I/O family. |
+| **M13 — Honest dice** | Phase 11 | `gamba()` / `gamba(n)` / `gamba(lo, hi)` via OpenSSL `RAND_bytes`. |
 
-M1–M4 are strictly ordered. M7, M8, M10, and M12 are independent of M2–M6 and
-can proceed in parallel by anyone who wants them. M11 depends only on M10.
+M1–M4 are strictly ordered. M7, M8, M10, M12, and M13 are independent of M2–M6
+and can proceed in parallel by anyone who wants them. M11 depends only on M10.
 
 M10 quietly delivers two things the rest of the roadmap wants: the module search
 path that Phase 4 builds on, and the function references that Phases 5, 6, and 8
@@ -1061,9 +1171,10 @@ phrases read badly in call position (`soft launch(server, 8080)`), so the
 vocabulary stays single-token throughout.
 
 None of these collide with a keyword currently in `lang.l`, with a registered
-builtin (`yapping`, `yappin`, `baka`, `bet`, `chill`, `ragequit`, `slorp`), or
-with a proposed preprocessor directive. `letcook` is deliberately one word so it
-cannot be confused with the `#cooked` directive.
+builtin (`yapping`, `yappin`, `baka`, `bet`, `chill`, `ragequit`, `slorp`),
+with Phase 11's `gamba` / `gamba_bytes`, or with a proposed preprocessor
+directive. `letcook` is deliberately one word so it cannot be confused with
+the `#cooked` directive.
 
 `bruh` was considered and rejected: it is already `break`
 ([lang.l:71](../lang.l#L71)).
@@ -1076,7 +1187,9 @@ each keyword, and any change to an *existing* keyword needs explicit sign-off.
 vocabulary — `sussybaka`, `fr`, `nah`, `zesty`, `capping`, `lowkey`, `ragebait`,
 `touchgrass`, `mogg`, `larping`, `lockin`, `logoff`, `roasted` — is deliberately
 **absent**: it is a cooked library, so those are ordinary function names, not
-reserved words. They still must not collide, and all thirteen were checked
+reserved words. Phase 11's `gamba` / `gamba_bytes` are absent for the same
+reason as Phase 10's file I/O family: they are `stdrot` functions, they never
+appear in the README keyword table, and they cost the grammar nothing. They still must not collide, and all thirteen were checked
 against `lang.l`, the registered builtins, and the proposals above — but they
 cost the grammar nothing, they only exist in files that say
 `#cooked <sussybaka>`, and they never appear in the README keyword table. They
@@ -1150,3 +1263,17 @@ per keyword, and default to "library function" when in doubt.
     `expected_results.json` entry for every test. Step 2 of §9c makes that false.
     Update it in the same PR, or add the sussybaka mode alongside it and remove
     the JSON requirement only when the migration completes?
+15. **OpenSSL as a build dependency (Phase 11).** **Settled:** `gamba` is
+    part of the Brainrot standard library, so `libcrypto` is a required
+    native dependency of `libstdrot.so`. `#cooked <gamba>` as a separate
+    `.so` is rejected. wasm still must not link OpenSSL; that is a
+    platform limitation of the browser artifact, not an optional stdlib.
+16. **`gamba()` no-arg range.** `[0, INT_MAX]` matches `rand()`'s shape.
+    Full `[0, 2^32)` wants `nonut rizz` / a wider type. Requiring an
+    explicit range and dropping the no-arg form is the safest API and the
+    worst meme. **Recommendation: keep `gamba()` as `[0, INT_MAX]`, but
+    ship `gamba(n)` / `gamba(lo, hi)` in the same PR.**
+17. **wasm `gamba` (Phase 11).** Absent, a stub that errors, or a later
+    Web Crypto / `getentropy` backend? **Recommendation for this phase:
+    absent or erroring stub.** Do not block the wasm playground on
+    OpenSSL.
