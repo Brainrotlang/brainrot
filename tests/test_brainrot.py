@@ -37,7 +37,7 @@ def test_brainrot_examples(example, expected_output):
     elif example == "native_call_string_arg":
         command = f"printf 'skibidi\\nq\\n' | {brainrot_path} {example_file_path}"
     elif example == "native_call_do_while":
-        command = f"printf '50\\n150\\n' | {brainrot_path} {example_file_path}"
+        command = f"printf '5\\n50\\n6\\n150\\n' | {brainrot_path} {example_file_path}"
     else:
         command = f"{brainrot_path} {example_file_path}"
 
