@@ -7,20 +7,24 @@ for f in test_cases/*.brainrot; do
     base=$(basename "$f" .brainrot)
 
     case "$base" in
-        slorp_int)    input="42" ;;
-        slorp_short)  input="69" ;;
-        slorp_float)  input="3.14" ;;
-        slorp_double) input="3.141592" ;;
-        slorp_char)   input="c" ;;
-        slorp_bool)   input="1" ;;
-        slorp_string) input="skibidi bop bop yes yes" ;;
+        slorp_int)                            input="42" ;;
+        slorp_short)                          input="69" ;;
+        slorp_float)                          input="3.14" ;;
+        slorp_double)                         input="3.141592" ;;
+        slorp_char)                           input="c" ;;
+        slorp_bool)                           input="1" ;;
+        slorp_string)                         input="skibidi bop bop yes yes" ;;
         slorp_identity_char_array)             input="hello" ;;
         native_cstring_param_char_array)       input="hello" ;;
         native_char_array_access)              input="hello" ;;
         native_char_param_scalar)              input="c" ;;
         identity_string_use_after_free)        input="hello" ;;
         identity_ownership_nonstring_result)   input="hello" ;;
-        *)            input="" ;;
+        native_call_self_init)                 input="42" ;;
+        native_call_loop)                      input=$'1\n2\n3' ;;
+        native_call_string_arg)                input=$'skibidi\nq' ;;
+        native_call_do_while)                  input=$'5\n50\n6\n150' ;;
+        *)                                     input="" ;;
     esac
 
     if [[ -n "$input" ]]; then
@@ -38,4 +42,3 @@ for f in test_cases/*.brainrot; do
 
     echo
 done
-
