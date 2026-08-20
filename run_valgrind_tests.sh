@@ -2,6 +2,16 @@
 
 TARGET="${1:-./brainrot-valgrind}"
 
+if ! command -v valgrind >/dev/null 2>&1; then
+    echo "Error: valgrind is not installed or not in PATH" >&2
+    exit 1
+fi
+
+if [[ ! -x "$TARGET" ]]; then
+    echo "Error: Valgrind target '$TARGET' is not executable" >&2
+    exit 1
+fi
+
 for f in test_cases/*.brainrot; do
     echo "Running Valgrind on $f..."
     base=$(basename "$f" .brainrot)
@@ -35,10 +45,17 @@ for f in test_cases/*.brainrot; do
 
     valgrind_exit_code=$?  # Capture only valgrind’s exit code
 
-    if [[ $valgrind_exit_code -eq 100 ]]; then
-        echo "Valgrind detected memory issues in $f"
-        exit 1
-    fi
+    case $valgrind_exit_code in
+        0|1) ;;
+        100)
+            echo "Valgrind detected memory issues in $f" >&2
+            exit 1
+            ;;
+        *)
+            echo "Valgrind failed while running $f (exit $valgrind_exit_code)" >&2
+            exit 1
+            ;;
+    esac
 
     echo
 done

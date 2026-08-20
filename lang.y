@@ -272,13 +272,10 @@ struct_field
                (sizeof(uintptr_t)) doesn't depend on the pointee being
                complete yet.
 
-               Note: we deliberately don't YYABORT here. Aborting mid-way
-               through the still-open outer struct_def rule would strand
-               that rule's own pending IDENTIFIER token on the parser value
-               stack un-freed (this grammar has no %destructor entries), so
-               instead we record the error and let parsing finish normally;
-               main() checks struct_def_had_error after yyparse() and exits
-               the same way it does for a hard parse failure. */
+               Note: we deliberately don't YYABORT here. Finishing the outer
+               struct_def rule keeps struct_def_had_error and the partially
+               computed layout coherent; main() checks the flag after
+               yyparse() and exits as it does for a hard parse failure. */
             bool is_self = current_struct_def_name.data &&
                           strcmp($2.data, current_struct_def_name.data) == 0;
             if (is_self && $3.pointer_level == 0)

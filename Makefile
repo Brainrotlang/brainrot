@@ -6,8 +6,9 @@ PYTHON := python3
 EMCC := emcc
 
 # Compiler and linker flags
-CFLAGS := -Wall -Wextra -Wpedantic -Werror -O2 -Wuninitialized -fsanitize=address,undefined -fno-omit-frame-pointer -g
-VALGRIND_CFLAGS := -Wall -Wextra -Wpedantic -Werror -O2 -Wuninitialized -g
+SANITIZER_FLAGS := -fsanitize=address,undefined
+CFLAGS := -Wall -Wextra -Wpedantic -Werror -O2 -Wuninitialized $(SANITIZER_FLAGS) -fno-omit-frame-pointer -g
+VALGRIND_CFLAGS := $(filter-out $(SANITIZER_FLAGS),$(CFLAGS))
 LDFLAGS := -lfl -lm -ldl -rdynamic
 SO_CFLAGS := -fPIC -shared
 
