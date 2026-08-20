@@ -613,10 +613,25 @@ VarType stdrot_type_to_vartype(StdrotType type)
            would silently defeat every "type == NONE, don't validate"
            shortcut this analyzer already relies on. */
         return VAR_PTR;
+    case STDROT_NONE:
+        /* Same reasoning as STDROT_PTR/VAR_PTR just above, for the exact
+           same class of bug: STDROT_NONE means a native's descriptor
+           return type genuinely is void -- known with total certainty to
+           produce no value -- not "unknown, don't validate." Mapping it
+           to plain NONE meant `rizz x = a_void_native();` type-checked,
+           because every "type == NONE, fail open" shortcut in this
+           analyzer treated a certainly-void expression as an unknowable
+           one. See VAR_VOID's own comment (ast.h) for the full
+           reasoning. */
+        return VAR_VOID;
     case STDROT_ANY:
     case STDROT_HANDLE:
-    case STDROT_NONE:
     default:
+        /* Genuinely unknown/unsupported representations -- STDROT_ANY
+           (legacy export, real type not statically knowable) and
+           STDROT_HANDLE (reserved groundwork, no marshalling exists) --
+           correctly remain NONE, distinct from STDROT_NONE's VAR_VOID
+           just above. */
         return NONE;
     }
 }

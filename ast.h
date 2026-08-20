@@ -97,6 +97,25 @@ typedef enum
        why this is an intentional simplification -- the base type is
        erased uniformly at every depth, not just the outermost one). */
     VAR_PTR,
+    /* A genuinely void expression -- a call whose descriptor return type
+       is STDROT_NONE, known with total certainty to produce no value.
+       Deliberately its own VarType, distinct from NONE, for exactly the
+       reason VAR_PTR (above) is distinct from NONE: NONE means "I do not
+       know what this expression returns" (epistemology), VAR_VOID means
+       "I know precisely what it returns: nothing" (semantics). Those are
+       not the same claim, and collapsing them into one sentinel meant
+       every "type == NONE, fail open" shortcut in this analyzer also
+       silently waved through an ACTUALLY KNOWN void expression wherever
+       one was used as a value -- `rizz x = yapping("hi");` type-checked,
+       because `yapping`'s return type read as NONE, and NONE always
+       means "can't tell, don't block it." A void-typed expression should
+       be rejected everywhere a real value is required, with the same
+       confidence any other declared type mismatch is rejected -- not
+       waved through because the checker mistook "certainly nothing" for
+       "unknown." check_type_compatibility_ex() treats VAR_VOID as
+       compatible with nothing (not even itself, since there's no context
+       where consuming "no value" as a value is ever correct). */
+    VAR_VOID,
     NONE,
 } VarType;
 

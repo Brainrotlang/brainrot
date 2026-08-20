@@ -15,6 +15,7 @@
  * builtin.
  */
 #include "stdrot_api.h"
+#include <stdio.h>
 #include <string.h>
 
 /* Declares DOUBLE, actually returns INT -- numerically coercible, so
@@ -100,6 +101,29 @@ static StdrotValue stdrot_legacy_int(StdrotValue *args, int argc)
 }
 
 STDROT_EXPORT("legacy_int", stdrot_legacy_int);
+
+/* Round-18 review, finding #1 -- identical to legacy_int() above (a
+ * legacy/untyped STDROT_EXPORT() export, statically-unknowable return
+ * type), except it also prints an unmistakable marker to stdout, so a
+ * test can prove sizeof's operand was never *evaluated* even when the
+ * unknowable native call is nested inside a larger expression
+ * (`maxxing(legacy_int_prints() + 1)`), not just when it's the whole
+ * operand by itself: if handle_sizeof() (ast.c) ever fell back to
+ * get_expression_type()'s execute-to-discover path for a native call
+ * buried inside a NODE_OPERATION/NODE_UNARY_OPERATION, this marker would
+ * appear in the program's output despite the sizeof being rejected as a
+ * semantic error. */
+static StdrotValue stdrot_legacy_int_prints(StdrotValue *args, int argc)
+{
+    (void)args;
+    (void)argc;
+    printf("THIS MUST NEVER PRINT\n");
+    StdrotValue out = {STDROT_INT, {0}};
+    out.val.i = 42;
+    return out;
+}
+
+STDROT_EXPORT("legacy_int_prints", stdrot_legacy_int_prints);
 
 /* Round-17 review, finding #3 -- a second legacy/untyped export, this
  * one returning a fractional STDROT_DOUBLE, reused alongside legacy_int()

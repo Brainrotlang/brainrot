@@ -41,18 +41,28 @@ static int get_function_return_pointer_level(const String name);
 String evaluate_expression_string(ASTNode *node);
 
 /* ── Native-call memo cache ──────────────────────────────────────────────
- * Unlike a user-defined Function, a native (stdrot) call has no static
- * return type -- StdrotFn is fully dynamic, so the only way to know what
- * type a call produces is to actually invoke it. Expression evaluation
- * routinely asks that question once (e.g. handle_binary_operation peeking
- * at operand types via get_expression_type) and then reads the real value
- * a second time (e.g. evaluate_expression_short calling handle_function_call
- * on the same node) -- without this cache, that would invoke the native
- * function, and any side effects it has, twice per read. native_call_peek()
- * answers type-probe questions from the cache without consuming it;
- * native_call_consume(), used only by the terminal value-producing call
- * (handle_function_call), reads it and clears it so the next syntactic
- * visit to this call site (e.g. the next loop iteration) invokes fresh.
+ * A TYPED native (stdrot) call -- Phase 2 (issue #205) -- DOES have a
+ * static return type, readable off its registered StdrotEntry with no
+ * execution at all (get_native_call_static_type(), infer_runtime_
+ * expression_type_noeval(), below): a fixed return_type, or an identity-
+ * polymorphic return_like_arg resolved from the referenced argument's own
+ * (execution-free) type. This cache exists for what's left: a genuine
+ * legacy/untyped STDROT_EXPORT() export (return_type.type == STDROT_ANY,
+ * no return_like_arg) still has no way to know its return type short of
+ * running it, and expression evaluation routinely asks that question once
+ * (e.g. handle_binary_operation peeking at operand types via get_
+ * expression_type) and then reads the real value a second time (e.g.
+ * evaluate_expression_short calling handle_function_call on the same
+ * node) -- without this cache, that would invoke the native function, and
+ * any side effects it has, twice per read, for that legacy case. (A TYPED
+ * native's value-producing call still goes through native_call_consume()
+ * too, purely for uniformity -- it just never needs a prior peek to have
+ * populated the cache first, since its type never required one.)
+ * native_call_peek() answers type-probe questions from the cache without
+ * consuming it; native_call_consume(), used only by the terminal value-
+ * producing call (handle_function_call), reads it and clears it so the
+ * next syntactic visit to this call site (e.g. the next loop iteration)
+ * invokes fresh.
  *
  * This is strictly a type-probe-then-consume cache within a single real
  * evaluation. It is deliberately *not* used to paper over
@@ -102,17 +112,33 @@ static NativeCallCacheEntry *native_call_cache = NULL;
 static int native_call_cache_capacity = 0;
 static bool native_call_cache_cleanup_registered = false;
 
-/* Frees native_call_cache itself (the entries it holds need no per-entry
- * cleanup -- a NativeResult's own owned string, if any, is either already
- * consumed by the time this runs or was orphaned earlier for reasons
- * unrelated to this array's own lifetime, same as any other interpreter
- * state still standing at process exit). Registered via atexit() -- see
- * native_call_cache_grow() -- the same lazy-registration pattern stdrot.c's
- * free_pending_native_call_args() already uses for its own atexit hook,
- * since this array (unlike the old fixed-size one it replaced) is now a
- * genuine heap allocation that would otherwise leak. */
+/* Frees native_call_cache itself, plus any owned string still sitting
+ * inside a *valid, unconsumed* entry -- e.g. a peeked-but-never-consumed
+ * legacy STDROT_STRING result orphaned by a rejected sizeof operand
+ * (handle_sizeof() erroring out on a nested unknown-type call before the
+ * peek it already performed elsewhere in the same expression was ever
+ * consumed). Assuming every entry needs no per-entry cleanup was wrong:
+ * a NativeResult's owns_string (see its own comment, stdrot.h) means
+ * *this array* is the sole owner of that heap string until consumed, the
+ * same way stdrot.c's own deprecated write-back path (just above) frees
+ * an nr.owns_string buffer it's the last consumer of -- this is that
+ * same obligation, for whichever entries never got that far. Registered
+ * via atexit() -- see native_call_cache_grow() -- the same lazy-
+ * registration pattern stdrot.c's free_pending_native_call_args()
+ * already uses for its own atexit hook, since this array (unlike the old
+ * fixed-size one it replaced) is now a genuine heap allocation that
+ * would otherwise leak. */
 static void free_native_call_cache(void)
 {
+    for (int i = 0; i < native_call_cache_capacity; i++)
+    {
+        if (native_call_cache[i].valid &&
+            native_call_cache[i].result.owns_string &&
+            native_call_cache[i].result.value.type == STDROT_STRING)
+        {
+            SAFE_FREE(native_call_cache[i].result.value.val.str.data);
+        }
+    }
     SAFE_FREE(native_call_cache);
     native_call_cache_capacity = 0;
 }
@@ -241,6 +267,7 @@ size_t get_type_size_for_descriptor(VarType type, int pointer_level,
         return sizeof(String);
     case VAR_ENUM:
         return sizeof(int);
+    case VAR_VOID: /* genuinely zero-sized -- not "unknown, guess 0" */
     case NONE:
     default:
         return 0;
@@ -308,7 +335,12 @@ bool set_variable(const String name, void *value, VarType type,
         /* VAR_PTR only ever appears as the *inferred type of an
            expression* (a native call returning STDROT_PTR) -- no
            Brainrot declaration syntax can give an actual Variable this
-           as its own var_type, so this is structurally unreachable. */
+           as its own var_type, so this is structurally unreachable. Same
+           reasoning for VAR_VOID: no declaration syntax can give a
+           Variable "void" as its own type either -- it only ever
+           appears as an expression's inferred type (a call whose
+           descriptor return type is STDROT_NONE). */
+        case VAR_VOID:
         case NONE:
             break;
         }
@@ -1417,9 +1449,19 @@ int get_expression_pointer_level(ASTNode *node)
 }
 
 /* Forward declaration: get_expression_type()'s own NODE_FUNC_CALL case
-   calls this (defined below it, since it in turn calls get_expression_
-   type() for the identity-arg case -- see its own comment). */
+   calls this (defined below it, since it in turn calls infer_runtime_
+   expression_abi_type_noeval() for the identity-arg case -- see its own
+   comment). */
 static VarType get_native_call_static_type(ASTNode *node);
+
+/* Forward declarations: infer_runtime_expression_type_noeval() and
+   infer_runtime_expression_abi_type_noeval() (defined below get_
+   expression_type(), since the ABI one builds on the plain one, and the
+   plain one's own NODE_FUNC_CALL case calls get_native_call_static_type()
+   just above -- a three-way mutual-recursion knot, broken here the same
+   way get_native_call_static_type() itself already was. */
+static VarType infer_runtime_expression_type_noeval(ASTNode *expr);
+static VarType infer_runtime_expression_abi_type_noeval(ASTNode *expr);
 
 VarType get_expression_type(ASTNode *node)
 {
@@ -1570,6 +1612,196 @@ VarType get_expression_type(ASTNode *node)
     }
 }
 
+/* A genuinely recursive, execution-free expression type query -- the
+ * runtime-side counterpart of semantic_analyzer.c's own infer_expression_
+ * type(), reading runtime Variable/Function/enum-constant state
+ * (get_variable(), get_function(), find_global_enum_constant()) instead
+ * of the analyzer's static SymbolEntry table, but sharing that function's
+ * defining property: NO code path here ever reaches execute_native_call().
+ * A NODE_FUNC_CALL is answered purely from get_native_call_static_type()
+ * (never native_call_peek(), unlike get_expression_type()'s own NODE_
+ * FUNC_CALL case just above) -- and critically, that "never falls back to
+ * execution" property survives *nesting*: NODE_OPERATION/NODE_UNARY_
+ * OPERATION recurse into this same function on their operands, and if
+ * either operand's type is genuinely unknowable (NONE -- a legacy/
+ * untyped STDROT_ANY export anywhere underneath, however deeply nested),
+ * the whole containing expression's type is NONE too, propagated upward
+ * rather than silently resolved by running something. Previously,
+ * handle_sizeof() (below) only checked whether its OPERAND was directly a
+ * bare native call -- `maxxing(legacy_int())` was caught, but
+ * `maxxing(legacy_int() + 1)` fell through to plain get_expression_type(),
+ * which recursed into its NODE_OPERATION case, hit the same fallback, and
+ * executed legacy_int() anyway. handle_sizeof() now gates on this
+ * function over the *whole* operand first, rejecting instead of ever
+ * reaching that fallback -- see its own comment.
+ *
+ * Also the base infer_runtime_expression_abi_type_noeval() (below) builds
+ * its ABI-lowering on top of, for get_native_call_static_type()'s
+ * identity-argument case -- see that function's own comment for why an
+ * identity argument specifically needs the ABI-lowered type, not this
+ * function's plain source-level one. */
+static VarType infer_runtime_expression_type_noeval(ASTNode *expr)
+{
+    if (!expr)
+        return NONE;
+
+    switch (expr->type)
+    {
+    case NODE_INT:
+        return VAR_INT;
+    case NODE_SHORT:
+        return VAR_SHORT;
+    case NODE_FLOAT:
+        return VAR_FLOAT;
+    case NODE_DOUBLE:
+        return VAR_DOUBLE;
+    case NODE_BOOLEAN:
+        return VAR_BOOL;
+    case NODE_CHAR:
+        return VAR_CHAR;
+    case NODE_STRING:
+    case NODE_STRING_LITERAL:
+        return VAR_STRING;
+    case NODE_SIZEOF:
+        /* sizeof's own static type is always an integer byte count --
+           this reports that without evaluating the inner sizeof at all
+           (handle_sizeof() is never called here), matching get_
+           expression_type()'s identical NODE_SIZEOF case. */
+        return VAR_INT;
+    case NODE_ARRAY_ACCESS:
+    {
+        const String array_name = expr->data.array.name;
+        if (!array_name.data)
+            return NONE;
+        Variable *var = get_variable(array_name);
+        if (var != NULL)
+            return var->var_type;
+        return NONE;
+    }
+    case NODE_IDENTIFIER:
+    {
+        Variable *var = get_variable(expr->data.name);
+        if (var != NULL)
+            return var->var_type;
+        if (find_global_enum_constant(expr->data.name) != NULL)
+            return VAR_INT;
+        return NONE;
+    }
+    case NODE_OPERATION:
+    {
+        OperatorType op = expr->data.op.op;
+        if (op == OP_EQ || op == OP_NE || op == OP_LT || op == OP_GT ||
+            op == OP_LE || op == OP_GE || op == OP_AND || op == OP_OR)
+            return VAR_BOOL;
+
+        VarType left_type =
+            infer_runtime_expression_type_noeval(expr->data.op.left);
+        VarType right_type =
+            infer_runtime_expression_type_noeval(expr->data.op.right);
+        if (left_type == NONE || right_type == NONE)
+            return NONE;
+
+        int left_level = get_expression_pointer_level(expr->data.op.left);
+        int right_level = get_expression_pointer_level(expr->data.op.right);
+
+        if (left_level > 0 && right_level == 0)
+            return left_type;
+        if (right_level > 0 && left_level == 0 && op == OP_PLUS)
+            return right_type;
+        if (left_level > 0 || right_level > 0)
+            return left_type;
+
+        if (left_type == VAR_DOUBLE || right_type == VAR_DOUBLE)
+            return VAR_DOUBLE;
+        if (left_type == VAR_FLOAT || right_type == VAR_FLOAT)
+            return VAR_FLOAT;
+        if (left_type == VAR_INT || right_type == VAR_INT)
+            return VAR_INT;
+        return left_type;
+    }
+    case NODE_UNARY_OPERATION:
+        return infer_runtime_expression_type_noeval(expr->data.unary.operand);
+    case NODE_FUNC_CALL:
+    {
+        const String func_name = expr->data.func_call.function_name;
+        if (is_builtin_function(func_name))
+            return get_native_call_static_type(expr);
+
+        Function *func = get_function(func_name);
+        if (func != NULL)
+            return func->return_type;
+        return NONE;
+    }
+    case NODE_STRUCT_ACCESS:
+    {
+        StructDef *def = NULL;
+        void *base = NULL;
+        StructField *fld = NULL;
+        if (!resolve_struct_access(expr, &def, &base, &fld, false))
+            return NONE;
+        return fld->type;
+    }
+    default:
+        return NONE;
+    }
+}
+
+/* Runtime/execution-free counterpart of semantic_analyzer.c's own
+ * infer_expression_abi_type() -- see that function's comment for the two
+ * ABI-lowering rules this mirrors exactly (stdrot_char_narrows_to_int()
+ * for binary/unary-negation narrowing, and a char *array* identifier
+ * marshaling as STRING), so this file and the semantic analyzer's static
+ * pass cannot independently drift out of agreement about what ABI type
+ * an expression actually marshals as -- the two now share the *rule*
+ * (stdrot_char_narrows_to_int(), stdrot.h) even though each has to read
+ * it off a different data source (SymbolEntry vs. Variable) at a
+ * different phase (static analysis vs. execution). Built strictly on
+ * infer_runtime_expression_type_noeval() just above, so it inherits that
+ * function's "never executes anything" property outright.
+ *
+ * Deliberately distinct from get_expression_type()'s existing NODE_CHAR
+ * handling (VAR_INT, unconditionally, matching how a bare char literal
+ * behaves in ordinary Brainrot arithmetic/sizeof contexts): a native's
+ * identity-polymorphic argument (slorp<T>(T) -> T) marshals as exactly
+ * whatever ast_expr_to_stdrot_value() would produce for that argument,
+ * and a bare char literal marshals as STDROT_CHAR there, not STDROT_INT
+ * -- only narrowed for the specific node shapes stdrot_char_narrows_to_
+ * int() says narrow. Consuming get_expression_type() here (as get_
+ * native_call_static_type()'s identity case previously did) reported the
+ * wrong type for exactly this case, along with the same char-array-as-
+ * STRING and enum-as-INT mismatches infer_expression_abi_type() already
+ * fixed on the static-analysis side. */
+static VarType infer_runtime_expression_abi_type_noeval(ASTNode *expr)
+{
+    VarType t = infer_runtime_expression_type_noeval(expr);
+    if (!expr || t == NONE)
+        return t;
+
+    /* No StdrotType exists for an enum -- an enum-typed expression always
+       marshals as STDROT_INT (ast_expr_to_stdrot_value()'s NODE_
+       IDENTIFIER/VAR_ENUM case, stdrot.c), the same representation a
+       bare int gets. Matches infer_expression_abi_type()'s own
+       unconditional VAR_ENUM normalization. */
+    if (t == VAR_ENUM)
+        return VAR_INT;
+
+    if (t != VAR_CHAR)
+        return t;
+
+    if (stdrot_char_narrows_to_int(
+            expr->type,
+            expr->type == NODE_UNARY_OPERATION ? expr->data.unary.op : OP_PLUS))
+        return VAR_INT;
+
+    if (expr->type != NODE_IDENTIFIER)
+        return t;
+
+    Variable *var = get_variable(expr->data.name);
+    if (var != NULL && var->is_array)
+        return VAR_STRING;
+    return t;
+}
+
 /* Purely static return type for a call to a builtin (stdrot) native,
  * using only its registered StdrotEntry -- NEVER executing the native.
  * The runtime-side counterpart of semantic_analyzer.c's own static
@@ -1607,18 +1839,27 @@ static VarType get_native_call_static_type(ASTNode *node)
            argument's own type turns out to be -- return_like_arg is only
            ever validated (validate_native_registry(), stdrot.c) to name
            a STDROT_ANY parameter, so there is no fixed StdrotType to read
-           off return_type here at all. Delegating to get_expression_
-           type() on the argument expression itself is still execution-
-           free for this same reason recursively: a nested builtin call
-           there hits this same static-first path, and every other
-           expression shape get_expression_type() knows about (literals,
-           identifiers, arithmetic, ...) never executes anything either. */
+           off return_type here at all. Delegating to infer_runtime_
+           expression_abi_type_noeval() (above), not plain get_expression_
+           type(), because the identity this call promises is "same ABI
+           representation as this argument," not "same source-level
+           VarType" -- those differ for a char array (marshals as
+           STDROT_STRING, not the element's VAR_CHAR) and a bare char
+           literal (marshals as STDROT_CHAR, not get_expression_type()'s
+           unconditional VAR_INT) -- see that function's own comment.
+           Still execution-free for the same reason recursively: a nested
+           builtin call underneath hits this same static-first path via
+           infer_runtime_expression_type_noeval(), and unknowable
+           anywhere underneath propagates NONE instead of falling back to
+           running anything. */
         int idx = 0;
         for (ArgumentList *a = node->data.func_call.arguments; a;
              a = a->next, idx++)
         {
             if (idx == entry->return_like_arg)
-                return a->expr ? get_expression_type(a->expr) : NONE;
+                return a->expr
+                           ? infer_runtime_expression_abi_type_noeval(a->expr)
+                           : NONE;
         }
         return NONE;
     }
@@ -2473,9 +2714,10 @@ static bool unbox_native_numeric_result(void *raw, VarType actual, double *out)
 
 /* handle_function_call() returns NULL for two different reasons: the
  * call's actual result is genuinely void (current_return_value.type ==
- * NONE -- a legacy STDROT_ANY export or a STDROT_NONE-declared native
- * used where a value is expected), or it's a struct result this generic
- * scalar context can't represent (current_return_value.type ==
+ * VAR_VOID -- a legacy STDROT_ANY export whose real runtime result
+ * turned out to be STDROT_NONE, or a STDROT_NONE-declared native, either
+ * way used where a value is expected), or it's a struct result this
+ * generic scalar context can't represent (current_return_value.type ==
  * VAR_STRUCT, already discarded inside handle_function_call() itself).
  * A native call can only ever produce the former (StdrotType has no
  * struct variant reaching this path), so this only reports the void
@@ -2486,10 +2728,23 @@ static bool unbox_native_numeric_result(void *raw, VarType actual, double *out)
  * (having already reported the error) only for the void case; every
  * caller still falls through to its own default-value return either
  * way, matching what a NULL raw already meant before this check existed
- * for the struct case. */
+ * for the struct case.
+ *
+ * VAR_VOID, not NONE: stdrot_type_to_vartype() (stdrot.c) maps a real,
+ * already-executed native result's STDROT_NONE to VAR_VOID specifically
+ * so this exact check (and every other "is this call's result usable as
+ * a value" question) can tell "certainly nothing" apart from "couldn't
+ * determine a type ahead of time" -- see VAR_VOID's own comment (ast.h)
+ * for the full reasoning. current_return_value.type reaching here as
+ * plain NONE would mean marshal_native_return_value() populated it from
+ * something enforce_return_type() should already have rejected earlier
+ * (STDROT_ANY/STDROT_HANDLE/STDROT_CSTRING as an actual result tag) --
+ * checked defensively alongside VAR_VOID rather than assumed
+ * unreachable. */
 static bool warn_if_native_result_void(const char *context_name)
 {
-    if (current_return_value.type != NONE)
+    if (current_return_value.type != VAR_VOID &&
+        current_return_value.type != NONE)
         return false;
     char error_msg[MAX_BUFFER_LEN];
     snprintf(error_msg, sizeof(error_msg),
@@ -2835,35 +3090,34 @@ size_t handle_sizeof(ASTNode *node)
     {
         /* sizeof's operand is never evaluated -- that's its defining
            property, matching C. get_expression_type() alone doesn't
-           honor that for a bare native call: its own NODE_FUNC_CALL
-           case falls back to actually invoking a legacy/untyped native
-           to learn a type this function has no way to know is only
-           needed for a byte count, not a value. A direct builtin call
-           as sizeof's operand is checked here, via get_native_call_
-           static_type() (never executes anything, by construction --
-           see its own comment), instead of going through get_expression_
-           type() at all: NONE here means "genuinely unknowable without
-           running it," which for sizeof means reject, not "fall back to
-           running it anyway." A native call nested inside a larger
-           expression (`maxxing(a + slorp(x))`) still reaches get_
-           expression_type() below, same as before -- narrowing this
-           check to the direct-operand shape covers the case Phase 2
-           actually made staticaly answerable (a bare native call as the
-           whole operand) without a full non-executing reimplementation
-           of every expression shape get_expression_type() already
-           handles. */
-        if (expr->type == NODE_FUNC_CALL &&
-            is_builtin_function(expr->data.func_call.function_name))
+           honor that for a native call: its own NODE_FUNC_CALL case
+           falls back to actually invoking a legacy/untyped native to
+           learn a type this function has no way to know is only needed
+           for a byte count, not a value -- and that fallback isn't
+           limited to a bare call as the whole operand: get_expression_
+           type()'s NODE_OPERATION/NODE_UNARY_OPERATION cases recurse
+           into the very same fallback for any native call nested
+           *inside* a larger expression too (`maxxing(a + legacy_int())`).
+           Gating on infer_runtime_expression_type_noeval() (above) over
+           the *whole* operand first closes that: it recurses the same
+           shapes get_expression_type() does, but its own NODE_FUNC_CALL
+           case only ever consults get_native_call_static_type() (never
+           native_call_peek()), and propagates NONE up through any
+           containing operation/unary node rather than resolving it by
+           running something. If it reports NONE, get_expression_type()
+           below is *guaranteed* not to hit its own execute-to-discover
+           fallback either, for exactly the same reason (every builtin
+           call reachable from `expr` already static-typed, or this gate
+           would already have returned NONE) -- so this doesn't replace
+           get_expression_type() below, just proves ahead of time that
+           calling it is safe. */
+        if (infer_runtime_expression_type_noeval(expr) == NONE)
         {
-            VarType static_type = get_native_call_static_type(expr);
-            if (static_type == NONE)
-            {
-                yyerror("maxxing (sizeof) of a native call whose return "
-                        "type is not statically known -- sizeof's operand "
-                        "is never evaluated, so this native cannot be "
-                        "invoked to discover it");
-                return 0;
-            }
+            yyerror("maxxing (sizeof) of an expression whose type is not "
+                    "statically known -- sizeof's operand is never "
+                    "evaluated, so a native call it depends on cannot be "
+                    "invoked to discover it");
+            return 0;
         }
 
         // For non-identifiers (like literals), use get_expression_type
@@ -2889,6 +3143,17 @@ size_t handle_sizeof(ASTNode *node)
             return get_type_size_for_descriptor(
                 type, get_expression_pointer_level(expr), expr->modifiers);
         case VAR_ENUM:
+            return get_type_size_for_descriptor(
+                type, get_expression_pointer_level(expr), expr->modifiers);
+        case VAR_PTR:
+            /* A typed native's STDROT_PTR result (or any other pointer-
+               typed expression reaching this generic path) -- get_type_
+               size_for_descriptor() already handles pointer_level > 0
+               correctly (sizeof(uintptr_t)) via its own unconditional
+               check at the top; this case was simply missing, so a
+               pointer-typed non-identifier expression fell to the
+               `default: yyerror("Invalid type in sizeof")` case below
+               despite being a perfectly well-defined size. */
             return get_type_size_for_descriptor(
                 type, get_expression_pointer_level(expr), expr->modifiers);
         case VAR_STRUCT:
@@ -3540,6 +3805,13 @@ void *handle_function_call(ASTNode *node)
                expression, a separate concern from this runtime value's
                representation (see that function's comment). Structurally
                unreachable here. */
+        case VAR_VOID:
+            /* This whole switch is gated on current_return_value.has_value
+               above, and marshal_native_return_value() sets has_value to
+               false for a genuinely void (STDROT_NONE) result -- so
+               reaching here with type == VAR_VOID would mean has_value
+               was true for a call known to return nothing, a bug
+               elsewhere, not a case this function should paper over. */
         case NONE:
             return NULL;
         }
@@ -3914,8 +4186,20 @@ bool is_expression(ASTNode *node, VarType type)
         const String func_name = node->data.func_call.function_name;
         if (is_builtin_function(func_name))
         {
-            NativeResult result = native_call_peek(node);
-            return stdrot_type_to_vartype(result.value.type) == type;
+            /* Static-first, matching get_expression_type()'s own NODE_
+               FUNC_CALL case exactly (delegated to directly, rather than
+               duplicating it): a TYPED native's return type is answered
+               purely from its registered descriptor, via get_native_
+               call_static_type() -- no execution. native_call_peek()
+               only actually runs the call for a genuine legacy/untyped
+               STDROT_ANY export, where nothing describes the return type
+               ahead of time, same as before. Previously called native_
+               call_peek() unconditionally here, executing even a TYPED
+               native merely to answer a type-check question Phase 2
+               (issue #205) made statically answerable without running
+               anything -- inconsistent with get_expression_type() having
+               already been fixed to prefer the static answer. */
+            return get_expression_type(node) == type;
         }
         VarType ret = get_function_return_type(func_name);
         /* A by-value enum return has type int in C -- treat it as such so
@@ -5438,7 +5722,9 @@ bool enter_function_scope(Function *func, ArgumentList *args)
         case VAR_PTR:
         /* curr_param->type is a user-defined function parameter's
            declared type -- no Brainrot syntax can declare a parameter
-           VAR_PTR, so this is structurally unreachable. */
+           VAR_PTR (or VAR_VOID, same reasoning), so this is structurally
+           unreachable. */
+        case VAR_VOID:
         case NONE:
             break;
         }
@@ -5542,6 +5828,7 @@ bool enter_function_scope(Function *func, ArgumentList *args)
         case VAR_PTR:
         /* Same reasoning as the argument-evaluation switch above:
            structurally unreachable for a declared parameter type. */
+        case VAR_VOID:
         case NONE:
             break;
         }

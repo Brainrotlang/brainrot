@@ -188,9 +188,14 @@
     "native_legacy_void_variadic_tail_fail": "Error: stdrot: native 'yapping' argument 2: expression produced no value (STDROT_NONE) -- cannot be passed as a native argument",
     "identity_cstring_as_string_use_after_free": "hello",
     "native_sizeof_no_execution": "4\n42",
-    "semantic_error_native_sizeof_legacy_unknown": "Error: maxxing (sizeof) of a native call whose return type is not statically known -- sizeof's operand is never evaluated, so this native cannot be invoked to discover it at line 17\nError: maxxing (sizeof) of a native call whose return type is not statically known -- sizeof's operand is never evaluated, so this native cannot be invoked to discover it at line 17",
+    "semantic_error_native_sizeof_legacy_unknown": "Error: maxxing (sizeof) of an expression whose type is not statically known -- sizeof's operand is never evaluated, so a native call it depends on cannot be invoked to discover it at line 17\nError: maxxing (sizeof) of an expression whose type is not statically known -- sizeof's operand is never evaluated, so a native call it depends on cannot be invoked to discover it at line 17",
     "native_call_cache_growth": "714.5",
     "native_char_param_scalar": "99",
     "identity_string_use_after_free": "hello",
-    "identity_ownership_nonstring_result": "ok"
+    "identity_ownership_nonstring_result": "ok",
+    "semantic_error_native_sizeof_legacy_nested": "Error: maxxing (sizeof) of an expression whose type is not statically known -- sizeof's operand is never evaluated, so a native call it depends on cannot be invoked to discover it at line 21\nError: maxxing (sizeof) of an expression whose type is not statically known -- sizeof's operand is never evaluated, so a native call it depends on cannot be invoked to discover it at line 21",
+    "native_identity_abi_type_char_literal": "1",
+    "native_identity_abi_type_char_array": "Error: Invalid type in sizeof at line 19\nError: Invalid type in sizeof at line 19",
+    "semantic_error_native_void_typed_declaration": "Error: Type mismatch in initialization of 'x': expected int, got void at line 1",
+    "native_sizeof_ptr_result": "8"
 }

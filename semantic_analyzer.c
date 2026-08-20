@@ -169,10 +169,17 @@ const char *vartype_to_string(VarType type)
         return "struct";
     case VAR_PTR:
         return "pointer";
-    case NONE:
+    case VAR_VOID:
         return "void";
+    case NONE:
     default:
-        return "unknown";
+        /* NONE means "couldn't determine a type," not "determined it to
+           be void" -- that's VAR_VOID's own case, just above. Reusing
+           "void" for NONE was itself an instance of the sentinel-
+           collision bug VAR_VOID exists to close: an error message that
+           printed "expected int, got void" for a genuinely INDETERMINATE
+           expression would misreport why the mismatch happened. */
+        return "indeterminate";
     }
 }
 
@@ -316,6 +323,21 @@ bool check_type_compatibility_ex(VarType expected, int expected_pointer_level,
             return true;
         return expected == actual;
     }
+    /* VAR_VOID (ast.h's own comment has the full reasoning) is
+       compatible with NOTHING -- not even itself. Every other type in
+       this checker means "some concrete representation exists"; VAR_VOID
+       means "no value exists to have a representation at all." There is
+       no context where consuming a certainly-void expression as a value
+       is ever correct, so this has to be checked before the `expected ==
+       actual` shortcut below (which would otherwise wave through
+       `rizz x = a_void_native();` whenever both source and destination
+       "type" happened to be reported as VAR_VOID -- structurally
+       possible only for the RHS today, but the guard belongs here,
+       unconditionally, not on the strength of what currently calls
+       it). */
+    if (expected == VAR_VOID || actual == VAR_VOID)
+        return false;
+
     if (expected == actual)
         return true;
 
