@@ -10,6 +10,19 @@ CFLAGS := -Wall -Wextra -Wpedantic -Werror -O2 -Wuninitialized -fsanitize=addres
 LDFLAGS := -lfl -lm -ldl -rdynamic
 SO_CFLAGS := -fPIC -shared
 
+# `make release` ships binaries (GitHub Actions release matrix). Drop
+# sanitizers so the artifact doesn't need libasan/libubsan at runtime.
+# FLEX_PREFIX is for keg-only Homebrew flex on macOS (the release
+# workflow sets it to $(brew --prefix flex)).
+UNAME_S := $(shell uname -s)
+RELEASE_CFLAGS := -Wall -Wextra -Wpedantic -Werror -O2 -Wuninitialized
+FLEX_CPPFLAGS :=
+FLEX_LIB :=
+ifneq ($(FLEX_PREFIX),)
+FLEX_CPPFLAGS := -I$(FLEX_PREFIX)/include
+FLEX_LIB := -L$(FLEX_PREFIX)/lib
+endif
+
 # Source files and directories
 SRC_DIR := lib
 DEBUG_FLAGS := -g
@@ -105,6 +118,21 @@ lib: $(STDROT_LIB)
 debug: CFLAGS += $(DEBUG_FLAGS)
 debug: clean all
 	@echo "Debug build compiled with -g. Time to sigma grind with GDB."
+
+# Release build: no sanitizers, rpath so dlopen("libstdrot.so") finds the
+# copy next to the binary ($ORIGIN on ELF, @loader_path on Mach-O). Darwin
+# omits -ldl (dlopen lives in libSystem). Same pattern as `debug`: clean
+# then all, so a prior sanitizer build can't be reused.
+.PHONY: release
+ifeq ($(UNAME_S),Darwin)
+release: CFLAGS := $(RELEASE_CFLAGS) $(FLEX_CPPFLAGS)
+release: LDFLAGS := $(FLEX_LIB) -lfl -lm -rdynamic -Wl,-rpath,@loader_path
+else
+release: CFLAGS := $(RELEASE_CFLAGS) $(FLEX_CPPFLAGS)
+release: LDFLAGS := $(FLEX_LIB) -lfl -lm -ldl -rdynamic -Wl,-rpath,'$$ORIGIN'
+endif
+release: clean all
+	@echo "Release build: $(TARGET) + $(STDROT_LIB) (no sanitizers)."
 
 # stdrot shared library build
 $(STDROT_LIB): $(STDROT_SRCS)
@@ -289,6 +317,7 @@ format-check:
 help:
 	@echo "Available targets (rizzy edition):"
 	@echo "  all        : Build the main executable (default target). Sigma grindset activated."
+	@echo "  release    : Sanitizer-free build with rpath for shipped binaries (GitHub releases)."
 	@echo "  install    : Install the binary to /usr/local/bin. Certified W."
 	@echo "  uninstall  : Uninstall the binary from /usr/local/bin. Back to square one."
 	@echo "  test       : Run the test suite. Huggy Wuggy approves."
