@@ -22,6 +22,21 @@ STDROT_DIR := stdrot
 STDROT_SRCS := $(wildcard $(STDROT_DIR)/*.c) $(SRC_DIR)/input.c
 STDROT_LIB := libstdrot.so
 
+# Test-only stdrot library: production natives plus tests/stdrot/*.c
+# (bindings that exist solely so test_cases/*.brainrot can exercise ABI
+# paths no production builtin uses, e.g. STDROT_PTR -- see that
+# directory's own file comment). Deliberately a SEPARATE output from
+# $(STDROT_LIB): a self-registering native compiled into libstdrot.so is
+# a real, permanently-shipped Brainrot builtin the instant it compiles,
+# so test-only natives must never be part of that file, `make install`,
+# or the wasm build. `make test`/`make valgrind` point the interpreter at
+# this one instead via stdrot_load()'s STDROT_LIB_PATH override
+# (stdrot.c); every other target (`all`, `install`, `wasm`) never
+# references it and stays exactly as before.
+TEST_STDROT_DIR := tests/stdrot
+TEST_STDROT_SRCS := $(wildcard $(TEST_STDROT_DIR)/*.c)
+TEST_STDROT_LIB := tests/libstdrot.so
+
 # Output files
 TARGET := brainrot
 BISON_OUTPUT := lang.tab.c
@@ -86,6 +101,14 @@ $(STDROT_LIB): $(STDROT_SRCS)
 	$(CC) $(SO_CFLAGS) -I. -o $@ $^ -lm
 	@echo "libstdrot.so compiled with max rizz."
 
+# Test-only stdrot shared library build (production natives + tests/stdrot/
+# test-only natives). -I$(STDROT_DIR) so tests/stdrot/*.c can #include
+# "stdrot_api.h" the same bare way every production stdrot/*.c file already
+# does, despite living in a different directory.
+$(TEST_STDROT_LIB): $(STDROT_SRCS) $(TEST_STDROT_SRCS)
+	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $^ -lm
+	@echo "tests/libstdrot.so (production + test-only natives) compiled."
+
 # Main executable build
 $(TARGET): $(ALL_SRCS) $(STDROT_LIB)
 	$(CC) $(CFLAGS) -o $@ $(ALL_SRCS) $(LDFLAGS)
@@ -111,22 +134,22 @@ $(FLEX_OUTPUT): lang.l
 
 # Run tests
 .PHONY: test
-test: ensure-stdrot $(TARGET)
-	$(PYTHON) -m pytest -v
+test: $(TARGET) $(TEST_STDROT_LIB)
+	STDROT_LIB_PATH=$(CURDIR)/$(TEST_STDROT_LIB) $(PYTHON) -m pytest -v
 	@echo "Tests ran bussin', no cap."
 
 # Clean build artifacts
 .PHONY: clean
 clean:
-	rm -f $(TARGET) $(STDROT_LIB) $(GENERATED_SRCS) lang.tab.h
+	rm -f $(TARGET) $(STDROT_LIB) $(TEST_STDROT_LIB) $(GENERATED_SRCS) lang.tab.h
 	rm -f $(WASM_TARGET) $(WASM_JS)
 	rm -f *.o
 	@echo "Blud cleaned up the mess like a true sigma coder."
 
 # Run Valgrind on all .brainrot tests
 .PHONY: valgrind
-valgrind: ensure-stdrot $(TARGET)
-	@./run_valgrind_tests.sh
+valgrind: $(TARGET) $(TEST_STDROT_LIB)
+	@STDROT_LIB_PATH=$(CURDIR)/$(TEST_STDROT_LIB) ./run_valgrind_tests.sh
 	@echo "Valgrind check done. If anything was sus, it'll show up with a non-zero exit code. No cap."
 
 # Install target

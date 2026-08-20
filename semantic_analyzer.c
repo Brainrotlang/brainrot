@@ -280,9 +280,23 @@ bool check_type_compatibility_ex(VarType expected, int expected_pointer_level,
         /* VAR_PTR (an opaque native pointer -- STDROT_PTR) has no
            concrete base type by design, so it's wildcard-compatible with
            any base type once pointer *levels* already match (checked
-           above) -- matching C's void* implicitly converting to/from any
-           pointer type. This makes `rizz *p = get_ptr();` type-check
-           without needing VAR_PTR to equal every possible base VarType.
+           above). This makes `rizz *p = get_ptr();` type-check without
+           needing VAR_PTR to equal every possible base VarType.
+           Deliberately NOT the same guarantee as C's void* conversion
+           rule, despite the surface resemblance: void* <-> T* is sound
+           for exactly one level of indirection, but void** <-> T** is
+           not (writing an unrelated pointer through a void** silently
+           corrupts whatever the T** side believes it points to). This
+           check applies the wildcard at every depth uniformly --
+           STDROT_PTR level N is opaque all the way down, not just at the
+           outermost level -- because StdrotParam (stdrot_api.h) has no
+           field to express a *partially* erased pointer ("pointer to
+           pointer to known-int" vs. "...to known-double"); only
+           pointer_level exists, no base type at any depth. That is an
+           intentional simplification for now, not an oversight: a
+           binding generator emitting STDROT_PTR at depth > 1 should
+           treat the whole pointed-to graph as opaque, not assume any
+           C-void**-like base-type safety this check does not provide.
            NONE, deliberately, gets no such exception here: unlike
            VAR_PTR it means "couldn't determine a type at all", and
            granting it pointer-compatibility would silently accept any
@@ -844,6 +858,31 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
         return;
     }
 
+    if (entry->return_type.type == STDROT_CSTRING)
+    {
+        /* STDROT_CSTRING is argument-side ABI groundwork only: coerce_arg_
+           to_param() knows how to convert a Brainrot String INTO a const
+           char* for a native to consume, but marshal_native_return_value()
+           (ast.c) has no code path the other way -- a native returning
+           STDROT_CSTRING falls through its switch doing nothing, leaving
+           current_return_value.value.strvalue whatever stale/zeroed state
+           happened to already be in that union. stdrot_type_to_vartype()
+           still honestly maps STDROT_CSTRING to VAR_STRING, so without
+           this check the analyzer would approve `chungus s = a_cstring_
+           native();` as a real string and hand the interpreter a value
+           that was never actually constructed. Same reasoning as the
+           STDROT_HANDLE rejection above: reject outright rather than let
+           the descriptor advertise a return representation the final
+           marshalling layer cannot produce. */
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "'%s': native CSTRING return types are not marshalled yet",
+                 func_name.data);
+        add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                           STRING_LITERAL(error_msg), line);
+        return;
+    }
+
     cur = node->data.func_call.arguments;
     for (int i = 0; i < entry->param_count && cur; i++, cur = cur->next)
     {
@@ -867,13 +906,15 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
         if (param->type == STDROT_PTR)
         {
             /* An opaque pointer parameter accepts a pointer of *any* base
-               type at the right indirection depth -- like C's void*
-               implicitly converting to/from any pointer type -- so this
-               checks pointer_level only, deliberately skipping the base-
-               VarType comparison below (there is no base type to compare;
-               that's what "opaque" means). param->pointer_level counts
-               indirection *beyond* the one level STDROT_PTR itself already
-               represents (a plain STDROT_PTR argument is pointer_level 1). */
+               type at the right indirection depth -- erased uniformly at
+               every depth, not just C void*'s one safe level (see
+               STDROT_PTR's own comment in stdrot_api.h for why) -- so
+               this checks pointer_level only, deliberately skipping the
+               base-VarType comparison below (there is no base type to
+               compare; that's what "opaque" means). param->pointer_level
+               counts indirection *beyond* the one level STDROT_PTR itself
+               already represents (a plain STDROT_PTR argument is
+               pointer_level 1). */
             int actual_pl = infer_expression_pointer_level(cur->expr, analyzer);
             int expected_pl = param->pointer_level + 1;
             if (actual_pl != expected_pl)

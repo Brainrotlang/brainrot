@@ -2997,9 +2997,10 @@ static void marshal_native_return_value(ASTNode *node)
        reusing it means every existing consumer of a pointer-valued
        expression (dereference, pointer arithmetic, assignment to a
        pointer variable, ...) already knows how to handle it. The
-       semantic analyzer, separately, honestly reports NONE for this same
+       semantic analyzer, separately, reports VAR_PTR for this same
        call's static type (see infer_expression_type()) -- the two don't
-       need to agree on a VarType tag, only on pointer_level and the raw
+       need to agree on a VarType tag (this function tags it VAR_INT, not
+       VAR_PTR), only on pointer_level and the raw
        value. */
     if (result.type == STDROT_PTR)
     {
@@ -3041,15 +3042,24 @@ static void marshal_native_return_value(ASTNode *node)
     case STDROT_PTR:
         current_return_value.value.pvalue = (uintptr_t)result.val.ptr;
         break;
-    case STDROT_ANY:
     case STDROT_CSTRING:
     case STDROT_HANDLE:
-        /* Not yet returned by any registered native (STDROT_ANY only
-           appears in checked-but-unresolved descriptors; CSTRING is ABI
-           groundwork for the argument side only so far; HANDLE needs a
-           resource-ownership model Phase 2 hasn't designed yet, see
-           roadmap Appendix B Q6) -- add real marshalling once a builtin
-           actually produces one. */
+        /* semantic_check_native_call() rejects any call to a native whose
+           return_type.type is STDROT_CSTRING or STDROT_HANDLE outright
+           (CSTRING has no return-side marshalling implemented -- this
+           switch has no case that would populate strvalue for it; HANDLE
+           needs a resource-ownership model Phase 2 hasn't designed yet,
+           see roadmap Appendix B Q6) -- so a Brainrot program can never
+           reach this call with result.type equal to either, structurally
+           unreachable here. Add real marshalling (and remove the
+           semantic-analyzer rejection) once a builtin actually needs to
+           return one. */
+    case STDROT_ANY:
+        /* STDROT_ANY is a descriptor placeholder ("type genuinely
+           unknown" or "identity-polymorphic", see StdrotEntry's own
+           comment in stdrot_api.h) -- no native's actual StdrotValue
+           result should ever be tagged STDROT_ANY itself; if one is,
+           there is nothing meaningful to unbox. */
     case STDROT_NONE:
         break;
     }

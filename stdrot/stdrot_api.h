@@ -80,14 +80,28 @@ typedef enum
     STDROT_CSTRING, /* NUL-terminated const char *, owned by the caller for
                         the duration of the call */
     STDROT_PTR,     /* An opaque native pointer -- base type intentionally
-                        erased. A StdrotParam of {STDROT_PTR, NULL, N}
-                        describes a Brainrot-visible pointer of level N + 1
-                        (STDROT_PTR itself already represents one level of
-                        indirection, on top of whatever `pointer_level`
-                        counts) -- e.g. {STDROT_PTR, NULL, 0} is `rizz*`,
-                        {STDROT_PTR, NULL, 1} is `rizz**`, and so on. Only
-                        pointer_level is checked against the argument/
-                        return site; there is no base type to compare. */
+                        erased, AT EVERY DEPTH, not just the outermost one.
+                        A StdrotParam of {STDROT_PTR, NULL, N} describes a
+                        Brainrot-visible pointer of level N + 1 (STDROT_PTR
+                        itself already represents one level of indirection,
+                        on top of whatever `pointer_level` counts) -- e.g.
+                        {STDROT_PTR, NULL, 0} is `rizz*`, {STDROT_PTR,
+                        NULL, 1} is `rizz**`, and so on. Only pointer_level
+                        is checked against the argument/return site; there
+                        is no base type to compare, at any depth. This is
+                        NOT the same guarantee as C's void* conversion
+                        rule: void* <-> T* is sound for one level of
+                        indirection, but void** <-> T** is not (a callee
+                        could write an unrelated pointer through the
+                        void**, corrupting whatever the T** side believes
+                        it holds). StdrotParam has no field to express a
+                        partially-erased pointer ("pointer to pointer to
+                        known-int" vs. "...to known-double") -- only
+                        pointer_level exists -- so STDROT_PTR at depth > 1
+                        erases the *entire* pointed-to graph, uniformly. A
+                        binding generator emitting STDROT_PTR at depth > 1
+                        must treat it as fully opaque all the way down,
+                        not assume any base-type safety at inner levels. */
     STDROT_HANDLE,  /* opaque native resource, see StdrotValue.val.handle */
     STDROT_NONE     /* void return */
 } StdrotType;

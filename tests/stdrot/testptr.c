@@ -1,14 +1,25 @@
-/* stdrot/testptr.c – Minimal STDROT_PTR native bindings, committed as
- * permanent test-only infrastructure.
+/* tests/stdrot/testptr.c – Minimal STDROT_PTR native bindings, committed
+ * as permanent test-only infrastructure.
  *
  * Issue #205 mandates STDROT_PTR as part of the typed native ABI, but no
  * production native in this library actually takes or returns one --
  * without a native that does, STDROT_PTR round-tripping (as a parameter,
  * as a return value, and the pointer_level + 1 convention documented in
  * stdrot_api.h) has no coverage at all. These exist only to be called
- * from .brainrot fixtures under test_cases/; they are not part of the
- * language's standard library surface.
- */
+ * from .brainrot fixtures under test_cases/.
+ *
+ * Deliberately NOT under stdrot/: that directory is wildcard-globbed
+ * (STDROT_SRCS in the Makefile) straight into the production
+ * libstdrot.so, `make install`, and the wasm build. A self-registering
+ * native placed there is a real, permanently-shipped Brainrot builtin
+ * the moment it compiles, no matter what a comment claims -- there's no
+ * such thing as a "spiritually test-only" entry in a self-registering
+ * plugin section. This file is instead compiled into a separate,
+ * test-only library (tests/libstdrot.so, see the Makefile's
+ * TEST_STDROT_LIB rule) that only `make test`/`make valgrind` and CI's
+ * test job ever load, via stdrot_load()'s STDROT_LIB_PATH override
+ * (stdrot.c) -- the production libstdrot.so and brainrot.wasm never see
+ * this file at all. */
 #include "stdrot_api.h"
 
 /* poke_int(rizz *p, rizz v): writes v through p. Exercises STDROT_PTR as

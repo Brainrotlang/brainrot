@@ -155,5 +155,10 @@
     "native_ptr_param_return": "99\n99\n7\n7",
     "semantic_error_native_ptr_wrong_depth": "Error: 'poke_int' argument 1: expected a pointer (level 1), got pointer level 2 at line 9",
     "semantic_error_native_ptr_return_scalar_init": "Error: Type mismatch in initialization of 'x': expected int, got pointer at line 1",
-    "semantic_error_native_ptr_result_scalar_param": "Error: 'poke_int' argument 2: expected int, got pointer at line 7"
+    "semantic_error_native_ptr_result_scalar_param": "Error: 'poke_int' argument 2: expected int, got pointer at line 7",
+    "native_return_type_numeric_coercion": "42.000000",
+    "native_return_type_abi_violation_incompatible": "Error: stdrot: native 'lying_bool' declared to return a fixed type but actually returned an incompatible StdrotType (7 instead of 5) -- this is a bug in the native binding's C implementation, not the Brainrot program",
+    "native_return_type_abi_violation_ptr_mismatch": "Error: stdrot: native 'lying_ptr_return' declared to return a fixed type but actually returned an incompatible StdrotType (1 instead of 9) -- this is a bug in the native binding's C implementation, not the Brainrot program",
+    "native_return_type_abi_violation_any_pointer_leak": "Error: stdrot: native 'legacy_ptr_leak' is declared to return STDROT_ANY (legacy/untyped export or identity-polymorphic result) but actually returned a STDROT_PTR -- pointer/handle results require an explicit STDROT_PTR signature, not the unchecked ANY fallback",
+    "semantic_error_native_cstring_return": "Error: 'cstring_return': native CSTRING return types are not marshalled yet at line 9"
 }

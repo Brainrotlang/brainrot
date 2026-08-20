@@ -169,11 +169,34 @@ void stdrot_load(void)
      */
     dlopen(NULL, RTLD_LAZY | RTLD_GLOBAL);
 
+    /* STDROT_LIB_PATH, when set, names an exact library to load instead --
+     * used exclusively by `make test`/`make valgrind` and CI's test job to
+     * point at tests/libstdrot.so (production natives plus test-only ones
+     * from tests/stdrot/, see that directory's own comment) without ever
+     * touching the plain "./libstdrot.so" lookup below, which is what
+     * `make install` and every ordinary invocation of this binary still
+     * resolve to. Unset in normal use, so this changes nothing for anyone
+     * not explicitly opting into a different library. */
+    const char *lib_path_override = getenv("STDROT_LIB_PATH");
+    if (lib_path_override)
+    {
+        lib_handle = dlopen(lib_path_override, RTLD_LAZY | RTLD_GLOBAL);
+        if (!lib_handle)
+        {
+            fprintf(stderr, "Failed to load STDROT_LIB_PATH=%s: %s\n",
+                    lib_path_override, dlerror());
+            exit(EXIT_FAILURE);
+        }
+    }
+
     /* Open libstdrot.so from the same directory as the binary, or
      * LD_LIBRARY_PATH Use RTLD_GLOBAL so the library can access symbols from
      * the main binary (e.g., g_exec_context)
      */
-    lib_handle = dlopen("./libstdrot.so", RTLD_LAZY | RTLD_GLOBAL);
+    if (!lib_handle)
+    {
+        lib_handle = dlopen("./libstdrot.so", RTLD_LAZY | RTLD_GLOBAL);
+    }
     if (!lib_handle)
     {
         lib_handle = dlopen("libstdrot.so", RTLD_LAZY | RTLD_GLOBAL);
@@ -587,7 +610,41 @@ static void enforce_return_type(const String func_name, StdrotValue *result,
         identity_arg ? identity_arg->type : entry->return_type.type;
 
     if (declared == STDROT_ANY)
-        return; /* legacy/untyped export: actual tag wins */
+    {
+        /* STDROT_ANY means "any of the scalar/string types this pipeline
+           can marshal" (see its own comment in stdrot_api.h), not "any
+           value representable at all, pointers included" -- the same
+           rule the argument side already enforces (see
+           semantic_check_native_call()'s STDROT_ANY branch, which
+           rejects a pointer-valued *argument* for the identical reason).
+           Without this check, a legacy/untyped export (return_type.type
+           == STDROT_ANY, return_like_arg == -1) could hand back a
+           StdrotValue genuinely tagged STDROT_PTR/STDROT_HANDLE and
+           nothing here would object -- but the *static* side would never
+           know: entry->return_type.type is STDROT_ANY, not STDROT_PTR,
+           so infer_expression_pointer_level() reports 0 and every
+           pointer guard downstream (the scalar evaluators' NODE_FUNC_
+           CALL checks, VAR_PTR's wildcard-compatibility rule) never
+           fires. Static and runtime would disagree about what this
+           expression actually is -- exactly the class of bug this whole
+           enforcement function exists to close. */
+        if (result->type == STDROT_PTR || result->type == STDROT_HANDLE)
+        {
+            fprintf(stderr,
+                    "Error: stdrot: native '%s' is declared to return "
+                    "STDROT_ANY (legacy/untyped export or "
+                    "identity-polymorphic result) but actually returned a "
+                    "%s -- pointer/handle results require an explicit "
+                    "STDROT_PTR signature, not the unchecked ANY "
+                    "fallback\n",
+                    func_name.data,
+                    result->type == STDROT_PTR ? "STDROT_PTR"
+                                               : "STDROT_HANDLE");
+            exit(1);
+        }
+        return; /* legacy/untyped export: actual tag wins for any other
+                    type */
+    }
 
     if (result->type == declared)
         return;
@@ -596,7 +653,7 @@ static void enforce_return_type(const String func_name, StdrotValue *result,
         return;
 
     fprintf(stderr,
-            "stdrot: native '%s' declared to return %s but actually "
+            "Error: stdrot: native '%s' declared to return %s but actually "
             "returned an incompatible StdrotType (%d instead of %d) -- "
             "this is a bug in the native binding's C implementation, not "
             "the Brainrot program\n",

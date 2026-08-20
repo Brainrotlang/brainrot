@@ -11,6 +11,10 @@
 // still run and still asserted on, just against a different, equally exact
 // string, so a regression in either one still fails this harness.
 //
+// A handful more (WASM_SKIP below) are skipped outright rather than
+// asserted on — they depend on test-only natives that `make wasm` never
+// links in, see that constant's own comment.
+//
 // Usage: node tests/run_wasm_tests.mjs   (run from the repo root, after `make wasm`)
 
 import { readFileSync, existsSync, readdirSync } from "node:fs";
@@ -86,6 +90,32 @@ const WASM_EXPECTED_OVERRIDES = {
   giga_array: "1\n2\n3\n12",
 };
 
+// These fixtures call test-only natives (tests/stdrot/*.c: poke_int,
+// peek_int, test_ptr_source, lying_double, lying_bool, lying_ptr_return,
+// legacy_ptr_leak, cstring_return) that exist solely to exercise
+// execute_native_call()'s ABI checks -- deliberately kept out of
+// STDROT_SRCS (the Makefile's stdrot/*.c wildcard) so they're never a
+// real, permanently-shipped Brainrot builtin (see that directory's own
+// comment). `make wasm` links STDROT_SRCS directly into brainrot.wasm
+// with no separate test-augmented build the way the native dlopen path
+// has (tests/libstdrot.so, loaded via STDROT_LIB_PATH), so these natives
+// simply aren't registered here -- skipped rather than asserted against
+// an "Undefined function" error nobody actually cares about regressing.
+// The C logic these fixtures exercise (stdrot.c/ast.c/semantic_analyzer.c)
+// is identical between native and wasm builds; run_wasm_tests.mjs isn't
+// the thing standing between a regression there and CI noticing it.
+const WASM_SKIP = new Set([
+  "native_ptr_param_return",
+  "semantic_error_native_ptr_wrong_depth",
+  "semantic_error_native_ptr_return_scalar_init",
+  "semantic_error_native_ptr_result_scalar_param",
+  "native_return_type_numeric_coercion",
+  "native_return_type_abi_violation_incompatible",
+  "native_return_type_abi_violation_ptr_mismatch",
+  "native_return_type_abi_violation_any_pointer_leak",
+  "semantic_error_native_cstring_return",
+]);
+
 // Runs one program in a fresh module instance — the interpreter has global
 // state (current_scope, arena allocations, stdrot's symbol table) that is
 // not designed to be re-entered, so each run gets its own instance exactly
@@ -137,8 +167,14 @@ async function runOne(example, stdin) {
 let failures = 0;
 let passed = 0;
 let overridden = 0;
+let skipped = 0;
 
 for (const [example, nativeExpectedOutput] of Object.entries(expectedResults)) {
+  if (WASM_SKIP.has(example)) {
+    skipped++;
+    continue;
+  }
+
   const expectedOutput = WASM_EXPECTED_OVERRIDES[example] ?? nativeExpectedOutput;
   if (example in WASM_EXPECTED_OVERRIDES) overridden++;
 
@@ -196,6 +232,6 @@ for (const [example, nativeExpectedOutput] of Object.entries(expectedResults)) {
 }
 
 console.log(
-  `\n${passed} passed, ${failures} failed (${overridden} against a wasm-specific expected value) (${Object.keys(expectedResults).length} total)`,
+  `\n${passed} passed, ${failures} failed, ${skipped} skipped (test-only natives not in the wasm build) (${overridden} against a wasm-specific expected value) (${Object.keys(expectedResults).length} total)`,
 );
 process.exit(failures > 0 ? 1 : 0);
