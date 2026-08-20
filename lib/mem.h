@@ -12,7 +12,7 @@
 #include <assert.h>
 
 // Maximum allocation size - helps prevent integer overflow
-#define MAX_ALLOC_SIZE ((size_t)-1 >> 1)
+#define MAX_ALLOC_SIZE ((size_t) - 1 >> 1)
 
 // Alignment requirement for the platform
 #define ALIGNMENT sizeof(void *)
