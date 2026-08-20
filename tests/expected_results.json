@@ -236,5 +236,11 @@
     "native_user_string_return": "hello",
     "native_user_char_return": "A",
     "semantic_error_opaque_pointer_arithmetic": "Error: Type mismatch in initialization of 'x': expected int, got pointer at line 1\nError: Cannot perform pointer arithmetic on a type-erased pointer -- its pointee size is unknown at line 1",
-    "native_void_double_pointer_arithmetic": ""
+    "native_void_double_pointer_arithmetic": "",
+    "native_return_reentrant_native_call": "3.000000",
+    "native_return_reentrant_user_call": "3.000000",
+    "native_return_reentrant_float_from_int": "5.0",
+    "native_pointer_array_braced_init": "1 2\n1 99",
+    "native_float_pointer_array_braced_init": "1.5 2.5\n1.5 9.5",
+    "native_void_pointer_array_braced_init": "alive"
 }

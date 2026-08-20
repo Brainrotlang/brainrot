@@ -1,0 +1,21 @@
+🚽 Test case: round-24 review finding #1, a third (type, type) pair from
+🚽 the review's own regression matrix -- `chad` (float) returning the
+🚽 result of a nested `rizz` (int) call, exercising a different numeric
+🚽 conversion than the double/int pair the other two reentrancy fixtures
+🚽 use, since the review specifically asked for more than one exact-type
+🚽 case (every Round-23 return fixture only tested an exact-type match,
+🚽 which can't expose a tag being changed to a different, merely
+🚽 compatible type).
+rizz five() {
+    bussin 5;
+}
+
+chad widen3() {
+    bussin five();
+}
+
+skibidi main {
+    chad z = widen3();
+    yappin("%.1f\n", z);
+    bussin 0;
+}

@@ -3714,7 +3714,7 @@ int evaluate_expression_int(ASTNode *node)
    and Brainrot calls identically. */
 static void marshal_native_return_value(ASTNode *node)
 {
-    free_pending_struct_return_value();
+    free_pending_return_value();
     NativeResult nr = native_call_consume(node);
     StdrotValue result = nr.value;
 
@@ -3896,7 +3896,7 @@ void *handle_function_call(ASTNode *node)
             /* A struct return has no meaningful representation in this
                generic scalar-expression context; discard it (freeing the
                blob handle_return_statement allocated) rather than leak. */
-            free_pending_struct_return_value();
+            free_pending_return_value();
             break;
         case VAR_ENUM:
             /* pointer_level > 0 already handled above, before this
@@ -5126,6 +5126,32 @@ void populate_multi_array_variable(String name, ExpressionList *list,
 
     while (current != NULL && index < total_elements)
     {
+        /* Round-24 review, finding #2 -- pointer_level dominates element
+           representation here too, the same rule round 23 already
+           applied to reading an array element back out
+           (evaluate_multi_array_access()) and to allocating the array's
+           storage in the first place (get_type_size_for_descriptor(),
+           consulted by set_multi_array_variable()): a pointer-typed
+           array (`rizz *ptrs[N] = { &x, &y };`) is allocated at
+           sizeof(uintptr_t) per element, but this switch dispatched
+           purely on var->var_type, writing through an (int *)/(float *)/
+           etc. cast at the WRONG stride for a pointer array, and
+           evaluating each initializer expression (`&x`) with
+           evaluate_expression_int() instead of evaluate_expression_
+           pointer() -- reading a raw address through the wrong
+           evaluator entirely, not just at the wrong offset. Checked
+           before the base-type switch, dominant over it, for the
+           identical reason every other "pointer-ness dominates
+           representation" fix in this PR checks it first. */
+        if (var->pointer_level > 0)
+        {
+            uintptr_t *array = (uintptr_t *)var->value.array_data;
+            array[index] = evaluate_expression_pointer(current->expr);
+            current = current->next;
+            index++;
+            continue;
+        }
+
         switch (var->var_type)
         {
         case VAR_INT:
@@ -5405,7 +5431,7 @@ void execute_function_call(const String name, ArgumentList *args)
        current_return_value slot -- e.g. it was returned from a call used
        as a bare statement, which has nowhere to put it. Free it now,
        before this call overwrites the slot. */
-    free_pending_struct_return_value();
+    free_pending_return_value();
 
     current_return_value.type = func->return_type;
     current_return_value.pointer_level = func->return_pointer_level;
@@ -5444,7 +5470,23 @@ void execute_function_call(const String name, ArgumentList *args)
     POP_JUMP_BUFFER();
 }
 
-void free_pending_struct_return_value(void)
+/* Frees whichever owned heap allocation, if any, is still sitting
+ * unconsumed in the global current_return_value slot -- a VAR_STRUCT
+ * blob or a VAR_STRING owns_strvalue buffer, both left behind by a call
+ * whose result nothing ever read (e.g. ast_accept()'s generic pre-visit
+ * of a call embedded in a declaration/assignment/etc. -- see
+ * interpreter_visit_function_call()'s own comment for why a user-defined
+ * function has no memo cache the way a native call does, and is
+ * genuinely invoked twice as a result). Round 24 renamed this from
+ * free_pending_struct_return_value() -- it stopped being struct-only the
+ * moment round 23's finding #3 gave handle_return_statement() a
+ * VAR_STRING case, and a name that only names half its job invites the
+ * next VAR_STRING-shaped bug to be added right next to a cleanup
+ * function that doesn't mention strings at all. Called at every point
+ * this slot is about to be overwritten by a new call's result, so a
+ * stale owned value never survives past the moment nothing can reach it
+ * anymore. */
+void free_pending_return_value(void)
 {
     if (current_return_value.type == VAR_STRUCT &&
         current_return_value.value.pvalue)
@@ -5457,26 +5499,6 @@ void free_pending_struct_return_value(void)
         SAFE_FREE(current_return_value.struct_name);
         current_return_value.struct_name = (String){0};
     }
-    /* Round-23 review, finding #3 -- a VAR_STRING return, like a
-       VAR_STRUCT one just above, can be left sitting unconsumed in this
-       global slot: interpreter_visit_function_call()'s own comment
-       documents that a user-defined function has no memo cache the way
-       a native call does, so it's genuinely invoked TWICE for a call
-       embedded in a declaration/assignment/etc. -- once by ast_accept()'s
-       generic pre-visit (whose result nothing ever reads), once by the
-       statement's own real evaluator. Before this round, every VAR_
-       STRING-returning user-defined function crashed at the return
-       statement itself (handle_return_statement() had no VAR_STRING
-       case), so this double-invocation could never actually orphan a
-       heap string -- fixing that producer gap means it now can: the
-       pre-visit's call sets current_return_value.owns_strvalue = true
-       over an independently safe_strdup'd copy that nothing ever frees,
-       since the real evaluation's own call immediately overwrites this
-       same global slot with its own (separately consumed) result.
-       Freeing it here piggybacks on every existing call site that
-       already exists specifically to clear a stale VAR_STRUCT result
-       before this slot gets overwritten -- the identical hazard, just
-       for a different owned-heap-allocation return shape. */
     if (current_return_value.type == VAR_STRING &&
         current_return_value.owns_strvalue &&
         current_return_value.value.strvalue.data)
@@ -5496,180 +5518,266 @@ void handle_return_statement(ASTNode *expr)
        trusting whatever a nested call left behind: without this, e.g.
        `bussin 0;` in skibidi main right after calling a struct-returning
        function would find current_return_value.type still set to
-       VAR_STRUCT from that call. */
+       VAR_STRUCT from that call.
+
+       Round-24 review, finding #1 -- that reasoning has to apply to the
+       REST of this function too, not just this initial re-derivation:
+       `declared_type`/`declared_pointer_level`, not current_return_
+       value.type/.pointer_level, drive every decision below (which
+       evaluator to call, which union member to write) from here on, and
+       nothing writes INTO current_return_value.{type,pointer_level} until
+       AFTER the expression has been fully evaluated into a local. The
+       expression (`evaluate_expression_double(expr)` etc., or a nested
+       user-defined call reached through it) can itself invoke another
+       function -- native or Brainrot-defined -- which overwrites this
+       exact global slot with ITS OWN type/pointer_level for the
+       duration of that nested call. The previous version set current_
+       return_value.type/.pointer_level to this function's OWN declared
+       return type up front, then evaluated the expression, then wrote
+       only current_return_value.value.* afterward -- so a nested call
+       partway through evaluation left current_return_value.type
+       permanently stuck on the NESTED call's type (e.g. VAR_INT from an
+       inner native) while current_return_value.value held the OUTER
+       function's correctly-converted payload (e.g. a double) -- a tag/
+       payload mismatch handle_function_call() would then read through
+       the wrong union member entirely. Capturing the declared contract
+       in locals, evaluating into a local, and only then installing both
+       together closes the exact class of bug NativeResult (stdrot.h)
+       already closed at the native-ABI boundary -- payload and metadata
+       now travel together here too, immune to whatever a nested call
+       does to the shared global slot in between. */
     Scope *scope = current_scope;
     while (scope && !scope->is_function_scope)
         scope = scope->parent;
     Function *current_func = NULL;
+    VarType declared_type = NONE;
+    int declared_pointer_level = 0;
     if (scope)
     {
         current_func = get_function(scope->function_name);
         if (current_func)
         {
-            current_return_value.type = current_func->return_type;
-            current_return_value.pointer_level =
-                current_func->return_pointer_level;
+            declared_type = current_func->return_type;
+            declared_pointer_level = current_func->return_pointer_level;
         }
+    }
+    /* Not inside any function (declared_type/declared_pointer_level stay
+       NONE/0) -- this is skibidi main, which has no declared return
+       type. */
+
+    if (!expr)
+    {
+        current_return_value.type = declared_type;
+        current_return_value.pointer_level = declared_pointer_level;
+        current_return_value.has_value = true;
+    }
+    else if (declared_pointer_level > 0)
+    {
+        uintptr_t pointer_result = evaluate_expression_pointer(expr);
+        current_return_value.type = declared_type;
+        current_return_value.pointer_level = declared_pointer_level;
+        current_return_value.has_value = true;
+        current_return_value.value.pvalue = pointer_result;
     }
     else
     {
-        /* Not inside any function -- this is skibidi main, which has no
-           declared return type. */
-        current_return_value.type = NONE;
-        current_return_value.pointer_level = 0;
-    }
-
-    current_return_value.has_value = true;
-    if (expr)
-    {
-        if (current_return_value.pointer_level > 0)
+        switch (declared_type)
         {
-            current_return_value.value.pvalue =
-                evaluate_expression_pointer(expr);
+        case VAR_INT:
+        {
+            int result = evaluate_expression_int(expr);
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            current_return_value.value.ivalue = result;
+            break;
         }
-        else
+        case VAR_FLOAT:
         {
-            switch (current_return_value.type)
+            float result = evaluate_expression_float(expr);
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            current_return_value.value.fvalue = result;
+            break;
+        }
+        case VAR_DOUBLE:
+        {
+            double result = evaluate_expression_double(expr);
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            current_return_value.value.dvalue = result;
+            break;
+        }
+        case VAR_BOOL:
+        {
+            bool result = evaluate_expression_bool(expr);
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            current_return_value.value.bvalue = result;
+            break;
+        }
+        case VAR_SHORT:
+        {
+            short result = evaluate_expression_short(expr);
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            current_return_value.value.svalue = result;
+            break;
+        }
+        case VAR_ENUM:
+        {
+            int result = evaluate_expression_int(expr);
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            current_return_value.value.ivalue = result;
+            break;
+        }
+        case VAR_CHAR:
+        {
+            /* Round-23 review, finding #3 -- the return-CHECKING side
+               (semantic_analyze_with_scope_tracking()'s NODE_RETURN
+               case, round 22) already approved a `yap f() { bussin
+               'A'; }`-shaped function as statically coherent (VAR_CHAR
+               == VAR_CHAR), but this return-PRODUCING switch had no
+               VAR_CHAR case at all, so actually calling such a
+               function hit `default: yyerror("Unsupported return
+               type"); exit(1);` -- the checker approved a contract the
+               producer couldn't fulfill. current_return_value.value.
+               ivalue (not a dedicated char field) matches handle_
+               function_call()'s own VAR_CHAR consumer case, which
+               already reads a char return from that exact union
+               member. */
+            int result = evaluate_expression_int(expr);
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            current_return_value.value.ivalue = result;
+            break;
+        }
+        case VAR_STRING:
+        {
+            /* Same producer gap as VAR_CHAR just above, for `rant f()
+               { bussin "hello"; }` -- including a native's own
+               identity-polymorphic STRING result reaching here via
+               `bussin slorp(s);` (the review's own exhibit), since
+               nothing about THIS switch cares how the expression's
+               value was produced, only what VarType it's declared to
+               return. evaluate_expression_string() always hands back
+               an independently safe_strdup'd copy (see its own
+               comment) -- current_return_value.owns_strvalue = true
+               documents that this copy is this return's own, to be
+               consumed exactly the way handle_function_call()'s
+               VAR_STRING case already consumes a native's owned string
+               result: copy into the caller's box, then free this one.
+               Not freed here -- ownership travels via owns_strvalue
+               precisely so a caller that discards the return value
+               entirely (a bare `f();` statement, no assignment) still
+               has somewhere for this cleanup to happen (handle_
+               function_call()'s own VAR_STRING case runs regardless of
+               whether its result is ever used). Evaluated into a local
+               BEFORE any of current_return_value's fields are touched,
+               same as every other case here, so a nested call reached
+               while evaluating this string can't leave owns_strvalue
+               or type stuck on ITS OWN (unrelated) return afterward. */
+            String result = evaluate_expression_string(expr);
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            current_return_value.value.strvalue = result;
+            current_return_value.owns_strvalue = true;
+            break;
+        }
+        case VAR_VOID:
+            /* A real `skibidi`-declared function's return type is
+               VAR_VOID now (round 20), not NONE -- NONE here is
+               reached only for `bussin` outside any function (`main`
+               itself has no declared return type, see declared_type's
+               own NONE default above). Both mean the same thing for
+               this switch's purposes: ignore the expression's value
+               entirely -- it is never evaluated at all (matching the
+               original behavior this case has always had; `bussin
+               someExpr;` inside a void function has never executed
+               someExpr for its side effects, and introducing that now
+               would be a new, unrelated behavior change, not a
+               reentrancy fix). No nested-call reentrancy risk here for
+               exactly that reason: nothing runs evaluate_expression_*
+               on expr in this case, so current_return_value can't be
+               clobbered by anything expr might otherwise have called.
+               (Reaching this case at all, rather than the declared_
+               pointer_level > 0 branch above, means declared_pointer_
+               level == 0 -- genuinely void, not `skibidi *`.) */
+        case NONE:
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            break;
+        case VAR_STRUCT:
+        {
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            /* Only a plain struct variable is supported as the return
+               expression (matching the same constraint on struct
+               arguments -- see enter_function_scope). The blob is
+               copied into a fresh, heap-owned allocation *before* the
+               scope cleanup below runs: that cleanup frees this
+               function's own scope, which is where the source
+               variable's blob lives, so evaluating lazily (e.g. from
+               the caller, after this function returns) would read
+               freed memory. The caller is responsible for copying out
+               of current_return_value.value.pvalue and freeing it --
+               see interpreter_visit_declaration's struct_init_expr
+               handling. */
+            Variable *src = NULL;
+            if (expr->type == NODE_IDENTIFIER)
+                src = get_variable(expr->data.name);
+            if (!src || src->var_type != VAR_STRUCT)
             {
-            case VAR_INT:
-                current_return_value.value.ivalue =
-                    evaluate_expression_int(expr);
-                break;
-            case VAR_FLOAT:
-                current_return_value.value.fvalue =
-                    evaluate_expression_float(expr);
-                break;
-            case VAR_DOUBLE:
-                current_return_value.value.dvalue =
-                    evaluate_expression_double(expr);
-                break;
-            case VAR_BOOL:
-                current_return_value.value.bvalue =
-                    evaluate_expression_bool(expr);
-                break;
-            case VAR_SHORT:
-                current_return_value.value.svalue =
-                    evaluate_expression_short(expr);
-                break;
-            case VAR_ENUM:
-                current_return_value.value.ivalue =
-                    evaluate_expression_int(expr);
-                break;
-            case VAR_CHAR:
-                /* Round-23 review, finding #3 -- the return-CHECKING
-                   side (semantic_analyze_with_scope_tracking()'s
-                   NODE_RETURN case, round 22) already approved a `yap
-                   f() { bussin 'A'; }`-shaped function as statically
-                   coherent (VAR_CHAR == VAR_CHAR), but this return-
-                   PRODUCING switch had no VAR_CHAR case at all, so
-                   actually calling such a function hit `default:
-                   yyerror("Unsupported return type"); exit(1);` --
-                   the checker approved a contract the producer couldn't
-                   fulfill. current_return_value.value.ivalue (not a
-                   dedicated char field) matches handle_function_call()'s
-                   own VAR_CHAR consumer case, which already reads a
-                   char return from that exact union member. */
-                current_return_value.value.ivalue =
-                    evaluate_expression_int(expr);
-                break;
-            case VAR_STRING:
-                /* Same producer gap as VAR_CHAR just above, for `rant
-                   f() { bussin "hello"; }` -- including a native's own
-                   identity-polymorphic STRING result reaching here via
-                   `bussin slorp(s);` (the review's own exhibit), since
-                   nothing about THIS switch cares how the expression's
-                   value was produced, only what VarType it's declared
-                   to return. evaluate_expression_string() always hands
-                   back an independently safe_strdup'd copy (see its own
-                   comment) -- current_return_value.owns_strvalue = true
-                   documents that this copy is this return's own, to be
-                   consumed exactly the way handle_function_call()'s
-                   VAR_STRING case already consumes a native's owned
-                   string result: copy into the caller's box, then free
-                   this one. Not freed here -- ownership travels via
-                   owns_strvalue precisely so a caller that discards the
-                   return value entirely (a bare `f();` statement, no
-                   assignment) still has somewhere for this cleanup to
-                   happen (handle_function_call()'s own VAR_STRING case
-                   runs regardless of whether its result is ever used). */
-                current_return_value.value.strvalue =
-                    evaluate_expression_string(expr);
-                current_return_value.owns_strvalue = true;
-                break;
-            case VAR_VOID:
-                /* A real `skibidi`-declared function's return type is
-                   VAR_VOID now (round 20), not NONE -- NONE here is
-                   reached only for `bussin` outside any function (`main`
-                   itself has no declared return type, see the "Not
-                   inside any function" branch above). Both mean the
-                   same thing for this switch's purposes: ignore the
-                   expression's value, there is nowhere for it to go.
-                   (Reaching this case at all, rather than the
-                   pointer_level > 0 branch above, means pointer_level ==
-                   0 -- genuinely void, not `skibidi *`.) */
-            case NONE:
-                /* void/skibidi return type: ignore expression value */
-                break;
-            case VAR_STRUCT:
-            {
-                /* Only a plain struct variable is supported as the return
-                   expression (matching the same constraint on struct
-                   arguments -- see enter_function_scope). The blob is
-                   copied into a fresh, heap-owned allocation *before* the
-                   scope cleanup below runs: that cleanup frees this
-                   function's own scope, which is where the source
-                   variable's blob lives, so evaluating lazily (e.g. from
-                   the caller, after this function returns) would read
-                   freed memory. The caller is responsible for copying out
-                   of current_return_value.value.pvalue and freeing it --
-                   see interpreter_visit_declaration's struct_init_expr
-                   handling. */
-                Variable *src = NULL;
-                if (expr->type == NODE_IDENTIFIER)
-                    src = get_variable(expr->data.name);
-                if (!src || src->var_type != VAR_STRUCT)
-                {
-                    yyerror("Return expression is not a struct variable");
-                    /* value.pvalue may hold a stale bit pattern left over
-                       from a previous, differently-typed return sharing
-                       this union -- has_value=false is what tells the
-                       caller (interpreter_visit_declaration's
-                       struct_init_expr handling) there's nothing usable
-                       to read out of it. */
-                    current_return_value.has_value = false;
-                    break;
-                }
-                /* Catch a type mismatch here, at the return statement,
-                   rather than leaving it to be caught later by the
-                   caller's own destination-type check (still correct, but
-                   the error would point at the call site instead of this
-                   return). */
-                if (current_func && current_func->return_struct_name.data &&
-                    (!src->struct_name.data ||
-                     strcmp(src->struct_name.data,
-                            current_func->return_struct_name.data) != 0))
-                {
-                    yyerror("Return expression type does not match declared "
-                            "return type");
-                    current_return_value.has_value = false;
-                    break;
-                }
-                StructDef *def = get_struct_def(src->struct_name);
-                if (def)
-                {
-                    void *blob = calloc(1, def->total_size);
-                    if (blob && src->value.array_data)
-                        memcpy(blob, src->value.array_data, def->total_size);
-                    current_return_value.value.pvalue = (uintptr_t)blob;
-                    current_return_value.struct_name =
-                        safe_strdup(&src->struct_name);
-                }
+                yyerror("Return expression is not a struct variable");
+                /* value.pvalue may hold a stale bit pattern left over
+                   from a previous, differently-typed return sharing
+                   this union -- has_value=false is what tells the
+                   caller (interpreter_visit_declaration's
+                   struct_init_expr handling) there's nothing usable
+                   to read out of it. */
+                current_return_value.has_value = false;
                 break;
             }
-            default:
-                yyerror("Unsupported return type");
-                exit(1);
+            /* Catch a type mismatch here, at the return statement,
+               rather than leaving it to be caught later by the
+               caller's own destination-type check (still correct, but
+               the error would point at the call site instead of this
+               return). */
+            if (current_func && current_func->return_struct_name.data &&
+                (!src->struct_name.data ||
+                 strcmp(src->struct_name.data,
+                        current_func->return_struct_name.data) != 0))
+            {
+                yyerror("Return expression type does not match declared "
+                        "return type");
+                current_return_value.has_value = false;
+                break;
             }
+            StructDef *def = get_struct_def(src->struct_name);
+            if (def)
+            {
+                void *blob = calloc(1, def->total_size);
+                if (blob && src->value.array_data)
+                    memcpy(blob, src->value.array_data, def->total_size);
+                current_return_value.value.pvalue = (uintptr_t)blob;
+                current_return_value.struct_name =
+                    safe_strdup(&src->struct_name);
+            }
+            break;
+        }
+        default:
+            yyerror("Unsupported return type");
+            exit(1);
         }
     }
     // Clean up all scopes until we reach the function scope

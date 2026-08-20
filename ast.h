@@ -220,15 +220,19 @@ typedef struct
     String enum_name; /* enum tag, set when type == VAR_ENUM */
     /* Set when type == VAR_STRING: true iff value.strvalue.data is a
        heap buffer this ReturnValue is responsible for freeing once
-       consumed -- copied from the owns_string field of the NativeResult
-       (stdrot.h) marshal_native_return_value() consumed to populate this
-       slot from a native call, itself set only when that specific
-       result's STDROT_STRING payload is a freshly materialized buffer
-       nothing else references (see execute_native_call()'s own comment).
-       False for every other source of a VAR_STRING return (a Brainrot-
-       defined function's own return statement, a native result that
-       doesn't own its string), matching the existing, deliberately
-       conservative default. */
+       consumed. Two independent sources set it true, both meaning the
+       same thing ("this specific buffer is freshly materialized and
+       nothing else references it"): a native call, via the owns_string
+       field of the NativeResult (stdrot.h) marshal_native_return_value()
+       consumed to populate this slot (see execute_native_call()'s own
+       comment for when that's true); and, since round 23, a Brainrot-
+       defined function's own `bussin "some string";` return statement
+       (handle_return_statement()'s VAR_STRING case), whose evaluate_
+       expression_string() result is always an independently safe_
+       strdup'd copy no one else holds. False for a native result that
+       doesn't own its string (a literal, a live variable's own backing
+       storage the ABI boundary is only borrowing), matching the
+       existing, deliberately conservative default. */
     bool owns_strvalue;
 } ReturnValue;
 
@@ -645,14 +649,15 @@ ASTNode *create_function_def_node_enum(String name, String enum_name,
                                        int pointer_level, Parameter *params,
                                        ASTNode *body);
 void handle_return_statement(ASTNode *expr);
-/* Frees current_return_value's struct blob/tag (see handle_return_statement's
-   VAR_STRUCT case) if one is pending and unconsumed, and clears the slot.
-   Idempotent -- safe to call whether or not there's anything to free. Must
-   be called by whichever consumes or discards a struct-returning call's
-   result: interpreter_visit_declaration's struct_init_expr handling,
+/* Frees current_return_value's struct blob/tag or owned VAR_STRING buffer
+   (see handle_return_statement's VAR_STRUCT/VAR_STRING cases) if one is
+   pending and unconsumed, and clears the slot. Idempotent -- safe to call
+   whether or not there's anything to free. Must be called by whichever
+   consumes or discards a struct- or owned-string-returning call's result:
+   interpreter_visit_declaration's struct_init_expr handling,
    execute_function_call (for a leftover from a previous call), and any
-   context that gets a struct return but has nowhere to put it. */
-void free_pending_struct_return_value(void);
+   context that gets such a return but has nowhere to put it. */
+void free_pending_return_value(void);
 void *handle_binary_operation(ASTNode *node);
 void free_function_table(void);
 void free_static_variable_map(void);
