@@ -2300,6 +2300,34 @@ static bool unbox_native_numeric_result(void *raw, VarType actual, double *out)
     }
 }
 
+/* handle_function_call() returns NULL for two different reasons: the
+ * call's actual result is genuinely void (current_return_value.type ==
+ * NONE -- a legacy STDROT_ANY export or a STDROT_NONE-declared native
+ * used where a value is expected), or it's a struct result this generic
+ * scalar context can't represent (current_return_value.type ==
+ * VAR_STRUCT, already discarded inside handle_function_call() itself).
+ * A native call can only ever produce the former (StdrotType has no
+ * struct variant reaching this path), so this only reports the void
+ * case -- silently returning a default 0-ish value for "no value at
+ * all" is exactly the kind of static-type-information-implies-runtime-
+ * type-safety hole this file's other native-result checks already
+ * close (see unbox_native_numeric_result()'s own comment). Returns true
+ * (having already reported the error) only for the void case; every
+ * caller still falls through to its own default-value return either
+ * way, matching what a NULL raw already meant before this check existed
+ * for the struct case. */
+static bool warn_if_native_result_void(const char *context_name)
+{
+    if (current_return_value.type != NONE)
+        return false;
+    char error_msg[MAX_BUFFER_LEN];
+    snprintf(error_msg, sizeof(error_msg),
+             "Native call result (void) cannot be used in a %s context",
+             context_name);
+    yyerror(error_msg);
+    return true;
+}
+
 float evaluate_expression_float(ASTNode *node)
 {
     if (!node)
@@ -2389,7 +2417,10 @@ float evaluate_expression_float(ASTNode *node)
         }
         void *raw = handle_function_call(node);
         if (raw == NULL)
+        {
+            warn_if_native_result_void("float");
             return 0.0f;
+        }
         double value;
         if (!unbox_native_numeric_result(raw, current_return_value.type,
                                          &value))
@@ -2530,7 +2561,10 @@ double evaluate_expression_double(ASTNode *node)
         }
         void *raw = handle_function_call(node);
         if (raw == NULL)
+        {
+            warn_if_native_result_void("double");
             return 0.0L;
+        }
         double value;
         if (!unbox_native_numeric_result(raw, current_return_value.type,
                                          &value))
@@ -2730,7 +2764,10 @@ String evaluate_expression_string(ASTNode *node)
         }
         void *raw = handle_function_call(node);
         if (raw == NULL)
+        {
+            warn_if_native_result_void("string");
             return (String){.data = NULL, .len = 0};
+        }
         /* Unlike the numeric evaluators, there is no coercion group to
            fall back on here -- a native call result is either genuinely
            a String (current_return_value.type == VAR_STRING, in which
@@ -2885,7 +2922,10 @@ short evaluate_expression_short(ASTNode *node)
         }
         void *raw = handle_function_call(node);
         if (raw == NULL)
+        {
+            warn_if_native_result_void("integer");
             return 0;
+        }
         double value;
         if (!unbox_native_numeric_result(raw, current_return_value.type,
                                          &value))
@@ -3051,7 +3091,10 @@ int evaluate_expression_int(ASTNode *node)
         }
         void *raw = handle_function_call(node);
         if (raw == NULL)
+        {
+            warn_if_native_result_void("integer");
             return 0;
+        }
         double value;
         if (!unbox_native_numeric_result(raw, current_return_value.type,
                                          &value))
@@ -3415,7 +3458,10 @@ bool evaluate_expression_bool(ASTNode *node)
         }
         void *raw = handle_function_call(node);
         if (raw == NULL)
+        {
+            warn_if_native_result_void("bool");
             return 0;
+        }
         /* No numeric-coercion group applies to bool (see
            check_type_compatibility_ex(), semantic_analyzer.c -- VAR_BOOL
            isn't part of the int/short/float/double/enum group), so this

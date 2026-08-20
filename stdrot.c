@@ -634,23 +634,43 @@ static void enforce_return_type(const String func_name, StdrotValue *result,
            -- reaching that switch's STDROT_CSTRING case through THIS
            route would hit the exact same "structurally unreachable"
            marshalling gap the typed rejection exists to close, just via
-           a different front door. Static and runtime would disagree
-           about what this expression actually is -- exactly the class of
-           bug this whole enforcement function exists to close. */
+           a different front door. STDROT_ANY itself also belongs here:
+           it is a descriptor placeholder ("type genuinely unknown" or
+           "identity-polymorphic", see StdrotEntry's own comment in
+           stdrot_api.h), not a real value tag -- no native's C
+           implementation should ever construct a StdrotValue literally
+           tagged STDROT_ANY, and marshal_native_return_value() has
+           nothing meaningful to unbox if one does (see its own
+           STDROT_ANY case). Static and runtime would disagree about
+           what this expression actually is -- exactly the class of bug
+           this whole enforcement function exists to close. */
         if (result->type == STDROT_PTR || result->type == STDROT_HANDLE ||
-            result->type == STDROT_CSTRING)
+            result->type == STDROT_CSTRING || result->type == STDROT_ANY)
         {
-            const char *actual_name = result->type == STDROT_PTR ? "STDROT_PTR"
-                                      : result->type == STDROT_HANDLE
-                                          ? "STDROT_HANDLE"
-                                          : "STDROT_CSTRING";
+            const char *actual_name;
+            switch (result->type)
+            {
+            case STDROT_PTR:
+                actual_name = "STDROT_PTR";
+                break;
+            case STDROT_HANDLE:
+                actual_name = "STDROT_HANDLE";
+                break;
+            case STDROT_CSTRING:
+                actual_name = "STDROT_CSTRING";
+                break;
+            default:
+                actual_name = "STDROT_ANY";
+                break;
+            }
             fprintf(stderr,
                     "Error: stdrot: native '%s' is declared to return "
                     "STDROT_ANY (legacy/untyped export or "
                     "identity-polymorphic result) but actually returned a "
                     "%s -- pointer/handle/cstring results require an "
-                    "explicit typed signature, not the unchecked ANY "
-                    "fallback\n",
+                    "explicit typed signature, and a native must never "
+                    "construct a StdrotValue tagged STDROT_ANY itself, "
+                    "not the unchecked ANY fallback\n",
                     func_name.data, actual_name);
             exit(1);
         }

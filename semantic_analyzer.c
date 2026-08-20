@@ -158,6 +158,8 @@ const char *vartype_to_string(VarType type)
         return "string";
     case VAR_ENUM:
         return "enum";
+    case VAR_STRUCT:
+        return "struct";
     case VAR_PTR:
         return "pointer";
     case NONE:
@@ -953,6 +955,86 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
                          func_name.data, i + 1);
                 add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
                                    STRING_LITERAL(error_msg), line);
+                continue;
+            }
+
+            /* The comment above claims a specific closed set of accepted
+               types -- enforce it, rather than "not a pointer" being the
+               only check. ast_expr_to_stdrot_value() (stdrot.c) only
+               knows how to construct a StdrotValue for VAR_INT/SHORT/
+               FLOAT/DOUBLE/BOOL/CHAR/STRING/ENUM; anything else (a struct
+               identifier, most notably) falls through its switch leaving
+               out->type at its initialized STDROT_NONE, silently handing
+               the native "no value" instead of being rejected here before
+               the call is even approved. */
+            VarType actual_any = infer_expression_type(cur->expr, analyzer);
+            switch (actual_any)
+            {
+            case VAR_INT:
+            case VAR_SHORT:
+            case VAR_FLOAT:
+            case VAR_DOUBLE:
+            case VAR_BOOL:
+            case VAR_CHAR:
+            case VAR_STRING:
+            case VAR_ENUM:
+                break;
+            default:
+            {
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: %s is not a scalar/string type "
+                         "this native can accept",
+                         func_name.data, i + 1, vartype_to_string(actual_any));
+                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                   STRING_LITERAL(error_msg), line);
+                continue;
+            }
+            }
+
+            /* Arrays report the same VarType as their element
+               (`rizz arr[2]`'s var_type is VAR_INT, indistinguishable
+               from a scalar `rizz x` by infer_expression_type() alone),
+               but Variable (ast.h) stores an array's backing pointer and
+               a scalar's value in the SAME union: value.array_data
+               aliases value.ivalue/.fvalue/etc. ast_expr_to_stdrot_
+               value()'s VAR_INT/SHORT/FLOAT/DOUBLE/BOOL/ENUM cases read
+               that union unconditionally, with no is_array check --
+               unlike VAR_CHAR, which already branches on is_array to
+               become a STDROT_STRING instead. Passing a numeric array
+               through would reinterpret its backing pointer as a scalar
+               value; slorp's deprecated write-back path could then
+               overwrite that same pointer with whatever the user typed,
+               corrupting the array for every later access. Only VAR_CHAR
+               arrays have a real representation here (STDROT_STRING) --
+               every other array type is rejected until this pipeline
+               actually gains one.
+
+               find_symbol(), not get_variable(): semantic_analyze()
+               runs as a single static pass over the whole program before
+               the interpreter executes anything (see semantic_analyze(),
+               "Phase 1: Collect all declarations" then "Phase 2"), so no
+               runtime Variable exists yet at this point -- get_variable()
+               would always return NULL here regardless of the actual
+               program. SymbolEntry.is_array (this file's own symbol
+               table, populated by collect_declarations() from the
+               declaration AST node's is_array) is the field that's
+               actually populated during this pass. */
+            if (actual_any != VAR_CHAR && cur->expr->type == NODE_IDENTIFIER)
+            {
+                SymbolEntry *arr_sym =
+                    find_symbol(analyzer, cur->expr->data.name);
+                if (arr_sym && arr_sym->is_array)
+                {
+                    char error_msg[MAX_BUFFER_LEN];
+                    snprintf(error_msg, sizeof(error_msg),
+                             "'%s' argument %d: %s arrays cannot be passed "
+                             "where a scalar/string is expected",
+                             func_name.data, i + 1,
+                             vartype_to_string(actual_any));
+                    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                       STRING_LITERAL(error_msg), line);
+                }
             }
             continue;
         }
@@ -1240,7 +1322,7 @@ void semantic_visit_function_definition(Visitor *self, ASTNode *node)
 void add_symbol(SemanticAnalyzer *analyzer, const String name, VarType type,
                 int pointer_level, bool is_const, bool is_function,
                 VarType return_type, int return_pointer_level, int line_number,
-                const String struct_name)
+                const String struct_name, bool is_array)
 {
     if (!analyzer || !name.data)
         return;
@@ -1254,6 +1336,7 @@ void add_symbol(SemanticAnalyzer *analyzer, const String name, VarType type,
     entry->pointer_level = pointer_level;
     entry->is_const = is_const;
     entry->is_function = is_function;
+    entry->is_array = is_array;
     entry->return_type = return_type;
     entry->return_pointer_level = return_pointer_level;
     entry->line_number = line_number;
@@ -1355,7 +1438,7 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
             add_symbol(analyzer, var_name, var_type, node->pointer_level,
                        is_const, false, NONE, 0,
                        node->line_number > 0 ? node->line_number : 1,
-                       struct_name);
+                       struct_name, node->is_array);
         }
         if (node->data.op.right)
         {
@@ -1385,7 +1468,7 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
                            false, true, node->data.function_def.return_type,
                            node->pointer_level,
                            node->line_number > 0 ? node->line_number : 1,
-                           (String){0});
+                           (String){0}, false);
             }
         }
 
@@ -1403,7 +1486,7 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
                     add_symbol(analyzer, param->name, param->type,
                                param->pointer_level, false, false, NONE, 0,
                                node->line_number > 0 ? node->line_number : 1,
-                               param->struct_name);
+                               param->struct_name, false);
                 }
                 param = param->next;
             }

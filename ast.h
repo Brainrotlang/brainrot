@@ -89,8 +89,13 @@ typedef enum
        whatever that context assumed instead. VAR_PTR only ever appears
        with pointer_level > 0; check_type_compatibility_ex() treats it as
        wildcard-compatible with any base type once pointer_level already
-       matches (matching C's void* implicitly converting to/from any
-       pointer type), not as "give up checking." */
+       matches, not as "give up checking." NOT the same guarantee as C's
+       void* conversion rule, despite the surface resemblance: void* <->
+       T* is sound for exactly one level of indirection, but opaque** <->
+       T** is not (see check_type_compatibility_ex()'s own comment,
+       semantic_analyzer.c, and STDROT_PTR's comment in stdrot_api.h, for
+       why this is an intentional simplification -- the base type is
+       erased uniformly at every depth, not just the outermost one). */
     VAR_PTR,
     NONE,
 } VarType;
@@ -776,5 +781,5 @@ extern Arena arena;
      : (var_type) == VAR_BOOL   ? NODE_BOOLEAN                                 \
      : (var_type) == VAR_CHAR   ? NODE_CHAR                                    \
      : (var_type) == VAR_STRING ? NODE_STRING                                  \
-                                : (NodeType) - 1)
+                                : (NodeType)-1)
 #endif /* AST_H */

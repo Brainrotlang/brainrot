@@ -128,6 +128,34 @@ static StdrotValue stdrot_legacy_cstring(StdrotValue *args, int argc)
 
 STDROT_EXPORT("legacy_cstring", stdrot_legacy_cstring);
 
+/* Legacy/untyped export whose actual runtime result is STDROT_NONE
+ * (void) -- a genuinely valid, unremarkable native when called as its
+ * own bare statement. Used where a value is expected (e.g.
+ * `gigachad x = legacy_void();`), the scalar evaluators must reject it
+ * rather than silently treating "no value" as 0. */
+static StdrotValue stdrot_legacy_void(StdrotValue *args, int argc)
+{
+    (void)args;
+    (void)argc;
+    return (StdrotValue){STDROT_NONE, {0}};
+}
+
+STDROT_EXPORT("legacy_void", stdrot_legacy_void);
+
+/* Legacy/untyped export whose C implementation constructs a StdrotValue
+ * literally tagged STDROT_ANY -- a native-binding bug (STDROT_ANY is a
+ * descriptor placeholder, never a real value tag) that enforce_return_
+ * type()'s STDROT_ANY branch must reject, not silently accept as "any
+ * type, actual tag wins". */
+static StdrotValue stdrot_legacy_returns_any_tag(StdrotValue *args, int argc)
+{
+    (void)args;
+    (void)argc;
+    return (StdrotValue){STDROT_ANY, {0}};
+}
+
+STDROT_EXPORT("legacy_returns_any_tag", stdrot_legacy_returns_any_tag);
+
 /* Declares a STDROT_CSTRING return -- semantic_check_native_call()
  * (semantic_analyzer.c) must reject any call to this outright, since
  * marshal_native_return_value() (ast.c) has no code path that actually
