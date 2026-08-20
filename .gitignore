@@ -7,3 +7,5 @@ lang.gv
 libstdrot.so
 brainrot.wasm
 brainrot.mjs
+tests/brainrot-test.wasm
+tests/brainrot-test.mjs

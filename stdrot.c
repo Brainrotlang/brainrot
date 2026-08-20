@@ -613,33 +613,45 @@ static void enforce_return_type(const String func_name, StdrotValue *result,
     {
         /* STDROT_ANY means "any of the scalar/string types this pipeline
            can marshal" (see its own comment in stdrot_api.h), not "any
-           value representable at all, pointers included" -- the same
-           rule the argument side already enforces (see
-           semantic_check_native_call()'s STDROT_ANY branch, which
-           rejects a pointer-valued *argument* for the identical reason).
-           Without this check, a legacy/untyped export (return_type.type
-           == STDROT_ANY, return_like_arg == -1) could hand back a
-           StdrotValue genuinely tagged STDROT_PTR/STDROT_HANDLE and
-           nothing here would object -- but the *static* side would never
-           know: entry->return_type.type is STDROT_ANY, not STDROT_PTR,
-           so infer_expression_pointer_level() reports 0 and every
-           pointer guard downstream (the scalar evaluators' NODE_FUNC_
-           CALL checks, VAR_PTR's wildcard-compatibility rule) never
-           fires. Static and runtime would disagree about what this
-           expression actually is -- exactly the class of bug this whole
-           enforcement function exists to close. */
-        if (result->type == STDROT_PTR || result->type == STDROT_HANDLE)
+           value representable at all" -- the same rule the argument side
+           already enforces (see semantic_check_native_call()'s
+           STDROT_ANY branch, which rejects a pointer-valued *argument*
+           for the identical reason). Without this check, a legacy/
+           untyped export (return_type.type == STDROT_ANY, return_like_arg
+           == -1) could hand back a StdrotValue genuinely tagged
+           STDROT_PTR/STDROT_HANDLE/STDROT_CSTRING and nothing here would
+           object -- but the *static* side would never know:
+           entry->return_type.type is STDROT_ANY, not the real tag, so
+           every guard downstream that depends on the *declared* type
+           (the scalar evaluators' NODE_FUNC_CALL checks,
+           VAR_PTR's wildcard-compatibility rule, the STDROT_CSTRING-
+           return rejection in semantic_check_native_call()) never fires.
+           STDROT_CSTRING belongs in this rejected set for the same
+           reason STDROT_CSTRING-as-a-declared-return-type is rejected
+           outright elsewhere (semantic_check_native_call(), semantic_
+           analyzer.c): marshal_native_return_value() (ast.c) has no code
+           path that constructs a Brainrot String from one, typed or not
+           -- reaching that switch's STDROT_CSTRING case through THIS
+           route would hit the exact same "structurally unreachable"
+           marshalling gap the typed rejection exists to close, just via
+           a different front door. Static and runtime would disagree
+           about what this expression actually is -- exactly the class of
+           bug this whole enforcement function exists to close. */
+        if (result->type == STDROT_PTR || result->type == STDROT_HANDLE ||
+            result->type == STDROT_CSTRING)
         {
+            const char *actual_name = result->type == STDROT_PTR ? "STDROT_PTR"
+                                      : result->type == STDROT_HANDLE
+                                          ? "STDROT_HANDLE"
+                                          : "STDROT_CSTRING";
             fprintf(stderr,
                     "Error: stdrot: native '%s' is declared to return "
                     "STDROT_ANY (legacy/untyped export or "
                     "identity-polymorphic result) but actually returned a "
-                    "%s -- pointer/handle results require an explicit "
-                    "STDROT_PTR signature, not the unchecked ANY "
+                    "%s -- pointer/handle/cstring results require an "
+                    "explicit typed signature, not the unchecked ANY "
                     "fallback\n",
-                    func_name.data,
-                    result->type == STDROT_PTR ? "STDROT_PTR"
-                                               : "STDROT_HANDLE");
+                    func_name.data, actual_name);
             exit(1);
         }
         return; /* legacy/untyped export: actual tag wins for any other

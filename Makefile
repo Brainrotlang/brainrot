@@ -122,6 +122,26 @@ wasm: $(GENERATED_SRCS)
 	$(EMCC) $(WASM_CFLAGS) -I. -o $(WASM_JS) $(SRCS) $(STDROT_SRCS) $(GENERATED_SRCS) $(WASM_LDFLAGS)
 	@echo "brainrot.wasm compiled. Skibidi in the browser."
 
+# Test-augmented WebAssembly build: same as `wasm` but with
+# tests/stdrot/*.c (test-only natives, see that directory's own file
+# comment) statically linked in too, mirroring tests/libstdrot.so's
+# relationship to the native $(STDROT_LIB) build. Needed because the
+# pointer-ABI/return-type-enforcement fixtures that depend on those
+# natives exercise void*/uintptr_t/pointer_level/pointer-sized boxes
+# whose representation genuinely differs between wasm32 (ILP32) and
+# native (LP64) -- skipping them under wasm entirely would mean the one
+# target where that representation difference actually matters never
+# runs them. Output (tests/brainrot-test.wasm/.mjs) is a separate
+# artifact from `wasm`'s, used only by tests/run_wasm_tests.mjs -- never
+# uploaded, installed, or otherwise shipped.
+.PHONY: wasm-test
+wasm-test: $(GENERATED_SRCS)
+	@command -v $(EMCC) >/dev/null 2>&1 || { echo "Error: emcc not found. Install the Emscripten SDK (emsdk) first."; exit 1; }
+	$(EMCC) $(WASM_CFLAGS) -I. -I$(STDROT_DIR) -o tests/brainrot-test.mjs \
+		$(SRCS) $(STDROT_SRCS) $(TEST_STDROT_SRCS) $(GENERATED_SRCS) \
+		$(WASM_LDFLAGS)
+	@echo "tests/brainrot-test.wasm (production + test-only natives) compiled."
+
 # Generate parser files using Bison
 $(BISON_OUTPUT): lang.y
 	$(BISON) -d -Wcounterexamples $< -o $@
@@ -143,6 +163,7 @@ test: $(TARGET) $(TEST_STDROT_LIB)
 clean:
 	rm -f $(TARGET) $(STDROT_LIB) $(TEST_STDROT_LIB) $(GENERATED_SRCS) lang.tab.h
 	rm -f $(WASM_TARGET) $(WASM_JS)
+	rm -f tests/brainrot-test.wasm tests/brainrot-test.mjs
 	rm -f *.o
 	@echo "Blud cleaned up the mess like a true sigma coder."
 

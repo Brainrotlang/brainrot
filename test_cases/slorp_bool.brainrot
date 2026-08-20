@@ -1,0 +1,6 @@
+skibidi main {
+      cap flag;
+      slorp(flag);
+      yapping("You typed: %d", flag);
+      bussin 0;
+}

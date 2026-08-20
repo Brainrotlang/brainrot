@@ -79,6 +79,55 @@ static StdrotValue stdrot_legacy_ptr_leak(StdrotValue *args, int argc)
 
 STDROT_EXPORT("legacy_ptr_leak", stdrot_legacy_ptr_leak);
 
+/* Legacy/untyped export whose actual runtime result is a plain
+ * STDROT_INT -- non-pointer, so enforce_return_type() lets it through
+ * unconditionally (correctly: STDROT_ANY genuinely doesn't know the
+ * type ahead of time). What consumes this result must still not
+ * reinterpret the boxed int as whatever wider/narrower C type the
+ * calling context happens to expect. */
+static StdrotValue stdrot_legacy_int(StdrotValue *args, int argc)
+{
+    (void)args;
+    (void)argc;
+    StdrotValue out = {STDROT_INT, {0}};
+    out.val.i = 42;
+    return out;
+}
+
+STDROT_EXPORT("legacy_int", stdrot_legacy_int);
+
+/* Legacy/untyped export whose actual runtime result is a STDROT_STRING
+ * -- not numerically coercible at all, so a numeric evaluator consuming
+ * this must reject it outright rather than reinterpret the String*
+ * box's bytes as a number. */
+static StdrotValue stdrot_legacy_string(StdrotValue *args, int argc)
+{
+    (void)args;
+    (void)argc;
+    StdrotValue out = {STDROT_STRING, {0}};
+    out.val.str = STRING_LITERAL("nope");
+    return out;
+}
+
+STDROT_EXPORT("legacy_string", stdrot_legacy_string);
+
+/* Legacy/untyped export whose actual runtime result is a STDROT_CSTRING
+ * -- must be rejected by enforce_return_type()'s STDROT_ANY branch the
+ * same way STDROT_PTR/STDROT_HANDLE already are, since marshal_native_
+ * return_value() has no code path that constructs a Brainrot String
+ * from one (see the STDROT_CSTRING-as-declared-return-type rejection in
+ * semantic_check_native_call() for the identical reasoning). */
+static StdrotValue stdrot_legacy_cstring(StdrotValue *args, int argc)
+{
+    (void)args;
+    (void)argc;
+    StdrotValue out = {STDROT_CSTRING, {0}};
+    out.val.cstr = "hello";
+    return out;
+}
+
+STDROT_EXPORT("legacy_cstring", stdrot_legacy_cstring);
+
 /* Declares a STDROT_CSTRING return -- semantic_check_native_call()
  * (semantic_analyzer.c) must reject any call to this outright, since
  * marshal_native_return_value() (ast.c) has no code path that actually

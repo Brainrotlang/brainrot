@@ -196,6 +196,16 @@ jobs:
       - name: Build brainrot.wasm
         run: make wasm
 
+      # tests/brainrot-test.wasm/.mjs adds tests/stdrot/*.c (test-only
+      # natives) on top of the same sources brainrot.wasm above just
+      # built from -- run_wasm_tests.mjs needs it so the pointer-ABI/
+      # return-type-enforcement fixtures actually execute under wasm32
+      # instead of being skipped (see that file's own comment for why
+      # that distinction matters: pointer/uintptr_t representation
+      # differs between wasm32 and native). Never uploaded or shipped.
+      - name: Build test-only brainrot.wasm
+        run: make wasm-test
+
       - name: Run wasm smoke tests
         run: node tests/run_wasm_tests.mjs
 

@@ -115,6 +115,20 @@ double slorp_double(double var)
     exit(EXIT_FAILURE);
 }
 
+bool slorp_bool(bool var)
+{
+    input_status status = input_bool(&var);
+    if (status == INPUT_SUCCESS)
+        return var;
+    if (status == INPUT_CONVERSION_ERROR)
+    {
+        fprintf(stderr, "Error: Invalid boolean format (expected 0 or 1).\n");
+        exit(EXIT_FAILURE);
+    }
+    fprintf(stderr, "Error reading boolean: %d\n", status);
+    exit(EXIT_FAILURE);
+}
+
 static StdrotValue stdrot_slorp(StdrotValue *args, int argc)
 {
     if (argc <= 0)
@@ -140,6 +154,10 @@ static StdrotValue stdrot_slorp(StdrotValue *args, int argc)
     case STDROT_SHORT:
         out.type = STDROT_SHORT;
         out.val.s = slorp_short(args[0].val.s);
+        break;
+    case STDROT_BOOL:
+        out.type = STDROT_BOOL;
+        out.val.b = slorp_bool(args[0].val.b);
         break;
     case STDROT_CHAR:
         out.type = STDROT_CHAR;

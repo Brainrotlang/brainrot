@@ -35,6 +35,7 @@ Scope *current_scope;
 extern void yyerror(const char *s);
 extern void cleanup(void);
 extern TypeModifiers get_variable_modifiers(const String name);
+extern const char *vartype_to_string(VarType type);
 extern int yylineno;
 static int get_function_return_pointer_level(const String name);
 String evaluate_expression_string(ASTNode *node);
@@ -2232,6 +2233,73 @@ void *handle_unary_expression(ASTNode *node, void *operand_value,
     }
 }
 
+/* Frees the void* box handle_function_call() returned, accounting for
+ * VAR_STRING's nested allocation -- that box is a malloc'd String* whose
+ * ->data is itself a separate safe_strdup'd buffer (see handle_function_
+ * call()'s VAR_STRING case), which a single SAFE_FREE(raw) would leak.
+ * Every other VarType's box is a flat scalar with nothing further to
+ * free. Used by the type-mismatch error paths below, where `raw` is
+ * discarded unread rather than unpacked through its own evaluator's
+ * usual (type-appropriate) free sequence. */
+static void free_native_result_box(void *raw, VarType actual)
+{
+    if (actual == VAR_STRING)
+        SAFE_FREE(((String *)raw)->data);
+    SAFE_FREE(raw);
+}
+
+/* current_return_value.type is the ACTUAL runtime type
+ * handle_function_call() just boxed `raw` as -- for a typed native this is
+ * guaranteed (by execute_native_call()'s enforce_return_type(), stdrot.c)
+ * to match what the semantic analyzer approved for this call site, but
+ * for a legacy STDROT_ANY export (return_type.type == STDROT_ANY,
+ * return_like_arg == -1) there is no such guarantee at all: the analyzer
+ * couldn't determine a static type for the call (infer_expression_type()
+ * reports NONE for it, so declaration/argument type checks involving it
+ * are skipped outright), so the call is approved into whatever numeric
+ * context it's used in regardless of what the native's C implementation
+ * actually constructs. Blindly reinterpreting `raw` as whatever this
+ * evaluator's calling context expects reproduces, for every non-pointer
+ * type, exactly the wrong-union-member bug the STDROT_PTR pointer guards
+ * elsewhere in this file already close for pointer-valued results -- this
+ * closes it the rest of the way, by reading the box back out through the
+ * type it was ACTUALLY boxed as, coercing numerically only within the
+ * same group check_type_compatibility_ex() (semantic_analyzer.c) already
+ * grants int/short/float/double/enum, plus VAR_CHAR (not part of that
+ * static group, but a native call result specifically is a case this
+ * codebase already deliberately reads numerically -- see ast_expr_to_
+ * stdrot_value()'s NODE_FUNC_CALL/VAR_CHAR case, which routes a char-
+ * returning call like `slorp(c)` through evaluate_expression_int() on
+ * purpose), and refusing outright otherwise instead of casting past the
+ * allocation's real size. A no-op for a typed native or an identity-
+ * polymorphic one (slorp): `actual` always already matches what's
+ * expected there, since the semantic analyzer genuinely knows the
+ * static type in both cases. */
+static bool unbox_native_numeric_result(void *raw, VarType actual, double *out)
+{
+    switch (actual)
+    {
+    case VAR_INT:
+    case VAR_ENUM:
+        *out = (double)*(int *)raw;
+        return true;
+    case VAR_SHORT:
+        *out = (double)*(short *)raw;
+        return true;
+    case VAR_FLOAT:
+        *out = (double)*(float *)raw;
+        return true;
+    case VAR_DOUBLE:
+        *out = *(double *)raw;
+        return true;
+    case VAR_CHAR:
+        *out = (double)*(char *)raw;
+        return true;
+    default:
+        return false;
+    }
+}
+
 float evaluate_expression_float(ASTNode *node)
 {
     if (!node)
@@ -2319,14 +2387,24 @@ float evaluate_expression_float(ASTNode *node)
             yyerror("Cannot use pointer in float context");
             return 0.0f;
         }
-        float *res = (float *)handle_function_call(node);
-        if (res != NULL)
+        void *raw = handle_function_call(node);
+        if (raw == NULL)
+            return 0.0f;
+        double value;
+        if (!unbox_native_numeric_result(raw, current_return_value.type,
+                                         &value))
         {
-            float result = *res;
-            SAFE_FREE(res);
-            return result;
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Native call result (%s) cannot be used in a float "
+                     "context",
+                     vartype_to_string(current_return_value.type));
+            yyerror(error_msg);
+            free_native_result_box(raw, current_return_value.type);
+            return 0.0f;
         }
-        return 0.0f;
+        SAFE_FREE(raw);
+        return (float)value;
     }
     case NODE_STRUCT_ACCESS:
     {
@@ -2450,14 +2528,24 @@ double evaluate_expression_double(ASTNode *node)
             yyerror("Cannot use pointer in double context");
             return 0.0L;
         }
-        double *res = (double *)handle_function_call(node);
-        if (res != NULL)
+        void *raw = handle_function_call(node);
+        if (raw == NULL)
+            return 0.0L;
+        double value;
+        if (!unbox_native_numeric_result(raw, current_return_value.type,
+                                         &value))
         {
-            double result = *res;
-            SAFE_FREE(res);
-            return result;
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Native call result (%s) cannot be used in a double "
+                     "context",
+                     vartype_to_string(current_return_value.type));
+            yyerror(error_msg);
+            free_native_result_box(raw, current_return_value.type);
+            return 0.0L;
         }
-        return 0.0L;
+        SAFE_FREE(raw);
+        return value;
     }
     case NODE_STRUCT_ACCESS:
     {
@@ -2640,20 +2728,40 @@ String evaluate_expression_string(ASTNode *node)
             yyerror("Cannot use pointer in string context");
             return (String){.data = NULL, .len = 0};
         }
-        String *res = (String *)handle_function_call(node);
-        if (res != NULL)
+        void *raw = handle_function_call(node);
+        if (raw == NULL)
+            return (String){.data = NULL, .len = 0};
+        /* Unlike the numeric evaluators, there is no coercion group to
+           fall back on here -- a native call result is either genuinely
+           a String (current_return_value.type == VAR_STRING, in which
+           case `raw` really is handle_function_call()'s malloc'd String*
+           container) or it isn't, and reinterpreting anything else as
+           one reads ->data/->len straight past a smaller allocation (see
+           the pointer-level guard above for the same failure mode with a
+           STDROT_PTR result specifically -- this closes the identical
+           hole for every other mismatched type too, e.g. a legacy
+           STDROT_ANY export that actually returned an int). */
+        if (current_return_value.type != VAR_STRING)
         {
-            String result = safe_strdup(res);
-            /* res is handle_function_call()'s malloc'd String* container
-               (VAR_STRING case), already itself holding a freshly
-               safe_strdup'd buffer -- free that buffer too, not just the
-               container, or it's never reachable again after this
-               function returns. */
-            SAFE_FREE(res->data);
-            SAFE_FREE(res);
-            return result;
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Native call result (%s) cannot be used in a string "
+                     "context",
+                     vartype_to_string(current_return_value.type));
+            yyerror(error_msg);
+            SAFE_FREE(raw);
+            return (String){.data = NULL, .len = 0};
         }
-        return (String){.data = NULL, .len = 0};
+        String *res = (String *)raw;
+        String result = safe_strdup(res);
+        /* res is handle_function_call()'s malloc'd String* container
+           (VAR_STRING case), already itself holding a freshly
+           safe_strdup'd buffer -- free that buffer too, not just the
+           container, or it's never reachable again after this
+           function returns. */
+        SAFE_FREE(res->data);
+        SAFE_FREE(res);
+        return result;
     }
     default:
         yyerror("Invalid string expression");
@@ -2775,14 +2883,24 @@ short evaluate_expression_short(ASTNode *node)
             yyerror("Cannot use pointer in integer context");
             return 0;
         }
-        short *res = (short *)handle_function_call(node);
-        if (res != NULL)
+        void *raw = handle_function_call(node);
+        if (raw == NULL)
+            return 0;
+        double value;
+        if (!unbox_native_numeric_result(raw, current_return_value.type,
+                                         &value))
         {
-            short return_val = *res;
-            SAFE_FREE(res);
-            return return_val;
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Native call result (%s) cannot be used in an "
+                     "integer context",
+                     vartype_to_string(current_return_value.type));
+            yyerror(error_msg);
+            free_native_result_box(raw, current_return_value.type);
+            return 0;
         }
-        return 0;
+        SAFE_FREE(raw);
+        return (short)value;
     }
     case NODE_STRUCT_ACCESS:
     {
@@ -2931,14 +3049,24 @@ int evaluate_expression_int(ASTNode *node)
             yyerror("Cannot use pointer in integer context");
             return 0;
         }
-        int *res = (int *)handle_function_call(node);
-        if (res != NULL)
+        void *raw = handle_function_call(node);
+        if (raw == NULL)
+            return 0;
+        double value;
+        if (!unbox_native_numeric_result(raw, current_return_value.type,
+                                         &value))
         {
-            int return_val = *res;
-            SAFE_FREE(res);
-            return return_val;
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Native call result (%s) cannot be used in an "
+                     "integer context",
+                     vartype_to_string(current_return_value.type));
+            yyerror(error_msg);
+            free_native_result_box(raw, current_return_value.type);
+            return 0;
         }
-        return 0;
+        SAFE_FREE(raw);
+        return (int)value;
     }
     case NODE_STRUCT_ACCESS:
     {
@@ -3285,14 +3413,31 @@ bool evaluate_expression_bool(ASTNode *node)
             }
             return 0;
         }
-        bool *res = (bool *)handle_function_call(node);
-        if (res != NULL)
+        void *raw = handle_function_call(node);
+        if (raw == NULL)
+            return 0;
+        /* No numeric-coercion group applies to bool (see
+           check_type_compatibility_ex(), semantic_analyzer.c -- VAR_BOOL
+           isn't part of the int/short/float/double/enum group), so this
+           requires an exact match rather than falling back to
+           unbox_native_numeric_result(): a mismatched result (e.g. a
+           legacy STDROT_ANY export that actually returned a string) must
+           be rejected here the same way it already is for the numeric
+           evaluators, not silently reinterpreted through a `bool *`. */
+        if (current_return_value.type != VAR_BOOL)
         {
-            bool return_val = *res;
-            SAFE_FREE(res);
-            return return_val;
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Native call result (%s) cannot be used in a bool "
+                     "context",
+                     vartype_to_string(current_return_value.type));
+            yyerror(error_msg);
+            free_native_result_box(raw, current_return_value.type);
+            return 0;
         }
-        return 0;
+        bool return_val = *(bool *)raw;
+        SAFE_FREE(raw);
+        return return_val;
     }
     case NODE_STRUCT_ACCESS:
     {

@@ -1,0 +1,13 @@
+🚽 Test case: legacy_cstring() is a legacy/untyped export (STDROT_ANY)
+🚽 whose actual runtime result is a STDROT_CSTRING. STDROT_CSTRING-as-a-
+🚽 declared-return-type is already rejected statically elsewhere
+🚽 (semantic_error_native_cstring_return.brainrot) -- this closes the
+🚽 same hole reached through the legacy ANY escape hatch instead:
+🚽 marshal_native_return_value() has no code path that constructs a
+🚽 Brainrot String from a returned const char*, typed declaration or
+🚽 not, so enforce_return_type() must reject this at the runtime
+🚽 boundary just like it already does for STDROT_PTR/STDROT_HANDLE.
+skibidi main {
+    legacy_cstring();
+    bussin 0;
+}

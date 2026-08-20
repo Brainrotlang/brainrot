@@ -276,3 +276,34 @@ input_status input_double(double *value)
     *value = result;
     return INPUT_SUCCESS;
 }
+
+/**
+ * Safely reads a boolean value ("0" or "1" only)
+ *
+ * @param value Pointer to store the boolean value
+ * @return input_status indicating success or type of error
+ */
+input_status input_bool(bool *value)
+{
+    if (value == NULL)
+    {
+        return INPUT_NULL_PTR;
+    }
+
+    char buffer[32];
+    size_t chars_read;
+
+    input_status status = input_string(buffer, sizeof(buffer), &chars_read);
+    if (status != INPUT_SUCCESS)
+    {
+        return status;
+    }
+
+    if (chars_read == 1 && (buffer[0] == '0' || buffer[0] == '1'))
+    {
+        *value = buffer[0] == '1';
+        return INPUT_SUCCESS;
+    }
+
+    return INPUT_CONVERSION_ERROR;
+}

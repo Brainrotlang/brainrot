@@ -10,6 +10,7 @@ for f in test_cases/*.brainrot; do
         slorp_float)  input="3.14" ;;
         slorp_double) input="3.141592" ;;
         slorp_char)   input="c" ;;
+        slorp_bool)   input="1" ;;
         slorp_string) input="skibidi bop bop yes yes" ;;
         *)            input="" ;;
     esac
