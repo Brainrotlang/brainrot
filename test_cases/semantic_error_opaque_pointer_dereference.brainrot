@@ -1,0 +1,20 @@
+🚽 Test case: round-23 review finding #2 -- VAR_PTR is this codebase's
+🚽 own type for "an opaque native pointer with no concrete base type by
+🚽 design" (ast.h's own comment). Round 22 rejected dereferencing a
+🚽 `void *` (VAR_VOID, pointer level 1), reasoning "void has no pointee
+🚽 type" -- but VAR_PTR has the identical problem for the identical
+🚽 reason, and nothing checked it: `*test_ptr_source()` (a bare
+🚽 STDROT_PTR-returning native call, statically VAR_PTR/level 1) passed
+🚽 the dereference check, and whichever scalar evaluator happened to
+🚽 consume the result (evaluate_expression_bool()'s own OP_DEREFERENCE
+🚽 case, here) silently DECIDED the pointee's representation as bool
+🚽 after the fact -- the opposite of a typed ABI, where the descriptor
+🚽 is supposed to be authoritative end to end. Now rejected the same way
+🚽 a void-pointer dereference already is, sharing the same check and
+🚽 error message.
+skibidi main {
+    edgy (*test_ptr_source()) {
+        yapping("THIS MUST NEVER PRINT");
+    }
+    bussin 0;
+}

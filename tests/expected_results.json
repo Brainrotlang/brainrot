@@ -223,10 +223,18 @@
     "native_user_void_explicit_return": "survived",
     "native_pointer_array_element_arg": "42",
     "semantic_error_native_pointer_array_element_mismatch": "Error: 'ragequit' argument 1: expected int (pointer level 0), got int (pointer level 1) at line 12",
-    "semantic_error_void_pointer_dereference_write": "Error: Cannot dereference a void pointer -- void has no pointee type at line 18",
-    "semantic_error_void_pointer_dereference_read": "Error: Type mismatch in initialization of 'x': expected int, got void at line 1\nError: Cannot dereference a void pointer -- void has no pointee type at line 10",
+    "semantic_error_void_pointer_dereference_write": "Error: Cannot dereference a type-erased pointer -- its pointee type is unknown at line 18",
+    "semantic_error_void_pointer_dereference_read": "Error: Type mismatch in initialization of 'x': expected int, got void at line 1\nError: Cannot dereference a type-erased pointer -- its pointee type is unknown at line 10",
     "native_void_double_pointer_dereference": "alive",
     "semantic_error_return_type_void_expression": "Error: Return type mismatch in 'terrible': expected int, got void at line 1",
     "semantic_error_return_type_string_mismatch": "Error: Return type mismatch in 'f': expected int, got string at line 1",
-    "semantic_error_return_type_pointer_mismatch": "Error: Return type mismatch in 'f': expected a pointer (level 1), got pointer level 0 at line 1"
+    "semantic_error_return_type_pointer_mismatch": "Error: Return type mismatch in 'f': expected a pointer (level 1), got pointer level 0 at line 1",
+    "native_pointer_array_multi_element": "1 2\n1 99",
+    "native_void_pointer_array_element": "alive",
+    "native_float_pointer_array_multi_element": "1.5 2.5\n1.5 9.5",
+    "semantic_error_opaque_pointer_dereference": "Error: Cannot dereference a type-erased pointer -- its pointee type is unknown at line 16",
+    "native_user_string_return": "hello",
+    "native_user_char_return": "A",
+    "semantic_error_opaque_pointer_arithmetic": "Error: Type mismatch in initialization of 'x': expected int, got pointer at line 1\nError: Cannot perform pointer arithmetic on a type-erased pointer -- its pointee size is unknown at line 1",
+    "native_void_double_pointer_arithmetic": ""
 }

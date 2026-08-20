@@ -957,6 +957,51 @@ bool validate_binary_operation(ASTNode *left, ASTNode *right, OperatorType op,
     case OP_MINUS:
         if (left_pointer_level > 0 || right_pointer_level > 0)
         {
+            /* Round-23 review, finding #4 -- a single-level opaque
+               pointer (VAR_PTR, this codebase's own "no concrete base
+               type by design" native-pointer type -- see its own
+               comment, ast.h -- or VAR_VOID/`void *`) has no known
+               pointee size, so `ptr + n` has no defined element stride:
+               get_type_size_for_descriptor() (ast.c) returns 0 for
+               either base type at pointer_level 0 (the level the
+               arithmetic's own pointee is AT, one below the pointer's
+               own level 1), and evaluate_expression_pointer()'s own
+               NODE_OPERATION case used to silently default an unknown
+               scale to 1 -- meaning `test_ptr_source() + 1` quietly
+               meant "advance exactly one byte" for a type the ABI
+               explicitly documents as pointee-erased, not "the runtime
+               genuinely doesn't know, so ask the type system before
+               guessing." Rejected here, before arithmetic is even
+               considered valid, for the identical reason a bare
+               dereference of the same shape is already rejected
+               (NODE_UNARY_OPERATION's own OP_DEREFERENCE case, above):
+               a MULTI-level opaque pointer (`void **`, pointer_level >
+               1) is NOT rejected by this -- arithmetic on it advances by
+               sizeof(uintptr_t), a perfectly well-defined stride,
+               regardless of what the innermost pointee eventually
+               turns out to be. */
+            if (left_pointer_level == 1 &&
+                (left_type == VAR_PTR || left_type == VAR_VOID))
+            {
+                add_semantic_error(
+                    analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                    STRING_LITERAL("Cannot perform pointer arithmetic on a "
+                                   "type-erased pointer -- its pointee size "
+                                   "is unknown"),
+                    1);
+                return false;
+            }
+            if (right_pointer_level == 1 &&
+                (right_type == VAR_PTR || right_type == VAR_VOID))
+            {
+                add_semantic_error(
+                    analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                    STRING_LITERAL("Cannot perform pointer arithmetic on a "
+                                   "type-erased pointer -- its pointee size "
+                                   "is unknown"),
+                    1);
+                return false;
+            }
             if (left_pointer_level > 0 && right_pointer_level == 0 &&
                 (right_type == VAR_INT || right_type == VAR_SHORT ||
                  right_type == VAR_CHAR || right_type == VAR_BOOL))
@@ -1804,25 +1849,27 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node)
                 node->line_number > 0 ? node->line_number : 1);
             return;
         }
-        /* Round-22 review, finding #3 -- same check as the general
-           NODE_UNARY_OPERATION case (above in this file), needed
-           independently here because an assignment's dereference LHS
-           (`*p = 42;`) is deliberately NOT walked as a whole unary node
-           by semantic_analyze_with_scope_tracking()'s own NODE_
+        /* Round-22 review, finding #3, extended by round-23 finding #2
+           -- same check as the general NODE_UNARY_OPERATION case (above
+           in this file, see its own comment for the VAR_PTR reasoning),
+           needed independently here because an assignment's dereference
+           LHS (`*p = 42;`) is deliberately NOT walked as a whole unary
+           node by semantic_analyze_with_scope_tracking()'s own NODE_
            ASSIGNMENT case (only `operand` is visited, to avoid this
            exact pointer-ness check running twice) -- meaning THIS is
            the only place that validates a dereference LHS's pointee
-           type at all. A `void *` LHS (operand_pointer_level == 1, base
-           VAR_VOID) has no pointee representation to write through; a
-           `void **` LHS (operand_pointer_level > 1) dereferences fine,
-           down to a `void *` value. */
+           type at all. A `void *`/opaque-VAR_PTR LHS (operand_pointer_
+           level == 1) has no pointee representation to write through; a
+           `void **`/pointer-to-VAR_PTR LHS (operand_pointer_level > 1)
+           dereferences fine, down to a `void *`/VAR_PTR value. */
         if (operand_pointer_level == 1 &&
-            infer_expression_type(operand, analyzer) == VAR_VOID)
+            (infer_expression_type(operand, analyzer) == VAR_VOID ||
+             infer_expression_type(operand, analyzer) == VAR_PTR))
         {
             add_semantic_error(
                 analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
-                STRING_LITERAL("Cannot dereference a void pointer -- void "
-                               "has no pointee type"),
+                STRING_LITERAL("Cannot dereference a type-erased pointer -- "
+                               "its pointee type is unknown"),
                 node->line_number > 0 ? node->line_number : 1);
             return;
         }
@@ -2470,29 +2517,45 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                         "Cannot dereference a non-pointer expression"),
                     node->line_number > 0 ? node->line_number : 1);
             }
-            /* Round-22 review, finding #3 -- `void *` is a real value
-               (round 21), but that doesn't make `*(void *)` valid: a
-               pointer needs a pointee TYPE to know what representation
-               and size to read, and VAR_VOID has none. The invalidity
-               is specifically that dereferencing would PRODUCE
-               (VAR_VOID, 0) -- bare void, no value, ever (see VAR_VOID's
-               own comment, ast.h) -- not that the operand's base happens
-               to be VAR_VOID at all: `void **q` dereferences fine, to
-               `void *` (VAR_VOID, 1), a perfectly good pointer value one
-               level down. Checked as its own case (not folded into the
-               `<= 0` rejection above) because a `void **` operand
-               legitimately has pointer_level 2 > 0 and must NOT be
-               rejected by that check -- only the specific case where
-               this dereference's own result would land at pointer_level
-               0 with a VAR_VOID base. */
-            else if (infer_expression_type(node->data.unary.operand,
-                                           analyzer) == VAR_VOID &&
-                     operand_pointer_level == 1)
+            /* Round-22 review, finding #3, extended by round-23 finding
+               #2 -- `void *` is a real value (round 21), but that
+               doesn't make `*(void *)` valid: a pointer needs a pointee
+               TYPE to know what representation and size to read, and
+               VAR_VOID has none. VAR_PTR (this codebase's OWN opaque-
+               native-pointer type, per its own comment just above its
+               declaration, ast.h) has the identical problem for the
+               identical reason -- "an opaque native pointer with no
+               concrete base type by design" -- so `*test_ptr_source()`
+               (a bare STDROT_PTR-returning native call) was rejected no
+               more than `*(void *)` originally was: nothing here checked
+               VAR_PTR at all, so a dereferenced opaque pointer's
+               resulting type/pointer_level (VAR_PTR, 0) sailed through,
+               and whichever scalar evaluator happened to consume it
+               (evaluate_expression_bool()'s OP_DEREFERENCE case,
+               evaluate_expression_int()'s, ...) silently DECIDED the
+               pointee's representation after the fact -- the exact
+               opposite of a typed ABI, where the descriptor is supposed
+               to be authoritative. The invalidity in both cases is
+               specifically that dereferencing would PRODUCE pointer_
+               level 0 with a type-erased base (VAR_VOID or VAR_PTR) --
+               not that the operand's base happens to be one of those at
+               ANY depth: `void **q`/a pointer-to-VAR_PTR dereferences
+               fine, landing back at (VAR_VOID, 1)/(VAR_PTR, 1), still a
+               perfectly good opaque pointer VALUE one level down.
+               Checked as its own case (not folded into the `<= 0`
+               rejection above) because pointer_level 2 legitimately
+               passes that check and must not be rejected by it. */
+            else if (operand_pointer_level == 1 &&
+                     (infer_expression_type(node->data.unary.operand,
+                                            analyzer) == VAR_VOID ||
+                      infer_expression_type(node->data.unary.operand,
+                                            analyzer) == VAR_PTR))
             {
                 add_semantic_error(
                     analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
-                    STRING_LITERAL("Cannot dereference a void pointer -- "
-                                   "void has no pointee type"),
+                    STRING_LITERAL(
+                        "Cannot dereference a type-erased pointer -- its "
+                        "pointee type is unknown"),
                     node->line_number > 0 ? node->line_number : 1);
             }
         }

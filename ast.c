@@ -822,6 +822,35 @@ void *evaluate_multi_array_access(ASTNode *node)
     // Calculate the offset
     size_t offset = calculate_array_offset(var, indices, num_indices);
 
+    /* Round-23 review, finding #1 -- pointer_level DOMINATES element
+       stride the same way it dominates return-value boxing
+       (handle_function_call(), round 22) and native-argument marshalling
+       (ast_expr_to_stdrot_value(), stdrot.c): get_type_size_for_
+       descriptor() (this file) already allocates each element of a
+       pointer-typed array (`rizz *ptrs[N]`) as sizeof(uintptr_t) via its
+       own unconditional `pointer_level > 0` check, regardless of the
+       array's base VarType -- but this function's switch below dispatched
+       purely on var->var_type, computing each element's address using
+       THAT type's width (sizeof(int), sizeof(char), ...) instead of
+       sizeof(uintptr_t). For element 0 those strides coincidentally
+       agree with the correctly-allocated layout (both start at byte 0),
+       masking the bug completely -- but for element 1 onward, a `rizz
+       *ptrs[2]` array (each slot really 8 bytes on LP64) got indexed as
+       if each slot were 4 bytes (sizeof(int)), so `ptrs[1]` pointed
+       halfway into slot 0's own 8 bytes: an out-of-bounds/aliased
+       address, not the real second pointer -- real memory corruption on
+       both read and write, not merely a wrong value. Checked here,
+       before the base-type switch, for the identical reason every other
+       "pointer-ness dominates representation" fix in this PR checks it
+       first. VAR_VOID (`skibidi *ptrs[N]`) previously had no case at all
+       in the switch below and hit "Unknown variable type" unconditionally
+       -- also fixed by this same check, since it's a pointer-typed array
+       exactly like any other now. */
+    if (var->pointer_level > 0)
+    {
+        return (uintptr_t *)var->value.array_data + offset;
+    }
+
     // Return a pointer to the element
     switch (var->var_type)
     {
@@ -2307,8 +2336,24 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
                 size_t scale = get_type_size_for_descriptor(
                     get_expression_type(node->data.op.left), left_ptr - 1,
                     node->data.op.left->modifiers);
+                /* Round-23 review, finding #4 -- a scale of 0 means the
+                   pointee's size is genuinely unknown (a single-level
+                   opaque VAR_PTR/VAR_VOID pointer -- semantic analysis
+                   already rejects this shape statically, see validate_
+                   binary_operation()'s own comment), not "assume one
+                   byte." Defaulting to 1 silently gave `test_ptr_source()
+                   + 1` byte-pointer semantics for a type this ABI
+                   explicitly documents as pointee-erased. Kept as a
+                   defensive runtime check, matching every other place in
+                   this codebase where a static rejection has a runtime
+                   backstop too. */
                 if (scale == 0)
-                    scale = 1;
+                {
+                    yyerror("Cannot perform pointer arithmetic on a "
+                            "type-erased pointer -- its pointee size is "
+                            "unknown");
+                    return base;
+                }
                 return node->data.op.op == OP_PLUS
                            ? base + (uintptr_t)(offset * (ptrdiff_t)scale)
                            : base - (uintptr_t)(offset * (ptrdiff_t)scale);
@@ -2322,7 +2367,12 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
                     get_expression_type(node->data.op.right), right_ptr - 1,
                     node->data.op.right->modifiers);
                 if (scale == 0)
-                    scale = 1;
+                {
+                    yyerror("Cannot perform pointer arithmetic on a "
+                            "type-erased pointer -- its pointee size is "
+                            "unknown");
+                    return base;
+                }
                 return base + (uintptr_t)(offset * (ptrdiff_t)scale);
             }
         }
@@ -5407,6 +5457,33 @@ void free_pending_struct_return_value(void)
         SAFE_FREE(current_return_value.struct_name);
         current_return_value.struct_name = (String){0};
     }
+    /* Round-23 review, finding #3 -- a VAR_STRING return, like a
+       VAR_STRUCT one just above, can be left sitting unconsumed in this
+       global slot: interpreter_visit_function_call()'s own comment
+       documents that a user-defined function has no memo cache the way
+       a native call does, so it's genuinely invoked TWICE for a call
+       embedded in a declaration/assignment/etc. -- once by ast_accept()'s
+       generic pre-visit (whose result nothing ever reads), once by the
+       statement's own real evaluator. Before this round, every VAR_
+       STRING-returning user-defined function crashed at the return
+       statement itself (handle_return_statement() had no VAR_STRING
+       case), so this double-invocation could never actually orphan a
+       heap string -- fixing that producer gap means it now can: the
+       pre-visit's call sets current_return_value.owns_strvalue = true
+       over an independently safe_strdup'd copy that nothing ever frees,
+       since the real evaluation's own call immediately overwrites this
+       same global slot with its own (separately consumed) result.
+       Freeing it here piggybacks on every existing call site that
+       already exists specifically to clear a stale VAR_STRUCT result
+       before this slot gets overwritten -- the identical hazard, just
+       for a different owned-heap-allocation return shape. */
+    if (current_return_value.type == VAR_STRING &&
+        current_return_value.owns_strvalue &&
+        current_return_value.value.strvalue.data)
+    {
+        SAFE_FREE(current_return_value.value.strvalue.data);
+        current_return_value.owns_strvalue = false;
+    }
 }
 
 void handle_return_statement(ASTNode *expr)
@@ -5477,6 +5554,47 @@ void handle_return_statement(ASTNode *expr)
             case VAR_ENUM:
                 current_return_value.value.ivalue =
                     evaluate_expression_int(expr);
+                break;
+            case VAR_CHAR:
+                /* Round-23 review, finding #3 -- the return-CHECKING
+                   side (semantic_analyze_with_scope_tracking()'s
+                   NODE_RETURN case, round 22) already approved a `yap
+                   f() { bussin 'A'; }`-shaped function as statically
+                   coherent (VAR_CHAR == VAR_CHAR), but this return-
+                   PRODUCING switch had no VAR_CHAR case at all, so
+                   actually calling such a function hit `default:
+                   yyerror("Unsupported return type"); exit(1);` --
+                   the checker approved a contract the producer couldn't
+                   fulfill. current_return_value.value.ivalue (not a
+                   dedicated char field) matches handle_function_call()'s
+                   own VAR_CHAR consumer case, which already reads a
+                   char return from that exact union member. */
+                current_return_value.value.ivalue =
+                    evaluate_expression_int(expr);
+                break;
+            case VAR_STRING:
+                /* Same producer gap as VAR_CHAR just above, for `rant
+                   f() { bussin "hello"; }` -- including a native's own
+                   identity-polymorphic STRING result reaching here via
+                   `bussin slorp(s);` (the review's own exhibit), since
+                   nothing about THIS switch cares how the expression's
+                   value was produced, only what VarType it's declared
+                   to return. evaluate_expression_string() always hands
+                   back an independently safe_strdup'd copy (see its own
+                   comment) -- current_return_value.owns_strvalue = true
+                   documents that this copy is this return's own, to be
+                   consumed exactly the way handle_function_call()'s
+                   VAR_STRING case already consumes a native's owned
+                   string result: copy into the caller's box, then free
+                   this one. Not freed here -- ownership travels via
+                   owns_strvalue precisely so a caller that discards the
+                   return value entirely (a bare `f();` statement, no
+                   assignment) still has somewhere for this cleanup to
+                   happen (handle_function_call()'s own VAR_STRING case
+                   runs regardless of whether its result is ever used). */
+                current_return_value.value.strvalue =
+                    evaluate_expression_string(expr);
+                current_return_value.owns_strvalue = true;
                 break;
             case VAR_VOID:
                 /* A real `skibidi`-declared function's return type is
