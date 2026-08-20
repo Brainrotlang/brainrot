@@ -1335,7 +1335,33 @@ static bool finalize_native_string_result(StdrotValue *result)
 {
     if (result->type != STDROT_STRING)
         return false;
-    result->val.str = safe_strdup(&result->val.str);
+
+    /* Round-20 review, finding #4 -- safe_strdup() (lib/mem.c) genuinely
+       can fail (OOM, or a pathologically large string exceeding
+       MAX_ALLOC_SIZE) and, until its own fix this round, that failure
+       meant a NULL-pointer memcpy destination -- a crash, not a
+       reportable error. Even with that fixed (safe_strdup() now returns
+       {NULL, 0} instead of crashing), returning `true` here regardless
+       would still be wrong: this function's whole contract is "the
+       result now owns a valid independent copy," and claiming that on
+       failure would hand the caller a dangling/empty String tagged as
+       successfully owned. Degrading result->type to STDROT_NONE on
+       failure -- rather than inventing a separate failure signal -- is
+       deliberate: stdrot_type_to_vartype(STDROT_NONE) already maps to
+       VAR_VOID, so every value-consuming context this PR has spent
+       several rounds making reject VAR_VOID (require_value_expression(),
+       semantic_analyzer.c; the scalar evaluators' own runtime checks,
+       ast.c) already correctly rejects this result too, with no new
+       machinery needed. */
+    String copy = safe_strdup(&result->val.str);
+    if (!copy.data)
+    {
+        yyerror("Out of memory materializing native string return value");
+        result->type = STDROT_NONE;
+        result->val.str = (String){.data = NULL, .len = 0};
+        return false;
+    }
+    result->val.str = copy;
     return true;
 }
 

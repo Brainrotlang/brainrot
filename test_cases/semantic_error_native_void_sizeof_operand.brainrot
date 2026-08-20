@@ -1,0 +1,12 @@
+🚽 Test case: round-20 review finding #2 -- NODE_SIZEOF's semantic
+🚽 handling recursively visited its operand expression but never required
+🚽 it to produce a value, deferring a statically-known VAR_VOID operand
+🚽 to handle_sizeof()'s own runtime "Invalid type in sizeof" rejection
+🚽 (ast.c) instead of catching it during semantic analysis, where the
+🚽 type is already fully known without evaluating anything (sizeof's
+🚽 operand is never evaluated either way -- this just moves the KNOWN
+🚽 error earlier, matching every other statically-known type violation).
+skibidi main {
+    rizz n = maxxing(yapping("hi"));
+    bussin 0;
+}

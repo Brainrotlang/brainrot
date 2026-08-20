@@ -547,7 +547,7 @@ type:
     | YAP       { $$ = VAR_CHAR; }
     | CAP       { $$ = VAR_BOOL; }
     | RANT      { $$ = VAR_STRING; }
-    | SKIBIDI   { $$ = NONE; }
+    | SKIBIDI   { $$ = VAR_VOID; }
     ;
 
 declaration:

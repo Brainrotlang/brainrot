@@ -1,0 +1,13 @@
+🚽 Test case: round-20 review finding #2 -- NODE_UNARY_OPERATION's
+🚽 semantic handling special-cased ADDRESS_OF (wants an lvalue, already
+🚽 rejects a call operand via its own valid_lvalue check) and DEREFERENCE
+🚽 (wants a pointer, already rejects via a pointer_level check), but
+🚽 every OTHER unary operator -- arithmetic negation, logical not,
+🚽 increment/decrement -- fell through with no value requirement at all.
+🚽 `-yapping(...)` genuinely consumes its operand as a value; now
+🚽 rejected statically via require_value_expression(), instead of only
+🚽 at runtime.
+skibidi main {
+    rizz x = -yapping("hi");
+    bussin 0;
+}

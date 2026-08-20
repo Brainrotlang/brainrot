@@ -1578,6 +1578,28 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node)
 
     const String var_name = node->data.op.left->data.name;
 
+    /* Round-20 review, finding #1 -- `skibidi` (ast.h's own VAR_VOID
+       comment: "no declaration syntax produces a void-typed Variable")
+       now maps to VAR_VOID, not NONE, so a void-typed function's return
+       type is correctly distinguishable from "genuinely unknown" -- but
+       `type` (lang.y) is the SAME grammar nonterminal a variable
+       declaration's own type comes from, so `skibidi x;` now parses to
+       a VAR_VOID-typed declaration too, unless something rejects it.
+       Checked unconditionally (not gated behind node->data.op.right,
+       unlike the initializer-compatibility check below) so a bare
+       `skibidi x;` with no initializer is caught just as surely as
+       `skibidi x = 5;`. */
+    if (node->var_type == VAR_VOID && node->pointer_level == 0)
+    {
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "Cannot declare '%s' with type void", var_name.data);
+        add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                           STRING_LITERAL(error_msg),
+                           node->line_number > 0 ? node->line_number : 1);
+        return;
+    }
+
     if (node->data.op.right && node->data.op.right->type == NODE_STRUCT_DEF)
     {
         StructDef *def =
@@ -2318,6 +2340,18 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                     node->line_number > 0 ? node->line_number : 1);
             }
         }
+        else
+        {
+            /* Every other unary operator (arithmetic negation, logical
+               not, increment/decrement, ...) genuinely consumes its
+               operand as a value -- unlike ADDRESS_OF (wants an lvalue
+               location, not a value; already rejects a non-lvalue
+               operand shape like a call above) and DEREFERENCE (wants a
+               pointer; already rejected by the pointer_level check
+               above), neither of which needed this. */
+            require_value_expression(analyzer, node->data.unary.operand,
+                                     "unary operator operand");
+        }
         break;
     }
 
@@ -2472,6 +2506,8 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                 {
                     semantic_analyze_with_scope_tracking(
                         analyzer, node->data.array.indices[i]);
+                    require_value_expression(
+                        analyzer, node->data.array.indices[i], "subscript");
                 }
             }
         }
@@ -2479,6 +2515,8 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         {
             semantic_analyze_with_scope_tracking(analyzer,
                                                  node->data.array.index);
+            require_value_expression(analyzer, node->data.array.index,
+                                     "subscript");
         }
         break;
     }
@@ -2489,6 +2527,14 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         {
             semantic_analyze_with_scope_tracking(analyzer,
                                                  node->data.sizeof_stmt.expr);
+            /* sizeof's own operand isn't consumed as a VALUE (it's never
+               evaluated at all -- handle_sizeof()'s own comment, ast.c),
+               but a VAR_VOID operand is still a statically-known type
+               error worth rejecting here rather than deferring to
+               handle_sizeof()'s runtime "Invalid type in sizeof" -- the
+               type is already fully known without running anything. */
+            require_value_expression(analyzer, node->data.sizeof_stmt.expr,
+                                     "sizeof operand");
         }
         break;
     }
@@ -2542,6 +2588,7 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
             if (c->value)
             {
                 semantic_analyze_with_scope_tracking(analyzer, c->value);
+                require_value_expression(analyzer, c->value, "case value");
             }
             if (c->statements)
             {
@@ -2549,6 +2596,38 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
             }
         }
         analyzer->scope_depth--;
+        break;
+    }
+
+    /* Round-20 review, finding #3 -- interpreter_visit_error_statement()
+       (interpreter.c) hands this node's own expression straight to
+       execute_func_call("baka", ...), which marshals it as `baka`'s real
+       (typed, STDROT_STRING-format) argument -- but this switch had no
+       case for NODE_ERROR_STATEMENT at all, falling to the generic
+       `default:` below, which does nothing. That meant any native call
+       NESTED inside `baka(...)`'s argument (`baka(yapping(42))`) never
+       reached semantic_check_native_call() at all: `yapping`'s own
+       fixed-format-argument type checking never ran, silently tunneling
+       a statically-detectable ABI violation past semantic analysis
+       entirely, caught only by the runtime enforcement this PR's whole
+       point was to make redundant. Recursing into the expression (same
+       as every other statement form that wraps one) makes any nested
+       native call visited normally, and require_value_expression()
+       rejects a VAR_VOID argument the same way every other value-
+       consuming context now does. NODE_PRINT_STATEMENT (ast.h) is
+       structurally identical but not actually reachable from the
+       grammar (yapping() is an ordinary call now, not a dedicated
+       statement form) -- handled here anyway, defensively, so it can't
+       silently regain this exact hole if that ever changes. */
+    case NODE_ERROR_STATEMENT:
+    case NODE_PRINT_STATEMENT:
+    {
+        if (node->data.op.left)
+        {
+            semantic_analyze_with_scope_tracking(analyzer, node->data.op.left);
+            require_value_expression(analyzer, node->data.op.left,
+                                     "baka/yapping argument");
+        }
         break;
     }
 

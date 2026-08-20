@@ -4692,6 +4692,17 @@ ASTNode *create_default_node(VarType var_type)
     }
     case VAR_ENUM:
         return create_int_node(0);
+    case VAR_VOID:
+        /* `skibidi x;` (no initializer) -- reached here (parse time,
+           before semantic_visit_declaration()'s own VAR_VOID check,
+           ast.c/semantic_analyzer.c, ever runs) precisely because
+           `skibidi` maps to VAR_VOID now, the same as any other type
+           keyword reaching this function for a declaration with no
+           initializer to infer a value from. A named void variable was
+           never valid; this just names the rejection instead of falling
+           through the generic default case below. */
+        yyerror("Cannot declare a variable with type void");
+        exit(1);
     default:
         yyerror("Unsupported type for default node");
         exit(1);

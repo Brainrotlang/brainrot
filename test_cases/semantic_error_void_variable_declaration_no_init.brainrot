@@ -1,0 +1,15 @@
+🚽 Test case: round-20 review finding #1, no-initializer variant of the
+🚽 grammar-boundary fix -- `skibidi x;` (no initializer) reaches a
+🚽 DIFFERENT code path than `skibidi x = 5;`: create_default_node()
+🚽 (ast.c), called at parse time to synthesize a zero-value initializer
+🚽 for the declared type, since there's no explicit initializer
+🚽 expression to check against. Its switch had no VAR_VOID case, so this
+🚽 previously fell to the generic "Unsupported type for default node"
+🚽 fallback; now has its own case with a clearer message, exercised here
+🚽 specifically because it's a genuinely separate path from the with-
+🚽 initializer declaration rejection (semantic_visit_declaration(),
+🚽 exercised by semantic_error_void_variable_declaration.brainrot).
+skibidi main {
+    skibidi x;
+    bussin 0;
+}
