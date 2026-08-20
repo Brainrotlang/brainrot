@@ -3145,6 +3145,20 @@ size_t handle_sizeof(ASTNode *node)
         case VAR_ENUM:
             return get_type_size_for_descriptor(
                 type, get_expression_pointer_level(expr), expr->modifiers);
+        case VAR_STRING:
+            /* Round-19 review, finding #3 -- get_type_size_for_descriptor()
+               (above) has always defined VAR_STRING as sizeof(String),
+               and a plain identifier's sizeof (the branch above this
+               `else`) already uses it via get_type_size(); this generic
+               path (a native-call expression like `identity(buf)`
+               resolving to STDROT_STRING, per get_native_call_static_
+               type()) fell to the `default: yyerror("Invalid type in
+               sizeof")` below purely because this case was missing --
+               an AST-shape accident, not an actual "strings have no
+               size" rule, since the identical VarType already has a
+               well-defined size everywhere else. */
+            return get_type_size_for_descriptor(
+                type, get_expression_pointer_level(expr), expr->modifiers);
         case VAR_PTR:
             /* A typed native's STDROT_PTR result (or any other pointer-
                typed expression reaching this generic path) -- get_type_

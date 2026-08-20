@@ -1311,6 +1311,34 @@ static void free_pending_native_call_args(void)
     pending_native_call_stack = NULL;
 }
 
+/* Round-19 review, finding #2 -- materializes `result` into an
+ * independently-owned copy if (and only if) it's a STDROT_STRING,
+ * mutating it in place and returning whether it now owns that copy (the
+ * value NativeResult.owns_string is built from). This is the ENTIRE
+ * string-return lifetime contract this ABI promises: a native may return
+ * borrowed/aliased string storage from anywhere -- an argument's own
+ * scratch buffer, static storage, a live variable's backing storage --
+ * because the adapter copies it immediately, unconditionally, before
+ * anything downstream can free or mutate whatever it was borrowed from
+ * (see the general path's own comment, below, for why this used to be a
+ * narrower alias-specific check and had to become unconditional).
+ * Factored out specifically so execute_native_call()'s zero-argument
+ * fast path and its general path enforce that contract identically --
+ * the zero-argument path previously skipped this altogether, reasoning
+ * that "no argument buffers exist to alias" was still the operative
+ * invariant after the general path had already moved past it: a zero-
+ * argument native returning a pointer into its own static/scratch
+ * storage (`static char scratch[256]; ...`) is exactly as borrowed as an
+ * aliased argument buffer, and the contract this ABI documents doesn't
+ * carve out an exception for arity. */
+static bool finalize_native_string_result(StdrotValue *result)
+{
+    if (result->type != STDROT_STRING)
+        return false;
+    result->val.str = safe_strdup(&result->val.str);
+    return true;
+}
+
 NativeResult execute_native_call(const String func_name, ArgumentList *args)
 {
     if (!func_name.data || !functions)
@@ -1353,12 +1381,18 @@ NativeResult execute_native_call(const String func_name, ArgumentList *args)
         /* Same return-type enforcement as the general path below --
            can't skip it just because this call happens to take no
            arguments, or a zero-arg native's return-type bug would go
-           uncaught (see enforce_return_type()'s comment). No
-           argument-marshalling cleanup needed here since none was
-           allocated -- and with no arguments, a STDROT_STRING result
-           can't possibly alias one, so owns_string is always false. */
+           uncaught (see enforce_return_type()'s comment). No argument-
+           marshalling cleanup needed here since none was allocated --
+           but a STDROT_STRING result still needs the exact same
+           unconditional materialization the general path performs
+           (finalize_native_string_result(), just above): "no argument
+           buffers to alias" was the old, narrower invariant this ABI
+           already moved past, and a zero-argument native can return
+           borrowed static/scratch storage just as easily as an aliased
+           argument buffer can. */
         enforce_return_type(func_name, &result, entry, NULL);
-        return (NativeResult){result, false};
+        bool owns_string = finalize_native_string_result(&result);
+        return (NativeResult){result, owns_string};
     }
 
     StdrotValue *arg_values = SAFE_MALLOC_ARRAY(StdrotValue, total_args);
@@ -1551,12 +1585,7 @@ NativeResult execute_native_call(const String func_name, ArgumentList *args)
      * above) can recursively invoke execute_native_call() again for a
      * nested call, each producing its own independent NativeResult. See
      * NativeResult's own comment (stdrot.h) for the full reasoning. */
-    bool owns_string = false;
-    if (result.type == STDROT_STRING)
-    {
-        result.val.str = safe_strdup(&result.val.str);
-        owns_string = true;
-    }
+    bool owns_string = finalize_native_string_result(&result);
 
     /* Reached: entry->fn() returned normally rather than exit()ing, so
        ordinary cleanup below handles this frame, and the atexit handler

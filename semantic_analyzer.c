@@ -810,10 +810,54 @@ static VarType infer_expression_abi_type(ASTNode *expr,
     return t;
 }
 
+/* Round-19 review, finding #1 -- VAR_VOID (ast.h's own comment has the
+ * full reasoning) is "known with certainty to produce no value," so
+ * consuming one as a value anywhere -- an operator operand, a
+ * condition, a switch discriminant, ... -- is never correct, the same
+ * way a declared-type mismatch never is. Without a single shared check,
+ * VAR_VOID stopped being enforced the moment it left the one context
+ * (a declaration initializer) that happened to already reject it: a
+ * binary operation's arithmetic-type validation only ever treated
+ * VAR_STRING/VAR_BOOL as "clearly incompatible," so `yapping("hi") + 1`
+ * fell through its `return true` default, got promoted to VAR_INT by
+ * infer_expression_type()'s own widening rule (neither operand being
+ * VAR_DOUBLE/VAR_FLOAT, matching VAR_INT's fallthrough), and type-
+ * checked -- laundering "known to produce nothing" into a real int at
+ * the type-checking level, even though nothing about VAR_VOID's own
+ * definition changed. `if`/`while`/`do`-`while` conditions and a
+ * `switch` discriminant had the identical gap: each recursively visits
+ * its condition/discriminant expression, but never asked whether it
+ * actually produced a value at all. One shared check here, called from
+ * every value-consuming context below, instead of teaching each context
+ * individually that void is bad. */
+static bool require_value_expression(SemanticAnalyzer *analyzer, ASTNode *expr,
+                                     const char *context_name)
+{
+    if (!expr)
+        return true;
+    if (infer_expression_type(expr, analyzer) != VAR_VOID)
+        return true;
+
+    char error_msg[MAX_BUFFER_LEN];
+    snprintf(error_msg, sizeof(error_msg),
+             "Native call result (void) cannot be used in a %s context",
+             context_name);
+    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                       STRING_LITERAL(error_msg),
+                       expr->line_number > 0 ? expr->line_number : 1);
+    return false;
+}
+
 /* Validate binary operation types */
 bool validate_binary_operation(ASTNode *left, ASTNode *right, OperatorType op,
                                SemanticAnalyzer *analyzer)
 {
+    if (!require_value_expression(analyzer, left, "binary operator operand") ||
+        !require_value_expression(analyzer, right, "binary operator operand"))
+    {
+        return false;
+    }
+
     VarType left_type = infer_expression_type(left, analyzer);
     VarType right_type = infer_expression_type(right, analyzer);
     int left_pointer_level = infer_expression_pointer_level(left, analyzer);
@@ -2084,6 +2128,8 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         {
             semantic_analyze_with_scope_tracking(analyzer,
                                                  node->data.for_stmt.cond);
+            require_value_expression(analyzer, node->data.for_stmt.cond,
+                                     "condition");
         }
         if (node->data.for_stmt.incr)
         {
@@ -2108,6 +2154,8 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         {
             semantic_analyze_with_scope_tracking(analyzer,
                                                  node->data.while_stmt.cond);
+            require_value_expression(analyzer, node->data.while_stmt.cond,
+                                     "condition");
         }
 
         /* Enter loop scope for body */
@@ -2128,6 +2176,8 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         {
             semantic_analyze_with_scope_tracking(analyzer,
                                                  node->data.if_stmt.condition);
+            require_value_expression(analyzer, node->data.if_stmt.condition,
+                                     "condition");
         }
 
         /* Process then branch in new scope */
@@ -2469,6 +2519,8 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         {
             semantic_analyze_with_scope_tracking(analyzer,
                                                  node->data.while_stmt.cond);
+            require_value_expression(analyzer, node->data.while_stmt.cond,
+                                     "condition");
         }
         analyzer->scope_depth--;
         break;
@@ -2480,6 +2532,9 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         {
             semantic_analyze_with_scope_tracking(
                 analyzer, node->data.switch_stmt.expression);
+            require_value_expression(analyzer,
+                                     node->data.switch_stmt.expression,
+                                     "switch discriminant");
         }
         analyzer->scope_depth++;
         for (CaseNode *c = node->data.switch_stmt.cases; c; c = c->next)

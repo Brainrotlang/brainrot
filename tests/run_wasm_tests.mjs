@@ -127,13 +127,15 @@ const WASM_EXPECTED_OVERRIDES = {
   giga: "4\n4",
   giga_array: "1\n2\n3\n12",
   native_sizeof_ptr_result: "4",
+  native_identity_abi_type_char_array: "8",
 };
 
 // Fixtures that call a tests/stdrot/*.c native (poke_int, peek_int,
 // test_ptr_source, lying_double, lying_bool, lying_ptr_return,
 // legacy_ptr_leak, legacy_int, legacy_int_prints, legacy_string,
 // legacy_cstring, legacy_void, legacy_returns_any_tag, cstring_return,
-// takes_cstring, takes_char, identity) --
+// takes_cstring, takes_char, identity, legacy_scratch_string,
+// legacy_mutate_scratch_and_return_int) --
 // only meaningful in "test" mode against tests/brainrot-test.mjs, which is
 // the only build those natives are ever linked into. In "production" mode
 // they'd all fail with "Undefined function" against brainrot.mjs, which is
@@ -176,6 +178,7 @@ const WASM_PRODUCTION_SKIP = new Set([
   "native_identity_abi_type_char_literal",
   "native_identity_abi_type_char_array",
   "native_sizeof_ptr_result",
+  "native_zero_arg_string_ownership",
 ]);
 
 // Runs one program in a fresh module instance — the interpreter has global

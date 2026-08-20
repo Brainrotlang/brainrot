@@ -16,6 +16,7 @@
  */
 #include "stdrot_api.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Declares DOUBLE, actually returns INT -- numerically coercible, so
@@ -124,6 +125,98 @@ static StdrotValue stdrot_legacy_int_prints(StdrotValue *args, int argc)
 }
 
 STDROT_EXPORT("legacy_int_prints", stdrot_legacy_int_prints);
+
+/* Round-19 review, finding #2 -- a zero-argument legacy/untyped export
+ * whose STDROT_STRING result borrows a heap buffer this native itself
+ * owns and replaces on every call (frees the previous call's buffer,
+ * allocates a fresh one) -- a native-side cache being the specific
+ * shape the review used to demonstrate that execute_native_call()'s
+ * total_args == 0 fast path skipped the unconditional STDROT_STRING
+ * materialization the general (argc > 0) path already performs. Without
+ * that materialization, a call's cached-but-not-yet-consumed NativeResult
+ * (get_expression_type()'s NODE_OPERATION case, ast.c, peeks BOTH
+ * operands of a binary operation before consuming either -- see its own
+ * comment) still points directly at THIS buffer; a second call before
+ * the first is consumed frees it out from under the first call's still-
+ * pending result, and consuming that first result afterward reads
+ * already-freed memory -- an ASan-catchable heap-use-after-free, not
+ * just stale data, unlike a static-storage version of this same native
+ * would produce. */
+static char *scratch_heap_buf = NULL;
+static int scratch_call_count = 0;
+static bool scratch_cleanup_registered = false;
+
+/* The buffer live at whichever call happened to run last is never freed
+ * by either native above -- each only frees the PREVIOUS call's buffer,
+ * by design, to create the use-after-free window the comment above
+ * describes. Registered lazily (same pattern this codebase already uses
+ * for its own atexit hooks, e.g. ast.c's free_native_call_cache()) so a
+ * program that never calls either of these natives registers nothing. */
+static void free_scratch_heap_buf(void)
+{
+    free(scratch_heap_buf);
+    scratch_heap_buf = NULL;
+}
+
+static StdrotValue stdrot_legacy_scratch_string(StdrotValue *args, int argc)
+{
+    (void)args;
+    (void)argc;
+    scratch_call_count++;
+    free(scratch_heap_buf);
+    scratch_heap_buf = malloc(32);
+    snprintf(scratch_heap_buf, 32, "call-%d", scratch_call_count);
+    if (!scratch_cleanup_registered)
+    {
+        atexit(free_scratch_heap_buf);
+        scratch_cleanup_registered = true;
+    }
+    StdrotValue out = {STDROT_STRING, {0}};
+    out.val.str =
+        (String){.data = scratch_heap_buf, .len = strlen(scratch_heap_buf)};
+    return out;
+}
+
+STDROT_EXPORT("legacy_scratch_string", stdrot_legacy_scratch_string);
+
+/* Companion to legacy_scratch_string() (just above) -- shares its heap
+ * buffer, but returns a plain STDROT_INT and, as a side effect, frees
+ * and reallocates that buffer, simulating some OTHER native touching
+ * shared internal state legacy_scratch_string() itself owns. Used as the
+ * *other* operand of a binary operation whose left operand is a call to
+ * legacy_scratch_string(): get_expression_type()'s NODE_OPERATION case
+ * (ast.c) peeks the left operand first (executing legacy_scratch_string(),
+ * caching an unmaterialized NativeResult pointing straight at the shared
+ * buffer), then peeks this one second (executing it, freeing that exact
+ * buffer out from under the still-uncomsumed left-hand cache entry) --
+ * before handle_binary_operation() ever consumes either. Returning
+ * STDROT_INT specifically (not STDROT_STRING) is what gets handle_
+ * binary_operation() to actually evaluate both operands as real values
+ * (its `left_type == VAR_INT || right_type == VAR_INT` promotion check)
+ * instead of bailing out on "Unsupported type promotion" before either
+ * cached entry is ever consumed -- which is what two STRING-typed
+ * operands would do, never reaching the use-after-free at all. */
+static StdrotValue
+stdrot_legacy_mutate_scratch_and_return_int(StdrotValue *args, int argc)
+{
+    (void)args;
+    (void)argc;
+    scratch_call_count++;
+    free(scratch_heap_buf);
+    scratch_heap_buf = malloc(32);
+    snprintf(scratch_heap_buf, 32, "call-%d", scratch_call_count);
+    if (!scratch_cleanup_registered)
+    {
+        atexit(free_scratch_heap_buf);
+        scratch_cleanup_registered = true;
+    }
+    StdrotValue out = {STDROT_INT, {0}};
+    out.val.i = 1;
+    return out;
+}
+
+STDROT_EXPORT("legacy_mutate_scratch_and_return_int",
+              stdrot_legacy_mutate_scratch_and_return_int);
 
 /* Round-17 review, finding #3 -- a second legacy/untyped export, this
  * one returning a fractional STDROT_DOUBLE, reused alongside legacy_int()

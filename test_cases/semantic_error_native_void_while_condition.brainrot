@@ -1,0 +1,11 @@
+🚽 Test case: round-19 review finding #1 -- same gap as the `if` sibling
+🚽 fixture, for `while`: `yapping("hello")` statically resolves to
+🚽 VAR_VOID, but nothing required a `while` condition to actually produce
+🚽 a value before this round. Now caught statically by require_value_
+🚽 expression() (semantic_analyzer.c).
+skibidi main {
+    goon (yapping("hello")) {
+        bussin 1;
+    }
+    bussin 0;
+}

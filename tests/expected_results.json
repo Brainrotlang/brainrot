@@ -195,7 +195,11 @@
     "identity_ownership_nonstring_result": "ok",
     "semantic_error_native_sizeof_legacy_nested": "Error: maxxing (sizeof) of an expression whose type is not statically known -- sizeof's operand is never evaluated, so a native call it depends on cannot be invoked to discover it at line 21\nError: maxxing (sizeof) of an expression whose type is not statically known -- sizeof's operand is never evaluated, so a native call it depends on cannot be invoked to discover it at line 21",
     "native_identity_abi_type_char_literal": "1",
-    "native_identity_abi_type_char_array": "Error: Invalid type in sizeof at line 19\nError: Invalid type in sizeof at line 19",
+    "native_identity_abi_type_char_array": "16",
     "semantic_error_native_void_typed_declaration": "Error: Type mismatch in initialization of 'x': expected int, got void at line 1",
-    "native_sizeof_ptr_result": "8"
+    "native_sizeof_ptr_result": "8",
+    "semantic_error_native_void_arithmetic_operand": "Error: Native call result (void) cannot be used in a binary operator operand context at line 16",
+    "semantic_error_native_void_if_condition": "Error: Native call result (void) cannot be used in a condition context at line 11",
+    "semantic_error_native_void_while_condition": "Error: Native call result (void) cannot be used in a condition context at line 7",
+    "native_zero_arg_string_ownership": "Error: Native call result (string) cannot be used in an integer context at line 26"
 }
