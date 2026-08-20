@@ -2328,6 +2328,34 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
         }
         break;
     }
+    case NODE_STRUCT_ACCESS:
+    {
+        /* Round-21 review, finding #2's runtime half -- missing here for
+           the identical reason it was missing from get_expression_
+           pointer_level() and infer_expression_pointer_level()
+           (semantic_analyzer.c): a pointer-typed struct/union field
+           (`b.p`, `rizz *p;` inside `gang Box`) was never readable as a
+           pointer VALUE at all, only as an lvalue ADDRESS (evaluate_
+           lvalue_address()'s own NODE_STRUCT_ACCESS case, above, used
+           for *writing* to the field). Once the static side correctly
+           stopped rejecting `poke_int(b.p, 42)` before this native call
+           ever reached runtime marshalling, ast_expr_to_stdrot_value()
+           (stdrot.c) started actually calling this function for it --
+           and falling through to "Invalid pointer expression" (returning
+           a bogus NULL address) let the native write through a null
+           pointer instead of erroring cleanly, let alone working.
+           evaluate_struct_member_address() resolves the field's storage
+           location within its enclosing struct; the uintptr_t stored
+           there (not the field's own address) is the pointer VALUE this
+           function's contract promises. */
+        if (get_expression_pointer_level(node) <= 0)
+        {
+            yyerror("Expression is not a pointer");
+            return (uintptr_t)0;
+        }
+        void *addr = evaluate_struct_member_address(node);
+        return addr ? *(uintptr_t *)addr : (uintptr_t)0;
+    }
     default:
         break;
     }
@@ -4669,8 +4697,30 @@ void bruh()
     LONGJMP();
 }
 
-ASTNode *create_default_node(VarType var_type)
+ASTNode *create_default_node(VarType var_type, int pointer_level)
 {
+    /* Round-21 review, finding #1 -- a declaration with no initializer
+       to infer a pointer_level mismatch from (`declarator EQUALS
+       expression` isn't in play here) needs pointer_level itself to
+       decide what "no value to default to" even means: `skibidi x;`
+       (VAR_VOID, pointer_level 0) is genuinely invalid -- void isn't a
+       storable type -- but `skibidi *p;` (VAR_VOID, pointer_level 1) is
+       `void *`, a real pointer type, and treating it identically was
+       exactly the (VAR_VOID meaning both "no value" and "void*'s base
+       type") confusion this round's review is about. This codebase has
+       no general uninitialized-pointer-default policy for ANY base type
+       today, though -- `rizz *p;` alone already fails semantic analysis
+       ("Type mismatch ... expected a pointer (level 1), got pointer
+       level 0"), because create_int_node(0)'s own pointer_level is 0,
+       mismatching the declared one. Rather than inventing new "null
+       pointer default" semantics that don't exist anywhere else in the
+       language, a pointer-typed default (any base type, VAR_VOID
+       included) falls through to that exact same numeric-zero node,
+       so `skibidi *p;` fails the identical, already-established way
+       `rizz *p;` does -- not a parse-time crash unique to void. */
+    if (pointer_level > 0)
+        return create_int_node(0);
+
     switch (var_type)
     {
     case VAR_INT:
@@ -4693,14 +4743,12 @@ ASTNode *create_default_node(VarType var_type)
     case VAR_ENUM:
         return create_int_node(0);
     case VAR_VOID:
-        /* `skibidi x;` (no initializer) -- reached here (parse time,
-           before semantic_visit_declaration()'s own VAR_VOID check,
-           ast.c/semantic_analyzer.c, ever runs) precisely because
-           `skibidi` maps to VAR_VOID now, the same as any other type
-           keyword reaching this function for a declaration with no
-           initializer to infer a value from. A named void variable was
-           never valid; this just names the rejection instead of falling
-           through the generic default case below. */
+        /* Reached only for pointer_level == 0 now (the pointer_level > 0
+           case -- `skibidi *p;` -- already returned above, alongside
+           every other pointer-typed default). `skibidi x;` (no
+           initializer, no pointer) is genuinely invalid -- a named
+           void variable was never valid; this just names the rejection
+           instead of falling through the generic default case below. */
         yyerror("Cannot declare a variable with type void");
         exit(1);
     default:

@@ -1,0 +1,28 @@
+🚽 Test case: round-21 review finding #2 -- native-call semantic checking
+🚽 (semantic_check_native_call()) runs on a call's arguments BEFORE the
+🚽 generic traversal visits a NODE_STRUCT_ACCESS argument and populates
+🚽 its node->pointer_level, but infer_expression_pointer_level() had no
+🚽 NODE_STRUCT_ACCESS case, falling back to that not-yet-populated field
+🚽 (always 0 at check time). `poke_int`'s first parameter is declared
+🚽 STDROT_PTR; `b.p` (a real `rizz *` field) was falsely rejected as
+🚽 "pointer level 0" even though it genuinely holds a pointer. Fixed with
+🚽 a static struct-definition pointer_level resolution mirroring the
+🚽 existing base-type one (infer_struct_def_static()). The runtime side
+🚽 had its own, separate gap once the static rejection stopped masking
+🚽 it: evaluate_expression_pointer() (ast.c) had no NODE_STRUCT_ACCESS
+🚽 case either, so a call that now correctly passed static checking
+🚽 crashed at runtime reading a NULL pointer instead of `b.p`'s real
+🚽 value. Confirmed via a temporary A/B test (git stash to the pre-fix
+🚽 commit) that this was previously rejected statically with "expected a
+🚽 pointer (level 1), got pointer level 0" before ever reaching runtime.
+gang Box {
+    rizz *p;
+};
+
+skibidi main {
+    rizz x = 5;
+    gang Box b = { &x };
+    poke_int(b.p, 42);
+    yappin("%d\n", x);
+    bussin 0;
+}

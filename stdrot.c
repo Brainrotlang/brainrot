@@ -1336,30 +1336,39 @@ static bool finalize_native_string_result(StdrotValue *result)
     if (result->type != STDROT_STRING)
         return false;
 
-    /* Round-20 review, finding #4 -- safe_strdup() (lib/mem.c) genuinely
-       can fail (OOM, or a pathologically large string exceeding
-       MAX_ALLOC_SIZE) and, until its own fix this round, that failure
-       meant a NULL-pointer memcpy destination -- a crash, not a
-       reportable error. Even with that fixed (safe_strdup() now returns
-       {NULL, 0} instead of crashing), returning `true` here regardless
-       would still be wrong: this function's whole contract is "the
-       result now owns a valid independent copy," and claiming that on
-       failure would hand the caller a dangling/empty String tagged as
-       successfully owned. Degrading result->type to STDROT_NONE on
-       failure -- rather than inventing a separate failure signal -- is
-       deliberate: stdrot_type_to_vartype(STDROT_NONE) already maps to
-       VAR_VOID, so every value-consuming context this PR has spent
-       several rounds making reject VAR_VOID (require_value_expression(),
-       semantic_analyzer.c; the scalar evaluators' own runtime checks,
-       ast.c) already correctly rejects this result too, with no new
-       machinery needed. */
+    /* Round-20 review, finding #4, corrected by round-21 finding #4 --
+       safe_strdup() (lib/mem.c) genuinely can fail (OOM, or a
+       pathologically large string exceeding MAX_ALLOC_SIZE), and until
+       its own round-20 fix that failure meant a NULL-pointer memcpy
+       destination. The round-20 fix for THIS function's own failure
+       path was still wrong, though: it degraded result->type to
+       STDROT_NONE, reasoning that every VAR_VOID-rejecting context
+       would then correctly reject the result -- but that retags a
+       native call that genuinely, successfully returned a STDROT_STRING
+       (enforce_return_type() already validated it, just above the call
+       site below) as if it had returned nothing at all. The descriptor
+       said STRING; the native returned STRING; only the ADAPTER's own
+       copy failed -- that is not a different, valid return value, it is
+       this call failing to execute, the same severity class as every
+       other stdrot.c ABI enforcement failure (enforce_return_type()
+       itself, enforce_arg_type(), validate_native_registry()), all of
+       which report via stderr and exit(1) rather than inventing a
+       degraded-but-valid result. Every caller of this function runs it
+       BEFORE popping its own pending_native_call_stack frame (see the
+       general call path's own comment on that ordering, and identity_
+       arg's use just above enforce_return_type()) specifically so an
+       exit() from anywhere in this sequence still leaves that frame
+       reachable for the atexit handler to free -- this failure path
+       relies on that same invariant, not a frame release of its own. */
     String copy = safe_strdup(&result->val.str);
     if (!copy.data)
     {
-        yyerror("Out of memory materializing native string return value");
-        result->type = STDROT_NONE;
-        result->val.str = (String){.data = NULL, .len = 0};
-        return false;
+        fprintf(stderr, "stdrot: out of memory materializing a native's "
+                        "STDROT_STRING return value -- the native itself "
+                        "executed and returned a valid string, but this "
+                        "adapter's own required copy of it could not be "
+                        "allocated\n");
+        exit(1);
     }
     result->val.str = copy;
     return true;

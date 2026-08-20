@@ -18,6 +18,14 @@ extern Scope *current_scope;
 static VarType infer_expression_abi_type(ASTNode *expr,
                                          SemanticAnalyzer *analyzer);
 
+/* Forward declaration: infer_expression_pointer_level()'s own
+   NODE_STRUCT_ACCESS case (round-21 review, finding #2) needs this --
+   defined below both (it recurses on a struct-access chain's own
+   object, the same shape infer_expression_type()'s own NODE_STRUCT_
+   ACCESS case already resolves this way). */
+static StructDef *infer_struct_def_static(ASTNode *expr,
+                                          SemanticAnalyzer *analyzer);
+
 /* Create a new semantic analyzer */
 SemanticAnalyzer *semantic_analyzer_new(void)
 {
@@ -436,6 +444,48 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
         default:
             return 0;
         }
+    case NODE_STRUCT_ACCESS:
+    {
+        /* Round-21 review, finding #2 -- mirrors infer_expression_type()'s
+           own NODE_STRUCT_ACCESS case (below) exactly, for the identical
+           reason: semantic_check_native_call() (called from NODE_FUNC_
+           CALL's own case in semantic_analyze_with_scope_tracking(),
+           BEFORE that switch's argument-list loop visits a struct-access
+           argument) needs this expression's pointer_level before the
+           visitor that would normally populate node->pointer_level
+           (this function's own `default:` fallback, just below) has
+           ever run. Without this case, EVERY struct-access argument's
+           static pointer_level was 0, unconditionally, regardless of
+           the field's actual declared pointer_level -- silently
+           disabling STDROT_PTR argument-type checking for any native
+           call passing one (false rejection of a genuinely PTR-typed
+           field against a PTR parameter, since the level 0 vs 1
+           mismatch alone was enough to reject it) and, worse, false
+           ACCEPTANCE of a non-pointer field mistakenly checked against
+           a scalar parameter as if it were pointer-free, only for the
+           runtime ABI to discover the field is actually a pointer once
+           the argument is really marshalled (ast_expr_to_stdrot_value()
+           unconditionally checks get_expression_pointer_level() > 0
+           first). resolve_struct_access() only works once runtime
+           Variable state exists (semantic_analyze()'s own "Phase 1"/
+           "Phase 2" comment) -- falls back to infer_struct_def_static()
+           (below), which resolves purely from the global struct-
+           definition registry and the analyzer's own symbol table, the
+           same static path infer_expression_type() already uses. */
+        StructDef *def = NULL;
+        void *base = NULL;
+        StructField *fld = NULL;
+        if (resolve_struct_access(node, &def, &base, &fld, false))
+            return fld->pointer_level;
+
+        StructDef *static_def =
+            infer_struct_def_static(node->data.struct_access.object, analyzer);
+        if (!static_def)
+            return 0;
+        StructField *f =
+            find_struct_field(static_def, node->data.struct_access.member_name);
+        return f ? f->pointer_level : 0;
+    }
     default:
         return node->pointer_level;
     }
@@ -835,7 +885,20 @@ static bool require_value_expression(SemanticAnalyzer *analyzer, ASTNode *expr,
 {
     if (!expr)
         return true;
-    if (infer_expression_type(expr, analyzer) != VAR_VOID)
+    /* Round-21 review, finding #1 -- a type is (base VarType, pointer_
+       level), and that composite is what determines whether an
+       expression genuinely produces no value, not the base type alone.
+       (VAR_VOID, 0) is void -- no value, ever. (VAR_VOID, 1) is `void *`
+       -- a perfectly real pointer value (e.g. test_ptr_source(), a
+       STDROT_PTR-returning native, statically typed as VAR_VOID with
+       pointer_level 1 by marshal_native_return_value()'s own STDROT_PTR
+       branch, ast.c). Checking base type alone rejected `skibidi *p =
+       test_ptr_source(); edgy (p) { ... }` -- a coherent, valid program
+       under the very (base, pointer_level) model check_type_
+       compatibility_ex() and semantic_visit_declaration() already use --
+       as if `p` held no value at all. */
+    if (infer_expression_type(expr, analyzer) != VAR_VOID ||
+        infer_expression_pointer_level(expr, analyzer) > 0)
         return true;
 
     char error_msg[MAX_BUFFER_LEN];
@@ -1429,10 +1492,34 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
                                          actual_pointer_level))
         {
             char error_msg[MAX_BUFFER_LEN];
-            snprintf(error_msg, sizeof(error_msg),
-                     "'%s' argument %d: expected %s, got %s", func_name.data,
-                     i + 1, vartype_to_string(expected),
-                     vartype_to_string(actual));
+            /* Round-21 review, finding #2 -- when the base VarType
+               strings are identical (e.g. a pointer-typed struct field
+               like `rizz *p;` reports the same base VAR_INT a plain
+               `rizz` parameter does), the mismatch is entirely in
+               pointer_level, and the plain "expected %s, got %s" form
+               below prints the nonsensical "expected int, got int" --
+               correct about THERE being a mismatch (check_type_
+               compatibility_ex() above already used actual_pointer_level
+               to find it), useless about WHAT it actually is. Reported
+               explicitly whenever either side is a pointer, matching the
+               pointer-specific mismatch messages elsewhere in this
+               file. */
+            if (param->pointer_level > 0 || actual_pointer_level > 0)
+            {
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: expected %s (pointer level %d), "
+                         "got %s (pointer level %d)",
+                         func_name.data, i + 1, vartype_to_string(expected),
+                         param->pointer_level, vartype_to_string(actual),
+                         actual_pointer_level);
+            }
+            else
+            {
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: expected %s, got %s",
+                         func_name.data, i + 1, vartype_to_string(expected),
+                         vartype_to_string(actual));
+            }
             add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
                                STRING_LITERAL(error_msg), line);
         }

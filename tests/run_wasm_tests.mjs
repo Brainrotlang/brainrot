@@ -32,10 +32,11 @@
 //     registry count, layout, startup registry iteration all change too),
 //     so a green test-mode run does not substitute for this one.
 //
-// Two fixtures (WASM_EXPECTED_OVERRIDES below) get a wasm-specific expected
-// value instead of native's — see the comment next to it for why. They are
-// still run and still asserted on, just against a different, equally exact
-// string, so a regression in either one still fails this harness.
+// A handful of fixtures (WASM_EXPECTED_OVERRIDES below) get a wasm-specific
+// expected value instead of native's — see the comment next to it for why.
+// They are still run and still asserted on, just against a different,
+// equally exact string, so a regression in either one still fails this
+// harness.
 //
 // Usage: node tests/run_wasm_tests.mjs [test|production]
 //   (run from the repo root, after `make wasm-test` and/or `make wasm`)
@@ -128,6 +129,7 @@ const WASM_EXPECTED_OVERRIDES = {
   giga_array: "1\n2\n3\n12",
   native_sizeof_ptr_result: "4",
   native_identity_abi_type_char_array: "8",
+  native_void_pointer_struct_field: "8",
 };
 
 // Fixtures that call a tests/stdrot/*.c native (poke_int, peek_int,
@@ -179,6 +181,9 @@ const WASM_PRODUCTION_SKIP = new Set([
   "native_identity_abi_type_char_array",
   "native_sizeof_ptr_result",
   "native_zero_arg_string_ownership",
+  "native_void_pointer_from_native",
+  "native_struct_ptr_field_arg",
+  "native_void_pointer_parameter",
 ]);
 
 // Runs one program in a fresh module instance — the interpreter has global

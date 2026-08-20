@@ -227,6 +227,32 @@ struct_field_list
 struct_field
     : type declarator SEMICOLON
         {
+            /* Round-21 review, finding #3 -- a by-value (pointer_level
+               == 0) VAR_VOID field (`skibidi hole;` inside a struct) is
+               not a real type: get_type_size_for_descriptor() (ast.c)
+               returns 0 for it, and get_struct_field_size()'s own
+               defensive "an unexpectedly zero-sized field still needs
+               SOME layout size" fallback (there to protect against a
+               genuinely-should-have-been-resolved nested struct lookup
+               failing) would otherwise silently hand it sizeof(int) of
+               storage for a type that was never valid to declare at
+               all. A pointer field (`skibidi *p;`, void*) is a real,
+               differently-sized type (sizeof(uintptr_t), already
+               handled by get_struct_field_size()'s own pointer_level
+               check) and is NOT rejected here. Uses the same delayed-
+               error mechanism (struct_def_had_error) as the "Unknown
+               struct/union type"/"Unknown enum type" checks elsewhere
+               in this file, not YYABORT -- see struct_field's sibling
+               alternative's own comment for why. */
+            if ($1 == VAR_VOID && $2.pointer_level == 0)
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg),
+                        "Struct/union field '%s' cannot have type void",
+                        $2.name.data);
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
             $$ = create_parameter_ex($2.name, $1, $2.pointer_level, NULL,
                                      (TypeModifiers){0});
             SAFE_FREE($2.name);
@@ -404,11 +430,36 @@ params
 param_list
     : optional_modifiers type declarator
         {
+            /* Round-21 review, finding #3 -- a named by-value (pointer_
+               level == 0) void parameter is nonsense (an empty params
+               list, already its own grammar production, is how "no
+               parameters" is spelled); a void* parameter (pointer_level
+               > 0) is a real, ordinary pointer type and is NOT rejected
+               here. */
+            if ($2 == VAR_VOID && $3.pointer_level == 0)
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg),
+                        "Parameter '%s' cannot have type void", $3.name.data);
+                yyerror(msg);
+                exit(1);
+            }
             $$ = create_parameter_ex($3.name, $2, $3.pointer_level, NULL, get_current_modifiers());
             SAFE_FREE($3.name);
         }
     | param_list COMMA optional_modifiers type declarator
-        { $$ = create_parameter_ex($5.name, $4, $5.pointer_level, $1, get_current_modifiers()); SAFE_FREE($5.name); }
+        {
+            if ($4 == VAR_VOID && $5.pointer_level == 0)
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg),
+                        "Parameter '%s' cannot have type void", $5.name.data);
+                yyerror(msg);
+                exit(1);
+            }
+            $$ = create_parameter_ex($5.name, $4, $5.pointer_level, $1, get_current_modifiers());
+            SAFE_FREE($5.name);
+        }
     | optional_modifiers struct_or_union IDENTIFIER declarator
         {
             $$ = create_parameter_ex($4.name, VAR_STRUCT, $4.pointer_level, NULL, get_current_modifiers());
@@ -553,7 +604,7 @@ type:
 declaration:
     optional_modifiers type declarator
         {
-            $$ = create_declaration_node_ex($3.name, create_default_node($2), $3.pointer_level);
+            $$ = create_declaration_node_ex($3.name, create_default_node($2, $3.pointer_level), $3.pointer_level);
             SAFE_FREE($3.name);
         }
     | optional_modifiers type declarator EQUALS expression
@@ -678,8 +729,9 @@ declaration:
                 yyerror(msg);
                 struct_def_had_error = true;
             }
-            $$ = create_declaration_node_ex($4.name, create_default_node(VAR_ENUM),
-                                            $4.pointer_level);
+            $$ = create_declaration_node_ex(
+                $4.name, create_default_node(VAR_ENUM, $4.pointer_level),
+                $4.pointer_level);
             $$->var_type = VAR_ENUM;
             $$->enum_name = ARENA_STRDUP($3);
             SAFE_FREE($3);

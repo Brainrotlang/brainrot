@@ -156,7 +156,7 @@
     "native_ptr_param_return": "99\n99\n7\n7",
     "semantic_error_native_ptr_wrong_depth": "Error: 'poke_int' argument 1: expected a pointer (level 1), got pointer level 2 at line 9",
     "semantic_error_native_ptr_return_scalar_init": "Error: Type mismatch in initialization of 'x': expected int, got pointer at line 1",
-    "semantic_error_native_ptr_result_scalar_param": "Error: 'poke_int' argument 2: expected int, got pointer at line 7",
+    "semantic_error_native_ptr_result_scalar_param": "Error: 'poke_int' argument 2: expected int (pointer level 0), got pointer (pointer level 1) at line 7",
     "native_return_type_numeric_coercion": "42.000000",
     "native_return_type_abi_violation_incompatible": "Error: stdrot: native 'lying_bool' declared to return a fixed type but actually returned an incompatible StdrotType (7 instead of 5) -- this is a bug in the native binding's C implementation, not the Brainrot program",
     "native_return_type_abi_violation_ptr_mismatch": "Error: stdrot: native 'lying_ptr_return' declared to return a fixed type but actually returned an incompatible StdrotType (1 instead of 9) -- this is a bug in the native binding's C implementation, not the Brainrot program",
@@ -209,5 +209,13 @@
     "semantic_error_native_void_unary_operand": "Error: Type mismatch in initialization of 'x': expected int, got void at line 1\nError: Native call result (void) cannot be used in a unary operator operand context at line 11",
     "semantic_error_native_void_sizeof_operand": "Error: Native call result (void) cannot be used in a sizeof operand context at line 10",
     "semantic_error_native_void_switch_case": "Error: Native call result (void) cannot be used in a case value context at line 11",
-    "semantic_error_baka_nested_native_type": "Error: Native call result (void) cannot be used in a baka/yapping argument context at line 15\nError: 'yapping' argument 1: expected string, got int at line 15"
+    "semantic_error_baka_nested_native_type": "Error: Native call result (void) cannot be used in a baka/yapping argument context at line 15\nError: 'yapping' argument 1: expected string, got int at line 15",
+    "native_void_pointer_from_native": "1",
+    "semantic_error_void_pointer_uninitialized": "Error: Type mismatch in initialization of 'p': expected a pointer (level 1), got pointer level 0 at line 1",
+    "native_struct_ptr_field_arg": "42",
+    "semantic_error_native_struct_ptr_field_mismatch": "Error: 'ragequit' argument 1: expected int (pointer level 0), got int (pointer level 1) at line 20",
+    "semantic_error_void_parameter": "Error: Parameter 'x' cannot have type void at line 8",
+    "native_void_pointer_parameter": "42",
+    "semantic_error_void_struct_field": "Error: Struct/union field 'hole' cannot have type void at line 10\nParsing failed",
+    "native_void_pointer_struct_field": "12"
 }
