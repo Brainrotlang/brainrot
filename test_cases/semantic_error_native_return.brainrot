@@ -1,6 +1,12 @@
 🚽 Test case: a native call in a bussin (return) expression must be checked
 🚽 statically -- NODE_RETURN was previously unvisited by the semantic
-🚽 analyzer entirely.
+🚽 analyzer entirely. Round 22 finding #4 adds a second, independent
+🚽 layer this same fixture now also exercises: bet(2)'s own STATIC
+🚽 return type (bool) is checked against f()'s declared return type
+🚽 (int), reported before argument checking even gets to bet(2)'s own
+🚽 argument-type violation (2, an int, where bet's argument 1 wants
+🚽 bool) -- both were always true of this program, but only the second
+🚽 was ever caught before.
 rizz f() {
     bussin bet(2);
 }

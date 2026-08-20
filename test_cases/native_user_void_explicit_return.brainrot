@@ -1,0 +1,24 @@
+🚽 Test case: round-22 review finding #1's second regression -- a real
+🚽 `skibidi`-declared function's return type is VAR_VOID now (round 20),
+🚽 not NONE, but handle_return_statement()'s (ast.c) return-value switch
+🚽 still only had `case NONE:` ("void/skibidi return type: ignore
+🚽 expression value"), a comment left over from the pre-round-20 model
+🚽 where `skibidi` meant NONE. An explicit `bussin 0;` inside a genuine
+🚽 `skibidi` function reached that switch with type == VAR_VOID, missed
+🚽 every case, and fell into `default: yyerror("Unsupported return
+🚽 type"); exit(1);` -- a hard crash on an idiomatic, previously-working
+🚽 pattern. `main` itself never hit this (it explicitly sets NONE, not
+🚽 VAR_VOID, for "not inside any declared function"), which is why this
+🚽 regression needed a REAL `skibidi`-declared function to surface at
+🚽 all. Confirmed via a temporary A/B test (git stash to the pre-fix
+🚽 commit) that this exact program exited 1 with "Unsupported return
+🚽 type".
+skibidi noop() {
+    bussin 0;
+}
+
+skibidi main {
+    noop();
+    yapping("survived");
+    bussin 0;
+}

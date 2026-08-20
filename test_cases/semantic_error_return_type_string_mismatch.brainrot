@@ -1,0 +1,12 @@
+🚽 Test case: round-22 review finding #4, the plain-type-mismatch exhibit
+🚽 -- no native call involved at all, just an ordinary incompatible
+🚽 return expression (`rant`/string where `rizz`/int is declared) that
+🚽 the return-statement check now catches the same way a declaration
+🚽 initializer's own type mismatch already would.
+rizz f() {
+    bussin "string";
+}
+
+skibidi main {
+    bussin 0;
+}

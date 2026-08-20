@@ -184,6 +184,11 @@ const WASM_PRODUCTION_SKIP = new Set([
   "native_void_pointer_from_native",
   "native_struct_ptr_field_arg",
   "native_void_pointer_parameter",
+  "native_user_pointer_return",
+  "native_pointer_array_element_arg",
+  "semantic_error_void_pointer_dereference_write",
+  "semantic_error_void_pointer_dereference_read",
+  "native_void_double_pointer_dereference",
 ]);
 
 // Runs one program in a fresh module instance — the interpreter has global

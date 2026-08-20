@@ -1,0 +1,13 @@
+🚽 Test case: round-22 review finding #4, the pointer-level exhibit --
+🚽 `rizz *f()` declares a pointer return (level 1); `bussin 42;` returns
+🚽 a plain int (level 0). Checked as its own condition, before the base-
+🚽 type compatibility check, matching how semantic_visit_declaration()'s
+🚽 own initializer check already orders pointer-level and base-type
+🚽 checking.
+rizz *f() {
+    bussin 42;
+}
+
+skibidi main {
+    bussin 0;
+}

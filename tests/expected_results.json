@@ -92,7 +92,7 @@
     "semantic_error_native_array_index": "Error: 'bet' argument 1: expected bool, got int at line 6\nError: 'bet' argument 1: expected bool, got int at line 5",
     "semantic_error_native_sizeof": "Error: 'bet' argument 1: expected bool, got int at line 4",
     "semantic_error_native_braced_init": "Error: 'bet' argument 1: expected bool, got int at line 5",
-    "semantic_error_native_return": "Error: 'bet' argument 1: expected bool, got int at line 5",
+    "semantic_error_native_return": "Error: Return type mismatch in 'f': expected int, got bool at line 1\nError: 'bet' argument 1: expected bool, got int at line 11",
     "semantic_error_native_do_while": "Error: 'bet' argument 1: expected bool, got int at line 6",
     "semantic_error_native_switch": "Error: 'bet' argument 1: expected bool, got int at line 4",
     "semantic_error_native_assignment_nested_call": "Error: 'bet' argument 1: expected bool, got int at line 10",
@@ -217,5 +217,16 @@
     "semantic_error_void_parameter": "Error: Parameter 'x' cannot have type void at line 8",
     "native_void_pointer_parameter": "42",
     "semantic_error_void_struct_field": "Error: Struct/union field 'hole' cannot have type void at line 10\nParsing failed",
-    "native_void_pointer_struct_field": "12"
+    "native_void_pointer_struct_field": "12",
+    "native_user_pointer_return": "alive",
+    "native_user_float_pointer_return": "3.5",
+    "native_user_void_explicit_return": "survived",
+    "native_pointer_array_element_arg": "42",
+    "semantic_error_native_pointer_array_element_mismatch": "Error: 'ragequit' argument 1: expected int (pointer level 0), got int (pointer level 1) at line 12",
+    "semantic_error_void_pointer_dereference_write": "Error: Cannot dereference a void pointer -- void has no pointee type at line 18",
+    "semantic_error_void_pointer_dereference_read": "Error: Type mismatch in initialization of 'x': expected int, got void at line 1\nError: Cannot dereference a void pointer -- void has no pointee type at line 10",
+    "native_void_double_pointer_dereference": "alive",
+    "semantic_error_return_type_void_expression": "Error: Return type mismatch in 'terrible': expected int, got void at line 1",
+    "semantic_error_return_type_string_mismatch": "Error: Return type mismatch in 'f': expected int, got string at line 1",
+    "semantic_error_return_type_pointer_mismatch": "Error: Return type mismatch in 'f': expected a pointer (level 1), got pointer level 0 at line 1"
 }

@@ -382,6 +382,25 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
     }
     case NODE_ARRAY_ACCESS:
     {
+        /* Round-22 review, finding #2 -- mirrors NODE_IDENTIFIER's own
+           case just above (find_symbol() first, get_variable() as a
+           fallback for whenever runtime Variable state genuinely is
+           available), for the identical reason: semantic_check_native_
+           call() (NODE_FUNC_CALL's own case, below) runs BEFORE the
+           argument-list loop visits an array-access argument, so
+           get_variable() alone -- returning NULL during that single
+           static pass, since no runtime Variable exists yet (semantic_
+           analyze()'s own "Phase 1"/"Phase 2" comment) -- fell through
+           to node->pointer_level, unpopulated at that point. A pointer
+           array (`rizz *ptrs[4];`) element was falsely rejected against
+           a STDROT_PTR parameter (pointer_level read as 0) and falsely
+           *accepted* against a scalar one (also read as 0, hiding the
+           mismatch until runtime ABI enforcement caught it) -- the
+           identical bug NODE_STRUCT_ACCESS had (round 21, finding #2),
+           just for arrays instead of struct fields. */
+        SymbolEntry *symbol = find_symbol(analyzer, node->data.array.name);
+        if (symbol)
+            return symbol->pointer_level;
         Variable *var = get_variable(node->data.array.name);
         return var ? var->pointer_level : node->pointer_level;
     }
@@ -1775,11 +1794,35 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node)
         node->data.op.left->data.unary.op == OP_DEREFERENCE)
     {
         ASTNode *operand = node->data.op.left->data.unary.operand;
-        if (infer_expression_pointer_level(operand, analyzer) <= 0)
+        int operand_pointer_level =
+            infer_expression_pointer_level(operand, analyzer);
+        if (operand_pointer_level <= 0)
         {
             add_semantic_error(
                 analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
                 STRING_LITERAL("Cannot dereference a non-pointer expression"),
+                node->line_number > 0 ? node->line_number : 1);
+            return;
+        }
+        /* Round-22 review, finding #3 -- same check as the general
+           NODE_UNARY_OPERATION case (above in this file), needed
+           independently here because an assignment's dereference LHS
+           (`*p = 42;`) is deliberately NOT walked as a whole unary node
+           by semantic_analyze_with_scope_tracking()'s own NODE_
+           ASSIGNMENT case (only `operand` is visited, to avoid this
+           exact pointer-ness check running twice) -- meaning THIS is
+           the only place that validates a dereference LHS's pointee
+           type at all. A `void *` LHS (operand_pointer_level == 1, base
+           VAR_VOID) has no pointee representation to write through; a
+           `void **` LHS (operand_pointer_level > 1) dereferences fine,
+           down to a `void *` value. */
+        if (operand_pointer_level == 1 &&
+            infer_expression_type(operand, analyzer) == VAR_VOID)
+        {
+            add_semantic_error(
+                analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                STRING_LITERAL("Cannot dereference a void pointer -- void "
+                               "has no pointee type"),
                 node->line_number > 0 ? node->line_number : 1);
             return;
         }
@@ -2417,13 +2460,39 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         }
         else if (node->data.unary.op == OP_DEREFERENCE)
         {
-            if (infer_expression_pointer_level(node->data.unary.operand,
-                                               analyzer) <= 0)
+            int operand_pointer_level = infer_expression_pointer_level(
+                node->data.unary.operand, analyzer);
+            if (operand_pointer_level <= 0)
             {
                 add_semantic_error(
                     analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
                     STRING_LITERAL(
                         "Cannot dereference a non-pointer expression"),
+                    node->line_number > 0 ? node->line_number : 1);
+            }
+            /* Round-22 review, finding #3 -- `void *` is a real value
+               (round 21), but that doesn't make `*(void *)` valid: a
+               pointer needs a pointee TYPE to know what representation
+               and size to read, and VAR_VOID has none. The invalidity
+               is specifically that dereferencing would PRODUCE
+               (VAR_VOID, 0) -- bare void, no value, ever (see VAR_VOID's
+               own comment, ast.h) -- not that the operand's base happens
+               to be VAR_VOID at all: `void **q` dereferences fine, to
+               `void *` (VAR_VOID, 1), a perfectly good pointer value one
+               level down. Checked as its own case (not folded into the
+               `<= 0` rejection above) because a `void **` operand
+               legitimately has pointer_level 2 > 0 and must NOT be
+               rejected by that check -- only the specific case where
+               this dereference's own result would land at pointer_level
+               0 with a VAR_VOID base. */
+            else if (infer_expression_type(node->data.unary.operand,
+                                           analyzer) == VAR_VOID &&
+                     operand_pointer_level == 1)
+            {
+                add_semantic_error(
+                    analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                    STRING_LITERAL("Cannot dereference a void pointer -- "
+                                   "void has no pointee type"),
                     node->line_number > 0 ? node->line_number : 1);
             }
         }
@@ -2631,6 +2700,75 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         if (node->data.op.left)
         {
             semantic_analyze_with_scope_tracking(analyzer, node->data.op.left);
+
+            /* Round-22 review, finding #4 -- a return expression was
+               traversed (so a nested native call inside it still got
+               its own signature checked), but never compared against
+               the enclosing function's declared (return_type,
+               return_pointer_level) at all. `rizz terrible() { bussin
+               yapping("oops"); }` -- yapping() statically resolves to
+               VAR_VOID -- passed semantic analysis outright; only
+               ast.c's handle_return_statement() (at actual call time)
+               would eventually reject it. Skipped for VAR_STRUCT: that
+               return shape has its own dedicated struct-name-aware
+               check already (handle_return_statement(), ast.c) that
+               this VarType-only comparison can't replicate (VAR_STRUCT
+               == VAR_STRUCT alone says nothing about WHICH struct).
+               Skipped for a genuinely void-declared function
+               (VAR_VOID, pointer_level 0): `bussin <anything>;` inside
+               one is deliberately accepted and its value ignored
+               (handle_return_statement()'s own VAR_VOID case) -- the
+               same convention this codebase already uses for `bussin
+               0;` ending a `skibidi` function, not something this new
+               check should start rejecting. `skibidi *` (a void-
+               pointer-declared function) is NOT skipped: that's a real
+               pointer type with a real compatibility rule, just like
+               any other pointer return. */
+            Function *current_func =
+                get_function(analyzer->current_function_name);
+            if (current_func && current_func->return_type != VAR_STRUCT &&
+                !(current_func->return_type == VAR_VOID &&
+                  current_func->return_pointer_level == 0))
+            {
+                VarType declared_type = current_func->return_type;
+                int declared_pointer_level = current_func->return_pointer_level;
+                VarType actual_type =
+                    infer_expression_type(node->data.op.left, analyzer);
+                int actual_pointer_level = infer_expression_pointer_level(
+                    node->data.op.left, analyzer);
+
+                if (declared_pointer_level > 0 &&
+                    declared_pointer_level != actual_pointer_level)
+                {
+                    char error_msg[MAX_BUFFER_LEN];
+                    snprintf(error_msg, sizeof(error_msg),
+                             "Return type mismatch in '%s': expected a "
+                             "pointer (level %d), got pointer level %d",
+                             current_func->name.data, declared_pointer_level,
+                             actual_pointer_level);
+                    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                       STRING_LITERAL(error_msg),
+                                       node->line_number > 0 ? node->line_number
+                                                             : 1);
+                }
+                else if (declared_type != NONE && actual_type != NONE &&
+                         !check_type_compatibility_ex(
+                             declared_type, declared_pointer_level, actual_type,
+                             actual_pointer_level))
+                {
+                    char error_msg[MAX_BUFFER_LEN];
+                    snprintf(error_msg, sizeof(error_msg),
+                             "Return type mismatch in '%s': expected %s, "
+                             "got %s",
+                             current_func->name.data,
+                             vartype_to_string(declared_type),
+                             vartype_to_string(actual_type));
+                    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                       STRING_LITERAL(error_msg),
+                                       node->line_number > 0 ? node->line_number
+                                                             : 1);
+                }
+            }
         }
         break;
     }

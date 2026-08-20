@@ -1,0 +1,19 @@
+🚽 Test case: round-22 review finding #1, the non-int-base exhibit --
+🚽 the bug wasn't specific to `skibidi *`: ANY user-defined function
+🚽 returning a pointer to a non-int base type (`chad *`, `yap *`,
+🚽 `cap *`, `smol *`) fell into that base type's ordinary SCALAR case in
+🚽 handle_function_call() (VAR_FLOAT here), reinterpreting the raw
+🚽 address bit pattern as if it were a float value stored directly in
+🚽 the return box. Confirmed via a temporary A/B test (git stash to the
+🚽 pre-fix commit) that this crashed with an ASan SEGV inside
+🚽 evaluate_expression_float() reading through the mis-typed box.
+chad *pass_float_ptr(chad *p) {
+    bussin p;
+}
+
+skibidi main {
+    chad y = 3.5;
+    chad *q = pass_float_ptr(&y);
+    yappin("%.1f\n", *q);
+    bussin 0;
+}

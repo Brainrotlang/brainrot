@@ -1,0 +1,26 @@
+🚽 Test case: round-22 review finding #1 -- handle_function_call() (ast.c)
+🚽 boxed a return value by switching on its base VarType FIRST, with
+🚽 pointer-boxing special-cased only inside the VAR_INT/VAR_ENUM cases.
+🚽 A user-defined function returning `skibidi *` (any base type at all,
+🚽 pointer_level > 0) fell into VAR_VOID's own "structurally unreachable"
+🚽 case instead, returning NULL despite genuinely having a value --
+🚽 `identity_ptr(p)` handing its caller a null pointer regardless of
+🚽 what `p` actually pointed at. Fixed by checking pointer_level BEFORE
+🚽 the base-type switch, dominant over it, matching how the native-call
+🚽 marshaller (ast_expr_to_stdrot_value(), stdrot.c) already treats
+🚽 pointer-ness. Confirmed via a temporary A/B test (git stash to the
+🚽 pre-fix commit) that `q` silently ended up null.
+skibidi *identity_ptr(skibidi *p) {
+    bussin p;
+}
+
+skibidi main {
+    skibidi *p = test_ptr_source();
+    skibidi *q = identity_ptr(p);
+
+    edgy (q != 0) {
+        yapping("alive");
+    }
+
+    bussin 0;
+}

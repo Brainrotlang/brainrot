@@ -1,0 +1,16 @@
+🚽 Test case: round-22 review finding #4 -- a `bussin` (return)
+🚽 expression was recursively visited (so a nested native call inside it
+🚽 still got its own signature checked), but never compared against the
+🚽 enclosing function's declared (return_type, return_pointer_level) at
+🚽 all. `yapping(...)` statically resolves to VAR_VOID; `terrible()`
+🚽 declares `rizz` (int). Only ast.c's handle_return_statement(), at
+🚽 actual call time, would previously have caught this. Now rejected
+🚽 statically, via the same check_type_compatibility_ex() machinery
+🚽 every other declared-type comparison in this file already uses.
+rizz terrible() {
+    bussin yapping("oops");
+}
+
+skibidi main {
+    bussin 0;
+}

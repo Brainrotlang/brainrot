@@ -3769,15 +3769,34 @@ void *handle_function_call(ASTNode *node)
     void *return_value = NULL;
     if (current_return_value.has_value)
     {
+        /* Round-22 review, finding #1 -- a type here is (base VarType,
+           pointer_level), and pointer_level DOMINATES: any expression
+           with pointer_level > 0 marshals as a raw address regardless
+           of its base type, the same rule ast_expr_to_stdrot_value()
+           (stdrot.c) already enforces for the native-call boundary
+           (checked before ITS OWN type-specific switch, for the exact
+           same reason). Checking this before the switch below --
+           instead of duplicating a `pointer_level > 0` branch inside
+           only the VAR_INT/VAR_ENUM cases, as this function used to --
+           means a user-defined function returning `chad *`/`yap *`/
+           `cap *`/`smol *`/`skibidi *` (any base type at all, pointer_
+           level > 0) is boxed as an address here too: previously those
+           fell into their base type's ordinary SCALAR case (VAR_FLOAT,
+           VAR_CHAR, VAR_BOOL, VAR_SHORT, or -- for skibidi * specifically
+           -- VAR_VOID's own "structurally unreachable" case, which
+           returned NULL despite this call genuinely having a value),
+           reinterpreting a real address as if it were the scalar value
+           at that address, or discarding it outright. */
+        if (current_return_value.pointer_level > 0)
+        {
+            return_value = SAFE_MALLOC(uintptr_t);
+            *(uintptr_t *)return_value = current_return_value.value.pvalue;
+            return return_value;
+        }
+
         switch (current_return_value.type)
         {
         case VAR_INT:
-            if (current_return_value.pointer_level > 0)
-            {
-                return_value = SAFE_MALLOC(uintptr_t);
-                *(uintptr_t *)return_value = current_return_value.value.pvalue;
-                break;
-            }
             return_value = SAFE_MALLOC(int);
             *(int *)return_value = current_return_value.value.ivalue;
             break;
@@ -3830,30 +3849,33 @@ void *handle_function_call(ASTNode *node)
             free_pending_struct_return_value();
             break;
         case VAR_ENUM:
-            if (current_return_value.pointer_level > 0)
-            {
-                return_value = SAFE_MALLOC(uintptr_t);
-                *(uintptr_t *)return_value = current_return_value.value.pvalue;
-                break;
-            }
+            /* pointer_level > 0 already handled above, before this
+               switch -- an enum pointer return reaches this case only
+               with pointer_level == 0, an ordinary by-value enum. */
             return_value = SAFE_MALLOC(int);
             *(int *)return_value = current_return_value.value.ivalue;
             break;
         case VAR_PTR:
             /* marshal_native_return_value() always sets
                current_return_value.type to VAR_INT (not VAR_PTR) for a
-               STDROT_PTR result, reusing the pointer-boxing case above --
+               STDROT_PTR result, reusing the pointer-boxing check above --
                VAR_PTR is the semantic analyzer's own static type for the
                expression, a separate concern from this runtime value's
                representation (see that function's comment). Structurally
                unreachable here. */
         case VAR_VOID:
-            /* This whole switch is gated on current_return_value.has_value
-               above, and marshal_native_return_value() sets has_value to
-               false for a genuinely void (STDROT_NONE) result -- so
-               reaching here with type == VAR_VOID would mean has_value
-               was true for a call known to return nothing, a bug
-               elsewhere, not a case this function should paper over. */
+            /* pointer_level > 0 (`skibidi *`) already handled above,
+               before this switch -- reaching HERE with type == VAR_VOID
+               means pointer_level == 0, i.e. genuinely void, and this
+               whole switch is gated on current_return_value.has_value
+               above; marshal_native_return_value() sets has_value false
+               for a genuinely void (STDROT_NONE) native result, and
+               (once handle_return_statement() is fixed to match, see
+               its own VAR_VOID case) a Brainrot-defined void function
+               never sets has_value true either. Reaching here would
+               mean has_value was true for a call known to return
+               nothing -- a bug elsewhere, not a case this function
+               should paper over. */
         case NONE:
             return NULL;
         }
@@ -5456,6 +5478,17 @@ void handle_return_statement(ASTNode *expr)
                 current_return_value.value.ivalue =
                     evaluate_expression_int(expr);
                 break;
+            case VAR_VOID:
+                /* A real `skibidi`-declared function's return type is
+                   VAR_VOID now (round 20), not NONE -- NONE here is
+                   reached only for `bussin` outside any function (`main`
+                   itself has no declared return type, see the "Not
+                   inside any function" branch above). Both mean the
+                   same thing for this switch's purposes: ignore the
+                   expression's value, there is nowhere for it to go.
+                   (Reaching this case at all, rather than the
+                   pointer_level > 0 branch above, means pointer_level ==
+                   0 -- genuinely void, not `skibidi *`.) */
             case NONE:
                 /* void/skibidi return type: ignore expression value */
                 break;

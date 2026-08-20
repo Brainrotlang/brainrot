@@ -1,0 +1,12 @@
+🚽 Test case: round-22 review finding #3, the read-context sibling of
+🚽 semantic_error_void_pointer_dereference_write.brainrot -- `*p` used as
+🚽 a value (not an assignment LHS) goes through the general NODE_UNARY_
+🚽 OPERATION semantic case instead of semantic_visit_assignment(), the
+🚽 other of the two independent places this check was needed. Dereferencing
+🚽 would produce (VAR_VOID, 0) -- bare void, no representation to read --
+🚽 rejected before evaluate_expression_int() ever runs.
+skibidi main {
+    skibidi *p = test_ptr_source();
+    rizz x = *p;
+    bussin 0;
+}
