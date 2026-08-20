@@ -202,30 +202,3 @@ jobs:
           path: |
             brainrot.wasm
             brainrot.mjs
-
-  merge-warden:
-    name: Merge Warden
-    if: github.event_name == 'pull_request'
-    needs: [lint, test, wasm]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    permissions:
-      contents: read
-      issues: read
-      pull-requests: write
-
-    steps:
-      # Important: checkout the trusted base commit, not PR code.
-      # Merge Warden fetches the PR head itself as a read-only git ref.
-      - name: Checkout base branch
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-
-      - name: Review PR
-        uses: leo-aa88/merge-warden@809ebdbf6e81e0bf907cb6f2aa29c0b9a93cf8cd
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          xai-api-key: ${{ secrets.XAI_API_KEY }}
-          pr-number: ${{ github.event.pull_request.number }}
