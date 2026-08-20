@@ -1,0 +1,58 @@
+name: Merge Warden
+
+on:
+  workflow_run:
+    workflows: ["Brainrot CI"]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  review:
+    name: Merge Warden
+
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: write
+
+    steps:
+      # workflow_run executes from the trusted default branch.
+      # Never checkout or execute the PR head here.
+      - name: Checkout trusted default branch
+        uses: actions/checkout@v7
+
+      - name: Resolve pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          pr_number="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/pulls" \
+              --jq '.[0].number // empty'
+          )"
+
+          if [ -z "$pr_number" ]; then
+            echo "::error::Could not resolve PR for ${HEAD_SHA}"
+            exit 1
+          fi
+
+          echo "number=${pr_number}" >> "$GITHUB_OUTPUT"
+
+      - name: Review PR
+        uses: leo-aa88/merge-warden@809ebdbf6e81e0bf907cb6f2aa29c0b9a93cf8cd
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          xai-api-key: ${{ secrets.XAI_API_KEY }}
+          pr-number: ${{ steps.pr.outputs.number }}
