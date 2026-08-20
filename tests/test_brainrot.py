@@ -134,5 +134,38 @@ def test_bad_registry_rejected_at_load(bad_lib, expected_message):
     )
 
 
+# Round-16 review finding #1: tests/old_abi_sim/fake_pre_v2_registry.so
+# (built by `make old-abi-sim`) simulates a libstdrot.so built before
+# STDROT_ABI_VERSION/stdrot_get_api_v2() existed -- it exports only the
+# OLD "stdrot_get_api" symbol, under the OLD {name, fn} layout. Proves
+# stdrot_load() (stdrot.c) detects the missing versioned symbol and fails
+# loudly instead of reinterpreting this .so's actual memory as the
+# current ABI shape.
+def test_old_abi_rejected_at_load():
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    trivial_path = os.path.abspath(
+        os.path.join(script_dir, "../test_cases/trivial_no_op.brainrot"))
+    old_abi_lib_path = os.path.abspath(
+        os.path.join(script_dir, "old_abi_sim", "fake_pre_v2_registry.so"))
+
+    assert os.path.exists(old_abi_lib_path), (
+        f"{old_abi_lib_path} not found -- run `make old-abi-sim` first")
+
+    env = dict(os.environ, STDROT_LIB_PATH=old_abi_lib_path)
+    result = subprocess.run([brainrot_path, trivial_path],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env)
+
+    assert result.returncode == 1, (
+        f"Loading a pre-ABI-versioning .so should abort with exit code "
+        f"1, got {result.returncode}\nStdout:\n{result.stdout}\n"
+        f"Stderr:\n{result.stderr}"
+    )
+    assert "stdrot_get_api_v2" in result.stderr, (
+        f"Expected stderr to name the missing versioned entrypoint\n"
+        f"Actual stderr:\n{result.stderr}"
+    )
+
+
 if __name__ == "__main__":
     pytest.main(["-v", os.path.abspath(__file__)])

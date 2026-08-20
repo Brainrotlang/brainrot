@@ -40,7 +40,7 @@ TEST_STDROT_LIB := tests/libstdrot.so
 # Deliberately malformed native registries (see tests/badnatives/ own file
 # comment): each .c file there registers exactly one StdrotEntry that
 # validate_native_registry() (stdrot.c) must reject at stdrot_load() time.
-# Built as one minimal .so per file -- registry.c (stdrot_get_api()) plus
+# Built as one minimal .so per file -- registry.c (stdrot_get_api_v2()) plus
 # that single malformed entry, no production natives -- since these tests
 # only care whether loading aborts before any Brainrot program runs.
 BADNATIVES_DIR := tests/badnatives
@@ -130,6 +130,22 @@ $(BADNATIVES_DIR)/%.so: $(BADNATIVES_DIR)/%.c $(STDROT_DIR)/registry.c
 badnatives: $(BADNATIVES_LIBS)
 	@echo "tests/badnatives/*.so (malformed registries) compiled."
 
+# Simulated pre-ABI-versioning libstdrot.so (see tests/old_abi_sim/ own file
+# comment): built standalone, with no dependency on stdrot_api.h or
+# registry.c, so it genuinely only exports the OLD "stdrot_get_api" symbol
+# under the OLD layout -- proving stdrot_load() (stdrot.c) detects the
+# missing stdrot_get_api_v2() and fails loudly instead of misreading this
+# .so's memory as the current ABI shape.
+OLD_ABI_SIM_DIR := tests/old_abi_sim
+OLD_ABI_SIM_LIB := $(OLD_ABI_SIM_DIR)/fake_pre_v2_registry.so
+
+$(OLD_ABI_SIM_LIB): $(OLD_ABI_SIM_DIR)/fake_pre_v2_registry.c
+	$(CC) $(SO_CFLAGS) -o $@ $<
+
+.PHONY: old-abi-sim
+old-abi-sim: $(OLD_ABI_SIM_LIB)
+	@echo "tests/old_abi_sim/fake_pre_v2_registry.so (simulated pre-ABI-versioning .so) compiled."
+
 # Main executable build
 $(TARGET): $(ALL_SRCS) $(STDROT_LIB)
 	$(CC) $(CFLAGS) -o $@ $(ALL_SRCS) $(LDFLAGS)
@@ -175,7 +191,7 @@ $(FLEX_OUTPUT): lang.l
 
 # Run tests
 .PHONY: test
-test: $(TARGET) $(TEST_STDROT_LIB) badnatives
+test: $(TARGET) $(TEST_STDROT_LIB) badnatives old-abi-sim
 	STDROT_LIB_PATH=$(CURDIR)/$(TEST_STDROT_LIB) $(PYTHON) -m pytest -v
 	@echo "Tests ran bussin', no cap."
 
@@ -186,6 +202,7 @@ clean:
 	rm -f $(WASM_TARGET) $(WASM_JS)
 	rm -f tests/brainrot-test.wasm tests/brainrot-test.mjs
 	rm -f $(BADNATIVES_LIBS)
+	rm -f $(OLD_ABI_SIM_LIB)
 	rm -f *.o
 	@echo "Blud cleaned up the mess like a true sigma coder."
 

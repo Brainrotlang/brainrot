@@ -143,6 +143,14 @@ jobs:
       - name: Build malformed-registry test libraries
         run: make badnatives
 
+      # tests/old_abi_sim/fake_pre_v2_registry.so simulates a libstdrot.so
+      # built before STDROT_ABI_VERSION/stdrot_get_api_v2() existed (see
+      # that directory's own file comment) -- proves stdrot_load() detects
+      # the missing versioned entrypoint and fails loudly instead of
+      # misreading the old .so's memory as the current ABI shape.
+      - name: Build simulated pre-ABI-versioning library
+        run: make old-abi-sim
+
       - name: Run Pytest
         run: |
           source .venv/bin/activate

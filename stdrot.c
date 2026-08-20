@@ -9,7 +9,7 @@
  *     the stdrot sources are compiled into libstdrot.so and dlopen'd at
  *     runtime.
  *     1. Dynamic loader (stdrot_load/unload) that opens libstdrot.so and
- *        discovers all functions via stdrot_get_api()
+ *        discovers all functions via stdrot_get_api_v2()
  *     2. Thin varargs stubs (yapping/yappin/baka) and per-type slorp/
  *        ragequit/chill stubs that dlsym their real implementation by name
  *        on first use
@@ -18,7 +18,7 @@
  *     the stdrot sources are compiled directly into the same binary —
  *     there is no .so and no dlopen surface at all (wasm has no dynamic
  *     loader worth using for a single-artifact build). stdrot_load() calls
- *     stdrot_get_api() directly, and ragequit/chill/slorp_* are provided
+ *     stdrot_get_api_v2() directly, and ragequit/chill/slorp_* are provided
  *     solely by their stdrot definitions — this file only keeps the
  *     yapping/yappin/baka varargs stubs, redirecting them straight to
  *     v_yapping/v_yappin/v_baka instead of looking them up by name.
@@ -102,8 +102,9 @@ double slorp_double(double var);
 #ifdef STDROT_STATIC
 /* Statically linked in from stdrot/yapping.c and stdrot/baka.c — called
  * directly below instead of going through dlsym-by-name.
- * stdrot_get_api() (statically linked from stdrot/registry.c) is already
- * declared by stdrot_api.h, included transitively via stdrot.h above. */
+ * stdrot_get_api_v2() (statically linked from stdrot/registry.c) is
+ * already declared by stdrot_api.h, included transitively via stdrot.h
+ * above. */
 extern void v_yapping(const char *fmt, va_list ap);
 extern void v_yappin(const char *fmt, va_list ap);
 extern void v_baka(const char *fmt, va_list ap);
@@ -391,8 +392,13 @@ static void validate_native_registry(void)
 void stdrot_load(void)
 {
     /* stdrot/registry.c is linked directly into this binary, so the
-     * function table is just a direct call away — no loader needed. */
-    StdrotAPI api = stdrot_get_api();
+     * function table is just a direct call away — no loader needed, and
+     * no dlsym-based version check either: this is a single statically
+     * linked binary, compiled from one copy of stdrot_api.h, so the ABI
+     * mismatch stdrot_get_api_v2()'s naming exists to catch (an old
+     * libstdrot.so loaded by a new host, see STDROT_ABI_VERSION's own
+     * comment) is structurally impossible here. */
+    StdrotAPI api = stdrot_get_api_v2();
     functions = api.functions;
     function_count = api.count;
     validate_native_registry();
@@ -451,14 +457,41 @@ void stdrot_load(void)
         exit(EXIT_FAILURE);
     }
 
-    /* Get the API entrypoint */
+    /* Get the API entrypoint -- by its versioned name (STDROT_ABI_VERSION,
+       stdrot_api.h), never the pre-v2 "stdrot_get_api". A libstdrot.so
+       built before this ABI existed (StdrotEntry == {name, fn}, no
+       STDROT_ANY at StdrotType index 0, registry section holding
+       StdrotEntry structs directly rather than pointers to them) simply
+       doesn't export this symbol -- dlsym() fails the lookup cleanly,
+       instead of finding an old stdrot_get_api() under the old name and
+       calling it as if its StdrotAPI were shaped like this version's.
+       That would silently reinterpret the old .so's actual memory (e.g.
+       an entry's own `name` field bytes) as this version's `functions`
+       array of StdrotEntry POINTERS -- exactly the class of ABI-version
+       confusion this rename exists to make structurally impossible to
+       reach, not just unlikely. */
     StdrotAPI (*get_api)(void);
-    *(void **)(&get_api) = dlsym(lib_handle, "stdrot_get_api");
+    *(void **)(&get_api) = dlsym(lib_handle, "stdrot_get_api_v2");
     if (!get_api)
     {
-        fprintf(stderr, "libstdrot.so missing stdrot_get_api(): %s\n",
-                dlerror());
+        fprintf(stderr,
+                "libstdrot.so is missing stdrot_get_api_v2() -- it was "
+                "built against an incompatible stdrot ABI (expected "
+                "STDROT_ABI_VERSION %d). Rebuild libstdrot.so from this "
+                "checkout (`make lib`) before running this binary.\n",
+                STDROT_ABI_VERSION);
         dlclose(lib_handle);
+        /* exit() below runs every registered atexit handler, including
+           stdrot_unload() (atexit(stdrot_unload), lang.y) -- which would
+           otherwise dlclose() this same, already-closed handle again
+           (its own guard is `if (lib_handle)`, which does nothing to
+           protect against a stale pointer this function itself already
+           passed to dlclose()). A pre-existing bug in this exact error
+           path, uncovered by tests/old_abi_sim's fixture -- confirmed
+           via valgrind (invalid reads inside glibc's own _dl_close,
+           deep in freed loader bookkeeping) before this fix, clean
+           after it. */
+        lib_handle = NULL;
         exit(EXIT_FAILURE);
     }
 
@@ -1341,29 +1374,57 @@ NativeResult execute_native_call(const String func_name, ArgumentList *args)
             enforce_arg_type(func_name, arg_count, &arg_values[arg_count],
                              &entry->params[arg_count]);
         }
-        else if (entry->promote_variadic_tail)
+        else
         {
-            /* Beyond entry->param_count -- a genuine C-style variadic
-               tail (e.g. yapping's format-string arguments,
-               STDROT_EXPORT_SIG_VARIADIC()). apply_variadic_promotion()'s
-               own comment has the full reasoning: this is where C's
-               default argument promotions belong, centralized once
-               instead of every variadic consumer re-deriving them (or,
-               as this ABI briefly did, silently NOT applying them after
-               fixed-parameter char handling was corrected to stop
-               narrowing -- yapping's own "%d" never accepted STDROT_CHAR
-               to begin with).
+            /* Beyond entry->param_count -- the unchecked tail, for both
+               a genuine C-style variadic native and a legacy/untyped
+               STDROT_EXPORT() export (see promote_variadic_tail's own
+               comment, stdrot_api.h, for why those are different
+               concepts -- but this specific check applies to both:
+               neither can do anything meaningful with an argument that
+               marshalled to "no value" at all).
 
-               Deliberately NOT entry->is_variadic -- that flag is also
-               true for a legacy STDROT_EXPORT() export (arity unchecked
-               because its real signature is unknown, not because it's
-               C-variadic; see promote_variadic_tail's own comment,
-               stdrot_api.h). Promoting those arguments too would
-               silently change an existing legacy binding's observed
+               semantic_check_native_call()'s is_unmarshallable_expr()
+               (semantic_analyzer.c) already rejects most unmarshallable
+               shapes statically (a struct identifier, a non-char
+               array), but one shape it structurally cannot see: an
+               argument that's itself a call to a native declared
+               STDROT_ANY (a legacy/untyped export -- infer_expression_
+               type()'s own NONE fallthrough for exactly this case)
+               whose real, only-known-at-runtime return happens to be
+               STDROT_NONE (e.g. a legacy void-returning export). Reject
+               it here, the first point it's actually knowable, the same
+               way enforce_arg_type() already rejects a fixed
+               parameter's argument that turns out not to satisfy its
+               declared type after all despite passing static
+               analysis. */
+            if (arg_values[arg_count].type == STDROT_NONE)
+            {
+                fprintf(stderr,
+                        "Error: stdrot: native '%s' argument %d: "
+                        "expression produced no value (STDROT_NONE) -- "
+                        "cannot be passed as a native argument\n",
+                        func_name.data, arg_count + 1);
+                exit(1);
+            }
+
+            /* apply_variadic_promotion()'s own comment has the full
+               reasoning for why this is gated on promote_variadic_tail,
+               not entry->is_variadic: this is where C's default
+               argument promotions belong, centralized once instead of
+               every variadic consumer re-deriving them (or, as this ABI
+               briefly did, silently NOT applying them after fixed-
+               parameter char handling was corrected to stop narrowing
+               -- yapping's own "%d" never accepted STDROT_CHAR to begin
+               with) -- but applying that promotion to a legacy export's
+               arguments too would silently change its observed
                StdrotValue.type without recompiling or touching that
-               binding's own source -- a real ABI break for any wrapper
+               binding's own source, a real ABI break for any wrapper
                that switches on args[i].type. */
-            apply_variadic_promotion(&arg_values[arg_count]);
+            if (entry->promote_variadic_tail)
+            {
+                apply_variadic_promotion(&arg_values[arg_count]);
+            }
         }
 
         arg_count++;

@@ -1,13 +1,19 @@
-🚽 Test case: round-15 review finding #3 -- the same union-aliasing hazard
-🚽 as the fixed-parameter case (semantic_error_native_array_fixed_scalar.
-🚽 brainrot) applies to a native's unchecked variadic tail too:
-🚽 "unchecked type" is not the same claim as "unchecked representation
-🚽 validity". yapping("%d", arr) previously reached ast_expr_to_stdrot_
-🚽 value() with no array-shape validation at all beyond param_count,
-🚽 reinterpreting arr's backing pointer as a plain int to hand to "%d".
-🚽 semantic_check_native_call() now validates is_unmarshallable_array_arg()
-🚽 for every argument beyond param_count when is_variadic is true, not
-🚽 just the fixed/checked prefix.
+🚽 Test case: round-15 review finding #3 (message updated for round-16
+🚽 finding #2/#3) -- the same union-aliasing hazard as the fixed-parameter
+🚽 case (semantic_error_native_array_fixed_scalar.brainrot) applies to a
+🚽 native's unchecked variadic tail too: "unchecked type" is not the same
+🚽 claim as "unchecked representation validity". yapping("%d", arr)
+🚽 previously reached ast_expr_to_stdrot_value() with no array-shape
+🚽 validation at all beyond param_count, reinterpreting arr's backing
+🚽 pointer as a plain int to hand to "%d". semantic_check_native_call() now
+🚽 validates is_unmarshallable_expr() -- the general "does this expression
+🚽 have any valid StdrotValue representation" question, of which the array
+🚽 hazard is one instance -- for every argument beyond param_count when
+🚽 is_variadic is true, not just the fixed/checked prefix. The error
+🚽 message is deliberately representation-oriented ("has no supported
+🚽 native ABI representation"), not "variadic argument", since this same
+🚽 check and message apply to a legacy/untyped export's arguments too (see
+🚽 native_legacy_void_variadic_tail_fail.brainrot for that half).
 skibidi main {
     rizz arr[2];
     yapping("%d", arr);

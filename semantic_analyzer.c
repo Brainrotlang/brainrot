@@ -1016,6 +1016,65 @@ static bool is_unmarshallable_array_arg(ASTNode *expr,
     return sym && sym->is_array && sym->type != VAR_CHAR;
 }
 
+/* True when `expr` has NO valid StdrotValue representation ast_expr_to_
+ * stdrot_value() (stdrot.c) can honestly construct for it -- generalizes
+ * is_unmarshallable_array_arg() from "one specific representation bug"
+ * (a non-char array's backing pointer read as a scalar) to the actual
+ * invariant: does a real StdrotValue exist for this expression at all.
+ * That function's own closed accepted-type comment (VAR_INT/SHORT/FLOAT/
+ * DOUBLE/BOOL/CHAR/STRING/ENUM) already states the rule; this is that
+ * same rule applied everywhere an expression needs to become a native
+ * argument, not just where STDROT_ANY happens to ask.
+ *
+ * A struct identifier is the clearest failure case: ast_expr_to_stdrot_
+ * value() has no VAR_STRUCT branch in its NODE_IDENTIFIER switch, so
+ * out->type survives at its initialized STDROT_NONE -- the native
+ * receives "no value" where source code plainly supplied one, and (for
+ * a variadic consumer with no fixed parameter to have rejected this
+ * argument earlier) nothing downstream would otherwise notice.
+ *
+ * A pointer-level expression is NOT flagged here, unlike STDROT_ANY's
+ * own additional pointer rejection (semantic_check_native_call()'s
+ * STDROT_ANY branch) -- a pointer marshals honestly as STDROT_PTR, a
+ * real representation, just one STDROT_ANY specifically refuses to
+ * accept for its own reasons (no scalar/string to dispatch on). Callers
+ * that need STDROT_ANY's stricter rule check pointer-level themselves,
+ * on top of this.
+ *
+ * Returns false (does not flag) when the expression's static type is
+ * NONE -- genuinely unknowable ahead of time, e.g. an argument that is
+ * itself a legacy STDROT_ANY-returning call whose real runtime type
+ * this analyzer cannot see. Failing open there matches every other
+ * static check in this analyzer; it is NOT a soundness gap, because
+ * execute_native_call() (stdrot.c) independently rejects a variadic-tail
+ * argument that marshals to STDROT_NONE at the runtime ABI boundary --
+ * the same reasoning enforce_arg_type() already applies to fixed
+ * parameters, now covering the case no static check could. */
+static bool is_unmarshallable_expr(ASTNode *expr, SemanticAnalyzer *analyzer)
+{
+    if (is_unmarshallable_array_arg(expr, analyzer))
+        return true;
+
+    if (infer_expression_pointer_level(expr, analyzer) > 0)
+        return false;
+
+    switch (infer_expression_type(expr, analyzer))
+    {
+    case VAR_INT:
+    case VAR_SHORT:
+    case VAR_FLOAT:
+    case VAR_DOUBLE:
+    case VAR_BOOL:
+    case VAR_CHAR:
+    case VAR_STRING:
+    case VAR_ENUM:
+    case NONE:
+        return false;
+    default:
+        return true;
+    }
+}
+
 /* Type-checks a native call's fixed/checked argument prefix against its
    registered StdrotEntry -- arity plus, for each checked parameter actually
    supplied, that the argument's inferred type is compatible. STDROT_ANY
@@ -1316,19 +1375,22 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
     /* `cur` now sits at the first argument beyond param_count -- the
        unchecked variadic tail (format-string arguments, or every
        argument to a legacy/untyped STDROT_EXPORT() export, which is
-       also is_variadic == true with param_count == 0). Its TYPE is
-       deliberately left unchecked -- the whole point of is_variadic is
-       that this pipeline doesn't know what type each tail argument
-       ought to be -- but "unchecked type" is not the same claim as
-       "unchecked representation validity". A non-char array identifier
-       is exactly as unmarshallable here as it is for a fixed parameter
-       (see is_unmarshallable_array_arg()'s own comment): ast_expr_to_
-       stdrot_value() would still read the array's backing pointer
-       through the same aliased union, tag it as an ordinary scalar
-       StdrotValue, and hand a variadic consumer (process_yapping_
-       format(), stdrot/yapping.c) an address to format as if it were a
-       number -- entry->is_variadic being true doesn't change what that
-       union actually contains. */
+       also is_variadic == true with param_count == 0, see promote_
+       variadic_tail's own comment for why those two are NOT the same
+       concept). Its TYPE is deliberately left unchecked -- the whole
+       point of is_variadic is that this pipeline doesn't know what type
+       each tail argument ought to be -- but "unchecked type" is not the
+       same claim as "unchecked representation validity": is_
+       unmarshallable_expr() (its own comment has the full reasoning)
+       still has to hold for every argument that reaches ast_expr_to_
+       stdrot_value(), fixed-parameter or not. Deliberately worded as
+       "has no supported native ABI representation", not "is a variadic
+       argument" or "cannot be passed to a variadic argument" -- this
+       same check, and this same message, applies whether entry is a
+       genuine C-style variadic native or a legacy/untyped export with
+       an unrelated reason for leaving its arity unchecked; calling both
+       "variadic" here would blur exactly the distinction promote_
+       variadic_tail exists to keep separate. */
     if (entry->is_variadic)
     {
         int tail_index = entry->param_count;
@@ -1337,13 +1399,15 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
             if (!cur->expr)
                 continue;
 
-            if (is_unmarshallable_array_arg(cur->expr, analyzer))
+            if (is_unmarshallable_expr(cur->expr, analyzer))
             {
                 char error_msg[MAX_BUFFER_LEN];
                 snprintf(error_msg, sizeof(error_msg),
-                         "'%s' argument %d: arrays cannot be passed to a "
-                         "variadic argument",
-                         func_name.data, tail_index + 1);
+                         "'%s' argument %d: %s has no supported native ABI "
+                         "representation",
+                         func_name.data, tail_index + 1,
+                         vartype_to_string(
+                             infer_expression_type(cur->expr, analyzer)));
                 add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
                                    STRING_LITERAL(error_msg), line);
             }

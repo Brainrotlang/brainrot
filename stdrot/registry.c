@@ -16,8 +16,14 @@
 extern StdrotEntry *__start_stdrot_exports;
 extern StdrotEntry *__stop_stdrot_exports;
 
-/* Entry point called by stdrot.c after dlopen() */
-StdrotAPI stdrot_get_api(void)
+/* Entry point called by stdrot.c after dlopen() -- named/numbered for
+ * STDROT_ABI_VERSION (stdrot_api.h): renaming this alongside a real ABI
+ * layout change means an old .so's stdrot_get_api() (the pre-v2 name)
+ * is simply absent from a new host's dlsym() lookup, rather than being
+ * called and returning a StdrotAPI populated from a completely
+ * different memory layout. See that macro's own comment for the full
+ * reasoning. */
+StdrotAPI stdrot_get_api_v2(void)
 {
     /* Every slot in the section is exactly sizeof(StdrotEntry *) --
        there's no variable-sized-struct alignment padding to worry about

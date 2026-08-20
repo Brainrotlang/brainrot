@@ -1,0 +1,19 @@
+🚽 Test case: round-16 review finding #2 -- a struct identifier
+🚽 (semantic_error_native_struct_variadic_tail.brainrot) is catchable
+🚽 statically: its type is known at semantic-analysis time. This one
+🚽 isn't -- legacy_void() is a legacy/untyped STDROT_EXPORT() export,
+🚽 statically typed STDROT_ANY (return type genuinely unknown ahead of
+🚽 time, per infer_expression_type()'s own NONE fallthrough for exactly
+🚽 this shape), so is_unmarshallable_expr() correctly does NOT flag it --
+🚽 there is nothing to flag without actually running it. Its REAL runtime
+🚽 return is STDROT_NONE (void), only knowable once execute_native_call()
+🚽 actually marshals it. yapping("%d", legacy_void()) must therefore be
+🚽 rejected at the runtime ABI boundary instead, the same way
+🚽 enforce_arg_type() already rejects a fixed parameter whose argument
+🚽 turns out not to satisfy its declared type despite passing static
+🚽 analysis -- "no value" is not itself a value a variadic consumer can
+🚽 format.
+skibidi main {
+    yapping("%d", legacy_void());
+    bussin 0;
+}

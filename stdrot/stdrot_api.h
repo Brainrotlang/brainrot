@@ -395,6 +395,33 @@ typedef struct
     int count;
 } StdrotAPI;
 
-StdrotAPI stdrot_get_api(void);
+/* ── ABI version boundary ────────────────────────────────────────────────── *
+ * This header is the public contract between libstdrot.so and the main
+ * binary -- both are built from it, but nothing forces them to be built
+ * from the SAME copy of it. `make install` puts libstdrot.so somewhere the
+ * dynamic linker finds it independently of any particular ./brainrot
+ * build, and stdrot_load() dlopen's it by bare filename -- an old .so left
+ * over from before this ABI existed (StdrotEntry == {name, fn}, StdrotType
+ * had no STDROT_ANY at index 0, the registry section held StdrotEntry
+ * structs directly rather than pointers to them) is exactly as reachable
+ * at runtime as a freshly rebuilt one.
+ *
+ * Bumping STDROT_ABI_VERSION and renaming the entrypoint together
+ * (stdrot_get_api -> stdrot_get_api_v2, this version) means an old .so
+ * exporting the old symbol under the old name is simply invisible to a
+ * new host's dlsym() -- it fails the lookup instead of returning a
+ * StdrotAPI whose `functions`/`count` fields the old .so populated from a
+ * completely different memory layout (an old StdrotEntry array
+ * reinterpreted as an array of StdrotEntry POINTERS turns each old
+ * entry's own `name` field into a bogus pointer the new host would then
+ * dereference). stdrot_load() (stdrot.c) treats a missing v2 symbol as a
+ * hard, loud, immediate failure -- "rebuild libstdrot.so", not a guess at
+ * how to interpret unfamiliar memory. Bump this version (and the
+ * entrypoint name/number together) again the next time StdrotEntry's
+ * layout, StdrotType's numbering, or StdrotAPI's own shape changes in a
+ * way an old .so's memory could be misread as. */
+#define STDROT_ABI_VERSION 2
+
+StdrotAPI stdrot_get_api_v2(void);
 
 #endif /* STDROT_API_H */

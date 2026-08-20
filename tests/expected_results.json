@@ -182,8 +182,10 @@
     "native_variadic_char_promotion": "65 66 67",
     "native_identity_enum_variable": "1",
     "semantic_error_native_array_fixed_scalar": "Error: 'ragequit' argument 1: int arrays cannot be passed where a scalar/string is expected at line 12",
-    "semantic_error_native_array_variadic_tail": "Error: 'yapping' argument 2: arrays cannot be passed to a variadic argument at line 13",
+    "semantic_error_native_array_variadic_tail": "Error: 'yapping' argument 2: int has no supported native ABI representation at line 19",
     "native_legacy_variadic_not_promoted": "6",
+    "semantic_error_native_struct_variadic_tail": "Error: 'yapping' argument 2: struct has no supported native ABI representation at line 17",
+    "native_legacy_void_variadic_tail_fail": "Error: stdrot: native 'yapping' argument 2: expression produced no value (STDROT_NONE) -- cannot be passed as a native argument",
     "native_char_param_scalar": "99",
     "identity_string_use_after_free": "hello",
     "identity_ownership_nonstring_result": "ok"

@@ -161,6 +161,7 @@ const WASM_PRODUCTION_SKIP = new Set([
   "native_char_dereference",
   "native_identity_enum_variable",
   "native_legacy_variadic_not_promoted",
+  "native_legacy_void_variadic_tail_fail",
   "native_char_param_scalar",
   "identity_string_use_after_free",
   "identity_ownership_nonstring_result",
