@@ -98,9 +98,10 @@ const STDIN_BY_PREFIX = [
   ["slorp_string", "skibidi bop bop yes yes\n"],
   ["slorp_identity_char_array", "hello\n"],
   ["native_cstring_param_char_array", "hello\n"],
-  ["semantic_error_native_char_array_access", "hello\n"],
+  ["native_char_array_access", "hello\n"],
   ["native_char_param_scalar", "c\n"],
   ["identity_string_use_after_free", "hello\n"],
+  ["identity_ownership_nonstring_result", "hello\n"],
   ["native_call_self_init", "42\n"],
   ["native_call_loop", "1\n2\n3\n"],
   ["native_call_string_arg", "skibidi\nq\n"],
@@ -154,11 +155,13 @@ const WASM_PRODUCTION_SKIP = new Set([
   "native_typed_param_from_legacy_any",
   "semantic_error_native_ptr_dest_from_legacy_any",
   "native_cstring_param_char_array",
-  "semantic_error_native_char_array_access",
-  "semantic_error_native_char_struct_access",
-  "semantic_error_native_nested_struct_access",
+  "native_char_array_access",
+  "native_char_struct_access",
+  "native_nested_struct_access",
+  "native_char_dereference",
   "native_char_param_scalar",
   "identity_string_use_after_free",
+  "identity_ownership_nonstring_result",
 ]);
 
 // Runs one program in a fresh module instance — the interpreter has global

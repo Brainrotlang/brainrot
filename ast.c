@@ -23,7 +23,6 @@ static HashMap *enum_registry = NULL;
 static EnumDef *enum_registry_list = NULL;
 bool struct_def_had_error = false;
 ReturnValue current_return_value;
-bool g_native_string_result_owned = false;
 Arena arena;
 
 TypeModifiers current_modifiers = {false, false, false, false,
@@ -86,27 +85,25 @@ String evaluate_expression_string(ASTNode *node);
 typedef struct
 {
     ASTNode *node;
-    StdrotValue value;
+    /* The full NativeResult (stdrot.h), not just its StdrotValue -- string
+       ownership travels with the cached value itself, the same way it
+       travels through every other consumer of execute_native_call()'s
+       result (see NativeResult's own comment for why this can't be a
+       separate global). A cache hit hands back exactly the NativeResult
+       that was cached, ownership bit included. */
+    NativeResult result;
     bool valid;
-    /* Mirrors g_native_string_result_owned (ast.h) at the moment `value`
-       was cached -- carried alongside it, not just left in the bare
-       global, so native_call_consume() restores the correct flag even
-       when `value` came from an earlier peek() rather than a fresh
-       execute_native_call() (some other native call could otherwise run
-       in between and leave the global reflecting the wrong call). */
-    bool owns_string;
 } NativeCallCacheEntry;
 static NativeCallCacheEntry native_call_cache[NATIVE_CALL_CACHE_SIZE];
 
-static StdrotValue native_call_peek(ASTNode *node)
+static NativeResult native_call_peek(ASTNode *node)
 {
     int free_slot = -1;
     for (int i = 0; i < NATIVE_CALL_CACHE_SIZE; i++)
     {
         if (native_call_cache[i].valid && native_call_cache[i].node == node)
         {
-            g_native_string_result_owned = native_call_cache[i].owns_string;
-            return native_call_cache[i].value;
+            return native_call_cache[i].result;
         }
         if (free_slot < 0 && !native_call_cache[i].valid)
         {
@@ -116,28 +113,25 @@ static StdrotValue native_call_peek(ASTNode *node)
 
     if (free_slot < 0)
     {
-        g_native_string_result_owned = false;
-        return (StdrotValue){STDROT_NONE, {0}};
+        return (NativeResult){{STDROT_NONE, {0}}, false};
     }
 
-    StdrotValue value = execute_native_call(node->data.func_call.function_name,
-                                            node->data.func_call.arguments);
+    NativeResult result = execute_native_call(
+        node->data.func_call.function_name, node->data.func_call.arguments);
     native_call_cache[free_slot].node = node;
-    native_call_cache[free_slot].value = value;
+    native_call_cache[free_slot].result = result;
     native_call_cache[free_slot].valid = true;
-    native_call_cache[free_slot].owns_string = g_native_string_result_owned;
-    return value;
+    return result;
 }
 
-static StdrotValue native_call_consume(ASTNode *node)
+static NativeResult native_call_consume(ASTNode *node)
 {
     for (int i = 0; i < NATIVE_CALL_CACHE_SIZE; i++)
     {
         if (native_call_cache[i].valid && native_call_cache[i].node == node)
         {
             native_call_cache[i].valid = false;
-            g_native_string_result_owned = native_call_cache[i].owns_string;
-            return native_call_cache[i].value;
+            return native_call_cache[i].result;
         }
     }
     return execute_native_call(node->data.func_call.function_name,
@@ -1465,8 +1459,8 @@ VarType get_expression_type(ASTNode *node)
         const String func_name = node->data.func_call.function_name;
         if (is_builtin_function(func_name))
         {
-            StdrotValue value = native_call_peek(node);
-            return stdrot_type_to_vartype(value.type);
+            NativeResult result = native_call_peek(node);
+            return stdrot_type_to_vartype(result.value.type);
         }
         Function *func = get_function(func_name);
         if (func != NULL)
@@ -3187,18 +3181,18 @@ int evaluate_expression_int(ASTNode *node)
 static void marshal_native_return_value(ASTNode *node)
 {
     free_pending_struct_return_value();
-    StdrotValue result = native_call_consume(node);
+    NativeResult nr = native_call_consume(node);
+    StdrotValue result = nr.value;
 
     current_return_value.pointer_level = 0;
     current_return_value.struct_name = (String){0};
-    /* Reset unconditionally -- g_native_string_result_owned (set by
-       native_call_consume() immediately above, mirroring whatever
-       execute_native_call()/the cache determined) only actually applies
-       when result.type == STDROT_STRING, handled below; every other
-       result type must not inherit a stale true left over from a
-       previous native string call through this same global slot. */
+    /* nr.owns_string (NativeResult, stdrot.h) is scoped to exactly this
+       `nr` -- not a global -- so it can only ever be true here when THIS
+       call's own result really is the materialized string it describes,
+       regardless of what any nested call evaluated while marshalling
+       this call's arguments (or consumed from this cache) set it to. */
     current_return_value.owns_strvalue =
-        result.type == STDROT_STRING && g_native_string_result_owned;
+        result.type == STDROT_STRING && nr.owns_string;
     /* An opaque native pointer reuses VAR_INT + pointer_level, the same
        representation every other pointer-typed value in this interpreter
        already uses (see e.g. handle_function_call()'s VAR_INT case, which
@@ -3328,10 +3322,10 @@ void *handle_function_call(ASTNode *node)
             *(String *)return_value =
                 safe_strdup(&current_return_value.value.strvalue);
             /* current_return_value.owns_strvalue (ast.h, set by
-               marshal_native_return_value()): true only for a native
-               result the ABI boundary already knows is a heap buffer
-               nothing else references (see g_native_string_result_owned's
-               own comment) -- safe (and necessary, to avoid leaking it)
+               marshal_native_return_value() from that call's own
+               NativeResult, stdrot.h): true only for a native result the
+               ABI boundary already knows is a heap buffer nothing else
+               references -- safe (and necessary, to avoid leaking it)
                to free now that the copy above has captured everything
                the caller needs. False for every other VAR_STRING source
                (a Brainrot-defined function's own return, or a native
@@ -3723,13 +3717,28 @@ bool is_expression(ASTNode *node, VarType type)
         // For operations, check if the result type matches the target type
         return get_expression_type(node) == type;
     }
+    case NODE_UNARY_OPERATION:
+        /* Previously uncased, falling to the default: below --
+           `node->type == VART_TO_NODET(type)` can never be true for a
+           NODE_UNARY_OPERATION node (VART_TO_NODET maps to a literal
+           node type like NODE_CHAR, never to NODE_UNARY_OPERATION), so
+           is_expression() always reported false here regardless of the
+           unary expression's actual type. That silently forced every
+           unary-operation argument through ast_expr_to_stdrot_value()'s
+           final STDROT_INT fallback, masking whatever
+           stdrot_char_narrows_to_int() (stdrot.h) said for operators
+           that shouldn't narrow (OP_DEREFERENCE, the increment/decrement
+           family) -- get_expression_type(), like NODE_OPERATION just
+           above, already reports the correct type for every unary
+           operator (see its own NODE_UNARY_OPERATION case). */
+        return get_expression_type(node) == type;
     case NODE_FUNC_CALL:
     {
         const String func_name = node->data.func_call.function_name;
         if (is_builtin_function(func_name))
         {
-            StdrotValue value = native_call_peek(node);
-            return stdrot_type_to_vartype(value.type) == type;
+            NativeResult result = native_call_peek(node);
+            return stdrot_type_to_vartype(result.value.type) == type;
         }
         VarType ret = get_function_return_type(func_name);
         /* A by-value enum return has type int in C -- treat it as such so

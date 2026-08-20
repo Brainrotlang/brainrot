@@ -14,9 +14,10 @@ for f in test_cases/*.brainrot; do
         slorp_string) input="skibidi bop bop yes yes" ;;
         slorp_identity_char_array)             input="hello" ;;
         native_cstring_param_char_array)       input="hello" ;;
-        semantic_error_native_char_array_access) input="hello" ;;
+        native_char_array_access)              input="hello" ;;
         native_char_param_scalar)              input="c" ;;
         identity_string_use_after_free)        input="hello" ;;
+        identity_ownership_nonstring_result)   input="hello" ;;
         *)            input="" ;;
     esac
 

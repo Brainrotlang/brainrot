@@ -198,6 +198,32 @@ static void validate_native_registry(void)
                     entry->name, entry->return_type.pointer_level);
             exit(1);
         }
+        /* pointer_level is only meaningful stacked on top of STDROT_PTR
+           (StdrotParam's own comment, stdrot_api.h: "{STDROT_PTR, NULL,
+           N} describes N levels of indirection on top of whatever
+           pointer_level counts" -- {STDROT_PTR, NULL, 0} is one pointer
+           level, {STDROT_PTR, NULL, 1} is two, and so on). A non-PTR base
+           type with a nonzero pointer_level is an internally
+           contradictory descriptor: static checking (semantic_analyzer.c)
+           reads type + pointer_level directly and would approve it as an
+           ordinary N-level pointer to that base type, but runtime
+           marshalling (ast_expr_to_stdrot_value()) tags ANY expression
+           with pointer_level > 0 as STDROT_PTR regardless of declared
+           base type -- so the argument would always arrive tagged
+           STDROT_PTR while the descriptor insists it's something else,
+           and enforce_arg_type()/enforce_return_type() would reject
+           every call this "valid" descriptor was supposed to describe.
+           Reject the contradiction at the source instead of certifying a
+           descriptor nothing downstream can actually honor. */
+        if (entry->return_type.type != STDROT_PTR &&
+            entry->return_type.pointer_level != 0)
+        {
+            fprintf(stderr,
+                    "stdrot: native '%s': return_type.pointer_level (%d) "
+                    "must be 0 when return_type.type isn't STDROT_PTR\n",
+                    entry->name, entry->return_type.pointer_level);
+            exit(1);
+        }
         for (int p = 0; p < entry->param_count; p++)
         {
             if (entry->params[p].pointer_level < 0)
@@ -206,6 +232,35 @@ static void validate_native_registry(void)
                         "stdrot: native '%s': params[%d].pointer_level "
                         "(%d) must be >= 0\n",
                         entry->name, p, entry->params[p].pointer_level);
+                exit(1);
+            }
+            if (entry->params[p].type != STDROT_PTR &&
+                entry->params[p].pointer_level != 0)
+            {
+                fprintf(stderr,
+                        "stdrot: native '%s': params[%d].pointer_level "
+                        "(%d) must be 0 when params[%d].type isn't "
+                        "STDROT_PTR\n",
+                        entry->name, p, entry->params[p].pointer_level, p);
+                exit(1);
+            }
+            /* A parameter's type describes what representation it
+               consumes; STDROT_NONE ("void return") only makes sense as
+               a RETURN type -- a parameter that "consumes void" cannot
+               coherently accept an actual argument. Zero-argument
+               natives are already expressed via param_count == 0; a
+               STDROT_NONE-typed parameter slot is never necessary and
+               would leave both static checking and enforce_arg_type()
+               with no coherent rule for what value could ever satisfy
+               it. */
+            if (entry->params[p].type == STDROT_NONE)
+            {
+                fprintf(stderr,
+                        "stdrot: native '%s': params[%d].type must not be "
+                        "STDROT_NONE -- a void-typed parameter can't "
+                        "consume an argument; use param_count to express "
+                        "zero arguments instead\n",
+                        entry->name, p);
                 exit(1);
             }
         }
@@ -441,16 +496,68 @@ VarType stdrot_type_to_vartype(StdrotType type)
     }
 }
 
-bool stdrot_char_narrows_to_int(NodeType node_type)
+bool stdrot_char_narrows_to_int(NodeType node_type, OperatorType unary_op)
 {
     switch (node_type)
     {
-    case NODE_ARRAY_ACCESS:
-    case NODE_STRUCT_ACCESS:
     case NODE_UNARY_OPERATION:
+        switch (unary_op)
+        {
+        case OP_DEREFERENCE:
+        case OP_PRE_INC:
+        case OP_PRE_DEC:
+        case OP_POST_INC:
+        case OP_POST_DEC:
+            /* Dereferencing a char* yields an ordinary char lvalue with
+               no promotion of its own -- the pointed-to object's type IS
+               char, the same as any other char lvalue. Pre/post
+               increment and decrement are defined (C11 6.5.2.4,
+               6.5.3.1 -- "as if by" c = c +/- 1, via 6.5.16.2's
+               assignment conversion) to convert the result back to the
+               operand's own type before the expression's value is
+               determined: the *expression's type* is that of the
+               operand (char), even though the addition/subtraction
+               arithmetic itself happens in int. Neither belongs in the
+               narrowing set. */
+            return false;
+        case OP_ADDRESS_OF:
+        /* Unreachable in practice: ast_expr_to_stdrot_value()'s
+           pointer-level check (its own comment) already routes any
+           pointer_level > 0 expression, &c included, through STDROT_PTR
+           before this predicate is ever consulted for a "does this stay
+           char" question. Included here, narrowing, purely so a
+           hypothetical direct caller gets a defensible answer -- &c's
+           result plainly isn't a char value to begin with. */
+        default:
+            /* OP_NEG (unary arithmetic negation) undergoes the same
+               integer promotion as any other arithmetic operator --
+               this narrowing is genuine, correct C semantics, unlike
+               the array/struct-access cases removed below. */
+            return true;
+        }
     case NODE_OPERATION:
+        /* Binary arithmetic and comparison both apply the usual
+           arithmetic conversions, which promote a char operand to int
+           before the operator itself runs -- the *value* underwent
+           promotion here, not just the storage location it came from,
+           so this narrowing is correct C semantics. */
         return true;
     default:
+        /* NODE_ARRAY_ACCESS, NODE_STRUCT_ACCESS (and everything else --
+           identifiers, literals, a native call's own declared result):
+           a subscript or member-access expression is an ordinary lvalue
+           of the accessed element/field's own declared type -- `buf[0]`
+           and `foo.c` both have type char in C, full stop, the same as
+           a bare identifier naming a char variable. C only promotes a
+           char ARGUMENT to int for an unprototyped function call or the
+           variadic tail of a variadic one (default argument promotions,
+           C11 6.5.2.2p6-7) -- never merely because the argument
+           expression happens to be an array subscript or a member-
+           access, when it's being passed to a normally-prototyped
+           parameter, which is every one of Brainrot's fixed-signature
+           native calls. This function previously narrowed these two
+           node shapes as well, which taught the static checker to
+           agree with a marshalling bug instead of fixing the bug. */
         return false;
     }
 }
@@ -630,13 +737,19 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
        through plain int instead of preserving it as STDROT_CHAR. A
        native call is the only shape excluded: its own declared result
        (e.g. `yapping("%s", slorp(buf))`) is preserved faithfully. */
-    else if (!stdrot_char_narrows_to_int(expr->type) &&
+    else if (!stdrot_char_narrows_to_int(expr->type,
+                                         expr->type == NODE_UNARY_OPERATION
+                                             ? expr->data.unary.op
+                                             : OP_PLUS) &&
              is_expression(expr, VAR_CHAR))
     {
         out->type = STDROT_CHAR;
         out->val.c = (char)evaluate_expression_int(expr);
     }
-    else if (!stdrot_char_narrows_to_int(expr->type) &&
+    else if (!stdrot_char_narrows_to_int(expr->type,
+                                         expr->type == NODE_UNARY_OPERATION
+                                             ? expr->data.unary.op
+                                             : OP_PLUS) &&
              is_expression(expr, VAR_STRING))
     {
         out->type = STDROT_STRING;
@@ -1015,20 +1128,12 @@ static void free_pending_native_call_args(void)
     pending_native_call_stack = NULL;
 }
 
-StdrotValue execute_native_call(const String func_name, ArgumentList *args)
+NativeResult execute_native_call(const String func_name, ArgumentList *args)
 {
-    /* Reset unconditionally, on every entry, before any return path --
-       see g_native_string_result_owned's own comment (ast.h) for why a
-       stale true from a previous call must never survive into one that
-       doesn't itself set it (e.g. a call that errors out before
-       reaching entry->fn() at all, on any of the early-return paths
-       below). */
-    g_native_string_result_owned = false;
-
     if (!func_name.data || !functions)
     {
         yyerror("Function not found");
-        return (StdrotValue){STDROT_NONE, {0}};
+        return (NativeResult){{STDROT_NONE, {0}}, false};
     }
 
     const StdrotEntry *entry = get_native_function(func_name);
@@ -1036,7 +1141,7 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
     if (!entry || !entry->fn)
     {
         yyerror("Unknown function");
-        return (StdrotValue){STDROT_NONE, {0}};
+        return (NativeResult){{STDROT_NONE, {0}}, false};
     }
 
     /* Set execution context - get line number from first argument node */
@@ -1067,9 +1172,10 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
            arguments, or a zero-arg native's return-type bug would go
            uncaught (see enforce_return_type()'s comment). No
            argument-marshalling cleanup needed here since none was
-           allocated. */
+           allocated -- and with no arguments, a STDROT_STRING result
+           can't possibly alias one, so owns_string is always false. */
         enforce_return_type(func_name, &result, entry, NULL);
-        return result;
+        return (NativeResult){result, false};
     }
 
     StdrotValue *arg_values = SAFE_MALLOC_ARRAY(StdrotValue, total_args);
@@ -1092,7 +1198,7 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
         SAFE_FREE(owned_string_bufs);
         SAFE_FREE(owned_cstring_bufs);
         yyerror("Out of memory marshalling native call arguments");
-        return (StdrotValue){STDROT_NONE, {0}};
+        return (NativeResult){{STDROT_NONE, {0}}, false};
     }
 
     if (!native_call_cleanup_registered)
@@ -1175,23 +1281,37 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
      * frees the original owned buffer as it always did, and `result`
      * now points at independent memory nothing else references.
      *
-     * That copy still needs an owner, though -- g_native_string_result_
-     * owned (ast.h) is how this communicates "yes, actually free this
-     * one" to whichever of native_call_peek()/native_call_consume()
-     * (ast.c) or execute_func_call()'s deprecated write-back path
-     * (below, this file) ends up holding `result` next, and ultimately
-     * to handle_function_call()'s VAR_STRING case (ast.c), which frees
-     * current_return_value.value.strvalue.data right after copying it
-     * into the box the caller actually consumes -- but ONLY when this
-     * flag says that source is safe to free (a native's result can
-     * otherwise alias a string literal or a live Brainrot variable's
-     * own backing storage, e.g. slorp's deprecated identity pass-
-     * through, and unconditionally freeing THOSE would corrupt still-
-     * live state -- see the same reasoning documented on that VAR_
-     * STRING case for why it never freed its source unconditionally in
-     * the first place). Every other native result leaves this false,
-     * matching that existing, deliberately-conservative behavior
-     * exactly. */
+     * That copy still needs an owner, though -- owns_string, on the
+     * NativeResult this function returns (stdrot.h), is how this
+     * communicates "yes, actually free this one" to whichever of
+     * native_call_peek()/native_call_consume() (ast.c) or execute_
+     * func_call()'s deprecated write-back path (below, this file) ends
+     * up holding this result next, and ultimately to handle_function_
+     * call()'s VAR_STRING case (ast.c), which frees current_return_
+     * value.value.strvalue.data right after copying it into the box the
+     * caller actually consumes -- but ONLY when this flag says that
+     * source is safe to free (a native's result can otherwise alias a
+     * string literal or a live Brainrot variable's own backing storage,
+     * e.g. slorp's deprecated identity pass-through, and unconditionally
+     * freeing THOSE would corrupt still-live state -- see the same
+     * reasoning documented on that VAR_STRING case for why it never
+     * freed its source unconditionally in the first place). Every other
+     * native result leaves this false, matching that existing,
+     * deliberately-conservative behavior exactly.
+     *
+     * This is a local, scoped to exactly this invocation's own result --
+     * not a global -- precisely because evaluating this call's own
+     * arguments (ast_expr_to_stdrot_value(), above) can recursively
+     * invoke execute_native_call() again for a nested call, each
+     * producing its own independent NativeResult. A shared global set by
+     * the innermost nested call would still read as true here even when
+     * *this* call's own result isn't a string at all (the check below is
+     * gated on `result.type == STDROT_STRING`, so a non-string result
+     * would never touch a global to reset it) -- silently making an
+     * unrelated caller free whatever this result's non-string union
+     * member happens to contain, reinterpreted as a pointer. See
+     * NativeResult's own comment (stdrot.h) for the full reasoning. */
+    bool owns_string = false;
     if (result.type == STDROT_STRING)
     {
         for (int i = 0; i < arg_count; i++)
@@ -1200,7 +1320,7 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
                 owned_string_bufs[i] == result.val.str.data)
             {
                 result.val.str = safe_strdup(&result.val.str);
-                g_native_string_result_owned = true;
+                owns_string = true;
                 break;
             }
         }
@@ -1229,12 +1349,13 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
     SAFE_FREE(owned_string_bufs);
     SAFE_FREE(owned_cstring_bufs);
 
-    return result;
+    return (NativeResult){result, owns_string};
 }
 
 void execute_func_call(const String func_name, ArgumentList *args)
 {
-    StdrotValue result = execute_native_call(func_name, args);
+    NativeResult nr = execute_native_call(func_name, args);
+    StdrotValue result = nr.value;
 
     /* Deprecated write-back: if first arg is an identifier and the function
      * returned a value, also write the returned value back to that variable.
@@ -1314,23 +1435,28 @@ void execute_func_call(const String func_name, ArgumentList *args)
         }
     }
 
-    /* g_native_string_result_owned (ast.h): true only when result.type ==
-       STDROT_STRING *and* execute_native_call() had to materialize an
+    /* nr.owns_string (NativeResult, stdrot.h): true only when result.type
+       == STDROT_STRING *and* execute_native_call() had to materialize an
        independent copy of an aliased argument buffer to avoid a
-       use-after-free once its own argument-cleanup loop ran. This
-       function is the last consumer of `result` on every path above --
-       whether that path copied the string out (the STDROT_STRING case),
-       discarded it for some other reason (no identifier argument, an
-       identifier that didn't resolve to a live variable, or a result
-       type this deprecated write-back doesn't forward), or never entered
-       the write-back block at all. Whichever it was, nothing downstream
+       use-after-free once its own argument-cleanup loop ran -- scoped to
+       this specific `nr`, not a global, so a nested call evaluated while
+       marshalling `args` above can never leave this flag describing a
+       result other than this function's own. This function is the last
+       consumer of `result` on every path above -- whether that path
+       copied the string out (the STDROT_STRING case), discarded it for
+       some other reason (no identifier argument, an identifier that
+       didn't resolve to a live variable, or a result type this
+       deprecated write-back doesn't forward), or never entered the
+       write-back block at all. Whichever it was, nothing downstream
        still needs this buffer, so free it here unconditionally rather
        than leaking it on every path that isn't the one case that used to
-       remember to do this. */
-    if (g_native_string_result_owned)
+       remember to do this. The result.type check is redundant with how
+       execute_native_call() sets owns_string (only ever true alongside
+       STDROT_STRING) but kept as a belt-and-suspenders guard against
+       ever reinterpreting a non-string union member as a heap pointer. */
+    if (nr.owns_string && result.type == STDROT_STRING)
     {
         SAFE_FREE(result.val.str.data);
-        g_native_string_result_owned = false;
     }
 }
 

@@ -175,9 +175,11 @@
     "semantic_error_native_ptr_dest_from_legacy_any": "Error: Type mismatch in initialization of 'p': expected a pointer (level 1), got pointer level 0 at line 1",
     "slorp_identity_char_array": "hello",
     "native_cstring_param_char_array": "5",
-    "semantic_error_native_char_array_access": "Error: 'takes_char' argument 1: expected char, got int at line 16",
-    "semantic_error_native_char_struct_access": "Error: 'takes_char' argument 1: expected char, got int at line 18",
-    "semantic_error_native_nested_struct_access": "Error: 'takes_char' argument 1: expected char, got int at line 23",
+    "native_char_array_access": "104",
+    "native_char_struct_access": "120",
+    "native_nested_struct_access": "120",
+    "native_char_dereference": "120",
     "native_char_param_scalar": "99",
-    "identity_string_use_after_free": "hello"
+    "identity_string_use_after_free": "hello",
+    "identity_ownership_nonstring_result": "ok"
 }

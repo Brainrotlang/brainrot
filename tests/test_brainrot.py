@@ -33,8 +33,9 @@ def test_brainrot_examples(example, expected_output):
     elif example.startswith("slorp_string"):
         command = f"echo 'skibidi bop bop yes yes' | {brainrot_path} {example_file_path}"
     elif example in ("slorp_identity_char_array", "native_cstring_param_char_array",
-                      "semantic_error_native_char_array_access",
-                      "identity_string_use_after_free"):
+                      "native_char_array_access",
+                      "identity_string_use_after_free",
+                      "identity_ownership_nonstring_result"):
         command = f"echo 'hello' | {brainrot_path} {example_file_path}"
     elif example == "native_char_param_scalar":
         command = f"echo 'c' | {brainrot_path} {example_file_path}"
@@ -95,6 +96,10 @@ REGISTRY_REJECTION_CASES = [
     ("duplicate_name.so", "duplicate native export 'bad_duplicate'"),
     ("negative_pointer_level.so",
      "params[0].pointer_level (-1) must be >= 0"),
+    ("pointer_level_without_ptr.so",
+     "params[0].pointer_level (1) must be 0 when params[0].type isn't STDROT_PTR"),
+    ("none_typed_param.so",
+     "params[0].type must not be STDROT_NONE"),
 ]
 
 

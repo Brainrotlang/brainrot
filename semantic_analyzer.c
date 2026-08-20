@@ -717,14 +717,19 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
  * copy (so this function and ast_expr_to_stdrot_value() cannot
  * independently drift out of agreement, the way they briefly did):
  *
- *   1. stdrot_char_narrows_to_int() (stdrot.h) -- array access, struct
- *      access, and unary/binary operations never preserve a VAR_CHAR
- *      base type as STDROT_CHAR; they lower through plain int instead,
- *      matching C's own integer-promotion rules for sub-int arithmetic/
- *      access contexts. `takes_char(buf[0])` and `takes_char(foo.c)`
- *      must both be checked as VAR_INT arguments, not VAR_CHAR, or the
- *      analyzer approves a call the runtime ABI then reports as a
- *      mismatch.
+ *   1. stdrot_char_narrows_to_int() (stdrot.h) -- binary operations,
+ *      unary arithmetic negation, and (deliberately NOT) array access,
+ *      struct access, dereference, or increment/decrement never preserve
+ *      a VAR_CHAR base type as STDROT_CHAR for the ones that DO narrow;
+ *      they lower through plain int instead, matching the specific C
+ *      rule that actually applies to each shape (see that function's own
+ *      per-case reasoning, stdrot.c) rather than a single blanket "sub-
+ *      int expression" rule. `takes_char(c + c)` must be checked as a
+ *      VAR_INT argument; `takes_char(buf[0])` and `takes_char(foo.c)`
+ *      must NOT -- a subscript or member-access expression is an
+ *      ordinary lvalue of its element/field's own declared type in C,
+ *      promoted to int only for an unprototyped call or a variadic tail,
+ *      never merely for appearing as a normally-prototyped argument.
  *
  *   2. A VAR_CHAR *array identifier* (`yap buf[32]`) marshals as
  *      STDROT_STRING (ast_expr_to_stdrot_value()'s VAR_CHAR/is_array
@@ -749,7 +754,9 @@ static VarType infer_expression_abi_type(ASTNode *expr,
     if (t != VAR_CHAR || !expr)
         return t;
 
-    if (stdrot_char_narrows_to_int(expr->type))
+    if (stdrot_char_narrows_to_int(
+            expr->type,
+            expr->type == NODE_UNARY_OPERATION ? expr->data.unary.op : OP_PLUS))
         return VAR_INT;
 
     if (expr->type != NODE_IDENTIFIER)
