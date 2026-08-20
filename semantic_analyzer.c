@@ -989,6 +989,33 @@ void *semantic_visit_identifier(Visitor *self, ASTNode *node)
     return NULL;
 }
 
+/* True when `expr` is a non-char array identifier -- Variable's own value
+ * union (ast.h) aliases a scalar's storage with an array's backing
+ * pointer, so any code path that reads that union as a scalar (int,
+ * short, float, double, bool, or an enum, all of which ast_expr_to_
+ * stdrot_value() marshals by reading the scalar member unconditionally)
+ * would actually read the array's backing pointer's raw bytes instead --
+ * an address silently reinterpreted as whatever scalar type the
+ * descriptor declared. VAR_CHAR arrays are the one exception: they have
+ * a real StdrotValue representation (STDROT_STRING, via ast_expr_to_
+ * stdrot_value()'s own VAR_CHAR/is_array branch), so they're excluded
+ * here and handled by ordinary type-compatibility checking instead.
+ *
+ * find_symbol(), not get_variable(): this runs during the single static
+ * analysis pass, before the interpreter creates any runtime Variable
+ * (see semantic_analyze()'s own "Phase 1"/"Phase 2" comment) --
+ * SymbolEntry.is_array (semantic_analyzer.h) is the field actually
+ * populated at this point. */
+static bool is_unmarshallable_array_arg(ASTNode *expr,
+                                        SemanticAnalyzer *analyzer)
+{
+    if (!expr || expr->type != NODE_IDENTIFIER)
+        return false;
+
+    SymbolEntry *sym = find_symbol(analyzer, expr->data.name);
+    return sym && sym->is_array && sym->type != VAR_CHAR;
+}
+
 /* Type-checks a native call's fixed/checked argument prefix against its
    registered StdrotEntry -- arity plus, for each checked parameter actually
    supplied, that the argument's inferred type is compatible. STDROT_ANY
@@ -1208,49 +1235,22 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
             }
             }
 
-            /* Arrays report the same VarType as their element
-               (`rizz arr[2]`'s var_type is VAR_INT, indistinguishable
-               from a scalar `rizz x` by infer_expression_type() alone),
-               but Variable (ast.h) stores an array's backing pointer and
-               a scalar's value in the SAME union: value.array_data
-               aliases value.ivalue/.fvalue/etc. ast_expr_to_stdrot_
-               value()'s VAR_INT/SHORT/FLOAT/DOUBLE/BOOL/ENUM cases read
-               that union unconditionally, with no is_array check --
-               unlike VAR_CHAR, which already branches on is_array to
-               become a STDROT_STRING instead. Passing a numeric array
-               through would reinterpret its backing pointer as a scalar
-               value; slorp's deprecated write-back path could then
-               overwrite that same pointer with whatever the user typed,
-               corrupting the array for every later access. Only VAR_CHAR
-               arrays have a real representation here (STDROT_STRING) --
-               every other array type is rejected until this pipeline
-               actually gains one.
-
-               find_symbol(), not get_variable(): semantic_analyze()
-               runs as a single static pass over the whole program before
-               the interpreter executes anything (see semantic_analyze(),
-               "Phase 1: Collect all declarations" then "Phase 2"), so no
-               runtime Variable exists yet at this point -- get_variable()
-               would always return NULL here regardless of the actual
-               program. SymbolEntry.is_array (this file's own symbol
-               table, populated by collect_declarations() from the
-               declaration AST node's is_array) is the field that's
-               actually populated during this pass. */
-            if (actual_any != VAR_CHAR && cur->expr->type == NODE_IDENTIFIER)
+            /* See is_unmarshallable_array_arg()'s own comment for the
+               union-aliasing hazard this guards against: arrays report
+               the same VarType as their element (`rizz arr[2]`'s
+               var_type is VAR_INT, indistinguishable from a scalar
+               `rizz x` by infer_expression_type() alone), but passing
+               one through would reinterpret its backing pointer as a
+               scalar value. */
+            if (is_unmarshallable_array_arg(cur->expr, analyzer))
             {
-                SymbolEntry *arr_sym =
-                    find_symbol(analyzer, cur->expr->data.name);
-                if (arr_sym && arr_sym->is_array)
-                {
-                    char error_msg[MAX_BUFFER_LEN];
-                    snprintf(error_msg, sizeof(error_msg),
-                             "'%s' argument %d: %s arrays cannot be passed "
-                             "where a scalar/string is expected",
-                             func_name.data, i + 1,
-                             vartype_to_string(actual_any));
-                    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
-                                       STRING_LITERAL(error_msg), line);
-                }
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: %s arrays cannot be passed "
+                         "where a scalar/string is expected",
+                         func_name.data, i + 1, vartype_to_string(actual_any));
+                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                   STRING_LITERAL(error_msg), line);
             }
             continue;
         }
@@ -1272,6 +1272,31 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
         int actual_pointer_level =
             infer_expression_pointer_level(cur->expr, analyzer);
 
+        /* Same union-aliasing hazard the STDROT_ANY branch above already
+           guards against (see is_unmarshallable_array_arg()'s own
+           comment) -- a FIXED, non-ANY scalar parameter is just as
+           vulnerable: infer_expression_abi_type() reports a non-char
+           array identifier's ELEMENT type (e.g. VAR_INT for `rizz
+           arr[2]`), indistinguishable here from a scalar `rizz x`, and
+           check_type_compatibility_ex() below has no way to know the
+           argument is actually an array backed by a pointer the runtime
+           marshaller would read as if it were that scalar's own value.
+           Checked before the ordinary type-compatibility check, not
+           folded into it, so this fires with a clear "array, not a
+           scalar" diagnostic instead of a confusing "expected int, got
+           int" non-mismatch. */
+        if (is_unmarshallable_array_arg(cur->expr, analyzer))
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "'%s' argument %d: %s arrays cannot be passed where a "
+                     "scalar/string is expected",
+                     func_name.data, i + 1, vartype_to_string(actual));
+            add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                               STRING_LITERAL(error_msg), line);
+            continue;
+        }
+
         if (expected == NONE || actual == NONE)
             continue;
 
@@ -1285,6 +1310,43 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
                      vartype_to_string(actual));
             add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
                                STRING_LITERAL(error_msg), line);
+        }
+    }
+
+    /* `cur` now sits at the first argument beyond param_count -- the
+       unchecked variadic tail (format-string arguments, or every
+       argument to a legacy/untyped STDROT_EXPORT() export, which is
+       also is_variadic == true with param_count == 0). Its TYPE is
+       deliberately left unchecked -- the whole point of is_variadic is
+       that this pipeline doesn't know what type each tail argument
+       ought to be -- but "unchecked type" is not the same claim as
+       "unchecked representation validity". A non-char array identifier
+       is exactly as unmarshallable here as it is for a fixed parameter
+       (see is_unmarshallable_array_arg()'s own comment): ast_expr_to_
+       stdrot_value() would still read the array's backing pointer
+       through the same aliased union, tag it as an ordinary scalar
+       StdrotValue, and hand a variadic consumer (process_yapping_
+       format(), stdrot/yapping.c) an address to format as if it were a
+       number -- entry->is_variadic being true doesn't change what that
+       union actually contains. */
+    if (entry->is_variadic)
+    {
+        int tail_index = entry->param_count;
+        for (; cur; cur = cur->next, tail_index++)
+        {
+            if (!cur->expr)
+                continue;
+
+            if (is_unmarshallable_array_arg(cur->expr, analyzer))
+            {
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: arrays cannot be passed to a "
+                         "variadic argument",
+                         func_name.data, tail_index + 1);
+                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                   STRING_LITERAL(error_msg), line);
+            }
         }
     }
 }

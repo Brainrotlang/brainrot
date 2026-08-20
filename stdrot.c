@@ -233,6 +233,17 @@ static void validate_native_registry(void)
             fprintf(stderr, "stdrot: native '%s': fn is NULL\n", entry->name);
             exit(1);
         }
+        if (entry->promote_variadic_tail && !entry->is_variadic)
+        {
+            /* promote_variadic_tail (stdrot_api.h) only means something
+               for arguments beyond param_count -- there's no "tail" to
+               promote at all when is_variadic is false. */
+            fprintf(stderr,
+                    "stdrot: native '%s': promote_variadic_tail is true "
+                    "but is_variadic is false\n",
+                    entry->name);
+            exit(1);
+        }
         if (entry->return_type.pointer_level < 0)
         {
             fprintf(stderr,
@@ -1330,17 +1341,28 @@ NativeResult execute_native_call(const String func_name, ArgumentList *args)
             enforce_arg_type(func_name, arg_count, &arg_values[arg_count],
                              &entry->params[arg_count]);
         }
-        else if (entry->is_variadic)
+        else if (entry->promote_variadic_tail)
         {
-            /* Beyond entry->param_count -- the unchecked variadic tail
-               (e.g. yapping's format-string arguments). apply_variadic_
-               promotion()'s own comment has the full reasoning: this is
-               where C's default argument promotions belong, centralized
-               once instead of every variadic consumer re-deriving them
-               (or, as this ABI briefly did, silently NOT applying them
-               after fixed-parameter char handling was corrected to stop
+            /* Beyond entry->param_count -- a genuine C-style variadic
+               tail (e.g. yapping's format-string arguments,
+               STDROT_EXPORT_SIG_VARIADIC()). apply_variadic_promotion()'s
+               own comment has the full reasoning: this is where C's
+               default argument promotions belong, centralized once
+               instead of every variadic consumer re-deriving them (or,
+               as this ABI briefly did, silently NOT applying them after
+               fixed-parameter char handling was corrected to stop
                narrowing -- yapping's own "%d" never accepted STDROT_CHAR
-               to begin with). */
+               to begin with).
+
+               Deliberately NOT entry->is_variadic -- that flag is also
+               true for a legacy STDROT_EXPORT() export (arity unchecked
+               because its real signature is unknown, not because it's
+               C-variadic; see promote_variadic_tail's own comment,
+               stdrot_api.h). Promoting those arguments too would
+               silently change an existing legacy binding's observed
+               StdrotValue.type without recompiling or touching that
+               binding's own source -- a real ABI break for any wrapper
+               that switches on args[i].type. */
             apply_variadic_promotion(&arg_values[arg_count]);
         }
 

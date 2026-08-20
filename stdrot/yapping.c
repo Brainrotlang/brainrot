@@ -208,9 +208,9 @@ static const StdrotParam format_params[] = {
     {STDROT_STRING, NULL, 0},
 };
 
-STDROT_EXPORT_SIG("yapping", stdrot_yapping,
-                  ((StdrotParam){STDROT_NONE, NULL, 0}), format_params, 1, 1,
-                  true);
-STDROT_EXPORT_SIG("yappin", stdrot_yappin,
-                  ((StdrotParam){STDROT_NONE, NULL, 0}), format_params, 1, 1,
-                  true);
+STDROT_EXPORT_SIG_VARIADIC("yapping", stdrot_yapping,
+                           ((StdrotParam){STDROT_NONE, NULL, 0}), format_params,
+                           1, 1);
+STDROT_EXPORT_SIG_VARIADIC("yappin", stdrot_yappin,
+                           ((StdrotParam){STDROT_NONE, NULL, 0}), format_params,
+                           1, 1);

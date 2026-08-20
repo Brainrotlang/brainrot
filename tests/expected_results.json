@@ -181,6 +181,9 @@
     "native_char_dereference": "120",
     "native_variadic_char_promotion": "65 66 67",
     "native_identity_enum_variable": "1",
+    "semantic_error_native_array_fixed_scalar": "Error: 'ragequit' argument 1: int arrays cannot be passed where a scalar/string is expected at line 12",
+    "semantic_error_native_array_variadic_tail": "Error: 'yapping' argument 2: arrays cannot be passed to a variadic argument at line 13",
+    "native_legacy_variadic_not_promoted": "6",
     "native_char_param_scalar": "99",
     "identity_string_use_after_free": "hello",
     "identity_ownership_nonstring_result": "ok"

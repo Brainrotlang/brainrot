@@ -227,8 +227,15 @@ typedef StdrotValue (*StdrotFn)(StdrotValue *args, int argc);
  * are mandatory (arity error below that), the rest (min_args..param_count)
  * are optional-but-typed, e.g. bet's trailing message string. is_variadic
  * == true additionally allows args beyond param_count, left completely
- * unchecked (format-string tails, legacy/untyped exports, where
- * param_count and min_args are both 0).
+ * type-unchecked -- but that covers TWO unrelated situations (see
+ * promote_variadic_tail below for why a third field, not this one,
+ * decides whether C-style promotion applies to those args):
+ *   - a genuine C-style variadic tail (format-string arguments, e.g.
+ *     yapping) -- param_count/min_args are the real fixed-prefix arity.
+ *   - a legacy/untyped STDROT_EXPORT() export, whose real signature this
+ *     ABI simply doesn't know -- param_count and min_args are both 0,
+ *     arity is unchecked purely for backward compatibility, not because
+ *     the function has C varargs semantics.
  */
 typedef struct
 {
@@ -238,6 +245,21 @@ typedef struct
     int param_count;
     int min_args;
     bool is_variadic;
+    /* Only true for a genuine C-style variadic tail (set via
+       STDROT_EXPORT_SIG_VARIADIC() below, e.g. yapping/yappin/baka) --
+       NEVER inferred from is_variadic/param_count/return_type shape
+       (e.g. "param_count == 0 && is_variadic" looking legacy-shaped).
+       execute_native_call() (stdrot.c) applies C's default argument
+       promotions (char/bool/short -> int, float -> double) to every
+       argument at index >= param_count only when this is true. A
+       legacy STDROT_EXPORT() export is ALSO is_variadic == true (arity
+       is unchecked because the real signature is unknown, not because
+       it's C-variadic) but leaves this false -- applying promotion
+       there would silently change an existing legacy binding's
+       StdrotValue.type for arguments it never asked to have promoted,
+       without recompiling or touching that binding's own source: a
+       real ABI break for any wrapper that switches on args[i].type. */
+    bool promote_variadic_tail;
     /* -1: return_type.type is the call's real, fixed return type (the
        common case). >= 0: identity-polymorphic -- the call's actual
        result type is whatever the argument at this index turned out to
@@ -322,6 +344,31 @@ typedef struct
 #define STDROT_EXPORT(name_str, func_ptr)                                      \
     STDROT_EXPORT_SIG(name_str, func_ptr,                                      \
                       ((StdrotParam){STDROT_ANY, NULL, 0}), NULL, 0, 0, true)
+/* Same as STDROT_EXPORT_SIG, but for a native with a genuine C-style
+ * variadic tail (arguments beyond pcount are format-string-style
+ * varargs, e.g. yapping/yappin/baka) rather than STDROT_EXPORT()'s
+ * "legacy export, real signature unknown" use of is_variadic. Sets
+ * StdrotEntry.promote_variadic_tail (see its own comment) explicitly,
+ * so execute_native_call() applies C's default argument promotions to
+ * this native's tail specifically, never inferred from is_variadic/
+ * param_count alone -- a plain STDROT_EXPORT_SIG(..., true) or
+ * STDROT_EXPORT() stays un-promoted. */
+#define STDROT_EXPORT_SIG_VARIADIC(name_str, func_ptr, ret, params_ptr,        \
+                                   pcount, min_count)                          \
+    static const StdrotEntry STDROT_CONCAT(__stdrot_entry_, __LINE__) = {      \
+        .name = name_str,                                                      \
+        .return_type = ret,                                                    \
+        .params = params_ptr,                                                  \
+        .param_count = pcount,                                                 \
+        .min_args = min_count,                                                 \
+        .is_variadic = true,                                                   \
+        .promote_variadic_tail = true,                                         \
+        .return_like_arg = -1,                                                 \
+        .fn = func_ptr};                                                       \
+    __attribute__((used,                                                       \
+                   section("stdrot_exports"))) static const StdrotEntry *const \
+    STDROT_CONCAT(__stdrot_export_, __LINE__) =                                \
+        &STDROT_CONCAT(__stdrot_entry_, __LINE__)
 #else
 #error                                                                         \
     "Linker sections not supported on this compiler. Add registry.c fallback."

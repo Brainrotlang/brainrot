@@ -170,5 +170,6 @@ static const StdrotParam baka_format_params[] = {
     {STDROT_STRING, NULL, 0},
 };
 
-STDROT_EXPORT_SIG("baka", stdrot_baka, ((StdrotParam){STDROT_NONE, NULL, 0}),
-                  baka_format_params, 1, 1, true);
+STDROT_EXPORT_SIG_VARIADIC("baka", stdrot_baka,
+                           ((StdrotParam){STDROT_NONE, NULL, 0}),
+                           baka_format_params, 1, 1);

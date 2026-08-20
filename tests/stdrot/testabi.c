@@ -242,3 +242,24 @@ static const StdrotParam identity_params[] = {
     {STDROT_ANY, NULL, 0},
 };
 STDROT_EXPORT_SIG_IDENTITY("identity", stdrot_identity, identity_params, 1, 1);
+
+/* Round-15 review, finding #2: a legacy/untyped STDROT_EXPORT() export
+ * (param_count == 0, is_variadic == true purely because the real
+ * signature is unknown -- promote_variadic_tail, stdrot_api.h, stays
+ * false) that actually INSPECTS args[0].type, unlike every other legacy
+ * export in this file (legacy_int/legacy_string/legacy_cstring/
+ * legacy_void/legacy_returns_any_tag all ignore args entirely). Exists
+ * specifically so a regression that silently starts applying C default
+ * argument promotion to a legacy export's arguments (as briefly
+ * happened: is_variadic alone was mistaken for "this native has a C
+ * variadic tail") is actually observable -- returns the numeric
+ * StdrotType tag it received, letting the test assert exactly which one
+ * arrived, not just that SOME call succeeded. */
+static StdrotValue stdrot_legacy_type_probe(StdrotValue *args, int argc)
+{
+    StdrotValue out = {STDROT_INT, {0}};
+    out.val.i = (argc > 0) ? (int)args[0].type : -1;
+    return out;
+}
+
+STDROT_EXPORT("legacy_type_probe", stdrot_legacy_type_probe);
