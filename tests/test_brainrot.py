@@ -100,6 +100,10 @@ REGISTRY_REJECTION_CASES = [
      "params[0].pointer_level (1) must be 0 when params[0].type isn't STDROT_PTR"),
     ("none_typed_param.so",
      "params[0].type must not be STDROT_NONE"),
+    ("invalid_return_type.so",
+     "return_type.type (999) is not a valid StdrotType"),
+    ("invalid_param_type.so",
+     "params[0].type (999) is not a valid StdrotType"),
 ]
 
 

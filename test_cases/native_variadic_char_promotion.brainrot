@@ -1,0 +1,25 @@
+🚽 Test case: round-14 review finding #1 -- the round-13 fix that stopped
+🚽 narrowing a FIXED (prototyped) char parameter to int was only half of C's
+🚽 actual rule. C's default argument promotions apply char/bool/short -> int
+🚽 (and float -> double) specifically to a VARIADIC argument, since there's
+🚽 no prototype to convert "as if by assignment" to. Before this fix,
+🚽 yapping's format-string tail (is_variadic == true, beyond its one typed
+🚽 param) inherited the fixed-parameter char-preserving behavior instead --
+🚽 `yapping("%d", c)` marshalled c as STDROT_CHAR, which process_yapping_
+🚽 format()'s "%d" family (stdrot/yapping.c) never accepted (only
+🚽 STDROT_INT/SHORT/BOOL), so nothing got formatted at all. apply_variadic_
+🚽 promotion() (stdrot.c) now applies C's promotion centrally, once, to
+🚽 every argument beyond a native's param_count, so any variadic consumer
+🚽 can trust the canonical promoted representation.
+gang Foo {
+    yap c;
+};
+
+skibidi main {
+    yap c = 'A';
+    yap buf[4];
+    buf[0] = 'B';
+    gang Foo foo = { 'C' };
+    yapping("%d %d %d", c, buf[0], foo.c);
+    bussin 0;
+}

@@ -179,6 +179,8 @@
     "native_char_struct_access": "120",
     "native_nested_struct_access": "120",
     "native_char_dereference": "120",
+    "native_variadic_char_promotion": "65 66 67",
+    "native_identity_enum_variable": "1",
     "native_char_param_scalar": "99",
     "identity_string_use_after_free": "hello",
     "identity_ownership_nonstring_result": "ok"

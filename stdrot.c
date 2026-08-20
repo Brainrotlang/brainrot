@@ -150,7 +150,26 @@ static void *stdrot_lookup_symbol(const String symbol_name)
  * return_type()/enforce_arg_type()), it should fail loudly and immediately
  * rather than surfacing piecemeal depending on which call path happens to
  * touch the broken field first. Run once, right after the registry loads,
- * instead of at each individual call site. */
+ * instead of at each individual call site.
+ *
+ * What "validated" means here: every field is internally coherent (in
+ * range, self-consistent with the other fields on the same descriptor --
+ * pointer_level only meaningful alongside STDROT_PTR, return_like_arg only
+ * meaningful naming a STDROT_ANY mandatory argument, and so on). It does
+ * NOT mean every *capability* a structurally-valid descriptor could
+ * describe is actually implemented end to end. STDROT_HANDLE (any
+ * position) and STDROT_CSTRING as a *return* type are real, well-formed
+ * StdrotType values -- reserved groundwork for capabilities this ABI
+ * hasn't finished (see stdrot_api.h's own STDROT_HANDLE/STDROT_CSTRING
+ * comments) -- not malformed metadata. A descriptor using either loads
+ * successfully; semantic_check_native_call() (semantic_analyzer.c)
+ * rejects any *call* to it before that call could ever reach a marshaller
+ * with no code path to honor it. That is a deliberate two-tier design,
+ * not a gap in this function: collapsing "structurally coherent" and
+ * "fully implemented" into one load-time check would mean a single .so
+ * exporting one reserved-but-unimplemented capability refuses to load at
+ * all, taking down every unrelated, fully-supported native alongside it,
+ * for a call that might never even happen. */
 static void validate_native_registry(void)
 {
     for (int i = 0; i < function_count; i++)
@@ -159,6 +178,15 @@ static void validate_native_registry(void)
         if (!entry || !entry->name)
         {
             fprintf(stderr, "stdrot: registry entry %d has no name\n", i);
+            exit(1);
+        }
+        if (entry->return_type.type < STDROT_ANY ||
+            entry->return_type.type > STDROT_NONE)
+        {
+            fprintf(stderr,
+                    "stdrot: native '%s': return_type.type (%d) is not a "
+                    "valid StdrotType\n",
+                    entry->name, (int)entry->return_type.type);
             exit(1);
         }
         if (entry->min_args < 0 || entry->param_count < 0)
@@ -184,6 +212,21 @@ static void validate_native_registry(void)
                     "is NULL\n",
                     entry->name, entry->param_count);
             exit(1);
+        }
+        /* Safe to dereference entry->params[p] from here on: the NULL
+           check just above guarantees it's non-NULL whenever param_count
+           > 0 (the only way this loop actually iterates). */
+        for (int p = 0; p < entry->param_count; p++)
+        {
+            if (entry->params[p].type < STDROT_ANY ||
+                entry->params[p].type > STDROT_NONE)
+            {
+                fprintf(stderr,
+                        "stdrot: native '%s': params[%d].type (%d) is not "
+                        "a valid StdrotType\n",
+                        entry->name, p, (int)entry->params[p].type);
+                exit(1);
+            }
         }
         if (!entry->fn)
         {
@@ -963,6 +1006,49 @@ static void enforce_return_type(const String func_name, StdrotValue *result,
     exit(1);
 }
 
+/* C's default argument promotions (C11 6.5.2.2p6-7), applied to exactly
+ * the arguments this ABI's own STDROT_CSTRING-narrowing/char-lowering
+ * fix (stdrot_char_narrows_to_int(), stdrot.h) just started deliberately
+ * NOT applying to fixed, prototyped parameters: `char`/`_Bool`/`short`
+ * promote to `int`, `float` promotes to `double`. A fixed parameter is
+ * "converted as if by assignment" to its declared type -- no promotion
+ * -- which is exactly why `takes_char(buf[0])` now correctly stays char.
+ * A native's unchecked variadic tail (is_variadic, argument index >=
+ * param_count -- e.g. yapping's format-string arguments) has no
+ * prototype to convert "as if by assignment" *to*; C's own variadic
+ * calling convention promotes every such argument the same way, and any
+ * variadic consumer (process_yapping_format(), stdrot/yapping.c) is
+ * entitled to expect that canonical representation rather than having to
+ * understand every legal tagged Brainrot type individually. Centralized
+ * here, once, at the ABI boundary every variadic native call passes
+ * through -- not duplicated per-formatter. Other types (STRING, PTR,
+ * CSTRING, ...) pass through unchanged; C's own default promotions don't
+ * touch them either. */
+static void apply_variadic_promotion(StdrotValue *value)
+{
+    switch (value->type)
+    {
+    case STDROT_CHAR:
+        value->val.i = value->val.c;
+        value->type = STDROT_INT;
+        break;
+    case STDROT_BOOL:
+        value->val.i = value->val.b ? 1 : 0;
+        value->type = STDROT_INT;
+        break;
+    case STDROT_SHORT:
+        value->val.i = value->val.s;
+        value->type = STDROT_INT;
+        break;
+    case STDROT_FLOAT:
+        value->val.d = value->val.f;
+        value->type = STDROT_DOUBLE;
+        break;
+    default:
+        break;
+    }
+}
+
 static bool coerce_arg_to_param(StdrotValue *value, StdrotType declared)
 {
     if (value->type == declared)
@@ -1243,6 +1329,19 @@ NativeResult execute_native_call(const String func_name, ArgumentList *args)
                program passed semantic analysis. */
             enforce_arg_type(func_name, arg_count, &arg_values[arg_count],
                              &entry->params[arg_count]);
+        }
+        else if (entry->is_variadic)
+        {
+            /* Beyond entry->param_count -- the unchecked variadic tail
+               (e.g. yapping's format-string arguments). apply_variadic_
+               promotion()'s own comment has the full reasoning: this is
+               where C's default argument promotions belong, centralized
+               once instead of every variadic consumer re-deriving them
+               (or, as this ABI briefly did, silently NOT applying them
+               after fixed-parameter char handling was corrected to stop
+               narrowing -- yapping's own "%d" never accepted STDROT_CHAR
+               to begin with). */
+            apply_variadic_promotion(&arg_values[arg_count]);
         }
 
         arg_count++;

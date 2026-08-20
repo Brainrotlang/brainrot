@@ -751,7 +751,27 @@ static VarType infer_expression_abi_type(ASTNode *expr,
                                          SemanticAnalyzer *analyzer)
 {
     VarType t = infer_expression_type(expr, analyzer);
-    if (t != VAR_CHAR || !expr)
+    if (!expr)
+        return t;
+
+    /* No StdrotType exists for an enum (stdrot_api.h's StdrotType enum
+       has no ENUM member) -- ast_expr_to_stdrot_value()'s NODE_IDENTIFIER/
+       VAR_ENUM case (stdrot.c) always marshals an enum-typed expression
+       as STDROT_INT, the exact same representation a bare int gets.
+       Every OTHER reachable enum-typed expression shape (array access,
+       struct access -- there's no dedicated VAR_ENUM handling for either,
+       so they fall to ast_expr_to_stdrot_value()'s unconditional
+       NODE_ARRAY_ACCESS/NODE_STRUCT_ACCESS -> STDROT_INT catch-all)
+       marshals the same way. Normalized here unconditionally, before the
+       VAR_CHAR-specific handling below, so identity<T>(T)'s static T
+       (infer_expression_type() alone still faithfully reports VAR_ENUM,
+       which callers that care about the *source* type still want) can't
+       diverge from the runtime T an enum argument/identity-return
+       actually marshals as. */
+    if (t == VAR_ENUM)
+        return VAR_INT;
+
+    if (t != VAR_CHAR)
         return t;
 
     if (stdrot_char_narrows_to_int(
