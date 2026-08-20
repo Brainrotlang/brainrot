@@ -174,5 +174,9 @@
     "native_typed_param_from_legacy_any": "Error: stdrot: native 'bet' argument 1: declared to accept StdrotType 5 but the actual argument is StdrotType 7, even after attempted coercion -- static type checking approved this call without knowing the argument's real type (see semantic_check_native_call()'s NONE fallthrough), and the runtime value doesn't satisfy the declared parameter after all",
     "semantic_error_native_ptr_dest_from_legacy_any": "Error: Type mismatch in initialization of 'p': expected a pointer (level 1), got pointer level 0 at line 1",
     "slorp_identity_char_array": "hello",
-    "native_cstring_param_char_array": "5"
+    "native_cstring_param_char_array": "5",
+    "semantic_error_native_char_array_access": "Error: 'takes_char' argument 1: expected char, got int at line 16",
+    "semantic_error_native_char_struct_access": "Error: 'takes_char' argument 1: expected char, got int at line 18",
+    "native_char_param_scalar": "99",
+    "identity_string_use_after_free": "hello"
 }

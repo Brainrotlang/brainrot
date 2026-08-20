@@ -98,6 +98,9 @@ const STDIN_BY_PREFIX = [
   ["slorp_string", "skibidi bop bop yes yes\n"],
   ["slorp_identity_char_array", "hello\n"],
   ["native_cstring_param_char_array", "hello\n"],
+  ["semantic_error_native_char_array_access", "hello\n"],
+  ["native_char_param_scalar", "c\n"],
+  ["identity_string_use_after_free", "hello\n"],
   ["native_call_self_init", "42\n"],
   ["native_call_loop", "1\n2\n3\n"],
   ["native_call_string_arg", "skibidi\nq\n"],
@@ -124,12 +127,13 @@ const WASM_EXPECTED_OVERRIDES = {
 // Fixtures that call a tests/stdrot/*.c native (poke_int, peek_int,
 // test_ptr_source, lying_double, lying_bool, lying_ptr_return,
 // legacy_ptr_leak, legacy_int, legacy_string, legacy_cstring, legacy_void,
-// legacy_returns_any_tag, cstring_return, takes_cstring) -- only meaningful
-// in "test" mode against tests/brainrot-test.mjs, which is the only build
-// those natives are ever linked into. In "production" mode they'd all fail
-// with "Undefined function" against brainrot.mjs, which is expected (that
-// module correctly doesn't have them) rather than a regression worth
-// asserting against.
+// legacy_returns_any_tag, cstring_return, takes_cstring, takes_char,
+// identity) --
+// only meaningful in "test" mode against tests/brainrot-test.mjs, which is
+// the only build those natives are ever linked into. In "production" mode
+// they'd all fail with "Undefined function" against brainrot.mjs, which is
+// expected (that module correctly doesn't have them) rather than a
+// regression worth asserting against.
 const WASM_PRODUCTION_SKIP = new Set([
   "native_ptr_param_return",
   "semantic_error_native_ptr_wrong_depth",
@@ -150,6 +154,10 @@ const WASM_PRODUCTION_SKIP = new Set([
   "native_typed_param_from_legacy_any",
   "semantic_error_native_ptr_dest_from_legacy_any",
   "native_cstring_param_char_array",
+  "semantic_error_native_char_array_access",
+  "semantic_error_native_char_struct_access",
+  "native_char_param_scalar",
+  "identity_string_use_after_free",
 ]);
 
 // Runs one program in a fresh module instance — the interpreter has global

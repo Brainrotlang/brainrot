@@ -104,9 +104,48 @@ typedef enum
     STDROT_SHORT,
     STDROT_BOOL,
     STDROT_CHAR,
-    STDROT_STRING,  /* Brainrot String (length-prefixed, not NUL-terminated) */
-    STDROT_CSTRING, /* NUL-terminated const char *, owned by the caller for
-                        the duration of the call */
+    STDROT_STRING,  /* Brainrot String (length-prefixed, not NUL-terminated).
+                        Ownership differs by direction:
+                          - as an ARGUMENT: borrowed for the duration of
+                            the call only. A native must not retain
+                            .val.str.data past its own return.
+                          - as a RETURN value: also only borrowed by the
+                            native past its own return, in the following
+                            specific sense -- execute_native_call()
+                            (stdrot.c) materializes (deep-copies) the
+                            returned .val.str.data into independent memory
+                            immediately after the call, BEFORE releasing
+                            any of this call's own argument-owned scratch
+                            buffers, specifically so a native that returns
+                            one of its own arguments unchanged (T -> T,
+                            see STDROT_EXPORT_SIG_IDENTITY below) doesn't
+                            hand back a pointer this adapter is about to
+                            free. A native's own return value therefore
+                            does not need to be independently heap-owned
+                            by the native itself -- returning a borrowed/
+                            aliased buffer (including one of its own
+                            arguments, as long as that argument was itself
+                            a STDROT_STRING) is safe by construction. */
+    STDROT_CSTRING, /* NUL-terminated const char *, STRICTLY NON-ESCAPING:
+                        the adapter owns the buffer, allocated fresh from
+                        the Brainrot String argument immediately before
+                        the call and freed immediately after entry->fn()
+                        returns (execute_native_call(), stdrot.c). A
+                        native's C implementation MUST NOT retain this
+                        pointer past its own return -- storing it in a
+                        global, a callback registration, or any structure
+                        that outlives the call is a use-after-free the
+                        moment this adapter's cleanup runs. There is
+                        currently no annotation for a native that needs
+                        the opposite contract (retaining/owning the
+                        string beyond the call, e.g. a C API like
+                        `set_global_name(const char *)` that keeps the
+                        pointer) -- that is a real, tracked gap (see
+                        issue #205 and the roadmap's Phase 2 "string
+                        boundary" section), not an oversight silently
+                        left unaddressed. A native needing an escaping
+                        string is not yet expressible through this ABI;
+                        do not write one until this gap is closed. */
     STDROT_PTR,     /* An opaque native pointer -- base type intentionally
                         erased, AT EVERY DEPTH, not just the outermost one.
                         A StdrotParam of {STDROT_PTR, NULL, N} describes a

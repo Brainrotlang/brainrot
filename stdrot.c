@@ -62,6 +62,7 @@ extern bool set_short_variable(const String name, short value,
                                TypeModifiers mods);
 extern bool set_bool_variable(const String name, bool value,
                               TypeModifiers mods);
+extern bool set_char_variable(const String name, int value, TypeModifiers mods);
 
 /* ── Dynamic library state (native build only) ───────────────────────────── */
 #ifndef STDROT_STATIC
@@ -141,6 +142,71 @@ static void *stdrot_lookup_symbol(const String symbol_name)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
 
+/* ── Registry validation ───────────────────────────────────────────────────
+ * A malformed StdrotEntry is a bug in the native binding itself (a hand-
+ * written STDROT_EXPORT_SIG (or STDROT_EXPORT_SIG_IDENTITY) invocation with
+ * inconsistent arguments), never something a Brainrot program can trigger
+ * -- so, like every other native-binding bug this ABI catches (enforce_
+ * return_type()/enforce_arg_type()), it should fail loudly and immediately
+ * rather than surfacing piecemeal depending on which call path happens to
+ * touch the broken field first. Run once, right after the registry loads,
+ * instead of at each individual call site. */
+static void validate_native_registry(void)
+{
+    for (int i = 0; i < function_count; i++)
+    {
+        const StdrotEntry *entry = functions[i];
+        if (!entry || !entry->name)
+        {
+            fprintf(stderr, "stdrot: registry entry %d has no name\n", i);
+            exit(1);
+        }
+        if (entry->min_args < 0 || entry->param_count < 0)
+        {
+            fprintf(stderr,
+                    "stdrot: native '%s': min_args (%d) and param_count "
+                    "(%d) must both be >= 0\n",
+                    entry->name, entry->min_args, entry->param_count);
+            exit(1);
+        }
+        if (entry->min_args > entry->param_count)
+        {
+            fprintf(stderr,
+                    "stdrot: native '%s': min_args (%d) cannot exceed "
+                    "param_count (%d)\n",
+                    entry->name, entry->min_args, entry->param_count);
+            exit(1);
+        }
+        if (entry->param_count > 0 && !entry->params)
+        {
+            fprintf(stderr,
+                    "stdrot: native '%s': param_count (%d) > 0 but params "
+                    "is NULL\n",
+                    entry->name, entry->param_count);
+            exit(1);
+        }
+        /* return_like_arg (StdrotEntry's own comment, stdrot_api.h): -1
+           means "not identity-polymorphic," otherwise it must name a
+           MANDATORY argument -- an identity relationship ("same type as
+           argument N") is meaningless if argument N might not be
+           supplied. Catches e.g. STDROT_EXPORT_SIG_IDENTITY(name, fn,
+           params, 1, 0) -- one optional param, zero mandatory ones, so
+           .return_like_arg = 0 (hardcoded by that macro) could point at
+           an argument that was never actually passed. */
+        if (entry->return_like_arg != -1 &&
+            (entry->return_like_arg < 0 ||
+             entry->return_like_arg >= entry->min_args))
+        {
+            fprintf(stderr,
+                    "stdrot: native '%s': return_like_arg (%d) must be -1 "
+                    "or a mandatory argument index (0 <= return_like_arg "
+                    "< min_args = %d)\n",
+                    entry->name, entry->return_like_arg, entry->min_args);
+            exit(1);
+        }
+    }
+}
+
 /* ── Loader ──────────────────────────────────────────────────────────────── */
 
 #ifdef STDROT_STATIC
@@ -152,6 +218,7 @@ void stdrot_load(void)
     StdrotAPI api = stdrot_get_api();
     functions = api.functions;
     function_count = api.count;
+    validate_native_registry();
 }
 
 void stdrot_unload(void)
@@ -222,6 +289,7 @@ void stdrot_load(void)
     StdrotAPI api = get_api();
     functions = api.functions;
     function_count = api.count;
+    validate_native_registry();
 }
 
 void stdrot_unload(void)
@@ -302,6 +370,20 @@ VarType stdrot_type_to_vartype(StdrotType type)
     case STDROT_NONE:
     default:
         return NONE;
+    }
+}
+
+bool stdrot_char_narrows_to_int(NodeType node_type)
+{
+    switch (node_type)
+    {
+    case NODE_ARRAY_ACCESS:
+    case NODE_STRUCT_ACCESS:
+    case NODE_UNARY_OPERATION:
+    case NODE_OPERATION:
+        return true;
+    default:
+        return false;
     }
 }
 
@@ -472,18 +554,22 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
         out->type = STDROT_DOUBLE;
         out->val.d = evaluate_expression_double(expr);
     }
-    /* Gated to NODE_FUNC_CALL specifically (a native call returning a char
-       or string, e.g. `yapping("%s", slorp(buf))`) rather than folded into
-       the general is_expression() checks above: NODE_ARRAY_ACCESS is
-       unconditionally treated as int below regardless of element type
-       (e.g. a lone `buf[0]`), and is_expression(expr, VAR_CHAR) would
-       otherwise also match that case, changing its marshalling too. */
-    else if (expr->type == NODE_FUNC_CALL && is_expression(expr, VAR_CHAR))
+    /* stdrot_char_narrows_to_int() (stdrot.h) is the ONE place this
+       exception is defined -- infer_expression_abi_type()
+       (semantic_analyzer.c) consults the identical predicate so the
+       static checker and this runtime marshaller can't independently
+       drift out of agreement about which node shapes lower a char
+       through plain int instead of preserving it as STDROT_CHAR. A
+       native call is the only shape excluded: its own declared result
+       (e.g. `yapping("%s", slorp(buf))`) is preserved faithfully. */
+    else if (!stdrot_char_narrows_to_int(expr->type) &&
+             is_expression(expr, VAR_CHAR))
     {
         out->type = STDROT_CHAR;
         out->val.c = (char)evaluate_expression_int(expr);
     }
-    else if (expr->type == NODE_FUNC_CALL && is_expression(expr, VAR_STRING))
+    else if (!stdrot_char_narrows_to_int(expr->type) &&
+             is_expression(expr, VAR_STRING))
     {
         out->type = STDROT_STRING;
         out->val.str = evaluate_expression_string(expr);
@@ -975,6 +1061,41 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
             : NULL;
     enforce_return_type(func_name, &result, entry, identity_arg);
 
+    /* Materialize an escaping string result BEFORE releasing argument
+     * scratch below, while any buffer it might alias is still valid.
+     * STDROT_ANY/STDROT_EXPORT_SIG_IDENTITY (e.g. a plausible `identity`
+     * native: `return args[0];`) can hand back the SAME StdrotValue --
+     * same .val.str.data pointer -- that was just marshalled as this
+     * call's own argument. That pointer is exactly one of
+     * owned_string_bufs[]: a nested call's result (`identity(legacy_
+     * string())`) is marshalled by ast_expr_to_stdrot_value() into a
+     * freshly allocated buffer, tracked here so it gets freed once this
+     * call is done with it -- but if the native's result aliases that
+     * same buffer, "done with it" isn't true anymore: the cleanup loop
+     * right below would free the exact memory `result` is about to be
+     * returned pointing at, and the caller (marshal_native_return_value()/
+     * handle_function_call(), ast.c) would then copy from already-freed
+     * memory. A copy here breaks the alias cleanly: the cleanup loop
+     * frees the original owned buffer as it always did, and `result`
+     * now points at independent memory nothing else references. Uses
+     * the same "leak the source rather than risk freeing a buffer
+     * something else still needs" tradeoff already accepted elsewhere in
+     * this pipeline (see handle_function_call()'s VAR_STRING case,
+     * ast.c) -- this copy isn't freed by anyone either, which is a real
+     * but bounded leak, not a use-after-free. */
+    if (result.type == STDROT_STRING)
+    {
+        for (int i = 0; i < arg_count; i++)
+        {
+            if (owned_string_bufs[i] &&
+                owned_string_bufs[i] == result.val.str.data)
+            {
+                result.val.str = safe_strdup(&result.val.str);
+                break;
+            }
+        }
+    }
+
     /* Reached: entry->fn() returned normally rather than exit()ing, so
        ordinary cleanup below handles this frame, and the atexit handler
        above must not also try to (double-free) -- pop it first. Any
@@ -982,11 +1103,6 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
        returning here, so this is always exactly our own frame. */
     pending_native_call_stack = frame.next;
 
-    /* None of the registered natives return one of their own string
-       arguments back out (slorp -- the one native that could reuse an
-       argument buffer in its result -- only ever takes a plain identifier
-       per the grammar, never a nested call), so freeing here can't dangle
-       a pointer the caller is still holding. */
     for (int i = 0; i < arg_count; i++)
     {
         if (owned_string_bufs[i])
@@ -1044,7 +1160,15 @@ void execute_func_call(const String func_name, ArgumentList *args)
                 set_short_variable(name, result.val.s, var->modifiers);
                 break;
             case STDROT_CHAR:
-                set_int_variable(name, result.val.c, var->modifiers);
+                /* set_char_variable(), not set_int_variable(): the latter
+                   sets var_type to VAR_INT, corrupting the variable's own
+                   type tag for every later use of it -- including a
+                   subsequent native-call argument, which would then
+                   marshal as STDROT_INT instead of STDROT_CHAR despite
+                   still holding an ordinary char value (see
+                   ast_expr_to_stdrot_value()'s NODE_IDENTIFIER/VAR_CHAR
+                   case, which dispatches purely on var->var_type). */
+                set_char_variable(name, result.val.c, var->modifiers);
                 break;
             case STDROT_STRING:
                 if (var->is_array && var->var_type == VAR_CHAR &&

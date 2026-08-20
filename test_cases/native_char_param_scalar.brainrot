@@ -1,0 +1,16 @@
+🚽 Test case: takes_char() declares a plain STDROT_CHAR parameter. A
+🚽 bare char identifier (not an array, not a struct field, not an
+🚽 expression) must still work correctly -- this is the positive
+🚽 counterpart to semantic_error_native_char_array_access.brainrot and
+🚽 semantic_error_native_char_struct_access.brainrot. Also exercises the
+🚽 deprecated slorp(c) write-back path immediately beforehand, which
+🚽 previously corrupted `c`'s own var_type via set_int_variable() instead
+🚽 of set_char_variable(), silently turning a later `takes_char(c)` into
+🚽 a spurious runtime ABI-violation abort.
+skibidi main {
+    yap c;
+    slorp(c);
+    rizz r = takes_char(c);
+    yapping("%d", r);
+    bussin 0;
+}

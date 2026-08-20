@@ -36,6 +36,21 @@ const StdrotEntry *get_native_function(const String func_name);
 /* Shared StdrotType -> VarType mapping, used by both the interpreter
  * (ast.c) and the semantic analyzer so the two never drift apart. */
 VarType stdrot_type_to_vartype(StdrotType type);
+/* True for the AST expression shapes whose marshalled ABI representation
+ * never preserves a VAR_CHAR base type as STDROT_CHAR (or a VAR_STRUCT/
+ * VAR_STRING one, though those have their own separate handling) --
+ * array access, struct field access, unary operations, and binary
+ * operations all lower a char through plain int instead (matching C's
+ * own integer-promotion rules for sub-int arithmetic/access contexts).
+ * Only a bare identifier, a literal, or a native call's own declared
+ * result preserves char/string faithfully. This is the ONE place this
+ * exception is defined -- both the runtime marshaller
+ * (ast_expr_to_stdrot_value(), stdrot.c) and the static checker
+ * (infer_expression_abi_type(), semantic_analyzer.c) call this instead
+ * of maintaining their own copy of the exception list, so the two
+ * cannot independently drift out of agreement about which node shapes
+ * it applies to. */
+bool stdrot_char_narrows_to_int(NodeType node_type);
 
 /* ── String boundary ──────────────────────────────────────────────────────
  * Brainrot's String is length-prefixed and not guaranteed NUL-terminated;

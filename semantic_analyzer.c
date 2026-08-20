@@ -466,6 +466,34 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
         return NONE;
     }
 
+    case NODE_ARRAY_ACCESS:
+    {
+        /* Previously missing entirely (fell to `default: return NONE`),
+           which meant EVERY array-access expression's static type was
+           unknown, unconditionally -- not just the VAR_CHAR ones
+           infer_expression_abi_type() cares about. That silently
+           disabled argument type-checking for any native call passing
+           one (semantic_check_native_call()'s `actual == NONE`
+           fallthrough), regardless of the array's actual element type.
+           Reports the ELEMENT type (the array's own declared type, same
+           as NODE_IDENTIFIER just above) -- infer_expression_abi_type()
+           is what narrows a VAR_CHAR one to VAR_INT to match how
+           ast_expr_to_stdrot_value() (stdrot.c) actually marshals it. */
+        const String array_name = node->data.array.name;
+        if (!array_name.data)
+            return NONE;
+
+        SymbolEntry *symbol = find_symbol(analyzer, array_name);
+        if (symbol)
+            return symbol->type;
+
+        Variable *var = get_variable(array_name);
+        if (var)
+            return var->var_type;
+
+        return NONE;
+    }
+
     case NODE_OPERATION:
     {
         VarType left_type = infer_expression_type(node->data.op.left, analyzer);
@@ -580,9 +608,44 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
         StructDef *def = NULL;
         void *base = NULL;
         StructField *fld = NULL;
-        if (!resolve_struct_access(node, &def, &base, &fld, false))
+        if (resolve_struct_access(node, &def, &base, &fld, false))
+            return fld->type;
+
+        /* resolve_struct_access() only works at runtime -- its object
+           resolution goes through get_variable(), which is always NULL
+           during this single static pass (see semantic_analyze(),
+           "Phase 1: Collect all declarations" then "Phase 2" -- the
+           whole program is analyzed before the interpreter executes
+           anything). Without a static fallback, EVERY struct-field
+           access's type was unconditionally NONE, silently disabling
+           argument type-checking for any native call passing one
+           (semantic_check_native_call()'s `actual == NONE` fallthrough)
+           regardless of the field's actual type. A struct's field
+           *types* don't depend on any particular instance, though --
+           get_struct_def() is a global type-definition registry,
+           independent of runtime Variable state -- so a direct object
+           (`foo.c`, not a chained `foo.bar.c`) is resolvable here via
+           the analyzer's own symbol table (SymbolEntry.struct_name). */
+        ASTNode *obj = node->data.struct_access.object;
+        if (!obj || obj->type != NODE_IDENTIFIER)
             return NONE;
-        return fld->type;
+
+        SymbolEntry *obj_sym = find_symbol(analyzer, obj->data.name);
+        String struct_name = obj_sym ? obj_sym->struct_name : (String){0};
+        if (!struct_name.data)
+            return NONE;
+
+        StructDef *static_def = get_struct_def(struct_name);
+        if (!static_def)
+            return NONE;
+
+        for (StructField *f = static_def->fields; f; f = f->next)
+        {
+            if (strcmp(f->name.data,
+                       node->data.struct_access.member_name.data) == 0)
+                return f->type;
+        }
+        return NONE;
     }
 
     default:
@@ -592,18 +655,35 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
 
 /* The static VarType a native-ABI marshalling call (ast_expr_to_stdrot_
  * value(), stdrot.c) will actually produce for this expression --
- * distinct from infer_expression_type() because a VAR_CHAR *array*
- * (`yap buf[32]`) marshals as STDROT_STRING there (its own VAR_CHAR/
- * is_array branch), which stdrot_type_to_vartype() maps back to
- * VAR_STRING, not VAR_CHAR -- but infer_expression_type() reports the
- * ELEMENT type (VAR_CHAR) for any VAR_CHAR expression, array or not, so
- * it can't tell "a single char" and "a char buffer used as a string"
- * apart. Only NODE_IDENTIFIER is special-cased: that's the only
- * expression shape SymbolEntry.is_array is populated for (see its own
- * comment, semantic_analyzer.h) -- a non-identifier VAR_CHAR expression
- * (a literal, an array access yielding one element, ...) is never an
- * array itself, so plain infer_expression_type() is already correct for
- * it. Used wherever static checking needs to agree with what the ABI
+ * distinct from infer_expression_type() because that function reports
+ * the SOURCE-LEVEL type, while the ABI boundary sometimes lowers it to
+ * something else. Two independent exceptions, both delegated to a
+ * single shared rule each side consults instead of encoding its own
+ * copy (so this function and ast_expr_to_stdrot_value() cannot
+ * independently drift out of agreement, the way they briefly did):
+ *
+ *   1. stdrot_char_narrows_to_int() (stdrot.h) -- array access, struct
+ *      access, and unary/binary operations never preserve a VAR_CHAR
+ *      base type as STDROT_CHAR; they lower through plain int instead,
+ *      matching C's own integer-promotion rules for sub-int arithmetic/
+ *      access contexts. `takes_char(buf[0])` and `takes_char(foo.c)`
+ *      must both be checked as VAR_INT arguments, not VAR_CHAR, or the
+ *      analyzer approves a call the runtime ABI then reports as a
+ *      mismatch.
+ *
+ *   2. A VAR_CHAR *array identifier* (`yap buf[32]`) marshals as
+ *      STDROT_STRING (ast_expr_to_stdrot_value()'s VAR_CHAR/is_array
+ *      branch), which stdrot_type_to_vartype() maps back to VAR_STRING
+ *      -- but infer_expression_type() reports the ELEMENT type
+ *      (VAR_CHAR) for any VAR_CHAR expression, array or not, so it
+ *      can't tell "a single char" and "a char buffer used as a string"
+ *      apart. Only NODE_IDENTIFIER is checked here: that's the only
+ *      expression shape SymbolEntry.is_array is populated for (see its
+ *      own comment, semantic_analyzer.h), and is mutually exclusive
+ *      with exception 1 above (an identifier is never one of the node
+ *      shapes that narrows).
+ *
+ * Used wherever static checking needs to agree with what the ABI
  * boundary will actually construct: slorp<T>(T)->T's return_like_arg
  * identity (infer_expression_type()'s own NODE_FUNC_CALL case, above)
  * and native argument type-checking (semantic_check_native_call()). */
@@ -611,7 +691,13 @@ static VarType infer_expression_abi_type(ASTNode *expr,
                                          SemanticAnalyzer *analyzer)
 {
     VarType t = infer_expression_type(expr, analyzer);
-    if (t != VAR_CHAR || !expr || expr->type != NODE_IDENTIFIER)
+    if (t != VAR_CHAR || !expr)
+        return t;
+
+    if (stdrot_char_narrows_to_int(expr->type))
+        return VAR_INT;
+
+    if (expr->type != NODE_IDENTIFIER)
         return t;
 
     SymbolEntry *sym = find_symbol(analyzer, expr->data.name);

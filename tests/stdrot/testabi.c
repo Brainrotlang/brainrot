@@ -199,3 +199,46 @@ static const StdrotParam takes_cstring_params[] = {
 STDROT_EXPORT_SIG("takes_cstring", stdrot_takes_cstring,
                   ((StdrotParam){STDROT_INT, NULL, 0}), takes_cstring_params, 1,
                   1, false);
+
+/* Takes a plain STDROT_CHAR parameter, returns it widened to int --
+ * exercises the stdrot_char_narrows_to_int() fix (stdrot.h): a char
+ * ARRAY-ACCESS argument (`buf[0]`) is source-level VAR_CHAR, but both
+ * ast_expr_to_stdrot_value() and infer_expression_abi_type() must agree
+ * it lowers to (STDROT_)INT, not (STDROT_)CHAR, for this call --
+ * declared STDROT_CHAR -- to correctly be REJECTED (a genuine type
+ * mismatch, argument is INT not CHAR), while a bare char identifier
+ * (`c`) is correctly ACCEPTED. */
+static StdrotValue stdrot_takes_char(StdrotValue *args, int argc)
+{
+    (void)argc;
+    StdrotValue out = {STDROT_INT, {0}};
+    out.val.i = (int)args[0].val.c;
+    return out;
+}
+
+static const StdrotParam takes_char_params[] = {
+    {STDROT_CHAR, NULL, 0},
+};
+STDROT_EXPORT_SIG("takes_char", stdrot_takes_char,
+                  ((StdrotParam){STDROT_INT, NULL, 0}), takes_char_params, 1, 1,
+                  false);
+
+/* Identity function, T -> T, exactly like STDROT_EXPORT_SIG_IDENTITY's
+ * own documentation describes -- and exactly the shape that turns a
+ * nested legacy-ANY string argument into a use-after-free without
+ * execute_native_call()'s materialize-before-free fix: `identity(legacy_
+ * string())`'s argument marshalling allocates a fresh buffer for the
+ * nested call's result, tracked as owned scratch to free once this call
+ * is done -- but this native hands that SAME buffer straight back out as
+ * its own result, so "done with it" isn't true until the caller has
+ * actually consumed the return value. */
+static StdrotValue stdrot_identity(StdrotValue *args, int argc)
+{
+    (void)argc;
+    return args[0];
+}
+
+static const StdrotParam identity_params[] = {
+    {STDROT_ANY, NULL, 0},
+};
+STDROT_EXPORT_SIG_IDENTITY("identity", stdrot_identity, identity_params, 1, 1);
