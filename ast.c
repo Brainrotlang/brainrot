@@ -23,6 +23,7 @@ static HashMap *enum_registry = NULL;
 static EnumDef *enum_registry_list = NULL;
 bool struct_def_had_error = false;
 ReturnValue current_return_value;
+bool g_native_string_result_owned = false;
 Arena arena;
 
 TypeModifiers current_modifiers = {false, false, false, false,
@@ -87,6 +88,13 @@ typedef struct
     ASTNode *node;
     StdrotValue value;
     bool valid;
+    /* Mirrors g_native_string_result_owned (ast.h) at the moment `value`
+       was cached -- carried alongside it, not just left in the bare
+       global, so native_call_consume() restores the correct flag even
+       when `value` came from an earlier peek() rather than a fresh
+       execute_native_call() (some other native call could otherwise run
+       in between and leave the global reflecting the wrong call). */
+    bool owns_string;
 } NativeCallCacheEntry;
 static NativeCallCacheEntry native_call_cache[NATIVE_CALL_CACHE_SIZE];
 
@@ -97,6 +105,7 @@ static StdrotValue native_call_peek(ASTNode *node)
     {
         if (native_call_cache[i].valid && native_call_cache[i].node == node)
         {
+            g_native_string_result_owned = native_call_cache[i].owns_string;
             return native_call_cache[i].value;
         }
         if (free_slot < 0 && !native_call_cache[i].valid)
@@ -107,6 +116,7 @@ static StdrotValue native_call_peek(ASTNode *node)
 
     if (free_slot < 0)
     {
+        g_native_string_result_owned = false;
         return (StdrotValue){STDROT_NONE, {0}};
     }
 
@@ -115,6 +125,7 @@ static StdrotValue native_call_peek(ASTNode *node)
     native_call_cache[free_slot].node = node;
     native_call_cache[free_slot].value = value;
     native_call_cache[free_slot].valid = true;
+    native_call_cache[free_slot].owns_string = g_native_string_result_owned;
     return value;
 }
 
@@ -125,6 +136,7 @@ static StdrotValue native_call_consume(ASTNode *node)
         if (native_call_cache[i].valid && native_call_cache[i].node == node)
         {
             native_call_cache[i].valid = false;
+            g_native_string_result_owned = native_call_cache[i].owns_string;
             return native_call_cache[i].value;
         }
     }
@@ -3179,6 +3191,14 @@ static void marshal_native_return_value(ASTNode *node)
 
     current_return_value.pointer_level = 0;
     current_return_value.struct_name = (String){0};
+    /* Reset unconditionally -- g_native_string_result_owned (set by
+       native_call_consume() immediately above, mirroring whatever
+       execute_native_call()/the cache determined) only actually applies
+       when result.type == STDROT_STRING, handled below; every other
+       result type must not inherit a stale true left over from a
+       previous native string call through this same global slot. */
+    current_return_value.owns_strvalue =
+        result.type == STDROT_STRING && g_native_string_result_owned;
     /* An opaque native pointer reuses VAR_INT + pointer_level, the same
        representation every other pointer-typed value in this interpreter
        already uses (see e.g. handle_function_call()'s VAR_INT case, which
@@ -3307,6 +3327,23 @@ void *handle_function_call(ASTNode *node)
             return_value = SAFE_MALLOC(String);
             *(String *)return_value =
                 safe_strdup(&current_return_value.value.strvalue);
+            /* current_return_value.owns_strvalue (ast.h, set by
+               marshal_native_return_value()): true only for a native
+               result the ABI boundary already knows is a heap buffer
+               nothing else references (see g_native_string_result_owned's
+               own comment) -- safe (and necessary, to avoid leaking it)
+               to free now that the copy above has captured everything
+               the caller needs. False for every other VAR_STRING source
+               (a Brainrot-defined function's own return, or a native
+               result that might alias a string literal or a live
+               variable's own backing storage) -- freeing those
+               unconditionally would corrupt still-live state, which is
+               exactly why this was never done unconditionally before. */
+            if (current_return_value.owns_strvalue)
+            {
+                SAFE_FREE(current_return_value.value.strvalue.data);
+                current_return_value.owns_strvalue = false;
+            }
             break;
         case VAR_STRUCT:
             /* A struct return has no meaningful representation in this

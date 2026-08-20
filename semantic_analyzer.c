@@ -419,6 +419,72 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
     }
 }
 
+/* Purely static struct-type resolution for a struct-typed expression node
+ * (NODE_IDENTIFIER, or a nested NODE_STRUCT_ACCESS for a chain like
+ * `a.b.c`), used by infer_expression_type()'s NODE_STRUCT_ACCESS case
+ * below to resolve a member-access chain of ANY depth using only the
+ * analyzer's own symbol table (find_symbol) and the global struct-
+ * definition registry (get_struct_def) -- never get_variable()/runtime
+ * Variable storage, which (like resolve_struct_access()) isn't populated
+ * yet during this single static pass (see semantic_analyze()'s own
+ * comment).
+ *
+ * This mirrors the recursive parent-type resolution semantic_analyze_
+ * with_scope_tracking()'s own NODE_STRUCT_ACCESS case performs (which
+ * additionally falls back to get_variable() and mutates node->var_type on
+ * the AST node) -- but that mutation can't be relied on here: semantic_
+ * check_native_call() (which calls infer_expression_type() on each
+ * argument via infer_expression_abi_type()) runs from that same case's
+ * NODE_FUNC_CALL handling BEFORE the arguments themselves get visited by
+ * that case's own argument loop, so a struct-access argument's node->
+ * var_type may still be its unpopulated default the first time this asks
+ * about it. Recursing independently here, purely off static type
+ * metadata, doesn't depend on visit order at all.
+ *
+ * Returns NULL if `expr` doesn't statically resolve to a struct-typed
+ * value this way (unknown symbol, non-struct type, or a pointer-typed
+ * intermediate field -- chaining `.` through a pointer isn't supported,
+ * matching semantic_analyze_with_scope_tracking()'s own rejection of it).
+ */
+static StructDef *infer_struct_def_static(ASTNode *expr,
+                                          SemanticAnalyzer *analyzer)
+{
+    if (!expr)
+        return NULL;
+
+    if (expr->type == NODE_IDENTIFIER)
+    {
+        /* No pointer_level check here, matching resolve_struct_access()'s
+           own top-level NODE_IDENTIFIER case (ast.c) and semantic_
+           analyze_with_scope_tracking()'s NODE_STRUCT_ACCESS case (this
+           file) -- neither rejects a pointer-typed *object* itself, only
+           a pointer-typed *intermediate field* partway through a chain
+           (checked below, for the NODE_STRUCT_ACCESS branch, matching
+           both of those). */
+        SymbolEntry *sym = find_symbol(analyzer, expr->data.name);
+        if (!sym || sym->type != VAR_STRUCT || !sym->struct_name.data)
+            return NULL;
+        return get_struct_def(sym->struct_name);
+    }
+
+    if (expr->type == NODE_STRUCT_ACCESS)
+    {
+        StructDef *parent_def =
+            infer_struct_def_static(expr->data.struct_access.object, analyzer);
+        if (!parent_def)
+            return NULL;
+
+        StructField *fld =
+            find_struct_field(parent_def, expr->data.struct_access.member_name);
+        if (!fld || fld->type != VAR_STRUCT || fld->pointer_level > 0 ||
+            !fld->struct_name.data)
+            return NULL;
+        return get_struct_def(fld->struct_name);
+    }
+
+    return NULL;
+}
+
 /* Infer the type of an expression */
 VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
 {
@@ -623,29 +689,18 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
            regardless of the field's actual type. A struct's field
            *types* don't depend on any particular instance, though --
            get_struct_def() is a global type-definition registry,
-           independent of runtime Variable state -- so a direct object
-           (`foo.c`, not a chained `foo.bar.c`) is resolvable here via
-           the analyzer's own symbol table (SymbolEntry.struct_name). */
-        ASTNode *obj = node->data.struct_access.object;
-        if (!obj || obj->type != NODE_IDENTIFIER)
-            return NONE;
-
-        SymbolEntry *obj_sym = find_symbol(analyzer, obj->data.name);
-        String struct_name = obj_sym ? obj_sym->struct_name : (String){0};
-        if (!struct_name.data)
-            return NONE;
-
-        StructDef *static_def = get_struct_def(struct_name);
+           independent of runtime Variable state -- so infer_struct_def_
+           static() (above) resolves the object -- direct (`foo.c`) or a
+           chain of any depth (`foo.inner.c`, `foo.inner.deeper.c`) --
+           using only that registry and the analyzer's own symbol table. */
+        StructDef *static_def =
+            infer_struct_def_static(node->data.struct_access.object, analyzer);
         if (!static_def)
             return NONE;
 
-        for (StructField *f = static_def->fields; f; f = f->next)
-        {
-            if (strcmp(f->name.data,
-                       node->data.struct_access.member_name.data) == 0)
-                return f->type;
-        }
-        return NONE;
+        StructField *f =
+            find_struct_field(static_def, node->data.struct_access.member_name);
+        return f ? f->type : NONE;
     }
 
     default:

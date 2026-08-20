@@ -134,6 +134,15 @@ jobs:
       - name: Build test-only shared library
         run: make tests/libstdrot.so
 
+      # tests/badnatives/*.so: one minimal .so per file, each holding a
+      # single deliberately malformed StdrotEntry that validate_native_
+      # registry() (stdrot.c) must reject at stdrot_load() time -- see that
+      # directory's own file comment. test_bad_registry_rejected_at_load
+      # (tests/test_brainrot.py) points STDROT_LIB_PATH at one of these per
+      # subprocess, never at the shared tests/libstdrot.so above.
+      - name: Build malformed-registry test libraries
+        run: make badnatives
+
       - name: Run Pytest
         run: |
           source .venv/bin/activate

@@ -37,6 +37,16 @@ TEST_STDROT_DIR := tests/stdrot
 TEST_STDROT_SRCS := $(wildcard $(TEST_STDROT_DIR)/*.c)
 TEST_STDROT_LIB := tests/libstdrot.so
 
+# Deliberately malformed native registries (see tests/badnatives/ own file
+# comment): each .c file there registers exactly one StdrotEntry that
+# validate_native_registry() (stdrot.c) must reject at stdrot_load() time.
+# Built as one minimal .so per file -- registry.c (stdrot_get_api()) plus
+# that single malformed entry, no production natives -- since these tests
+# only care whether loading aborts before any Brainrot program runs.
+BADNATIVES_DIR := tests/badnatives
+BADNATIVES_SRCS := $(wildcard $(BADNATIVES_DIR)/*.c)
+BADNATIVES_LIBS := $(BADNATIVES_SRCS:.c=.so)
+
 # Output files
 TARGET := brainrot
 BISON_OUTPUT := lang.tab.c
@@ -109,6 +119,17 @@ $(TEST_STDROT_LIB): $(STDROT_SRCS) $(TEST_STDROT_SRCS)
 	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $^ -lm
 	@echo "tests/libstdrot.so (production + test-only natives) compiled."
 
+# Malformed-registry .so's: one per tests/badnatives/*.c, each linked
+# against only registry.c (never the rest of $(STDROT_SRCS) -- these don't
+# need, and shouldn't get, any production natives alongside the one
+# deliberately broken entry).
+$(BADNATIVES_DIR)/%.so: $(BADNATIVES_DIR)/%.c $(STDROT_DIR)/registry.c
+	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $(STDROT_DIR)/registry.c $< -lm
+
+.PHONY: badnatives
+badnatives: $(BADNATIVES_LIBS)
+	@echo "tests/badnatives/*.so (malformed registries) compiled."
+
 # Main executable build
 $(TARGET): $(ALL_SRCS) $(STDROT_LIB)
 	$(CC) $(CFLAGS) -o $@ $(ALL_SRCS) $(LDFLAGS)
@@ -154,7 +175,7 @@ $(FLEX_OUTPUT): lang.l
 
 # Run tests
 .PHONY: test
-test: $(TARGET) $(TEST_STDROT_LIB)
+test: $(TARGET) $(TEST_STDROT_LIB) badnatives
 	STDROT_LIB_PATH=$(CURDIR)/$(TEST_STDROT_LIB) $(PYTHON) -m pytest -v
 	@echo "Tests ran bussin', no cap."
 
@@ -164,6 +185,7 @@ clean:
 	rm -f $(TARGET) $(STDROT_LIB) $(TEST_STDROT_LIB) $(GENERATED_SRCS) lang.tab.h
 	rm -f $(WASM_TARGET) $(WASM_JS)
 	rm -f tests/brainrot-test.wasm tests/brainrot-test.mjs
+	rm -f $(BADNATIVES_LIBS)
 	rm -f *.o
 	@echo "Blud cleaned up the mess like a true sigma coder."
 

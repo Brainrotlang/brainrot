@@ -185,6 +185,30 @@ static void validate_native_registry(void)
                     entry->name, entry->param_count);
             exit(1);
         }
+        if (!entry->fn)
+        {
+            fprintf(stderr, "stdrot: native '%s': fn is NULL\n", entry->name);
+            exit(1);
+        }
+        if (entry->return_type.pointer_level < 0)
+        {
+            fprintf(stderr,
+                    "stdrot: native '%s': return_type.pointer_level (%d) "
+                    "must be >= 0\n",
+                    entry->name, entry->return_type.pointer_level);
+            exit(1);
+        }
+        for (int p = 0; p < entry->param_count; p++)
+        {
+            if (entry->params[p].pointer_level < 0)
+            {
+                fprintf(stderr,
+                        "stdrot: native '%s': params[%d].pointer_level "
+                        "(%d) must be >= 0\n",
+                        entry->name, p, entry->params[p].pointer_level);
+                exit(1);
+            }
+        }
         /* return_like_arg (StdrotEntry's own comment, stdrot_api.h): -1
            means "not identity-polymorphic," otherwise it must name a
            MANDATORY argument -- an identity relationship ("same type as
@@ -203,6 +227,50 @@ static void validate_native_registry(void)
                     "< min_args = %d)\n",
                     entry->name, entry->return_like_arg, entry->min_args);
             exit(1);
+        }
+        /* return_like_arg must name a STDROT_ANY parameter, full stop.
+           "identity-polymorphic" only means something coherent if the
+           parameter itself carries no fixed representation to coerce
+           into -- T -> T, with T decided entirely by the caller. If the
+           parameter is a fixed type (STDROT_CSTRING, STDROT_DOUBLE,
+           STDROT_PTR, ...), static analysis infers the result type from
+           the *source* expression (before coercion) while the runtime
+           marshaller/enforce_return_type() see the argument *after*
+           parameter coercion -- two different types for the same call
+           whenever the source type and the fixed parameter type differ
+           (STRING literal coerced to CSTRING, INT coerced to DOUBLE, a
+           bare pointer with no STDROT_PTR-shaped static inference,
+           etc). Forcing STDROT_ANY here removes the coercion step
+           entirely, so there is only one type to agree on. A native that
+           genuinely wants "same value, fixed type" should declare that
+           fixed type as an ordinary (non-identity) return_type instead
+           of borrowing this mechanism. */
+        if (entry->return_like_arg != -1 &&
+            entry->params[entry->return_like_arg].type != STDROT_ANY)
+        {
+            fprintf(stderr,
+                    "stdrot: native '%s': return_like_arg (%d) names a "
+                    "parameter that isn't STDROT_ANY -- identity-"
+                    "polymorphic natives may only alias a STDROT_ANY "
+                    "parameter, since any fixed parameter type undergoes "
+                    "coercion that static inference and runtime "
+                    "enforcement would then disagree about\n",
+                    entry->name, entry->return_like_arg);
+            exit(1);
+        }
+        for (int j = 0; j < i; j++)
+        {
+            if (functions[j] && functions[j]->name &&
+                strcmp(functions[j]->name, entry->name) == 0)
+            {
+                fprintf(stderr,
+                        "stdrot: duplicate native export '%s' -- "
+                        "get_native_function() would silently resolve "
+                        "every call to whichever entry happens to come "
+                        "first in the linker section\n",
+                        entry->name);
+                exit(1);
+            }
         }
     }
 }
@@ -796,9 +864,29 @@ static bool coerce_arg_to_param(StdrotValue *value, StdrotType declared)
         if (value->type == STDROT_STRING)
         {
             const char *cstr = stdrot_string_to_cstring(value->val.str);
+            /* stdrot_string_to_cstring() can genuinely return NULL --
+               value->val.str.data == NULL, or (more likely in practice)
+               the string exceeds MAX_ALLOC_SIZE (lib/mem.c's
+               handle_malloc_error() returns NULL rather than aborting,
+               so this is reachable by an ordinary Brainrot program
+               building a large-enough string, not just a hypothetical
+               true malloc() failure). value->type must NOT become
+               STDROT_CSTRING unless conversion actually succeeded:
+               tagging it CSTRING with a NULL .val.cstr would make
+               enforce_arg_type() (below) approve the argument against a
+               native that trusts its own declared signature and
+               dereferences it unconditionally (e.g. strlen()) --
+               silently turning an allocation failure into a null-
+               pointer dereference inside someone else's C code. Leaving
+               `value` as STDROT_STRING (unconverted) on failure instead
+               makes enforce_arg_type() see a genuine, honest type
+               mismatch and report *that*, rather than a tag that lies
+               about what the union actually holds. */
+            if (!cstr)
+                return false;
             value->type = STDROT_CSTRING;
             value->val.cstr = cstr;
-            return cstr != NULL;
+            return true;
         }
         return false;
     default:
@@ -929,6 +1017,14 @@ static void free_pending_native_call_args(void)
 
 StdrotValue execute_native_call(const String func_name, ArgumentList *args)
 {
+    /* Reset unconditionally, on every entry, before any return path --
+       see g_native_string_result_owned's own comment (ast.h) for why a
+       stale true from a previous call must never survive into one that
+       doesn't itself set it (e.g. a call that errors out before
+       reaching entry->fn() at all, on any of the early-return paths
+       below). */
+    g_native_string_result_owned = false;
+
     if (!func_name.data || !functions)
     {
         yyerror("Function not found");
@@ -1077,12 +1173,25 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
      * handle_function_call(), ast.c) would then copy from already-freed
      * memory. A copy here breaks the alias cleanly: the cleanup loop
      * frees the original owned buffer as it always did, and `result`
-     * now points at independent memory nothing else references. Uses
-     * the same "leak the source rather than risk freeing a buffer
-     * something else still needs" tradeoff already accepted elsewhere in
-     * this pipeline (see handle_function_call()'s VAR_STRING case,
-     * ast.c) -- this copy isn't freed by anyone either, which is a real
-     * but bounded leak, not a use-after-free. */
+     * now points at independent memory nothing else references.
+     *
+     * That copy still needs an owner, though -- g_native_string_result_
+     * owned (ast.h) is how this communicates "yes, actually free this
+     * one" to whichever of native_call_peek()/native_call_consume()
+     * (ast.c) or execute_func_call()'s deprecated write-back path
+     * (below, this file) ends up holding `result` next, and ultimately
+     * to handle_function_call()'s VAR_STRING case (ast.c), which frees
+     * current_return_value.value.strvalue.data right after copying it
+     * into the box the caller actually consumes -- but ONLY when this
+     * flag says that source is safe to free (a native's result can
+     * otherwise alias a string literal or a live Brainrot variable's
+     * own backing storage, e.g. slorp's deprecated identity pass-
+     * through, and unconditionally freeing THOSE would corrupt still-
+     * live state -- see the same reasoning documented on that VAR_
+     * STRING case for why it never freed its source unconditionally in
+     * the first place). Every other native result leaves this false,
+     * matching that existing, deliberately-conservative behavior
+     * exactly. */
     if (result.type == STDROT_STRING)
     {
         for (int i = 0; i < arg_count; i++)
@@ -1091,6 +1200,7 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
                 owned_string_bufs[i] == result.val.str.data)
             {
                 result.val.str = safe_strdup(&result.val.str);
+                g_native_string_result_owned = true;
                 break;
             }
         }
@@ -1189,6 +1299,11 @@ void execute_func_call(const String func_name, ArgumentList *args)
                         dst[n] = '\0';
                     }
                 }
+                /* Freeing an owned buffer (if any) is handled once, below,
+                   after this whole write-back block -- see the comment
+                   there. This case only needs to have finished reading
+                   result.val.str.data (via the memcpy above) before that
+                   point, which it has. */
                 break;
             case STDROT_BOOL:
                 set_bool_variable(name, result.val.b, var->modifiers);
@@ -1197,6 +1312,25 @@ void execute_func_call(const String func_name, ArgumentList *args)
                 break;
             }
         }
+    }
+
+    /* g_native_string_result_owned (ast.h): true only when result.type ==
+       STDROT_STRING *and* execute_native_call() had to materialize an
+       independent copy of an aliased argument buffer to avoid a
+       use-after-free once its own argument-cleanup loop ran. This
+       function is the last consumer of `result` on every path above --
+       whether that path copied the string out (the STDROT_STRING case),
+       discarded it for some other reason (no identifier argument, an
+       identifier that didn't resolve to a live variable, or a result
+       type this deprecated write-back doesn't forward), or never entered
+       the write-back block at all. Whichever it was, nothing downstream
+       still needs this buffer, so free it here unconditionally rather
+       than leaking it on every path that isn't the one case that used to
+       remember to do this. */
+    if (g_native_string_result_owned)
+    {
+        SAFE_FREE(result.val.str.data);
+        g_native_string_result_owned = false;
     }
 }
 

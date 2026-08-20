@@ -156,6 +156,7 @@ const WASM_PRODUCTION_SKIP = new Set([
   "native_cstring_param_char_array",
   "semantic_error_native_char_array_access",
   "semantic_error_native_char_struct_access",
+  "semantic_error_native_nested_struct_access",
   "native_char_param_scalar",
   "identity_string_use_after_free",
 ]);

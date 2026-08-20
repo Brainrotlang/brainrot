@@ -199,6 +199,15 @@ typedef struct
        the comment on handle_return_statement's VAR_STRUCT case. */
     String struct_name;
     String enum_name; /* enum tag, set when type == VAR_ENUM */
+    /* Set when type == VAR_STRING: true iff value.strvalue.data is a
+       heap buffer this ReturnValue is responsible for freeing once
+       consumed (mirrors g_native_string_result_owned at the moment
+       marshal_native_return_value() populated this slot from a native
+       call -- see that global's own comment). False for every other
+       source of a VAR_STRING return (a Brainrot-defined function's own
+       return statement, a native result that doesn't own its string),
+       matching the existing, deliberately conservative default. */
+    bool owns_strvalue;
 } ReturnValue;
 
 /* Symbol table structure */
@@ -461,6 +470,21 @@ extern Scope *current_scope;
 extern HashMap *function_map;
 extern ReturnValue current_return_value;
 extern JumpBuffer *jump_buffer;
+/* Set by execute_native_call() (stdrot.c) immediately before it returns,
+ * read by its caller immediately after (native_call_peek()/
+ * native_call_consume(), ast.c; execute_func_call()'s deprecated write-
+ * back path, stdrot.c) -- true iff the StdrotValue just returned is a
+ * STDROT_STRING whose .val.str.data is a heap buffer THIS call is
+ * responsible for having its cleanup free, as opposed to one aliasing a
+ * string literal, a live Brainrot variable's own backing storage (e.g.
+ * slorp's deprecated identity pass-through), or an argument buffer
+ * something else already owns. See execute_native_call()'s materialize-
+ * before-free comment for the one case that currently sets this: an
+ * identity-style native (T -> T) returning a nested call's result
+ * unchanged. Always false for every other native result -- reset at the
+ * top of every execute_native_call() invocation so a previous call's
+ * value can never leak into one that doesn't set it. */
+extern bool g_native_string_result_owned;
 /* Function prototypes */
 bool set_int_variable(const String name, int value, TypeModifiers mods);
 bool set_array_variable(String name, int length, TypeModifiers mods,
@@ -781,5 +805,5 @@ extern Arena arena;
      : (var_type) == VAR_BOOL   ? NODE_BOOLEAN                                 \
      : (var_type) == VAR_CHAR   ? NODE_CHAR                                    \
      : (var_type) == VAR_STRING ? NODE_STRING                                  \
-                                : (NodeType) - 1)
+                                : (NodeType)-1)
 #endif /* AST_H */
