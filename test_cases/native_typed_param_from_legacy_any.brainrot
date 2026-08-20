@@ -1,0 +1,13 @@
+🚽 Test case: legacy_string() is a legacy/untyped export (STDROT_ANY)
+🚽 whose actual runtime result is STDROT_STRING. Its static type is NONE
+🚽 (genuinely unknown), so semantic_check_native_call()'s argument check
+🚽 for bet's fixed STDROT_BOOL parameter fails open entirely -- there is
+🚽 no static way to catch this call passing a string where bet expects a
+🚽 bool. enforce_arg_type() (stdrot.c) must catch it at the runtime ABI
+🚽 boundary instead, after coerce_arg_to_param()'s attempted conversion
+🚽 fails, rather than handing bet's native wrapper a StdrotValue tagged
+🚽 something other than what its own StdrotParam declared.
+skibidi main {
+    bet(legacy_string());
+    bussin 0;
+}

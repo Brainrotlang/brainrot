@@ -1,16 +1,21 @@
-/* tests/stdrot/testabi.c – Deliberately lying native bindings, committed
- * as permanent test-only infrastructure for execute_native_call()'s
- * return-type enforcement (enforce_return_type() in stdrot.c).
+/* tests/stdrot/testabi.c – Permanent test-only native bindings for
+ * execute_native_call()'s ABI enforcement (stdrot.c) and the static
+ * checks in semantic_check_native_call() (semantic_analyzer.c) that are
+ * supposed to agree with it.
  *
- * Every native below declares one return representation in its
- * StdrotEntry and then actually constructs a StdrotValue tagged
- * something else -- the exact class of native-binding bug
- * enforce_return_type() exists to catch instead of letting it corrupt
- * whatever reads the result downstream. See tests/stdrot/testptr.c's
- * comment for why this lives outside stdrot/ rather than being a real,
- * permanently-shipped Brainrot builtin.
+ * Most natives below deliberately lie: each declares one return
+ * representation in its StdrotEntry and then actually constructs a
+ * StdrotValue tagged something else -- the exact class of native-
+ * binding bug enforce_return_type()/enforce_arg_type() exist to catch
+ * instead of letting it corrupt whatever reads the result downstream.
+ * A few (e.g. takes_cstring) are perfectly honest natives that exist
+ * only to exercise a representation the ABI is supposed to accept.
+ * See tests/stdrot/testptr.c's comment for why this file lives outside
+ * stdrot/ rather than being a real, permanently-shipped Brainrot
+ * builtin.
  */
 #include "stdrot_api.h"
+#include <string.h>
 
 /* Declares DOUBLE, actually returns INT -- numerically coercible, so
  * enforce_return_type() should silently convert 42 -> 42.0 rather than
@@ -172,3 +177,25 @@ static StdrotValue stdrot_cstring_return(StdrotValue *args, int argc)
 
 STDROT_EXPORT_SIG("cstring_return", stdrot_cstring_return,
                   ((StdrotParam){STDROT_CSTRING, NULL, 0}), NULL, 0, 0, false);
+
+/* Takes a STDROT_CSTRING parameter, returns its length via strlen() --
+ * exercises the representation-gap fix in semantic_check_native_call():
+ * a char-array argument (`yap path[256]`) is source-level VAR_CHAR, but
+ * ast_expr_to_stdrot_value() marshals it as STDROT_STRING and coerce_
+ * arg_to_param() already converts STDROT_STRING -> STDROT_CSTRING, so a
+ * call like `takes_cstring(path)` must type-check, not be rejected on
+ * the strength of the array's element type alone. */
+static StdrotValue stdrot_takes_cstring(StdrotValue *args, int argc)
+{
+    (void)argc;
+    StdrotValue out = {STDROT_INT, {0}};
+    out.val.i = (int)strlen(args[0].val.cstr);
+    return out;
+}
+
+static const StdrotParam takes_cstring_params[] = {
+    {STDROT_CSTRING, NULL, 0},
+};
+STDROT_EXPORT_SIG("takes_cstring", stdrot_takes_cstring,
+                  ((StdrotParam){STDROT_INT, NULL, 0}), takes_cstring_params, 1,
+                  1, false);

@@ -11,6 +11,13 @@ extern void yyerror(const char *s);
 extern String safe_strdup(const String *str);
 extern Scope *current_scope;
 
+/* Forward declaration: infer_expression_type()'s own NODE_FUNC_CALL/
+   return_like_arg case needs this (mutual recursion -- see
+   infer_expression_abi_type()'s own definition and comment, below
+   infer_expression_type()). */
+static VarType infer_expression_abi_type(ASTNode *expr,
+                                         SemanticAnalyzer *analyzer);
+
 /* Create a new semantic analyzer */
 SemanticAnalyzer *semantic_analyzer_new(void)
 {
@@ -523,7 +530,18 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
                STDROT_ANY -- that shape is ambiguous on its own: a legacy
                STDROT_EXPORT() also has an STDROT_ANY return, for a
                completely different reason (genuinely unknown, not "same
-               as this argument"). */
+               as this argument"). Uses infer_expression_abi_type(), not
+               plain infer_expression_type(), because the *identity*
+               this call promises is "same ABI representation as this
+               argument," not "same Brainrot source-level VarType" --
+               those two differ for a char array (`yap buf[32]`):
+               source-level it's VAR_CHAR, but ast_expr_to_stdrot_value()
+               (stdrot.c) marshals it as STDROT_STRING, and slorp's own
+               dispatch returns STDROT_STRING right back. Reporting plain
+               VAR_CHAR here would let `chad c = slorp(buf);` type-check
+               (WRONG -- the runtime result is a string) while rejecting
+               `rant s = slorp(buf);` (WRONG -- the runtime result IS a
+               string, just not by the source-level type). */
             if (entry->return_like_arg >= 0)
             {
                 int idx = 0;
@@ -531,9 +549,9 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
                      a = a->next, idx++)
                 {
                     if (idx == entry->return_like_arg)
-                        return a->expr
-                                   ? infer_expression_type(a->expr, analyzer)
-                                   : NONE;
+                        return a->expr ? infer_expression_abi_type(a->expr,
+                                                                   analyzer)
+                                       : NONE;
                 }
                 return NONE;
             }
@@ -570,6 +588,36 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
     default:
         return NONE;
     }
+}
+
+/* The static VarType a native-ABI marshalling call (ast_expr_to_stdrot_
+ * value(), stdrot.c) will actually produce for this expression --
+ * distinct from infer_expression_type() because a VAR_CHAR *array*
+ * (`yap buf[32]`) marshals as STDROT_STRING there (its own VAR_CHAR/
+ * is_array branch), which stdrot_type_to_vartype() maps back to
+ * VAR_STRING, not VAR_CHAR -- but infer_expression_type() reports the
+ * ELEMENT type (VAR_CHAR) for any VAR_CHAR expression, array or not, so
+ * it can't tell "a single char" and "a char buffer used as a string"
+ * apart. Only NODE_IDENTIFIER is special-cased: that's the only
+ * expression shape SymbolEntry.is_array is populated for (see its own
+ * comment, semantic_analyzer.h) -- a non-identifier VAR_CHAR expression
+ * (a literal, an array access yielding one element, ...) is never an
+ * array itself, so plain infer_expression_type() is already correct for
+ * it. Used wherever static checking needs to agree with what the ABI
+ * boundary will actually construct: slorp<T>(T)->T's return_like_arg
+ * identity (infer_expression_type()'s own NODE_FUNC_CALL case, above)
+ * and native argument type-checking (semantic_check_native_call()). */
+static VarType infer_expression_abi_type(ASTNode *expr,
+                                         SemanticAnalyzer *analyzer)
+{
+    VarType t = infer_expression_type(expr, analyzer);
+    if (t != VAR_CHAR || !expr || expr->type != NODE_IDENTIFIER)
+        return t;
+
+    SymbolEntry *sym = find_symbol(analyzer, expr->data.name);
+    if (sym && sym->is_array)
+        return VAR_STRING;
+    return t;
 }
 
 /* Validate binary operation types */
@@ -1040,7 +1088,19 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
         }
 
         VarType expected = stdrot_type_to_vartype(param->type);
-        VarType actual = infer_expression_type(cur->expr, analyzer);
+        /* infer_expression_abi_type(), not infer_expression_type(): a
+           STDROT_STRING/STDROT_CSTRING param maps to VAR_STRING here
+           (stdrot_type_to_vartype()), and the runtime bridge already
+           accepts a char-array argument for either (ast_expr_to_stdrot_
+           value()'s VAR_CHAR/is_array case produces STDROT_STRING;
+           coerce_arg_to_param() already knows STDROT_STRING ->
+           STDROT_CSTRING) -- rejecting it here on the strength of plain
+           infer_expression_type() reporting VAR_CHAR (the array's
+           element type) would be a false negative against a call the
+           ABI can actually service, exactly the same representation gap
+           slorp's return_like_arg identity has (see infer_expression_
+           abi_type()'s own comment). */
+        VarType actual = infer_expression_abi_type(cur->expr, analyzer);
         int actual_pointer_level =
             infer_expression_pointer_level(cur->expr, analyzer);
 
@@ -1182,9 +1242,42 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node)
         int init_pointer_level =
             infer_expression_pointer_level(node->data.op.right, analyzer);
 
-        if (declared_type != NONE && init_type != NONE &&
-            !check_type_compatibility_ex(declared_type, declared_pointer_level,
-                                         init_type, init_pointer_level))
+        /* Pointer-level compatibility is knowable even when the base
+           type isn't (init_type == NONE -- e.g. a legacy STDROT_ANY-
+           returning native call used as an initializer, whose actual
+           scalar type the analyzer genuinely can't predict). What IS
+           always knowable is whether the call's own descriptor declared
+           a pointer result at all: infer_expression_pointer_level()
+           reports pointer_level > 0 only for an entry whose return_type.
+           type is literally STDROT_PTR (see its own NODE_FUNC_CALL
+           case), and enforce_return_type() (stdrot.c) already guarantees
+           a legacy STDROT_ANY export can never actually return one --
+           there is no legitimate dynamic case where "unknown base type"
+           should also mean "unknown pointer-ness." Checked before, and
+           independently of, the base-type compatibility check below, so
+           `rizz *p = legacy_int();` (declared_pointer_level=1,
+           init_pointer_level=0) is rejected instead of silently
+           skipping all checking because init_type happens to be NONE
+           too. declared_pointer_level == 0 with any init_pointer_level
+           falls through to the ordinary check below unaffected (a
+           pointer-valued initializer for a non-pointer destination is
+           already caught there via check_type_compatibility_ex()'s own
+           pointer_level comparison). */
+        if (declared_pointer_level > 0 &&
+            declared_pointer_level != init_pointer_level)
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Type mismatch in initialization of '%s': expected a "
+                     "pointer (level %d), got pointer level %d",
+                     var_name.data, declared_pointer_level, init_pointer_level);
+            add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                               STRING_LITERAL(error_msg), 1);
+        }
+        else if (declared_type != NONE && init_type != NONE &&
+                 !check_type_compatibility_ex(declared_type,
+                                              declared_pointer_level, init_type,
+                                              init_pointer_level))
         {
             char error_msg[MAX_BUFFER_LEN];
             snprintf(

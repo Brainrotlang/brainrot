@@ -170,5 +170,9 @@
     "semantic_error_native_any_int_array": "Error: 'slorp' argument 1: int arrays cannot be passed where a scalar/string is expected at line 10",
     "native_return_type_any_void_value_context": "Error: Native call result (void) cannot be used in a double context at line 12",
     "native_return_type_any_void_statement": "ok",
-    "native_return_type_abi_violation_any_tag": "Error: stdrot: native 'legacy_returns_any_tag' is declared to return STDROT_ANY (legacy/untyped export or identity-polymorphic result) but actually returned a STDROT_ANY -- pointer/handle/cstring results require an explicit typed signature, and a native must never construct a StdrotValue tagged STDROT_ANY itself, not the unchecked ANY fallback"
+    "native_return_type_abi_violation_any_tag": "Error: stdrot: native 'legacy_returns_any_tag' is declared to return STDROT_ANY (legacy/untyped export or identity-polymorphic result) but actually returned a STDROT_ANY -- pointer/handle/cstring results require an explicit typed signature, and a native must never construct a StdrotValue tagged STDROT_ANY itself, not the unchecked ANY fallback",
+    "native_typed_param_from_legacy_any": "Error: stdrot: native 'bet' argument 1: declared to accept StdrotType 5 but the actual argument is StdrotType 7, even after attempted coercion -- static type checking approved this call without knowing the argument's real type (see semantic_check_native_call()'s NONE fallthrough), and the runtime value doesn't satisfy the declared parameter after all",
+    "semantic_error_native_ptr_dest_from_legacy_any": "Error: Type mismatch in initialization of 'p': expected a pointer (level 1), got pointer level 0 at line 1",
+    "slorp_identity_char_array": "hello",
+    "native_cstring_param_char_array": "5"
 }

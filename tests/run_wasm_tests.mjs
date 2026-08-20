@@ -96,6 +96,8 @@ const STDIN_BY_PREFIX = [
   ["slorp_char", "c\n"],
   ["slorp_bool", "1\n"],
   ["slorp_string", "skibidi bop bop yes yes\n"],
+  ["slorp_identity_char_array", "hello\n"],
+  ["native_cstring_param_char_array", "hello\n"],
   ["native_call_self_init", "42\n"],
   ["native_call_loop", "1\n2\n3\n"],
   ["native_call_string_arg", "skibidi\nq\n"],
@@ -122,10 +124,10 @@ const WASM_EXPECTED_OVERRIDES = {
 // Fixtures that call a tests/stdrot/*.c native (poke_int, peek_int,
 // test_ptr_source, lying_double, lying_bool, lying_ptr_return,
 // legacy_ptr_leak, legacy_int, legacy_string, legacy_cstring, legacy_void,
-// legacy_returns_any_tag, cstring_return) -- only meaningful in "test" mode
-// against tests/brainrot-test.mjs, which is the only build those natives
-// are ever linked into. In "production" mode they'd all fail with
-// "Undefined function" against brainrot.mjs, which is expected (that
+// legacy_returns_any_tag, cstring_return, takes_cstring) -- only meaningful
+// in "test" mode against tests/brainrot-test.mjs, which is the only build
+// those natives are ever linked into. In "production" mode they'd all fail
+// with "Undefined function" against brainrot.mjs, which is expected (that
 // module correctly doesn't have them) rather than a regression worth
 // asserting against.
 const WASM_PRODUCTION_SKIP = new Set([
@@ -145,6 +147,9 @@ const WASM_PRODUCTION_SKIP = new Set([
   "native_return_type_any_cstring_leak",
   "native_return_type_any_void_value_context",
   "native_return_type_any_void_statement",
+  "native_typed_param_from_legacy_any",
+  "semantic_error_native_ptr_dest_from_legacy_any",
+  "native_cstring_param_char_array",
 ]);
 
 // Runs one program in a fresh module instance — the interpreter has global

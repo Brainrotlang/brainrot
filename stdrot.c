@@ -717,13 +717,72 @@ static bool coerce_arg_to_param(StdrotValue *value, StdrotType declared)
         return false;
     default:
         /* STDROT_BOOL/STDROT_CHAR/STDROT_STRING/STDROT_ANY/STDROT_PTR/
-           STDROT_HANDLE/STDROT_NONE: either the semantic checker already
-           requires an exact match (no coercion needed), or the analyzer
-           refuses to accept a call whose signature declares these at all
-           (see semantic_check_native_call()) -- so this is unreachable
-           for a program that passed semantic analysis. */
+           STDROT_HANDLE/STDROT_NONE: the semantic checker requires an
+           exact match for a *statically typed* argument, so this is a
+           no-op there -- but that check fails open when the argument's
+           inferred type is NONE (e.g. a legacy STDROT_ANY-returning call
+           used as an argument, see semantic_check_native_call()'s
+           `actual == NONE` short-circuit), so this genuinely can be
+           reached with a value that has no available coercion. Returning
+           false here (as opposed to silently accepting) is correct;
+           enforce_arg_type() below is what actually catches the
+           still-mismatched value afterward. */
         return false;
     }
+}
+
+/* Makes the native's declared param type authoritative for what
+ * entry->fn() actually receives, the argument-side counterpart to
+ * enforce_return_type(). Static argument checking (semantic_check_
+ * native_call()) fails open whenever an argument's inferred type is
+ * NONE -- most commonly a legacy STDROT_ANY-returning call used as an
+ * argument, since the analyzer genuinely has no static type for it -- so
+ * a call the analyzer approved can still hand coerce_arg_to_param() a
+ * StdrotValue with no valid conversion to the declared param type.
+ * Without this check, entry->fn() would receive that mismatched value
+ * anyway: coerce_arg_to_param() returning false (no owned cstring
+ * buffer) is silently treated as "nothing further to do," not "this
+ * didn't work." A native wrapper is entitled to trust its own
+ * StdrotParam blindly (e.g. `bool x = args[0].val.b;` for a declared
+ * STDROT_BOOL param) -- that trust has to be enforced at this boundary,
+ * not left to every wrapper to defensively re-check. */
+static void enforce_arg_type(const String func_name, int arg_index,
+                             const StdrotValue *value, const StdrotParam *param)
+{
+    if (param->type == STDROT_ANY)
+    {
+        /* Same accepted set as semantic_check_native_call()'s static
+           STDROT_ANY check: any scalar/string this pipeline actually
+           marshals, not a pointer/handle/cstring-shaped value. */
+        switch (value->type)
+        {
+        case STDROT_INT:
+        case STDROT_SHORT:
+        case STDROT_FLOAT:
+        case STDROT_DOUBLE:
+        case STDROT_BOOL:
+        case STDROT_CHAR:
+        case STDROT_STRING:
+            return;
+        default:
+            break;
+        }
+    }
+    else if (value->type == param->type)
+    {
+        return;
+    }
+
+    fprintf(stderr,
+            "Error: stdrot: native '%s' argument %d: declared to accept "
+            "StdrotType %d but the actual argument is StdrotType %d, "
+            "even after attempted coercion -- static type checking "
+            "approved this call without knowing the argument's real "
+            "type (see semantic_check_native_call()'s NONE fallthrough), "
+            "and the runtime value doesn't satisfy the declared "
+            "parameter after all\n",
+            func_name.data, arg_index + 1, (int)param->type, (int)value->type);
+    exit(1);
 }
 
 /* A native's own C implementation can call exit() directly (bet's
@@ -883,11 +942,19 @@ StdrotValue execute_native_call(const String func_name, ArgumentList *args)
         /* Convert to whatever entry->params[arg_count] actually declared
            -- see coerce_arg_to_param()'s comment for why this has to
            happen here, not just at the semantic-analysis type check. */
-        if (arg_count < entry->param_count && entry->params &&
-            coerce_arg_to_param(&arg_values[arg_count],
-                                entry->params[arg_count].type))
+        if (arg_count < entry->param_count && entry->params)
         {
-            owned_cstring_bufs[arg_count] = arg_values[arg_count].val.cstr;
+            if (coerce_arg_to_param(&arg_values[arg_count],
+                                    entry->params[arg_count].type))
+            {
+                owned_cstring_bufs[arg_count] = arg_values[arg_count].val.cstr;
+            }
+            /* Re-verifies the contract coerce_arg_to_param() just
+               attempted to satisfy -- see enforce_arg_type()'s own
+               comment for why this can genuinely fail even after a
+               program passed semantic analysis. */
+            enforce_arg_type(func_name, arg_count, &arg_values[arg_count],
+                             &entry->params[arg_count]);
         }
 
         arg_count++;

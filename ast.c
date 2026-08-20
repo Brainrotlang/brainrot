@@ -1872,6 +1872,27 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
         break;
     case NODE_FUNC_CALL:
     {
+        /* A pointer *destination* (the caller of this function, e.g. a
+           pointer-typed declaration's runtime handler) decides to call
+           this based only on ITS OWN declared pointer_level, not on
+           whatever this call's source expression actually is -- so a
+           call whose own return isn't declared to produce a pointer
+           (get_expression_pointer_level(node) == 0) must be rejected
+           here rather than blindly reinterpreting whatever
+           handle_function_call() boxed as a uintptr_t*. Without this,
+           a legacy STDROT_ANY export that actually returns e.g. a plain
+           int (enforce_return_type() only rejects one that returns a
+           real STDROT_PTR, since that's the only case a legacy export
+           genuinely isn't allowed to produce) would have its boxed int
+           value reinterpreted as a raw memory address -- `rizz *p =
+           legacy_int();` handing `p` the address 0x2a instead of being
+           rejected. */
+        if (get_expression_pointer_level(node) == 0)
+        {
+            yyerror("Native call result is not a pointer, cannot be used "
+                    "in a pointer context");
+            return (uintptr_t)0;
+        }
         uintptr_t *res = (uintptr_t *)handle_function_call(node);
         if (res)
         {

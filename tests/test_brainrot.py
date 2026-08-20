@@ -32,6 +32,8 @@ def test_brainrot_examples(example, expected_output):
         command = f"echo '1' | {brainrot_path} {example_file_path}"
     elif example.startswith("slorp_string"):
         command = f"echo 'skibidi bop bop yes yes' | {brainrot_path} {example_file_path}"
+    elif example in ("slorp_identity_char_array", "native_cstring_param_char_array"):
+        command = f"echo 'hello' | {brainrot_path} {example_file_path}"
     elif example == "native_call_self_init":
         command = f"echo '42' | {brainrot_path} {example_file_path}"
     elif example == "native_call_loop":

@@ -1,0 +1,14 @@
+🚽 Test case: legacy_int() is a legacy/untyped export (STDROT_ANY) whose
+🚽 actual runtime result is a plain STDROT_INT (never a pointer --
+🚽 enforce_return_type() already guarantees a legacy ANY export can't
+🚽 return STDROT_PTR). Its static base type is NONE, but its static
+🚽 pointer_level is knowably 0 regardless (infer_expression_pointer_level()
+🚽 only reports > 0 for an entry whose descriptor literally says
+🚽 STDROT_PTR). A pointer-typed declaration must reject this on the
+🚽 strength of that pointer-level mismatch alone, not silently skip all
+🚽 checking just because the base type also happens to be unknown.
+skibidi main {
+    rizz *p = legacy_int();
+    yapping("%d", *p);
+    bussin 0;
+}

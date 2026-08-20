@@ -60,16 +60,44 @@ extern ExecutionContext g_exec_context;
 
 typedef enum
 {
-    STDROT_ANY, /* unchecked: accepts/returns any NON-POINTER type (legacy
-                   exports, identity-polymorphic builtins like slorp) --
-                   kept as the zero value so a zero-initialized StdrotParam
+    STDROT_ANY, /* accepts/returns any ABI-marshallable scalar/string
+                   value (int/short/float/double/bool/char/string/enum) --
+                   used for legacy exports (STDROT_EXPORT(), signature
+                   genuinely unknown) and identity-polymorphic builtins
+                   like slorp (return_like_arg, see StdrotEntry) -- kept
+                   as the zero value so a zero-initialized StdrotParam
                    means "unchecked" rather than silently claiming int.
-                   Pointer-valued arguments/results are deliberately
-                   rejected even here -- a pointer's whole point is its
-                   address and level of indirection, which "any type,
-                   unchecked" can't express safely, so callers that want to
-                   pass or return a pointer must say so explicitly via
-                   STDROT_PTR below. */
+                   NOT "any value representable at all": pointers,
+                   handles, structs/aggregates, and most array types are
+                   all deliberately rejected even here, both statically
+                   (semantic_check_native_call(), semantic_analyzer.c)
+                   and at the runtime ABI boundary (enforce_return_type()/
+                   enforce_arg_type(), stdrot.c) --
+                     * pointer-valued: a pointer's whole point is its
+                       address and level of indirection, which "any type,
+                       unchecked" can't express safely -- say so
+                       explicitly via STDROT_PTR below instead.
+                     * STDROT_HANDLE-valued: needs a resource-ownership
+                       model this ABI hasn't designed yet.
+                     * STDROT_CSTRING-valued (as a *return*): nothing
+                       marshals a returned C string into a Brainrot
+                       String yet (as an *argument*, this is fine --
+                       ordinary strings and char arrays both convert to
+                       STDROT_CSTRING when a param declares it directly).
+                     * struct/aggregate identifiers: no StdrotValue
+                       representation exists for one.
+                     * numeric arrays: Variable's value union aliases a
+                       scalar's own storage with an array's backing
+                       pointer, so marshalling one as a scalar would
+                       reinterpret that pointer as data. A VAR_CHAR array
+                       (`yap buf[32]`) is the one exception -- it has a
+                       real representation (STDROT_STRING) and is
+                       accepted.
+                   A StdrotValue whose own .type tag is literally
+                   STDROT_ANY is also rejected wherever this enum value
+                   would otherwise be compared against one: STDROT_ANY is
+                   a descriptor placeholder, never a value a native
+                   should actually construct. */
     STDROT_INT,
     STDROT_FLOAT,
     STDROT_DOUBLE,
