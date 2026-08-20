@@ -1,0 +1,7 @@
+🚽 Test case: test_ptr_source() returns a STDROT_PTR (rizz*) -- it cannot
+🚽 initialize a plain scalar rizz variable, since a boxed uintptr_t
+🚽 reinterpreted as a plain int is not a meaningful conversion.
+skibidi main {
+    rizz x = test_ptr_source();
+    bussin 0;
+}

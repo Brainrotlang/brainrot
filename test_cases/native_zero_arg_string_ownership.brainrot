@@ -1,0 +1,26 @@
+🚽 Test case: round-19 review finding #2 -- execute_native_call()'s
+🚽 total_args == 0 fast path (stdrot.c) previously skipped the STDROT_
+🚽 STRING materialization the general (argc > 0) path already performs
+🚽 unconditionally, reasoning that "no argument buffers exist to alias"
+🚽 was still the operative invariant after the general path had already
+🚽 moved past it. legacy_scratch_string() (tests/stdrot/testabi.c) is a
+🚽 zero-argument legacy export whose STDROT_STRING result borrows a heap
+🚽 buffer it owns and replaces (frees, reallocates) on every call --
+🚽 exactly the "returns borrowed storage, trusting the adapter to copy it
+🚽 immediately" shape the review used to demonstrate the hole.
+🚽 legacy_mutate_scratch_and_return_int() shares that same buffer and
+🚽 frees/reallocates it as a side effect. get_expression_type()'s
+🚽 NODE_OPERATION case (ast.c) peeks this expression's left operand first
+🚽 (executing legacy_scratch_string(), caching an unmaterialized result
+🚽 pointing straight at the shared buffer) and its right operand second
+🚽 (executing the mutator, freeing that exact buffer) before either is
+🚽 consumed -- without materializing the left operand's result the
+🚽 instant it's produced, consuming it afterward reads already-freed
+🚽 memory: a heap-use-after-free, not just stale data. Confirmed via a
+🚽 temporary A/B test (reverting the zero-argument path to skip finalize_
+🚽 native_string_result()) that the pre-fix code crashes under ASan with
+🚽 exactly that heap-use-after-free.
+skibidi main {
+    rizz n = legacy_scratch_string() + legacy_mutate_scratch_and_return_int();
+    bussin 0;
+}

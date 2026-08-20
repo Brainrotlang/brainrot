@@ -1,0 +1,13 @@
+🚽 Test case: a native call nested inside another call's argument, on the
+🚽 right-hand side of a plain assignment, must be checked statically --
+🚽 ast_accept()'s NODE_FUNC_CALL dispatch doesn't walk call arguments.
+rizz f(rizz x) {
+    bussin x;
+}
+
+skibidi main {
+    rizz x;
+    x = f(bet(2));
+    yapping("%d", x);
+    bussin 0;
+}

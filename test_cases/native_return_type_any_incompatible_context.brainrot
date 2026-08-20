@@ -1,0 +1,13 @@
+🚽 Test case: legacy_string() is a legacy/untyped export (STDROT_ANY)
+🚽 whose actual runtime result is a STDROT_STRING -- not numerically
+🚽 coercible at all. The semantic analyzer has no static type for a
+🚽 legacy ANY call (infer_expression_type() reports NONE), so
+🚽 `gigachad x = legacy_string();` type-checks with zero static
+🚽 knowledge of the mismatch; evaluate_expression_double() must catch it
+🚽 at runtime instead, by checking the ACTUAL boxed type before
+🚽 dereferencing, rather than reinterpreting a String* container's bytes
+🚽 as a double.
+skibidi main {
+    gigachad x = legacy_string();
+    bussin 0;
+}

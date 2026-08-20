@@ -1,0 +1,10 @@
+🚽 Test case: legacy_void() (legacy STDROT_ANY, actual STDROT_NONE)
+🚽 called as a bare statement -- the ordinary, correct usage of a void
+🚽 native. warn_if_native_result_void() must not fire here: nothing
+🚽 requests a value from this call, so "no value" is exactly right, not
+🚽 an error.
+skibidi main {
+    legacy_void();
+    yapping("ok");
+    bussin 0;
+}

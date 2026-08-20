@@ -166,4 +166,10 @@ static StdrotValue stdrot_baka(StdrotValue *args, int arg_count)
     return (StdrotValue){STDROT_NONE, {0}};
 }
 
-STDROT_EXPORT("baka", stdrot_baka);
+static const StdrotParam baka_format_params[] = {
+    {STDROT_STRING, NULL, 0},
+};
+
+STDROT_EXPORT_SIG_VARIADIC("baka", stdrot_baka,
+                           ((StdrotParam){STDROT_NONE, NULL, 0}),
+                           baka_format_params, 1, 1);

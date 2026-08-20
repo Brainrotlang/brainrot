@@ -35,23 +35,34 @@ Scope *current_scope;
 extern void yyerror(const char *s);
 extern void cleanup(void);
 extern TypeModifiers get_variable_modifiers(const String name);
+extern const char *vartype_to_string(VarType type);
 extern int yylineno;
 static int get_function_return_pointer_level(const String name);
 String evaluate_expression_string(ASTNode *node);
 
 /* ── Native-call memo cache ──────────────────────────────────────────────
- * Unlike a user-defined Function, a native (stdrot) call has no static
- * return type -- StdrotFn is fully dynamic, so the only way to know what
- * type a call produces is to actually invoke it. Expression evaluation
- * routinely asks that question once (e.g. handle_binary_operation peeking
- * at operand types via get_expression_type) and then reads the real value
- * a second time (e.g. evaluate_expression_short calling handle_function_call
- * on the same node) -- without this cache, that would invoke the native
- * function, and any side effects it has, twice per read. native_call_peek()
- * answers type-probe questions from the cache without consuming it;
- * native_call_consume(), used only by the terminal value-producing call
- * (handle_function_call), reads it and clears it so the next syntactic
- * visit to this call site (e.g. the next loop iteration) invokes fresh.
+ * A TYPED native (stdrot) call -- Phase 2 (issue #205) -- DOES have a
+ * static return type, readable off its registered StdrotEntry with no
+ * execution at all (get_native_call_static_type(), infer_runtime_
+ * expression_type_noeval(), below): a fixed return_type, or an identity-
+ * polymorphic return_like_arg resolved from the referenced argument's own
+ * (execution-free) type. This cache exists for what's left: a genuine
+ * legacy/untyped STDROT_EXPORT() export (return_type.type == STDROT_ANY,
+ * no return_like_arg) still has no way to know its return type short of
+ * running it, and expression evaluation routinely asks that question once
+ * (e.g. handle_binary_operation peeking at operand types via get_
+ * expression_type) and then reads the real value a second time (e.g.
+ * evaluate_expression_short calling handle_function_call on the same
+ * node) -- without this cache, that would invoke the native function, and
+ * any side effects it has, twice per read, for that legacy case. (A TYPED
+ * native's value-producing call still goes through native_call_consume()
+ * too, purely for uniformity -- it just never needs a prior peek to have
+ * populated the cache first, since its type never required one.)
+ * native_call_peek() answers type-probe questions from the cache without
+ * consuming it; native_call_consume(), used only by the terminal value-
+ * producing call (handle_function_call), reads it and clears it so the
+ * next syntactic visit to this call site (e.g. the next loop iteration)
+ * invokes fresh.
  *
  * This is strictly a type-probe-then-consume cache within a single real
  * evaluation. It is deliberately *not* used to paper over
@@ -69,34 +80,113 @@ String evaluate_expression_string(ASTNode *node);
  * slorp(b)`) peeks *both* operands (get_expression_type on each, to decide
  * the promoted type) before either is consumed -- so this can't be a single
  * pending slot, or peeking the second call would evict the first call's
- * still-unconsumed entry and force a spurious re-invocation. A small table
- * of independently-tracked entries, keyed by node identity, avoids that.
- * Expressions nest nowhere near NATIVE_CALL_CACHE_SIZE simultaneously-
- * pending native calls deep in practice; if that bound is ever hit,
- * native_call_peek() reports an unknown (STDROT_NONE) type rather than
- * invoking without a slot to cache the result in -- invoking there with
- * nowhere to store the result would make the guaranteed-single-invocation
- * promise from native_call_consume() a lie for whichever call got evicted.
- * The call is still invoked exactly once, for real, whenever it's actually
- * consumed; overflow only degrades type inference for that one call, never
- * invocation count. */
-#define NATIVE_CALL_CACHE_SIZE 16
+ * still-unconsumed entry and force a spurious re-invocation. A table of
+ * independently-tracked entries, keyed by node identity, avoids that --
+ * grown dynamically (native_call_cache_ensure_capacity(), below) rather
+ * than a fixed-size array. A fixed cap here is not a harmless
+ * implementation detail: it would mean the type this pipeline reports
+ * for a legacy/untyped native call (see get_native_call_static_type()'s
+ * own comment for why a TYPED native no longer needs this cache at all)
+ * depends on how many OTHER pending type-probes happen to already be in
+ * flight when it's asked -- the same expression's static type changing
+ * depending on unrelated cache occupancy is exactly the kind of
+ * capacity-dependent language semantics this pipeline must never have.
+ * Growth failure (allocator exhaustion) is the one case still reported
+ * as an unknown (STDROT_NONE) type rather than crashing -- indistinguishable
+ * from any other allocation failure elsewhere in this interpreter, not a
+ * deliberately-designed capacity limit. */
+#define NATIVE_CALL_CACHE_INITIAL_CAPACITY 16
 typedef struct
 {
     ASTNode *node;
-    StdrotValue value;
+    /* The full NativeResult (stdrot.h), not just its StdrotValue -- string
+       ownership travels with the cached value itself, the same way it
+       travels through every other consumer of execute_native_call()'s
+       result (see NativeResult's own comment for why this can't be a
+       separate global). A cache hit hands back exactly the NativeResult
+       that was cached, ownership bit included. */
+    NativeResult result;
     bool valid;
 } NativeCallCacheEntry;
-static NativeCallCacheEntry native_call_cache[NATIVE_CALL_CACHE_SIZE];
+static NativeCallCacheEntry *native_call_cache = NULL;
+static int native_call_cache_capacity = 0;
+static bool native_call_cache_cleanup_registered = false;
 
-static StdrotValue native_call_peek(ASTNode *node)
+/* Frees native_call_cache itself, plus any owned string still sitting
+ * inside a *valid, unconsumed* entry -- e.g. a peeked-but-never-consumed
+ * legacy STDROT_STRING result orphaned by a rejected sizeof operand
+ * (handle_sizeof() erroring out on a nested unknown-type call before the
+ * peek it already performed elsewhere in the same expression was ever
+ * consumed). Assuming every entry needs no per-entry cleanup was wrong:
+ * a NativeResult's owns_string (see its own comment, stdrot.h) means
+ * *this array* is the sole owner of that heap string until consumed, the
+ * same way stdrot.c's own deprecated write-back path (just above) frees
+ * an nr.owns_string buffer it's the last consumer of -- this is that
+ * same obligation, for whichever entries never got that far. Registered
+ * via atexit() -- see native_call_cache_grow() -- the same lazy-
+ * registration pattern stdrot.c's free_pending_native_call_args()
+ * already uses for its own atexit hook, since this array (unlike the old
+ * fixed-size one it replaced) is now a genuine heap allocation that
+ * would otherwise leak. */
+static void free_native_call_cache(void)
+{
+    for (int i = 0; i < native_call_cache_capacity; i++)
+    {
+        if (native_call_cache[i].valid &&
+            native_call_cache[i].result.owns_string &&
+            native_call_cache[i].result.value.type == STDROT_STRING)
+        {
+            SAFE_FREE(native_call_cache[i].result.value.val.str.data);
+        }
+    }
+    SAFE_FREE(native_call_cache);
+    native_call_cache_capacity = 0;
+}
+
+/* Doubles native_call_cache's capacity (or allocates the initial one),
+ * preserving every existing entry -- SAFE_MALLOC_ARRAY() zero-initializes
+ * the new buffer, so every newly added slot's `valid` already reads
+ * false with no separate init loop needed. Returns false (leaving the
+ * existing cache, if any, untouched and fully usable) only on genuine
+ * allocation failure -- the sole case native_call_peek() below still
+ * reports STDROT_NONE for, same as any other out-of-memory condition in
+ * this interpreter. */
+static bool native_call_cache_grow(void)
+{
+    int new_capacity = native_call_cache_capacity == 0
+                           ? NATIVE_CALL_CACHE_INITIAL_CAPACITY
+                           : native_call_cache_capacity * 2;
+    NativeCallCacheEntry *grown =
+        SAFE_MALLOC_ARRAY(NativeCallCacheEntry, new_capacity);
+    if (!grown)
+        return false;
+
+    if (native_call_cache_capacity > 0)
+    {
+        memcpy(grown, native_call_cache,
+               sizeof(NativeCallCacheEntry) *
+                   (size_t)native_call_cache_capacity);
+        SAFE_FREE(native_call_cache);
+    }
+    native_call_cache = grown;
+    native_call_cache_capacity = new_capacity;
+
+    if (!native_call_cache_cleanup_registered)
+    {
+        atexit(free_native_call_cache);
+        native_call_cache_cleanup_registered = true;
+    }
+    return true;
+}
+
+static NativeResult native_call_peek(ASTNode *node)
 {
     int free_slot = -1;
-    for (int i = 0; i < NATIVE_CALL_CACHE_SIZE; i++)
+    for (int i = 0; i < native_call_cache_capacity; i++)
     {
         if (native_call_cache[i].valid && native_call_cache[i].node == node)
         {
-            return native_call_cache[i].value;
+            return native_call_cache[i].result;
         }
         if (free_slot < 0 && !native_call_cache[i].valid)
         {
@@ -106,53 +196,33 @@ static StdrotValue native_call_peek(ASTNode *node)
 
     if (free_slot < 0)
     {
-        return (StdrotValue){STDROT_NONE, {0}};
+        free_slot = native_call_cache_capacity;
+        if (!native_call_cache_grow())
+        {
+            return (NativeResult){{STDROT_NONE, {0}}, false};
+        }
     }
 
-    StdrotValue value = execute_native_call(node->data.func_call.function_name,
-                                            node->data.func_call.arguments);
+    NativeResult result = execute_native_call(
+        node->data.func_call.function_name, node->data.func_call.arguments);
     native_call_cache[free_slot].node = node;
-    native_call_cache[free_slot].value = value;
+    native_call_cache[free_slot].result = result;
     native_call_cache[free_slot].valid = true;
-    return value;
+    return result;
 }
 
-static StdrotValue native_call_consume(ASTNode *node)
+static NativeResult native_call_consume(ASTNode *node)
 {
-    for (int i = 0; i < NATIVE_CALL_CACHE_SIZE; i++)
+    for (int i = 0; i < native_call_cache_capacity; i++)
     {
         if (native_call_cache[i].valid && native_call_cache[i].node == node)
         {
             native_call_cache[i].valid = false;
-            return native_call_cache[i].value;
+            return native_call_cache[i].result;
         }
     }
     return execute_native_call(node->data.func_call.function_name,
                                node->data.func_call.arguments);
-}
-
-static VarType stdrot_type_to_vartype(StdrotType type)
-{
-    switch (type)
-    {
-    case STDROT_INT:
-        return VAR_INT;
-    case STDROT_FLOAT:
-        return VAR_FLOAT;
-    case STDROT_DOUBLE:
-        return VAR_DOUBLE;
-    case STDROT_SHORT:
-        return VAR_SHORT;
-    case STDROT_BOOL:
-        return VAR_BOOL;
-    case STDROT_CHAR:
-        return VAR_CHAR;
-    case STDROT_STRING:
-        return VAR_STRING;
-    case STDROT_NONE:
-    default:
-        return NONE;
-    }
 }
 
 /* Helper to build a namespaced static key */
@@ -197,6 +267,7 @@ size_t get_type_size_for_descriptor(VarType type, int pointer_level,
         return sizeof(String);
     case VAR_ENUM:
         return sizeof(int);
+    case VAR_VOID: /* genuinely zero-sized -- not "unknown, guess 0" */
     case NONE:
     default:
         return 0;
@@ -260,6 +331,16 @@ bool set_variable(const String name, void *value, VarType type,
         case VAR_ENUM:
             var->value.ivalue = *(int *)value;
             break;
+        case VAR_PTR:
+        /* VAR_PTR only ever appears as the *inferred type of an
+           expression* (a native call returning STDROT_PTR) -- no
+           Brainrot declaration syntax can give an actual Variable this
+           as its own var_type, so this is structurally unreachable. Same
+           reasoning for VAR_VOID: no declaration syntax can give a
+           Variable "void" as its own type either -- it only ever
+           appears as an expression's inferred type (a call whose
+           descriptor return type is STDROT_NONE). */
+        case VAR_VOID:
         case NONE:
             break;
         }
@@ -740,6 +821,35 @@ void *evaluate_multi_array_access(ASTNode *node)
 
     // Calculate the offset
     size_t offset = calculate_array_offset(var, indices, num_indices);
+
+    /* Round-23 review, finding #1 -- pointer_level DOMINATES element
+       stride the same way it dominates return-value boxing
+       (handle_function_call(), round 22) and native-argument marshalling
+       (ast_expr_to_stdrot_value(), stdrot.c): get_type_size_for_
+       descriptor() (this file) already allocates each element of a
+       pointer-typed array (`rizz *ptrs[N]`) as sizeof(uintptr_t) via its
+       own unconditional `pointer_level > 0` check, regardless of the
+       array's base VarType -- but this function's switch below dispatched
+       purely on var->var_type, computing each element's address using
+       THAT type's width (sizeof(int), sizeof(char), ...) instead of
+       sizeof(uintptr_t). For element 0 those strides coincidentally
+       agree with the correctly-allocated layout (both start at byte 0),
+       masking the bug completely -- but for element 1 onward, a `rizz
+       *ptrs[2]` array (each slot really 8 bytes on LP64) got indexed as
+       if each slot were 4 bytes (sizeof(int)), so `ptrs[1]` pointed
+       halfway into slot 0's own 8 bytes: an out-of-bounds/aliased
+       address, not the real second pointer -- real memory corruption on
+       both read and write, not merely a wrong value. Checked here,
+       before the base-type switch, for the identical reason every other
+       "pointer-ness dominates representation" fix in this PR checks it
+       first. VAR_VOID (`skibidi *ptrs[N]`) previously had no case at all
+       in the switch below and hit "Unknown variable type" unconditionally
+       -- also fixed by this same check, since it's a pointer-typed array
+       exactly like any other now. */
+    if (var->pointer_level > 0)
+    {
+        return (uintptr_t *)var->value.array_data + offset;
+    }
 
     // Return a pointer to the element
     switch (var->var_type)
@@ -1308,12 +1418,22 @@ int get_expression_pointer_level(ASTNode *node)
         }
         return get_expression_pointer_level(node->data.unary.operand);
     case NODE_FUNC_CALL:
-        /* Native calls have no pointer/handle representation yet (StdrotValue
-           carries only scalars/strings -- see roadmap L5), so their pointer
-           level is always 0. This can be answered without invoking the
-           call, so it never touches the native-call memo cache. */
         if (is_builtin_function(node->data.func_call.function_name))
+        {
+            /* A native's declared signature (return_type.type/pointer_level)
+               is static data on the registered StdrotEntry -- answering
+               this from it never invokes the call, so it never touches
+               the native-call memo cache, same as before this consulted
+               STDROT_PTR at all. Only STDROT_PTR has a pointer_level to
+               report (see marshal_native_return_value()'s comment on why
+               that reuses VAR_INT + pointer_level); everything else,
+               including the unmarshalled STDROT_HANDLE, is level 0. */
+            const StdrotEntry *entry =
+                get_native_function(node->data.func_call.function_name);
+            if (entry && entry->return_type.type == STDROT_PTR)
+                return entry->return_type.pointer_level + 1;
             return 0;
+        }
         return get_function_return_pointer_level(
             node->data.func_call.function_name);
     case NODE_OPERATION:
@@ -1356,6 +1476,21 @@ int get_expression_pointer_level(ASTNode *node)
         return node->pointer_level;
     }
 }
+
+/* Forward declaration: get_expression_type()'s own NODE_FUNC_CALL case
+   calls this (defined below it, since it in turn calls infer_runtime_
+   expression_abi_type_noeval() for the identity-arg case -- see its own
+   comment). */
+static VarType get_native_call_static_type(ASTNode *node);
+
+/* Forward declarations: infer_runtime_expression_type_noeval() and
+   infer_runtime_expression_abi_type_noeval() (defined below get_
+   expression_type(), since the ABI one builds on the plain one, and the
+   plain one's own NODE_FUNC_CALL case calls get_native_call_static_type()
+   just above -- a three-way mutual-recursion knot, broken here the same
+   way get_native_call_static_type() itself already was. */
+static VarType infer_runtime_expression_type_noeval(ASTNode *expr);
+static VarType infer_runtime_expression_abi_type_noeval(ASTNode *expr);
 
 VarType get_expression_type(ASTNode *node)
 {
@@ -1461,8 +1596,27 @@ VarType get_expression_type(ASTNode *node)
         const String func_name = node->data.func_call.function_name;
         if (is_builtin_function(func_name))
         {
-            StdrotValue value = native_call_peek(node);
-            return stdrot_type_to_vartype(value.type);
+            /* get_native_call_static_type() (below) answers this from
+               the registered StdrotEntry alone, no execution, for every
+               TYPED native (a fixed return_type, or an identity-
+               polymorphic return_like_arg) -- Phase 2 (issue #205) made
+               that statically knowable, so this no longer has to run
+               arbitrary native C code merely to learn what type a call
+               produces. Only a genuine legacy/untyped STDROT_EXPORT()
+               export (return_type.type == STDROT_ANY, no return_like_arg)
+               falls back to native_call_peek()'s execute-to-discover
+               behavior -- unavoidable there since nothing describes its
+               real return type ahead of time, and safe here specifically
+               because THIS caller (unlike handle_sizeof(), which uses
+               get_native_call_static_type() directly and never falls
+               back) always goes on to actually evaluate the call for its
+               value regardless of what this type-probe reports. */
+            VarType static_type = get_native_call_static_type(node);
+            if (static_type != NONE)
+                return static_type;
+
+            NativeResult result = native_call_peek(node);
+            return stdrot_type_to_vartype(result.value.type);
         }
         Function *func = get_function(func_name);
         if (func != NULL)
@@ -1485,6 +1639,264 @@ VarType get_expression_type(ASTNode *node)
         yyerror("Unknown node type in get_expression_type");
         return NONE;
     }
+}
+
+/* A genuinely recursive, execution-free expression type query -- the
+ * runtime-side counterpart of semantic_analyzer.c's own infer_expression_
+ * type(), reading runtime Variable/Function/enum-constant state
+ * (get_variable(), get_function(), find_global_enum_constant()) instead
+ * of the analyzer's static SymbolEntry table, but sharing that function's
+ * defining property: NO code path here ever reaches execute_native_call().
+ * A NODE_FUNC_CALL is answered purely from get_native_call_static_type()
+ * (never native_call_peek(), unlike get_expression_type()'s own NODE_
+ * FUNC_CALL case just above) -- and critically, that "never falls back to
+ * execution" property survives *nesting*: NODE_OPERATION/NODE_UNARY_
+ * OPERATION recurse into this same function on their operands, and if
+ * either operand's type is genuinely unknowable (NONE -- a legacy/
+ * untyped STDROT_ANY export anywhere underneath, however deeply nested),
+ * the whole containing expression's type is NONE too, propagated upward
+ * rather than silently resolved by running something. Previously,
+ * handle_sizeof() (below) only checked whether its OPERAND was directly a
+ * bare native call -- `maxxing(legacy_int())` was caught, but
+ * `maxxing(legacy_int() + 1)` fell through to plain get_expression_type(),
+ * which recursed into its NODE_OPERATION case, hit the same fallback, and
+ * executed legacy_int() anyway. handle_sizeof() now gates on this
+ * function over the *whole* operand first, rejecting instead of ever
+ * reaching that fallback -- see its own comment.
+ *
+ * Also the base infer_runtime_expression_abi_type_noeval() (below) builds
+ * its ABI-lowering on top of, for get_native_call_static_type()'s
+ * identity-argument case -- see that function's own comment for why an
+ * identity argument specifically needs the ABI-lowered type, not this
+ * function's plain source-level one. */
+static VarType infer_runtime_expression_type_noeval(ASTNode *expr)
+{
+    if (!expr)
+        return NONE;
+
+    switch (expr->type)
+    {
+    case NODE_INT:
+        return VAR_INT;
+    case NODE_SHORT:
+        return VAR_SHORT;
+    case NODE_FLOAT:
+        return VAR_FLOAT;
+    case NODE_DOUBLE:
+        return VAR_DOUBLE;
+    case NODE_BOOLEAN:
+        return VAR_BOOL;
+    case NODE_CHAR:
+        return VAR_CHAR;
+    case NODE_STRING:
+    case NODE_STRING_LITERAL:
+        return VAR_STRING;
+    case NODE_SIZEOF:
+        /* sizeof's own static type is always an integer byte count --
+           this reports that without evaluating the inner sizeof at all
+           (handle_sizeof() is never called here), matching get_
+           expression_type()'s identical NODE_SIZEOF case. */
+        return VAR_INT;
+    case NODE_ARRAY_ACCESS:
+    {
+        const String array_name = expr->data.array.name;
+        if (!array_name.data)
+            return NONE;
+        Variable *var = get_variable(array_name);
+        if (var != NULL)
+            return var->var_type;
+        return NONE;
+    }
+    case NODE_IDENTIFIER:
+    {
+        Variable *var = get_variable(expr->data.name);
+        if (var != NULL)
+            return var->var_type;
+        if (find_global_enum_constant(expr->data.name) != NULL)
+            return VAR_INT;
+        return NONE;
+    }
+    case NODE_OPERATION:
+    {
+        OperatorType op = expr->data.op.op;
+        if (op == OP_EQ || op == OP_NE || op == OP_LT || op == OP_GT ||
+            op == OP_LE || op == OP_GE || op == OP_AND || op == OP_OR)
+            return VAR_BOOL;
+
+        VarType left_type =
+            infer_runtime_expression_type_noeval(expr->data.op.left);
+        VarType right_type =
+            infer_runtime_expression_type_noeval(expr->data.op.right);
+        if (left_type == NONE || right_type == NONE)
+            return NONE;
+
+        int left_level = get_expression_pointer_level(expr->data.op.left);
+        int right_level = get_expression_pointer_level(expr->data.op.right);
+
+        if (left_level > 0 && right_level == 0)
+            return left_type;
+        if (right_level > 0 && left_level == 0 && op == OP_PLUS)
+            return right_type;
+        if (left_level > 0 || right_level > 0)
+            return left_type;
+
+        if (left_type == VAR_DOUBLE || right_type == VAR_DOUBLE)
+            return VAR_DOUBLE;
+        if (left_type == VAR_FLOAT || right_type == VAR_FLOAT)
+            return VAR_FLOAT;
+        if (left_type == VAR_INT || right_type == VAR_INT)
+            return VAR_INT;
+        return left_type;
+    }
+    case NODE_UNARY_OPERATION:
+        return infer_runtime_expression_type_noeval(expr->data.unary.operand);
+    case NODE_FUNC_CALL:
+    {
+        const String func_name = expr->data.func_call.function_name;
+        if (is_builtin_function(func_name))
+            return get_native_call_static_type(expr);
+
+        Function *func = get_function(func_name);
+        if (func != NULL)
+            return func->return_type;
+        return NONE;
+    }
+    case NODE_STRUCT_ACCESS:
+    {
+        StructDef *def = NULL;
+        void *base = NULL;
+        StructField *fld = NULL;
+        if (!resolve_struct_access(expr, &def, &base, &fld, false))
+            return NONE;
+        return fld->type;
+    }
+    default:
+        return NONE;
+    }
+}
+
+/* Runtime/execution-free counterpart of semantic_analyzer.c's own
+ * infer_expression_abi_type() -- see that function's comment for the two
+ * ABI-lowering rules this mirrors exactly (stdrot_char_narrows_to_int()
+ * for binary/unary-negation narrowing, and a char *array* identifier
+ * marshaling as STRING), so this file and the semantic analyzer's static
+ * pass cannot independently drift out of agreement about what ABI type
+ * an expression actually marshals as -- the two now share the *rule*
+ * (stdrot_char_narrows_to_int(), stdrot.h) even though each has to read
+ * it off a different data source (SymbolEntry vs. Variable) at a
+ * different phase (static analysis vs. execution). Built strictly on
+ * infer_runtime_expression_type_noeval() just above, so it inherits that
+ * function's "never executes anything" property outright.
+ *
+ * Deliberately distinct from get_expression_type()'s existing NODE_CHAR
+ * handling (VAR_INT, unconditionally, matching how a bare char literal
+ * behaves in ordinary Brainrot arithmetic/sizeof contexts): a native's
+ * identity-polymorphic argument (slorp<T>(T) -> T) marshals as exactly
+ * whatever ast_expr_to_stdrot_value() would produce for that argument,
+ * and a bare char literal marshals as STDROT_CHAR there, not STDROT_INT
+ * -- only narrowed for the specific node shapes stdrot_char_narrows_to_
+ * int() says narrow. Consuming get_expression_type() here (as get_
+ * native_call_static_type()'s identity case previously did) reported the
+ * wrong type for exactly this case, along with the same char-array-as-
+ * STRING and enum-as-INT mismatches infer_expression_abi_type() already
+ * fixed on the static-analysis side. */
+static VarType infer_runtime_expression_abi_type_noeval(ASTNode *expr)
+{
+    VarType t = infer_runtime_expression_type_noeval(expr);
+    if (!expr || t == NONE)
+        return t;
+
+    /* No StdrotType exists for an enum -- an enum-typed expression always
+       marshals as STDROT_INT (ast_expr_to_stdrot_value()'s NODE_
+       IDENTIFIER/VAR_ENUM case, stdrot.c), the same representation a
+       bare int gets. Matches infer_expression_abi_type()'s own
+       unconditional VAR_ENUM normalization. */
+    if (t == VAR_ENUM)
+        return VAR_INT;
+
+    if (t != VAR_CHAR)
+        return t;
+
+    if (stdrot_char_narrows_to_int(
+            expr->type,
+            expr->type == NODE_UNARY_OPERATION ? expr->data.unary.op : OP_PLUS))
+        return VAR_INT;
+
+    if (expr->type != NODE_IDENTIFIER)
+        return t;
+
+    Variable *var = get_variable(expr->data.name);
+    if (var != NULL && var->is_array)
+        return VAR_STRING;
+    return t;
+}
+
+/* Purely static return type for a call to a builtin (stdrot) native,
+ * using only its registered StdrotEntry -- NEVER executing the native.
+ * The runtime-side counterpart of semantic_analyzer.c's own static
+ * native-call type inference (infer_expression_type()'s NODE_FUNC_CALL
+ * case): Phase 2 (issue #205) gave every native a real, registered
+ * signature, so the type a TYPED native's call produces is knowable
+ * ahead of time from that descriptor alone, the same way a Brainrot-
+ * defined function's return type already was before this file ever
+ * needed to execute anything to answer that question.
+ *
+ * Returns NONE when the type genuinely cannot be known without running
+ * the native -- a legacy/untyped STDROT_EXPORT() export (return_type.type
+ * == STDROT_ANY, return_like_arg == -1, "signature unknown" by design,
+ * see StdrotEntry's own comment, stdrot_api.h). get_expression_type()'s
+ * own NODE_FUNC_CALL case still falls back to native_call_peek() (which
+ * actually executes) for exactly that remaining case -- safe there
+ * specifically because that caller always goes on to evaluate the call
+ * for its value regardless. handle_sizeof() (this file) calls this
+ * function directly instead, and does NOT fall back to executing
+ * anything when it returns NONE: sizeof's operand must never be
+ * evaluated, full stop, and "the type is only knowable by running the
+ * native" is exactly the situation where honoring that contract means
+ * reporting the size as unknowable rather than quietly violating it. */
+static VarType get_native_call_static_type(ASTNode *node)
+{
+    const String func_name = node->data.func_call.function_name;
+    const StdrotEntry *entry = get_native_function(func_name);
+    if (!entry)
+        return NONE;
+
+    if (entry->return_like_arg >= 0)
+    {
+        /* Identity-polymorphic (slorp<T>(T) -> T, STDROT_EXPORT_SIG_
+           IDENTITY()): the call's real type is whatever the referenced
+           argument's own type turns out to be -- return_like_arg is only
+           ever validated (validate_native_registry(), stdrot.c) to name
+           a STDROT_ANY parameter, so there is no fixed StdrotType to read
+           off return_type here at all. Delegating to infer_runtime_
+           expression_abi_type_noeval() (above), not plain get_expression_
+           type(), because the identity this call promises is "same ABI
+           representation as this argument," not "same source-level
+           VarType" -- those differ for a char array (marshals as
+           STDROT_STRING, not the element's VAR_CHAR) and a bare char
+           literal (marshals as STDROT_CHAR, not get_expression_type()'s
+           unconditional VAR_INT) -- see that function's own comment.
+           Still execution-free for the same reason recursively: a nested
+           builtin call underneath hits this same static-first path via
+           infer_runtime_expression_type_noeval(), and unknowable
+           anywhere underneath propagates NONE instead of falling back to
+           running anything. */
+        int idx = 0;
+        for (ArgumentList *a = node->data.func_call.arguments; a;
+             a = a->next, idx++)
+        {
+            if (idx == entry->return_like_arg)
+                return a->expr
+                           ? infer_runtime_expression_abi_type_noeval(a->expr)
+                           : NONE;
+        }
+        return NONE;
+    }
+
+    if (entry->return_type.type == STDROT_ANY)
+        return NONE;
+
+    return stdrot_type_to_vartype(entry->return_type.type);
 }
 
 void *handle_binary_operation(ASTNode *node)
@@ -1880,6 +2292,27 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
         break;
     case NODE_FUNC_CALL:
     {
+        /* A pointer *destination* (the caller of this function, e.g. a
+           pointer-typed declaration's runtime handler) decides to call
+           this based only on ITS OWN declared pointer_level, not on
+           whatever this call's source expression actually is -- so a
+           call whose own return isn't declared to produce a pointer
+           (get_expression_pointer_level(node) == 0) must be rejected
+           here rather than blindly reinterpreting whatever
+           handle_function_call() boxed as a uintptr_t*. Without this,
+           a legacy STDROT_ANY export that actually returns e.g. a plain
+           int (enforce_return_type() only rejects one that returns a
+           real STDROT_PTR, since that's the only case a legacy export
+           genuinely isn't allowed to produce) would have its boxed int
+           value reinterpreted as a raw memory address -- `rizz *p =
+           legacy_int();` handing `p` the address 0x2a instead of being
+           rejected. */
+        if (get_expression_pointer_level(node) == 0)
+        {
+            yyerror("Native call result is not a pointer, cannot be used "
+                    "in a pointer context");
+            return (uintptr_t)0;
+        }
         uintptr_t *res = (uintptr_t *)handle_function_call(node);
         if (res)
         {
@@ -1903,8 +2336,24 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
                 size_t scale = get_type_size_for_descriptor(
                     get_expression_type(node->data.op.left), left_ptr - 1,
                     node->data.op.left->modifiers);
+                /* Round-23 review, finding #4 -- a scale of 0 means the
+                   pointee's size is genuinely unknown (a single-level
+                   opaque VAR_PTR/VAR_VOID pointer -- semantic analysis
+                   already rejects this shape statically, see validate_
+                   binary_operation()'s own comment), not "assume one
+                   byte." Defaulting to 1 silently gave `test_ptr_source()
+                   + 1` byte-pointer semantics for a type this ABI
+                   explicitly documents as pointee-erased. Kept as a
+                   defensive runtime check, matching every other place in
+                   this codebase where a static rejection has a runtime
+                   backstop too. */
                 if (scale == 0)
-                    scale = 1;
+                {
+                    yyerror("Cannot perform pointer arithmetic on a "
+                            "type-erased pointer -- its pointee size is "
+                            "unknown");
+                    return base;
+                }
                 return node->data.op.op == OP_PLUS
                            ? base + (uintptr_t)(offset * (ptrdiff_t)scale)
                            : base - (uintptr_t)(offset * (ptrdiff_t)scale);
@@ -1918,11 +2367,44 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
                     get_expression_type(node->data.op.right), right_ptr - 1,
                     node->data.op.right->modifiers);
                 if (scale == 0)
-                    scale = 1;
+                {
+                    yyerror("Cannot perform pointer arithmetic on a "
+                            "type-erased pointer -- its pointee size is "
+                            "unknown");
+                    return base;
+                }
                 return base + (uintptr_t)(offset * (ptrdiff_t)scale);
             }
         }
         break;
+    }
+    case NODE_STRUCT_ACCESS:
+    {
+        /* Round-21 review, finding #2's runtime half -- missing here for
+           the identical reason it was missing from get_expression_
+           pointer_level() and infer_expression_pointer_level()
+           (semantic_analyzer.c): a pointer-typed struct/union field
+           (`b.p`, `rizz *p;` inside `gang Box`) was never readable as a
+           pointer VALUE at all, only as an lvalue ADDRESS (evaluate_
+           lvalue_address()'s own NODE_STRUCT_ACCESS case, above, used
+           for *writing* to the field). Once the static side correctly
+           stopped rejecting `poke_int(b.p, 42)` before this native call
+           ever reached runtime marshalling, ast_expr_to_stdrot_value()
+           (stdrot.c) started actually calling this function for it --
+           and falling through to "Invalid pointer expression" (returning
+           a bogus NULL address) let the native write through a null
+           pointer instead of erroring cleanly, let alone working.
+           evaluate_struct_member_address() resolves the field's storage
+           location within its enclosing struct; the uintptr_t stored
+           there (not the field's own address) is the pointer VALUE this
+           function's contract promises. */
+        if (get_expression_pointer_level(node) <= 0)
+        {
+            yyerror("Expression is not a pointer");
+            return (uintptr_t)0;
+        }
+        void *addr = evaluate_struct_member_address(node);
+        return addr ? *(uintptr_t *)addr : (uintptr_t)0;
     }
     default:
         break;
@@ -2241,6 +2723,115 @@ void *handle_unary_expression(ASTNode *node, void *operand_value,
     }
 }
 
+/* Frees the void* box handle_function_call() returned, accounting for
+ * VAR_STRING's nested allocation -- that box is a malloc'd String* whose
+ * ->data is itself a separate safe_strdup'd buffer (see handle_function_
+ * call()'s VAR_STRING case), which a single SAFE_FREE(raw) would leak.
+ * Every other VarType's box is a flat scalar with nothing further to
+ * free. Used by the type-mismatch error paths below, where `raw` is
+ * discarded unread rather than unpacked through its own evaluator's
+ * usual (type-appropriate) free sequence. */
+static void free_native_result_box(void *raw, VarType actual)
+{
+    if (actual == VAR_STRING)
+        SAFE_FREE(((String *)raw)->data);
+    SAFE_FREE(raw);
+}
+
+/* current_return_value.type is the ACTUAL runtime type
+ * handle_function_call() just boxed `raw` as -- for a typed native this is
+ * guaranteed (by execute_native_call()'s enforce_return_type(), stdrot.c)
+ * to match what the semantic analyzer approved for this call site, but
+ * for a legacy STDROT_ANY export (return_type.type == STDROT_ANY,
+ * return_like_arg == -1) there is no such guarantee at all: the analyzer
+ * couldn't determine a static type for the call (infer_expression_type()
+ * reports NONE for it, so declaration/argument type checks involving it
+ * are skipped outright), so the call is approved into whatever numeric
+ * context it's used in regardless of what the native's C implementation
+ * actually constructs. Blindly reinterpreting `raw` as whatever this
+ * evaluator's calling context expects reproduces, for every non-pointer
+ * type, exactly the wrong-union-member bug the STDROT_PTR pointer guards
+ * elsewhere in this file already close for pointer-valued results -- this
+ * closes it the rest of the way, by reading the box back out through the
+ * type it was ACTUALLY boxed as, coercing numerically only within the
+ * same group check_type_compatibility_ex() (semantic_analyzer.c) already
+ * grants int/short/float/double/enum, plus VAR_CHAR (not part of that
+ * static group, but a native call result specifically is a case this
+ * codebase already deliberately reads numerically -- see ast_expr_to_
+ * stdrot_value()'s NODE_FUNC_CALL/VAR_CHAR case, which routes a char-
+ * returning call like `slorp(c)` through evaluate_expression_int() on
+ * purpose), and refusing outright otherwise instead of casting past the
+ * allocation's real size. A no-op for a typed native or an identity-
+ * polymorphic one (slorp): `actual` always already matches what's
+ * expected there, since the semantic analyzer genuinely knows the
+ * static type in both cases. */
+static bool unbox_native_numeric_result(void *raw, VarType actual, double *out)
+{
+    switch (actual)
+    {
+    case VAR_INT:
+    case VAR_ENUM:
+        *out = (double)*(int *)raw;
+        return true;
+    case VAR_SHORT:
+        *out = (double)*(short *)raw;
+        return true;
+    case VAR_FLOAT:
+        *out = (double)*(float *)raw;
+        return true;
+    case VAR_DOUBLE:
+        *out = *(double *)raw;
+        return true;
+    case VAR_CHAR:
+        *out = (double)*(char *)raw;
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* handle_function_call() returns NULL for two different reasons: the
+ * call's actual result is genuinely void (current_return_value.type ==
+ * VAR_VOID -- a legacy STDROT_ANY export whose real runtime result
+ * turned out to be STDROT_NONE, or a STDROT_NONE-declared native, either
+ * way used where a value is expected), or it's a struct result this
+ * generic scalar context can't represent (current_return_value.type ==
+ * VAR_STRUCT, already discarded inside handle_function_call() itself).
+ * A native call can only ever produce the former (StdrotType has no
+ * struct variant reaching this path), so this only reports the void
+ * case -- silently returning a default 0-ish value for "no value at
+ * all" is exactly the kind of static-type-information-implies-runtime-
+ * type-safety hole this file's other native-result checks already
+ * close (see unbox_native_numeric_result()'s own comment). Returns true
+ * (having already reported the error) only for the void case; every
+ * caller still falls through to its own default-value return either
+ * way, matching what a NULL raw already meant before this check existed
+ * for the struct case.
+ *
+ * VAR_VOID, not NONE: stdrot_type_to_vartype() (stdrot.c) maps a real,
+ * already-executed native result's STDROT_NONE to VAR_VOID specifically
+ * so this exact check (and every other "is this call's result usable as
+ * a value" question) can tell "certainly nothing" apart from "couldn't
+ * determine a type ahead of time" -- see VAR_VOID's own comment (ast.h)
+ * for the full reasoning. current_return_value.type reaching here as
+ * plain NONE would mean marshal_native_return_value() populated it from
+ * something enforce_return_type() should already have rejected earlier
+ * (STDROT_ANY/STDROT_HANDLE/STDROT_CSTRING as an actual result tag) --
+ * checked defensively alongside VAR_VOID rather than assumed
+ * unreachable. */
+static bool warn_if_native_result_void(const char *context_name)
+{
+    if (current_return_value.type != VAR_VOID &&
+        current_return_value.type != NONE)
+        return false;
+    char error_msg[MAX_BUFFER_LEN];
+    snprintf(error_msg, sizeof(error_msg),
+             "Native call result (void) cannot be used in a %s context",
+             context_name);
+    yyerror(error_msg);
+    return true;
+}
+
 float evaluate_expression_float(ASTNode *node)
 {
     if (!node)
@@ -2323,14 +2914,32 @@ float evaluate_expression_float(ASTNode *node)
     }
     case NODE_FUNC_CALL:
     {
-        float *res = (float *)handle_function_call(node);
-        if (res != NULL)
+        if (get_expression_pointer_level(node) > 0)
         {
-            float result = *res;
-            SAFE_FREE(res);
-            return result;
+            yyerror("Cannot use pointer in float context");
+            return 0.0f;
         }
-        return 0.0f;
+        void *raw = handle_function_call(node);
+        if (raw == NULL)
+        {
+            warn_if_native_result_void("float");
+            return 0.0f;
+        }
+        double value;
+        if (!unbox_native_numeric_result(raw, current_return_value.type,
+                                         &value))
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Native call result (%s) cannot be used in a float "
+                     "context",
+                     vartype_to_string(current_return_value.type));
+            yyerror(error_msg);
+            free_native_result_box(raw, current_return_value.type);
+            return 0.0f;
+        }
+        SAFE_FREE(raw);
+        return (float)value;
     }
     case NODE_STRUCT_ACCESS:
     {
@@ -2449,14 +3058,32 @@ double evaluate_expression_double(ASTNode *node)
     }
     case NODE_FUNC_CALL:
     {
-        double *res = (double *)handle_function_call(node);
-        if (res != NULL)
+        if (get_expression_pointer_level(node) > 0)
         {
-            double result = *res;
-            SAFE_FREE(res);
-            return result;
+            yyerror("Cannot use pointer in double context");
+            return 0.0L;
         }
-        return 0.0L;
+        void *raw = handle_function_call(node);
+        if (raw == NULL)
+        {
+            warn_if_native_result_void("double");
+            return 0.0L;
+        }
+        double value;
+        if (!unbox_native_numeric_result(raw, current_return_value.type,
+                                         &value))
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Native call result (%s) cannot be used in a double "
+                     "context",
+                     vartype_to_string(current_return_value.type));
+            yyerror(error_msg);
+            free_native_result_box(raw, current_return_value.type);
+            return 0.0L;
+        }
+        SAFE_FREE(raw);
+        return value;
     }
     case NODE_STRUCT_ACCESS:
     {
@@ -2539,6 +3166,38 @@ size_t handle_sizeof(ASTNode *node)
     }
     else
     {
+        /* sizeof's operand is never evaluated -- that's its defining
+           property, matching C. get_expression_type() alone doesn't
+           honor that for a native call: its own NODE_FUNC_CALL case
+           falls back to actually invoking a legacy/untyped native to
+           learn a type this function has no way to know is only needed
+           for a byte count, not a value -- and that fallback isn't
+           limited to a bare call as the whole operand: get_expression_
+           type()'s NODE_OPERATION/NODE_UNARY_OPERATION cases recurse
+           into the very same fallback for any native call nested
+           *inside* a larger expression too (`maxxing(a + legacy_int())`).
+           Gating on infer_runtime_expression_type_noeval() (above) over
+           the *whole* operand first closes that: it recurses the same
+           shapes get_expression_type() does, but its own NODE_FUNC_CALL
+           case only ever consults get_native_call_static_type() (never
+           native_call_peek()), and propagates NONE up through any
+           containing operation/unary node rather than resolving it by
+           running something. If it reports NONE, get_expression_type()
+           below is *guaranteed* not to hit its own execute-to-discover
+           fallback either, for exactly the same reason (every builtin
+           call reachable from `expr` already static-typed, or this gate
+           would already have returned NONE) -- so this doesn't replace
+           get_expression_type() below, just proves ahead of time that
+           calling it is safe. */
+        if (infer_runtime_expression_type_noeval(expr) == NONE)
+        {
+            yyerror("maxxing (sizeof) of an expression whose type is not "
+                    "statically known -- sizeof's operand is never "
+                    "evaluated, so a native call it depends on cannot be "
+                    "invoked to discover it");
+            return 0;
+        }
+
         // For non-identifiers (like literals), use get_expression_type
         VarType type = get_expression_type(expr);
         switch (type)
@@ -2562,6 +3221,31 @@ size_t handle_sizeof(ASTNode *node)
             return get_type_size_for_descriptor(
                 type, get_expression_pointer_level(expr), expr->modifiers);
         case VAR_ENUM:
+            return get_type_size_for_descriptor(
+                type, get_expression_pointer_level(expr), expr->modifiers);
+        case VAR_STRING:
+            /* Round-19 review, finding #3 -- get_type_size_for_descriptor()
+               (above) has always defined VAR_STRING as sizeof(String),
+               and a plain identifier's sizeof (the branch above this
+               `else`) already uses it via get_type_size(); this generic
+               path (a native-call expression like `identity(buf)`
+               resolving to STDROT_STRING, per get_native_call_static_
+               type()) fell to the `default: yyerror("Invalid type in
+               sizeof")` below purely because this case was missing --
+               an AST-shape accident, not an actual "strings have no
+               size" rule, since the identical VarType already has a
+               well-defined size everywhere else. */
+            return get_type_size_for_descriptor(
+                type, get_expression_pointer_level(expr), expr->modifiers);
+        case VAR_PTR:
+            /* A typed native's STDROT_PTR result (or any other pointer-
+               typed expression reaching this generic path) -- get_type_
+               size_for_descriptor() already handles pointer_level > 0
+               correctly (sizeof(uintptr_t)) via its own unconditional
+               check at the top; this case was simply missing, so a
+               pointer-typed non-identifier expression fell to the
+               `default: yyerror("Invalid type in sizeof")` case below
+               despite being a perfectly well-defined size. */
             return get_type_size_for_descriptor(
                 type, get_expression_pointer_level(expr), expr->modifiers);
         case VAR_STRUCT:
@@ -2627,20 +3311,55 @@ String evaluate_expression_string(ASTNode *node)
     }
     case NODE_FUNC_CALL:
     {
-        String *res = (String *)handle_function_call(node);
-        if (res != NULL)
+        /* A pointer-level result is boxed as a uintptr_t (see
+           handle_function_call()'s VAR_INT case), not a String -- without
+           this check, the cast below would reinterpret that
+           sizeof(uintptr_t)-byte allocation as a much larger String
+           struct and read res->data/res->len straight past the end of
+           it, not just misread a value like the numeric evaluators'
+           equivalent guard, an actual out-of-bounds heap read. */
+        if (get_expression_pointer_level(node) > 0)
         {
-            String result = safe_strdup(res);
-            /* res is handle_function_call()'s malloc'd String* container
-               (VAR_STRING case), already itself holding a freshly
-               safe_strdup'd buffer -- free that buffer too, not just the
-               container, or it's never reachable again after this
-               function returns. */
-            SAFE_FREE(res->data);
-            SAFE_FREE(res);
-            return result;
+            yyerror("Cannot use pointer in string context");
+            return (String){.data = NULL, .len = 0};
         }
-        return (String){.data = NULL, .len = 0};
+        void *raw = handle_function_call(node);
+        if (raw == NULL)
+        {
+            warn_if_native_result_void("string");
+            return (String){.data = NULL, .len = 0};
+        }
+        /* Unlike the numeric evaluators, there is no coercion group to
+           fall back on here -- a native call result is either genuinely
+           a String (current_return_value.type == VAR_STRING, in which
+           case `raw` really is handle_function_call()'s malloc'd String*
+           container) or it isn't, and reinterpreting anything else as
+           one reads ->data/->len straight past a smaller allocation (see
+           the pointer-level guard above for the same failure mode with a
+           STDROT_PTR result specifically -- this closes the identical
+           hole for every other mismatched type too, e.g. a legacy
+           STDROT_ANY export that actually returned an int). */
+        if (current_return_value.type != VAR_STRING)
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Native call result (%s) cannot be used in a string "
+                     "context",
+                     vartype_to_string(current_return_value.type));
+            yyerror(error_msg);
+            SAFE_FREE(raw);
+            return (String){.data = NULL, .len = 0};
+        }
+        String *res = (String *)raw;
+        String result = safe_strdup(res);
+        /* res is handle_function_call()'s malloc'd String* container
+           (VAR_STRING case), already itself holding a freshly
+           safe_strdup'd buffer -- free that buffer too, not just the
+           container, or it's never reachable again after this
+           function returns. */
+        SAFE_FREE(res->data);
+        SAFE_FREE(res);
+        return result;
     }
     default:
         yyerror("Invalid string expression");
@@ -2757,14 +3476,32 @@ short evaluate_expression_short(ASTNode *node)
     }
     case NODE_FUNC_CALL:
     {
-        short *res = (short *)handle_function_call(node);
-        if (res != NULL)
+        if (get_expression_pointer_level(node) > 0)
         {
-            short return_val = *res;
-            SAFE_FREE(res);
-            return return_val;
+            yyerror("Cannot use pointer in integer context");
+            return 0;
         }
-        return 0;
+        void *raw = handle_function_call(node);
+        if (raw == NULL)
+        {
+            warn_if_native_result_void("integer");
+            return 0;
+        }
+        double value;
+        if (!unbox_native_numeric_result(raw, current_return_value.type,
+                                         &value))
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Native call result (%s) cannot be used in an "
+                     "integer context",
+                     vartype_to_string(current_return_value.type));
+            yyerror(error_msg);
+            free_native_result_box(raw, current_return_value.type);
+            return 0;
+        }
+        SAFE_FREE(raw);
+        return (short)value;
     }
     case NODE_STRUCT_ACCESS:
     {
@@ -2908,14 +3645,32 @@ int evaluate_expression_int(ASTNode *node)
     }
     case NODE_FUNC_CALL:
     {
-        int *res = (int *)handle_function_call(node);
-        if (res != NULL)
+        if (get_expression_pointer_level(node) > 0)
         {
-            int return_val = *res;
-            SAFE_FREE(res);
-            return return_val;
+            yyerror("Cannot use pointer in integer context");
+            return 0;
         }
-        return 0;
+        void *raw = handle_function_call(node);
+        if (raw == NULL)
+        {
+            warn_if_native_result_void("integer");
+            return 0;
+        }
+        double value;
+        if (!unbox_native_numeric_result(raw, current_return_value.type,
+                                         &value))
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Native call result (%s) cannot be used in an "
+                     "integer context",
+                     vartype_to_string(current_return_value.type));
+            yyerror(error_msg);
+            free_native_result_box(raw, current_return_value.type);
+            return 0;
+        }
+        SAFE_FREE(raw);
+        return (int)value;
     }
     case NODE_STRUCT_ACCESS:
     {
@@ -2959,12 +3714,46 @@ int evaluate_expression_int(ASTNode *node)
    and Brainrot calls identically. */
 static void marshal_native_return_value(ASTNode *node)
 {
-    free_pending_struct_return_value();
-    StdrotValue result = native_call_consume(node);
+    free_pending_return_value();
+    NativeResult nr = native_call_consume(node);
+    StdrotValue result = nr.value;
 
     current_return_value.pointer_level = 0;
     current_return_value.struct_name = (String){0};
-    current_return_value.type = stdrot_type_to_vartype(result.type);
+    /* nr.owns_string (NativeResult, stdrot.h) is scoped to exactly this
+       `nr` -- not a global -- so it can only ever be true here when THIS
+       call's own result really is the materialized string it describes,
+       regardless of what any nested call evaluated while marshalling
+       this call's arguments (or consumed from this cache) set it to. */
+    current_return_value.owns_strvalue =
+        result.type == STDROT_STRING && nr.owns_string;
+    /* An opaque native pointer reuses VAR_INT + pointer_level, the same
+       representation every other pointer-typed value in this interpreter
+       already uses (see e.g. handle_function_call()'s VAR_INT case, which
+       boxes current_return_value.value.pvalue as a uintptr_t whenever
+       pointer_level > 0) -- not because a raw address is semantically an
+       int, but because that's the storage convention already in place
+       for "an address with no further type information attached", and
+       reusing it means every existing consumer of a pointer-valued
+       expression (dereference, pointer arithmetic, assignment to a
+       pointer variable, ...) already knows how to handle it. The
+       semantic analyzer, separately, reports VAR_PTR for this same
+       call's static type (see infer_expression_type()) -- the two don't
+       need to agree on a VarType tag (this function tags it VAR_INT, not
+       VAR_PTR), only on pointer_level and the raw
+       value. */
+    if (result.type == STDROT_PTR)
+    {
+        const StdrotEntry *entry =
+            get_native_function(node->data.func_call.function_name);
+        current_return_value.type = VAR_INT;
+        current_return_value.pointer_level =
+            (entry ? entry->return_type.pointer_level : 0) + 1;
+    }
+    else
+    {
+        current_return_value.type = stdrot_type_to_vartype(result.type);
+    }
     current_return_value.has_value = result.type != STDROT_NONE;
 
     switch (result.type)
@@ -2990,6 +3779,27 @@ static void marshal_native_return_value(ASTNode *node)
     case STDROT_STRING:
         current_return_value.value.strvalue = result.val.str;
         break;
+    case STDROT_PTR:
+        current_return_value.value.pvalue = (uintptr_t)result.val.ptr;
+        break;
+    case STDROT_CSTRING:
+    case STDROT_HANDLE:
+        /* semantic_check_native_call() rejects any call to a native whose
+           return_type.type is STDROT_CSTRING or STDROT_HANDLE outright
+           (CSTRING has no return-side marshalling implemented -- this
+           switch has no case that would populate strvalue for it; HANDLE
+           needs a resource-ownership model Phase 2 hasn't designed yet,
+           see roadmap Appendix B Q6) -- so a Brainrot program can never
+           reach this call with result.type equal to either, structurally
+           unreachable here. Add real marshalling (and remove the
+           semantic-analyzer rejection) once a builtin actually needs to
+           return one. */
+    case STDROT_ANY:
+        /* STDROT_ANY is a descriptor placeholder ("type genuinely
+           unknown" or "identity-polymorphic", see StdrotEntry's own
+           comment in stdrot_api.h) -- no native's actual StdrotValue
+           result should ever be tagged STDROT_ANY itself; if one is,
+           there is nothing meaningful to unbox. */
     case STDROT_NONE:
         break;
     }
@@ -3009,15 +3819,34 @@ void *handle_function_call(ASTNode *node)
     void *return_value = NULL;
     if (current_return_value.has_value)
     {
+        /* Round-22 review, finding #1 -- a type here is (base VarType,
+           pointer_level), and pointer_level DOMINATES: any expression
+           with pointer_level > 0 marshals as a raw address regardless
+           of its base type, the same rule ast_expr_to_stdrot_value()
+           (stdrot.c) already enforces for the native-call boundary
+           (checked before ITS OWN type-specific switch, for the exact
+           same reason). Checking this before the switch below --
+           instead of duplicating a `pointer_level > 0` branch inside
+           only the VAR_INT/VAR_ENUM cases, as this function used to --
+           means a user-defined function returning `chad *`/`yap *`/
+           `cap *`/`smol *`/`skibidi *` (any base type at all, pointer_
+           level > 0) is boxed as an address here too: previously those
+           fell into their base type's ordinary SCALAR case (VAR_FLOAT,
+           VAR_CHAR, VAR_BOOL, VAR_SHORT, or -- for skibidi * specifically
+           -- VAR_VOID's own "structurally unreachable" case, which
+           returned NULL despite this call genuinely having a value),
+           reinterpreting a real address as if it were the scalar value
+           at that address, or discarding it outright. */
+        if (current_return_value.pointer_level > 0)
+        {
+            return_value = SAFE_MALLOC(uintptr_t);
+            *(uintptr_t *)return_value = current_return_value.value.pvalue;
+            return return_value;
+        }
+
         switch (current_return_value.type)
         {
         case VAR_INT:
-            if (current_return_value.pointer_level > 0)
-            {
-                return_value = SAFE_MALLOC(uintptr_t);
-                *(uintptr_t *)return_value = current_return_value.value.pvalue;
-                break;
-            }
             return_value = SAFE_MALLOC(int);
             *(int *)return_value = current_return_value.value.ivalue;
             break;
@@ -3045,23 +3874,58 @@ void *handle_function_call(ASTNode *node)
             return_value = SAFE_MALLOC(String);
             *(String *)return_value =
                 safe_strdup(&current_return_value.value.strvalue);
+            /* current_return_value.owns_strvalue (ast.h, set by
+               marshal_native_return_value() from that call's own
+               NativeResult, stdrot.h): true only for a native result the
+               ABI boundary already knows is a heap buffer nothing else
+               references -- safe (and necessary, to avoid leaking it)
+               to free now that the copy above has captured everything
+               the caller needs. False for every other VAR_STRING source
+               (a Brainrot-defined function's own return, or a native
+               result that might alias a string literal or a live
+               variable's own backing storage) -- freeing those
+               unconditionally would corrupt still-live state, which is
+               exactly why this was never done unconditionally before. */
+            if (current_return_value.owns_strvalue)
+            {
+                SAFE_FREE(current_return_value.value.strvalue.data);
+                current_return_value.owns_strvalue = false;
+            }
             break;
         case VAR_STRUCT:
             /* A struct return has no meaningful representation in this
                generic scalar-expression context; discard it (freeing the
                blob handle_return_statement allocated) rather than leak. */
-            free_pending_struct_return_value();
+            free_pending_return_value();
             break;
         case VAR_ENUM:
-            if (current_return_value.pointer_level > 0)
-            {
-                return_value = SAFE_MALLOC(uintptr_t);
-                *(uintptr_t *)return_value = current_return_value.value.pvalue;
-                break;
-            }
+            /* pointer_level > 0 already handled above, before this
+               switch -- an enum pointer return reaches this case only
+               with pointer_level == 0, an ordinary by-value enum. */
             return_value = SAFE_MALLOC(int);
             *(int *)return_value = current_return_value.value.ivalue;
             break;
+        case VAR_PTR:
+            /* marshal_native_return_value() always sets
+               current_return_value.type to VAR_INT (not VAR_PTR) for a
+               STDROT_PTR result, reusing the pointer-boxing check above --
+               VAR_PTR is the semantic analyzer's own static type for the
+               expression, a separate concern from this runtime value's
+               representation (see that function's comment). Structurally
+               unreachable here. */
+        case VAR_VOID:
+            /* pointer_level > 0 (`skibidi *`) already handled above,
+               before this switch -- reaching HERE with type == VAR_VOID
+               means pointer_level == 0, i.e. genuinely void, and this
+               whole switch is gated on current_return_value.has_value
+               above; marshal_native_return_value() sets has_value false
+               for a genuinely void (STDROT_NONE) native result, and
+               (once handle_return_statement() is fixed to match, see
+               its own VAR_VOID case) a Brainrot-defined void function
+               never sets has_value true either. Reaching here would
+               mean has_value was true for a call known to return
+               nothing -- a bug elsewhere, not a case this function
+               should paper over. */
         case NONE:
             return NULL;
         }
@@ -3190,14 +4054,51 @@ bool evaluate_expression_bool(ASTNode *node)
     }
     case NODE_FUNC_CALL:
     {
-        bool *res = (bool *)handle_function_call(node);
-        if (res != NULL)
+        /* Same reasoning as NODE_IDENTIFIER/NODE_OPERATION above: a
+           pointer-level result (a STDROT_PTR-returning native call) is
+           boxed as a uintptr_t (see handle_function_call()'s VAR_INT
+           case), not a bool -- reading it through a bare `bool *` would
+           reinterpret the pointer's low byte as the whole truth value
+           instead of doing a proper != 0 comparison on the real address. */
+        if (get_expression_pointer_level(node) > 0)
         {
-            bool return_val = *res;
-            SAFE_FREE(res);
-            return return_val;
+            uintptr_t *res = (uintptr_t *)handle_function_call(node);
+            if (res != NULL)
+            {
+                bool return_val = *res != (uintptr_t)0;
+                SAFE_FREE(res);
+                return return_val;
+            }
+            return 0;
         }
-        return 0;
+        void *raw = handle_function_call(node);
+        if (raw == NULL)
+        {
+            warn_if_native_result_void("bool");
+            return 0;
+        }
+        /* No numeric-coercion group applies to bool (see
+           check_type_compatibility_ex(), semantic_analyzer.c -- VAR_BOOL
+           isn't part of the int/short/float/double/enum group), so this
+           requires an exact match rather than falling back to
+           unbox_native_numeric_result(): a mismatched result (e.g. a
+           legacy STDROT_ANY export that actually returned a string) must
+           be rejected here the same way it already is for the numeric
+           evaluators, not silently reinterpreted through a `bool *`. */
+        if (current_return_value.type != VAR_BOOL)
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Native call result (%s) cannot be used in a bool "
+                     "context",
+                     vartype_to_string(current_return_value.type));
+            yyerror(error_msg);
+            free_native_result_box(raw, current_return_value.type);
+            return 0;
+        }
+        bool return_val = *(bool *)raw;
+        SAFE_FREE(raw);
+        return return_val;
     }
     case NODE_STRUCT_ACCESS:
     {
@@ -3379,13 +4280,40 @@ bool is_expression(ASTNode *node, VarType type)
         // For operations, check if the result type matches the target type
         return get_expression_type(node) == type;
     }
+    case NODE_UNARY_OPERATION:
+        /* Previously uncased, falling to the default: below --
+           `node->type == VART_TO_NODET(type)` can never be true for a
+           NODE_UNARY_OPERATION node (VART_TO_NODET maps to a literal
+           node type like NODE_CHAR, never to NODE_UNARY_OPERATION), so
+           is_expression() always reported false here regardless of the
+           unary expression's actual type. That silently forced every
+           unary-operation argument through ast_expr_to_stdrot_value()'s
+           final STDROT_INT fallback, masking whatever
+           stdrot_char_narrows_to_int() (stdrot.h) said for operators
+           that shouldn't narrow (OP_DEREFERENCE, the increment/decrement
+           family) -- get_expression_type(), like NODE_OPERATION just
+           above, already reports the correct type for every unary
+           operator (see its own NODE_UNARY_OPERATION case). */
+        return get_expression_type(node) == type;
     case NODE_FUNC_CALL:
     {
         const String func_name = node->data.func_call.function_name;
         if (is_builtin_function(func_name))
         {
-            StdrotValue value = native_call_peek(node);
-            return stdrot_type_to_vartype(value.type) == type;
+            /* Static-first, matching get_expression_type()'s own NODE_
+               FUNC_CALL case exactly (delegated to directly, rather than
+               duplicating it): a TYPED native's return type is answered
+               purely from its registered descriptor, via get_native_
+               call_static_type() -- no execution. native_call_peek()
+               only actually runs the call for a genuine legacy/untyped
+               STDROT_ANY export, where nothing describes the return type
+               ahead of time, same as before. Previously called native_
+               call_peek() unconditionally here, executing even a TYPED
+               native merely to answer a type-check question Phase 2
+               (issue #205) made statically answerable without running
+               anything -- inconsistent with get_expression_type() having
+               already been fixed to prefer the static answer. */
+            return get_expression_type(node) == type;
         }
         VarType ret = get_function_return_type(func_name);
         /* A by-value enum return has type int in C -- treat it as such so
@@ -3841,8 +4769,30 @@ void bruh()
     LONGJMP();
 }
 
-ASTNode *create_default_node(VarType var_type)
+ASTNode *create_default_node(VarType var_type, int pointer_level)
 {
+    /* Round-21 review, finding #1 -- a declaration with no initializer
+       to infer a pointer_level mismatch from (`declarator EQUALS
+       expression` isn't in play here) needs pointer_level itself to
+       decide what "no value to default to" even means: `skibidi x;`
+       (VAR_VOID, pointer_level 0) is genuinely invalid -- void isn't a
+       storable type -- but `skibidi *p;` (VAR_VOID, pointer_level 1) is
+       `void *`, a real pointer type, and treating it identically was
+       exactly the (VAR_VOID meaning both "no value" and "void*'s base
+       type") confusion this round's review is about. This codebase has
+       no general uninitialized-pointer-default policy for ANY base type
+       today, though -- `rizz *p;` alone already fails semantic analysis
+       ("Type mismatch ... expected a pointer (level 1), got pointer
+       level 0"), because create_int_node(0)'s own pointer_level is 0,
+       mismatching the declared one. Rather than inventing new "null
+       pointer default" semantics that don't exist anywhere else in the
+       language, a pointer-typed default (any base type, VAR_VOID
+       included) falls through to that exact same numeric-zero node,
+       so `skibidi *p;` fails the identical, already-established way
+       `rizz *p;` does -- not a parse-time crash unique to void. */
+    if (pointer_level > 0)
+        return create_int_node(0);
+
     switch (var_type)
     {
     case VAR_INT:
@@ -3864,6 +4814,15 @@ ASTNode *create_default_node(VarType var_type)
     }
     case VAR_ENUM:
         return create_int_node(0);
+    case VAR_VOID:
+        /* Reached only for pointer_level == 0 now (the pointer_level > 0
+           case -- `skibidi *p;` -- already returned above, alongside
+           every other pointer-typed default). `skibidi x;` (no
+           initializer, no pointer) is genuinely invalid -- a named
+           void variable was never valid; this just names the rejection
+           instead of falling through the generic default case below. */
+        yyerror("Cannot declare a variable with type void");
+        exit(1);
     default:
         yyerror("Unsupported type for default node");
         exit(1);
@@ -4167,6 +5126,32 @@ void populate_multi_array_variable(String name, ExpressionList *list,
 
     while (current != NULL && index < total_elements)
     {
+        /* Round-24 review, finding #2 -- pointer_level dominates element
+           representation here too, the same rule round 23 already
+           applied to reading an array element back out
+           (evaluate_multi_array_access()) and to allocating the array's
+           storage in the first place (get_type_size_for_descriptor(),
+           consulted by set_multi_array_variable()): a pointer-typed
+           array (`rizz *ptrs[N] = { &x, &y };`) is allocated at
+           sizeof(uintptr_t) per element, but this switch dispatched
+           purely on var->var_type, writing through an (int *)/(float *)/
+           etc. cast at the WRONG stride for a pointer array, and
+           evaluating each initializer expression (`&x`) with
+           evaluate_expression_int() instead of evaluate_expression_
+           pointer() -- reading a raw address through the wrong
+           evaluator entirely, not just at the wrong offset. Checked
+           before the base-type switch, dominant over it, for the
+           identical reason every other "pointer-ness dominates
+           representation" fix in this PR checks it first. */
+        if (var->pointer_level > 0)
+        {
+            uintptr_t *array = (uintptr_t *)var->value.array_data;
+            array[index] = evaluate_expression_pointer(current->expr);
+            current = current->next;
+            index++;
+            continue;
+        }
+
         switch (var->var_type)
         {
         case VAR_INT:
@@ -4446,7 +5431,7 @@ void execute_function_call(const String name, ArgumentList *args)
        current_return_value slot -- e.g. it was returned from a call used
        as a bare statement, which has nowhere to put it. Free it now,
        before this call overwrites the slot. */
-    free_pending_struct_return_value();
+    free_pending_return_value();
 
     current_return_value.type = func->return_type;
     current_return_value.pointer_level = func->return_pointer_level;
@@ -4485,7 +5470,23 @@ void execute_function_call(const String name, ArgumentList *args)
     POP_JUMP_BUFFER();
 }
 
-void free_pending_struct_return_value(void)
+/* Frees whichever owned heap allocation, if any, is still sitting
+ * unconsumed in the global current_return_value slot -- a VAR_STRUCT
+ * blob or a VAR_STRING owns_strvalue buffer, both left behind by a call
+ * whose result nothing ever read (e.g. ast_accept()'s generic pre-visit
+ * of a call embedded in a declaration/assignment/etc. -- see
+ * interpreter_visit_function_call()'s own comment for why a user-defined
+ * function has no memo cache the way a native call does, and is
+ * genuinely invoked twice as a result). Round 24 renamed this from
+ * free_pending_struct_return_value() -- it stopped being struct-only the
+ * moment round 23's finding #3 gave handle_return_statement() a
+ * VAR_STRING case, and a name that only names half its job invites the
+ * next VAR_STRING-shaped bug to be added right next to a cleanup
+ * function that doesn't mention strings at all. Called at every point
+ * this slot is about to be overwritten by a new call's result, so a
+ * stale owned value never survives past the moment nothing can reach it
+ * anymore. */
+void free_pending_return_value(void)
 {
     if (current_return_value.type == VAR_STRUCT &&
         current_return_value.value.pvalue)
@@ -4497,6 +5498,13 @@ void free_pending_struct_return_value(void)
     {
         SAFE_FREE(current_return_value.struct_name);
         current_return_value.struct_name = (String){0};
+    }
+    if (current_return_value.type == VAR_STRING &&
+        current_return_value.owns_strvalue &&
+        current_return_value.value.strvalue.data)
+    {
+        SAFE_FREE(current_return_value.value.strvalue.data);
+        current_return_value.owns_strvalue = false;
     }
 }
 
@@ -4510,128 +5518,266 @@ void handle_return_statement(ASTNode *expr)
        trusting whatever a nested call left behind: without this, e.g.
        `bussin 0;` in skibidi main right after calling a struct-returning
        function would find current_return_value.type still set to
-       VAR_STRUCT from that call. */
+       VAR_STRUCT from that call.
+
+       Round-24 review, finding #1 -- that reasoning has to apply to the
+       REST of this function too, not just this initial re-derivation:
+       `declared_type`/`declared_pointer_level`, not current_return_
+       value.type/.pointer_level, drive every decision below (which
+       evaluator to call, which union member to write) from here on, and
+       nothing writes INTO current_return_value.{type,pointer_level} until
+       AFTER the expression has been fully evaluated into a local. The
+       expression (`evaluate_expression_double(expr)` etc., or a nested
+       user-defined call reached through it) can itself invoke another
+       function -- native or Brainrot-defined -- which overwrites this
+       exact global slot with ITS OWN type/pointer_level for the
+       duration of that nested call. The previous version set current_
+       return_value.type/.pointer_level to this function's OWN declared
+       return type up front, then evaluated the expression, then wrote
+       only current_return_value.value.* afterward -- so a nested call
+       partway through evaluation left current_return_value.type
+       permanently stuck on the NESTED call's type (e.g. VAR_INT from an
+       inner native) while current_return_value.value held the OUTER
+       function's correctly-converted payload (e.g. a double) -- a tag/
+       payload mismatch handle_function_call() would then read through
+       the wrong union member entirely. Capturing the declared contract
+       in locals, evaluating into a local, and only then installing both
+       together closes the exact class of bug NativeResult (stdrot.h)
+       already closed at the native-ABI boundary -- payload and metadata
+       now travel together here too, immune to whatever a nested call
+       does to the shared global slot in between. */
     Scope *scope = current_scope;
     while (scope && !scope->is_function_scope)
         scope = scope->parent;
     Function *current_func = NULL;
+    VarType declared_type = NONE;
+    int declared_pointer_level = 0;
     if (scope)
     {
         current_func = get_function(scope->function_name);
         if (current_func)
         {
-            current_return_value.type = current_func->return_type;
-            current_return_value.pointer_level =
-                current_func->return_pointer_level;
+            declared_type = current_func->return_type;
+            declared_pointer_level = current_func->return_pointer_level;
         }
+    }
+    /* Not inside any function (declared_type/declared_pointer_level stay
+       NONE/0) -- this is skibidi main, which has no declared return
+       type. */
+
+    if (!expr)
+    {
+        current_return_value.type = declared_type;
+        current_return_value.pointer_level = declared_pointer_level;
+        current_return_value.has_value = true;
+    }
+    else if (declared_pointer_level > 0)
+    {
+        uintptr_t pointer_result = evaluate_expression_pointer(expr);
+        current_return_value.type = declared_type;
+        current_return_value.pointer_level = declared_pointer_level;
+        current_return_value.has_value = true;
+        current_return_value.value.pvalue = pointer_result;
     }
     else
     {
-        /* Not inside any function -- this is skibidi main, which has no
-           declared return type. */
-        current_return_value.type = NONE;
-        current_return_value.pointer_level = 0;
-    }
-
-    current_return_value.has_value = true;
-    if (expr)
-    {
-        if (current_return_value.pointer_level > 0)
+        switch (declared_type)
         {
-            current_return_value.value.pvalue =
-                evaluate_expression_pointer(expr);
+        case VAR_INT:
+        {
+            int result = evaluate_expression_int(expr);
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            current_return_value.value.ivalue = result;
+            break;
         }
-        else
+        case VAR_FLOAT:
         {
-            switch (current_return_value.type)
+            float result = evaluate_expression_float(expr);
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            current_return_value.value.fvalue = result;
+            break;
+        }
+        case VAR_DOUBLE:
+        {
+            double result = evaluate_expression_double(expr);
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            current_return_value.value.dvalue = result;
+            break;
+        }
+        case VAR_BOOL:
+        {
+            bool result = evaluate_expression_bool(expr);
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            current_return_value.value.bvalue = result;
+            break;
+        }
+        case VAR_SHORT:
+        {
+            short result = evaluate_expression_short(expr);
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            current_return_value.value.svalue = result;
+            break;
+        }
+        case VAR_ENUM:
+        {
+            int result = evaluate_expression_int(expr);
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            current_return_value.value.ivalue = result;
+            break;
+        }
+        case VAR_CHAR:
+        {
+            /* Round-23 review, finding #3 -- the return-CHECKING side
+               (semantic_analyze_with_scope_tracking()'s NODE_RETURN
+               case, round 22) already approved a `yap f() { bussin
+               'A'; }`-shaped function as statically coherent (VAR_CHAR
+               == VAR_CHAR), but this return-PRODUCING switch had no
+               VAR_CHAR case at all, so actually calling such a
+               function hit `default: yyerror("Unsupported return
+               type"); exit(1);` -- the checker approved a contract the
+               producer couldn't fulfill. current_return_value.value.
+               ivalue (not a dedicated char field) matches handle_
+               function_call()'s own VAR_CHAR consumer case, which
+               already reads a char return from that exact union
+               member. */
+            int result = evaluate_expression_int(expr);
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            current_return_value.value.ivalue = result;
+            break;
+        }
+        case VAR_STRING:
+        {
+            /* Same producer gap as VAR_CHAR just above, for `rant f()
+               { bussin "hello"; }` -- including a native's own
+               identity-polymorphic STRING result reaching here via
+               `bussin slorp(s);` (the review's own exhibit), since
+               nothing about THIS switch cares how the expression's
+               value was produced, only what VarType it's declared to
+               return. evaluate_expression_string() always hands back
+               an independently safe_strdup'd copy (see its own
+               comment) -- current_return_value.owns_strvalue = true
+               documents that this copy is this return's own, to be
+               consumed exactly the way handle_function_call()'s
+               VAR_STRING case already consumes a native's owned string
+               result: copy into the caller's box, then free this one.
+               Not freed here -- ownership travels via owns_strvalue
+               precisely so a caller that discards the return value
+               entirely (a bare `f();` statement, no assignment) still
+               has somewhere for this cleanup to happen (handle_
+               function_call()'s own VAR_STRING case runs regardless of
+               whether its result is ever used). Evaluated into a local
+               BEFORE any of current_return_value's fields are touched,
+               same as every other case here, so a nested call reached
+               while evaluating this string can't leave owns_strvalue
+               or type stuck on ITS OWN (unrelated) return afterward. */
+            String result = evaluate_expression_string(expr);
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            current_return_value.value.strvalue = result;
+            current_return_value.owns_strvalue = true;
+            break;
+        }
+        case VAR_VOID:
+            /* A real `skibidi`-declared function's return type is
+               VAR_VOID now (round 20), not NONE -- NONE here is
+               reached only for `bussin` outside any function (`main`
+               itself has no declared return type, see declared_type's
+               own NONE default above). Both mean the same thing for
+               this switch's purposes: ignore the expression's value
+               entirely -- it is never evaluated at all (matching the
+               original behavior this case has always had; `bussin
+               someExpr;` inside a void function has never executed
+               someExpr for its side effects, and introducing that now
+               would be a new, unrelated behavior change, not a
+               reentrancy fix). No nested-call reentrancy risk here for
+               exactly that reason: nothing runs evaluate_expression_*
+               on expr in this case, so current_return_value can't be
+               clobbered by anything expr might otherwise have called.
+               (Reaching this case at all, rather than the declared_
+               pointer_level > 0 branch above, means declared_pointer_
+               level == 0 -- genuinely void, not `skibidi *`.) */
+        case NONE:
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            break;
+        case VAR_STRUCT:
+        {
+            current_return_value.type = declared_type;
+            current_return_value.pointer_level = 0;
+            current_return_value.has_value = true;
+            /* Only a plain struct variable is supported as the return
+               expression (matching the same constraint on struct
+               arguments -- see enter_function_scope). The blob is
+               copied into a fresh, heap-owned allocation *before* the
+               scope cleanup below runs: that cleanup frees this
+               function's own scope, which is where the source
+               variable's blob lives, so evaluating lazily (e.g. from
+               the caller, after this function returns) would read
+               freed memory. The caller is responsible for copying out
+               of current_return_value.value.pvalue and freeing it --
+               see interpreter_visit_declaration's struct_init_expr
+               handling. */
+            Variable *src = NULL;
+            if (expr->type == NODE_IDENTIFIER)
+                src = get_variable(expr->data.name);
+            if (!src || src->var_type != VAR_STRUCT)
             {
-            case VAR_INT:
-                current_return_value.value.ivalue =
-                    evaluate_expression_int(expr);
-                break;
-            case VAR_FLOAT:
-                current_return_value.value.fvalue =
-                    evaluate_expression_float(expr);
-                break;
-            case VAR_DOUBLE:
-                current_return_value.value.dvalue =
-                    evaluate_expression_double(expr);
-                break;
-            case VAR_BOOL:
-                current_return_value.value.bvalue =
-                    evaluate_expression_bool(expr);
-                break;
-            case VAR_SHORT:
-                current_return_value.value.svalue =
-                    evaluate_expression_short(expr);
-                break;
-            case VAR_ENUM:
-                current_return_value.value.ivalue =
-                    evaluate_expression_int(expr);
-                break;
-            case NONE:
-                /* void/skibidi return type: ignore expression value */
-                break;
-            case VAR_STRUCT:
-            {
-                /* Only a plain struct variable is supported as the return
-                   expression (matching the same constraint on struct
-                   arguments -- see enter_function_scope). The blob is
-                   copied into a fresh, heap-owned allocation *before* the
-                   scope cleanup below runs: that cleanup frees this
-                   function's own scope, which is where the source
-                   variable's blob lives, so evaluating lazily (e.g. from
-                   the caller, after this function returns) would read
-                   freed memory. The caller is responsible for copying out
-                   of current_return_value.value.pvalue and freeing it --
-                   see interpreter_visit_declaration's struct_init_expr
-                   handling. */
-                Variable *src = NULL;
-                if (expr->type == NODE_IDENTIFIER)
-                    src = get_variable(expr->data.name);
-                if (!src || src->var_type != VAR_STRUCT)
-                {
-                    yyerror("Return expression is not a struct variable");
-                    /* value.pvalue may hold a stale bit pattern left over
-                       from a previous, differently-typed return sharing
-                       this union -- has_value=false is what tells the
-                       caller (interpreter_visit_declaration's
-                       struct_init_expr handling) there's nothing usable
-                       to read out of it. */
-                    current_return_value.has_value = false;
-                    break;
-                }
-                /* Catch a type mismatch here, at the return statement,
-                   rather than leaving it to be caught later by the
-                   caller's own destination-type check (still correct, but
-                   the error would point at the call site instead of this
-                   return). */
-                if (current_func && current_func->return_struct_name.data &&
-                    (!src->struct_name.data ||
-                     strcmp(src->struct_name.data,
-                            current_func->return_struct_name.data) != 0))
-                {
-                    yyerror("Return expression type does not match declared "
-                            "return type");
-                    current_return_value.has_value = false;
-                    break;
-                }
-                StructDef *def = get_struct_def(src->struct_name);
-                if (def)
-                {
-                    void *blob = calloc(1, def->total_size);
-                    if (blob && src->value.array_data)
-                        memcpy(blob, src->value.array_data, def->total_size);
-                    current_return_value.value.pvalue = (uintptr_t)blob;
-                    current_return_value.struct_name =
-                        safe_strdup(&src->struct_name);
-                }
+                yyerror("Return expression is not a struct variable");
+                /* value.pvalue may hold a stale bit pattern left over
+                   from a previous, differently-typed return sharing
+                   this union -- has_value=false is what tells the
+                   caller (interpreter_visit_declaration's
+                   struct_init_expr handling) there's nothing usable
+                   to read out of it. */
+                current_return_value.has_value = false;
                 break;
             }
-            default:
-                yyerror("Unsupported return type");
-                exit(1);
+            /* Catch a type mismatch here, at the return statement,
+               rather than leaving it to be caught later by the
+               caller's own destination-type check (still correct, but
+               the error would point at the call site instead of this
+               return). */
+            if (current_func && current_func->return_struct_name.data &&
+                (!src->struct_name.data ||
+                 strcmp(src->struct_name.data,
+                        current_func->return_struct_name.data) != 0))
+            {
+                yyerror("Return expression type does not match declared "
+                        "return type");
+                current_return_value.has_value = false;
+                break;
             }
+            StructDef *def = get_struct_def(src->struct_name);
+            if (def)
+            {
+                void *blob = calloc(1, def->total_size);
+                if (blob && src->value.array_data)
+                    memcpy(blob, src->value.array_data, def->total_size);
+                current_return_value.value.pvalue = (uintptr_t)blob;
+                current_return_value.struct_name =
+                    safe_strdup(&src->struct_name);
+            }
+            break;
+        }
+        default:
+            yyerror("Unsupported return type");
+            exit(1);
         }
     }
     // Clean up all scopes until we reach the function scope
@@ -4905,6 +6051,12 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             arg_values[arg_count].pvalue = (uintptr_t)src->value.array_data;
             break;
         }
+        case VAR_PTR:
+        /* curr_param->type is a user-defined function parameter's
+           declared type -- no Brainrot syntax can declare a parameter
+           VAR_PTR (or VAR_VOID, same reasoning), so this is structurally
+           unreachable. */
+        case VAR_VOID:
         case NONE:
             break;
         }
@@ -5005,6 +6157,10 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             }
             break;
         }
+        case VAR_PTR:
+        /* Same reasoning as the argument-evaluation switch above:
+           structurally unreachable for a declared parameter type. */
+        case VAR_VOID:
         case NONE:
             break;
         }

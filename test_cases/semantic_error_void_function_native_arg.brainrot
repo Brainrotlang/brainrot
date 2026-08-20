@@ -1,0 +1,20 @@
+🚽 Test case: round-20 review finding #1 -- `skibidi` (void) previously
+🚽 mapped to NONE in the grammar's `type` nonterminal, the same sentinel
+🚽 used for "genuinely unknown" -- so a user-defined void function's
+🚽 statically-known return type collapsed back into "unknown," and every
+🚽 `if (actual == NONE) /* can't know, fail open */` check (e.g. a
+🚽 variadic native argument's representability check) waved a void
+🚽 function's call through using the exception meant for a legacy
+🚽 STDROT_ANY export's genuinely dynamic type. `skibidi` now maps to
+🚽 VAR_VOID (lang.y's `type` rule, and the lexer's current_var_type side
+🚽 effect it depends on for a declaration-with-initializer), so
+🚽 infer_expression_type(noop()) correctly reports VAR_VOID, and this is
+🚽 now rejected the same way any other statically-known-void native
+🚽 argument already is.
+skibidi noop() {
+}
+
+skibidi main {
+    yapping("%d", noop());
+    bussin 0;
+}

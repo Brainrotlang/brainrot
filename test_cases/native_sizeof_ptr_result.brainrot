@@ -1,0 +1,15 @@
+🚽 Test case: round-18 review finding #5 -- test_ptr_source() (tests/
+🚽 stdrot/testptr.c) is a real STDROT_EXPORT_SIG() native declared to
+🚽 return STDROT_PTR, end to end (get_native_call_static_type() already
+🚽 resolves it to VAR_PTR with no execution). handle_sizeof()'s type-
+🚽 dispatch switch (ast.c) had no `case VAR_PTR:` despite get_type_size_
+🚽 for_descriptor() immediately underneath already correctly handling
+🚽 pointer_level > 0 (sizeof(uintptr_t)) -- a pointer-typed native result
+🚽 fell to the generic `default: yyerror("Invalid type in sizeof")`
+🚽 instead. maxxing() of it must report sizeof(uintptr_t), i.e. 8 on this
+🚽 platform.
+skibidi main {
+    rizz n = maxxing(test_ptr_source());
+    yapping("%d", n);
+    bussin 0;
+}

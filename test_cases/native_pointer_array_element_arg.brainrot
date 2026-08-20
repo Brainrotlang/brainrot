@@ -1,0 +1,21 @@
+🚽 Test case: round-22 review finding #2 -- infer_expression_pointer_
+🚽 level()'s NODE_ARRAY_ACCESS case only ever consulted get_variable()
+🚽 (runtime Variable state, unavailable during the single static
+🚽 semantic-analysis pass) or the AST node's own not-yet-populated
+🚽 pointer_level, never the analyzer's own SymbolEntry table -- the
+🚽 exact bug NODE_STRUCT_ACCESS had (round 21, finding #2), just for a
+🚽 pointer ARRAY element instead of a struct field. `poke_int`'s first
+🚽 parameter is declared STDROT_PTR; `ptrs[0]` (a `rizz *` array
+🚽 element) was falsely rejected as pointer level 0. Fixed with the same
+🚽 find_symbol()-first discipline NODE_IDENTIFIER's own case already
+🚽 has. (Populated via a plain assignment, not a braced initializer --
+🚽 `rizz *ptrs[1] = { &x };` hits a separate, pre-existing bug in
+🚽 pointer-typed array-initializer marshalling, unrelated to this fix.)
+skibidi main {
+    rizz x = 5;
+    rizz *ptrs[1];
+    ptrs[0] = &x;
+    poke_int(ptrs[0], 42);
+    yappin("%d\n", x);
+    bussin 0;
+}

@@ -1,0 +1,15 @@
+🚽 Test case: round-23 review finding #4's positive counterpart --
+🚽 arithmetic on a MULTI-level opaque pointer (`void **`, pointer_level
+🚽 2) is perfectly well-defined: each element is itself a pointer
+🚽 (sizeof(uintptr_t)), a real, known stride, regardless of what the
+🚽 innermost pointee eventually turns out to be. Only a SINGLE-level
+🚽 opaque pointer (VAR_PTR or VAR_VOID at pointer_level 1) has an
+🚽 unknown element size -- checked as its own condition (pointer_level
+🚽 == 1, not >= 1) specifically so this case is never caught by the
+🚽 rejection.
+skibidi main {
+    skibidi *p = test_ptr_source();
+    skibidi **pp = &p;
+    skibidi **qq = pp + 1;
+    bussin 0;
+}

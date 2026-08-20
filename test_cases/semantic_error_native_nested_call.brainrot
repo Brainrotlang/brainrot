@@ -1,0 +1,8 @@
+🚽 Test case: an arity/type error on a native call nested inside another
+🚽 native call's argument, inside a declaration initializer, must still be
+🚽 caught statically -- not just the outermost call.
+skibidi main {
+    cap ok = bet(bet());
+    yapping("%b", ok);
+    bussin 0;
+}

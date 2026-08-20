@@ -100,10 +100,6 @@ jobs:
       - name: Grant execute permissions to Brainrot
         run: chmod +x brainrot
 
-      - name: Prepare shared library for tests
-        run: |
-          cp -f libstdrot.so tests/libstdrot.so
-
       - name: Force Ubuntu archive mirror
         run: |
           sudo sed -i \
@@ -122,22 +118,50 @@ jobs:
             -o Acquire::Retries=3 \
             -o Acquire::http::Timeout=15 \
             -o Acquire::https::Timeout=15 \
-          install python3 python3-pip valgrind libfl-dev libasan8 libubsan1 -y
+          install gcc python3 python3-pip valgrind libfl-dev libasan8 libubsan1 -y
           python3 -m venv .venv
           source .venv/bin/activate
           pip install -r requirements.txt
         working-directory: tests
 
+      # tests/libstdrot.so is production stdrot/*.c PLUS tests/stdrot/*.c
+      # (test-only natives that exist solely so test_cases/*.brainrot can
+      # exercise ABI paths no production builtin uses, e.g. STDROT_PTR --
+      # see that directory's own file comment). Built fresh here rather
+      # than reusing the downloaded libstdrot.so build artifact, which is
+      # deliberately production-only, the same file `make install` and
+      # the wasm build see.
+      - name: Build test-only shared library
+        run: make tests/libstdrot.so
+
+      # tests/badnatives/*.so: one minimal .so per file, each holding a
+      # single deliberately malformed StdrotEntry that validate_native_
+      # registry() (stdrot.c) must reject at stdrot_load() time -- see that
+      # directory's own file comment. test_bad_registry_rejected_at_load
+      # (tests/test_brainrot.py) points STDROT_LIB_PATH at one of these per
+      # subprocess, never at the shared tests/libstdrot.so above.
+      - name: Build malformed-registry test libraries
+        run: make badnatives
+
+      # tests/old_abi_sim/fake_pre_v2_registry.so simulates a libstdrot.so
+      # built before STDROT_ABI_VERSION/stdrot_get_api_v2() existed (see
+      # that directory's own file comment) -- proves stdrot_load() detects
+      # the missing versioned entrypoint and fails loudly instead of
+      # misreading the old .so's memory as the current ABI shape.
+      - name: Build simulated pre-ABI-versioning library
+        run: make old-abi-sim
+
       - name: Run Pytest
         run: |
           source .venv/bin/activate
-          export LD_LIBRARY_PATH="$PWD:$LD_LIBRARY_PATH"
+          export STDROT_LIB_PATH="$GITHUB_WORKSPACE/tests/libstdrot.so"
           pytest -v test_brainrot.py
         working-directory: tests
 
       - name: Run Valgrind on all .brainrot tests
         run: |
           chmod +x run_valgrind_tests.sh
+          export STDROT_LIB_PATH="$GITHUB_WORKSPACE/tests/libstdrot.so"
           ./run_valgrind_tests.sh
         working-directory: .
 
@@ -189,8 +213,30 @@ jobs:
       - name: Build brainrot.wasm
         run: make wasm
 
-      - name: Run wasm smoke tests
-        run: node tests/run_wasm_tests.mjs
+      # Smoke-tests the actual artifact this job uploads/ships, before it
+      # gets anywhere near the test-augmented build below. A prior version
+      # of this job only ran the test-augmented module here, which meant
+      # brainrot.wasm/.mjs got compiled but never executed by anything --
+      # a green run proved nothing about whether the shipped artifact
+      # actually starts up (see run_wasm_tests.mjs's own comment: the two
+      # builds differ in more than just "extra natives" -- linker section
+      # contents, registry count, layout, and startup registry iteration
+      # all change too).
+      - name: Run wasm smoke tests (production artifact)
+        run: node tests/run_wasm_tests.mjs production
+
+      # tests/brainrot-test.wasm/.mjs adds tests/stdrot/*.c (test-only
+      # natives) on top of the same sources brainrot.wasm above just
+      # built from -- run_wasm_tests.mjs needs it so the pointer-ABI/
+      # return-type-enforcement fixtures actually execute under wasm32
+      # instead of being skipped (see that file's own comment for why
+      # that distinction matters: pointer/uintptr_t representation
+      # differs between wasm32 and native). Never uploaded or shipped.
+      - name: Build test-only brainrot.wasm
+        run: make wasm-test
+
+      - name: Run wasm smoke tests (ABI test suite)
+        run: node tests/run_wasm_tests.mjs test
 
       - name: Compare wasm output against native for examples/
         run: node tests/run_wasm_examples_check.mjs

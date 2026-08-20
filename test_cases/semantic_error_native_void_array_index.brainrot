@@ -1,0 +1,16 @@
+🚽 Test case: round-20 review finding #2 -- require_value_expression()
+🚽 (semantic_analyzer.c, added round 19) was wired into binary operator
+🚽 operands and every loop/if/switch condition, but NOT into an array
+🚽 index: the analyzer recursively visited the index expression but never
+🚽 required it to actually produce a value. `yapping(...)` is a TYPED
+🚽 native whose descriptor return type is STDROT_NONE (VAR_VOID), so
+🚽 `a[yapping(...)]` previously type-checked statically and only failed
+🚽 at runtime, after yapping() had already executed for real (side
+🚽 effect: the marker below printing). Now rejected statically, with no
+🚽 execution at all.
+skibidi main {
+    rizz a[1];
+    a[0] = 42;
+    rizz x = a[yapping("THIS MUST NEVER PRINT")];
+    bussin 0;
+}

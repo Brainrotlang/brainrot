@@ -201,5 +201,16 @@ static StdrotValue stdrot_yappin(StdrotValue *args, int arg_count)
     return (StdrotValue){STDROT_NONE, {0}};
 }
 
-STDROT_EXPORT("yapping", stdrot_yapping);
-STDROT_EXPORT("yappin", stdrot_yappin);
+/* Format string is the fixed/checked prefix; the trailing format args are
+ * variadic and type-checked against the format spec at runtime, not
+ * statically, so they're left unchecked here (matches libc printf). */
+static const StdrotParam format_params[] = {
+    {STDROT_STRING, NULL, 0},
+};
+
+STDROT_EXPORT_SIG_VARIADIC("yapping", stdrot_yapping,
+                           ((StdrotParam){STDROT_NONE, NULL, 0}), format_params,
+                           1, 1);
+STDROT_EXPORT_SIG_VARIADIC("yappin", stdrot_yappin,
+                           ((StdrotParam){STDROT_NONE, NULL, 0}), format_params,
+                           1, 1);

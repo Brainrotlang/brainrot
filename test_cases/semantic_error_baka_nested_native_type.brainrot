@@ -1,0 +1,17 @@
+🚽 Test case: round-20 review finding #3 -- semantic_analyze_with_scope_
+🚽 tracking()'s switch had no case for NODE_ERROR_STATEMENT (`baka(...)`),
+🚽 falling to the generic `default:` (does nothing), so a native call
+🚽 nested inside baka's argument never reached semantic_check_native_
+🚽 call() at all: `yapping`'s own fixed-format-argument type checking
+🚽 (its parameter 0 is declared STDROT_STRING) never ran. This is
+🚽 deliberately a WRONGLY-typed nested call (42, an int, where yapping's
+🚽 format parameter requires a string) rather than a merely-valid one --
+🚽 a valid nested call would still "pass" even with the traversal gap
+🚽 completely unfixed, proving nothing about whether semantic checking
+🚽 actually descended into baka's argument. Now caught statically, via
+🚽 the normal native-call argument-type checking every other call
+🚽 position already gets.
+skibidi main {
+    baka(yapping(42));
+    bussin 0;
+}

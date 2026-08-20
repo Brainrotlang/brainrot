@@ -1,0 +1,17 @@
+🚽 Test case: round-21 review finding #3's struct-field counterpart -- a
+🚽 `void *` field (pointer_level > 0) is a real pointer-sized field and
+🚽 must NOT be rejected by the by-value-void field check. get_struct_
+🚽 field_size() already handles pointer_level > 0 correctly
+🚽 (sizeof(uintptr_t)) before ever reaching the type-size machinery a
+🚽 by-value void field would incorrectly fall through to; this proves
+🚽 the field-level rejection doesn't also catch the valid pointer case.
+gang Box {
+    skibidi *p;
+    rizz x;
+};
+
+skibidi main {
+    gang Box b;
+    yappin("%d\n", maxxing(b));
+    bussin 0;
+}

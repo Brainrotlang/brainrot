@@ -1,0 +1,10 @@
+🚽 Test case: legacy_returns_any_tag() is a legacy/untyped export whose
+🚽 C implementation constructs a StdrotValue literally tagged
+🚽 STDROT_ANY -- a native-binding bug (STDROT_ANY is a descriptor
+🚽 placeholder, never a real value a native should produce) that
+🚽 enforce_return_type() must reject rather than silently accept under
+🚽 "any type, actual tag wins".
+skibidi main {
+    legacy_returns_any_tag();
+    bussin 0;
+}

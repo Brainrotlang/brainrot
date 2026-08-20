@@ -1,0 +1,14 @@
+🚽 Test case: round-24 review finding #2, a second base type -- the
+🚽 review specifically asked to test `chad *`/`skibidi *` too, since
+🚽 pointer width can coincidentally match one scalar width and not
+🚽 another's across native/wasm32. `chad *` (float, always 4 bytes)
+🚽 exercises a different scalar width than the int-array fixture.
+skibidi main {
+    chad a = 1.5;
+    chad b = 2.5;
+    chad *ptrs[2] = { &a, &b };
+    yappin("%.1f %.1f\n", *ptrs[0], *ptrs[1]);
+    *ptrs[1] = 9.5;
+    yappin("%.1f %.1f\n", a, b);
+    bussin 0;
+}

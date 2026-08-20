@@ -1,0 +1,23 @@
+🚽 Test case: round-13 review finding #3 -- f.c (NODE_STRUCT_ACCESS on a
+🚽 char field) is an ordinary char lvalue in C, the same as any other char
+🚽 expression; `takes_char(f.c)` must type-check successfully as a char
+🚽 argument, not be rejected. A member-access expression's type is the
+🚽 field's own declared type -- accessing it doesn't promote it to int any
+🚽 more than reading a bare char variable would. stdrot_char_narrows_to_
+🚽 int() (stdrot.h) previously narrowed NODE_STRUCT_ACCESS unconditionally
+🚽 to int -- both the static checker and the runtime marshaller agreed
+🚽 with each other, but both were wrong, and a prior round's tests
+🚽 enshrined that agreement as "correct" behavior. Fixed on both sides;
+🚽 this fixture replaces the old
+🚽 semantic_error_native_char_struct_access.brainrot, which asserted the
+🚽 rejection this fix removes.
+gang Foo {
+    yap c;
+};
+
+skibidi main {
+    gang Foo f = { 'x' };
+    rizz r = takes_char(f.c);
+    yapping("%d", r);
+    bussin 0;
+}

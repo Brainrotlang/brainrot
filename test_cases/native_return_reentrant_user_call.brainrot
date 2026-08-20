@@ -1,0 +1,22 @@
+🚽 Test case: round-24 review finding #1's user-defined-call sibling --
+🚽 the same global-return-slot reentrancy doesn't require a native call
+🚽 at all: `three()` (declared `rizz`/int) also overwrites current_
+🚽 return_value while `widen()` (declared `gigachad`/double) is still
+🚽 mid-evaluation of its own `bussin three();`. Confirmed via a temporary
+🚽 A/B test (git stash to the pre-fix commit) that this printed
+🚽 "0.000000" instead of "3.000000", same failure mode as the native-call
+🚽 exhibit, proving the bug is in the user-function return channel
+🚽 itself, not anything native-ABI-specific.
+rizz three() {
+    bussin 3;
+}
+
+gigachad widen() {
+    bussin three();
+}
+
+skibidi main {
+    gigachad y = widen();
+    yappin("%f\n", y);
+    bussin 0;
+}

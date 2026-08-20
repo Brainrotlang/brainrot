@@ -899,13 +899,17 @@ skibidi main {
 ### 8.7. `bet`
 
 ```c
-void bet(int condition, const char* message);
+cap bet(cap condition, rant message);  /* message is optional */
 ```
 
 - Tests a condition and terminates the program if it's false.
 - Similar to C's `assert()` macro, but designed for runtime checks in Brainrot.
 - When the condition fails, prints an error message to `stderr` with the line number and optional custom message.
 - Useful for verifying assumptions and catching bugs during development.
+- On success, returns `W` -- usable directly, e.g. `cap ok = bet(x > 0);`.
+- `condition` must be `cap`; `message`, if given, must be `rant`. Both are
+  checked at semantic-analysis time -- `bet(1, "msg")` and
+  `bet(W, some_int)` are rejected before the program runs.
 
 **Example**:
 

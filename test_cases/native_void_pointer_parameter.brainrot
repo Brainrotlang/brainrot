@@ -1,0 +1,14 @@
+🚽 Test case: round-21 review finding #3's counterpart -- a `void *`
+🚽 parameter (pointer_level > 0) is a real, ordinary pointer type and
+🚽 must NOT be rejected by the same check that rejects a by-value void
+🚽 parameter. `wat(skibidi *x)` takes a real pointer (here, test_ptr_
+🚽 source()'s STDROT_PTR result) and must keep working exactly like any
+🚽 other pointer-typed parameter.
+rizz wat(skibidi *x) {
+    bussin 42;
+}
+
+skibidi main {
+    yappin("%d\n", wat(test_ptr_source()));
+    bussin 0;
+}

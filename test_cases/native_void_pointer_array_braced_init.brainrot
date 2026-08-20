@@ -1,0 +1,14 @@
+🚽 Test case: round-24 review finding #2's VAR_VOID exhibit --
+🚽 `skibidi *ptrs[N] = { ... }` reaches populate_multi_array_variable()'s
+🚽 switch, which (like evaluate_multi_array_access() before round 23's
+🚽 own fix) has no VAR_VOID case at all and would hit "Unsupported array
+🚽 type for initialization" unconditionally. Fixed by the same pointer_
+🚽 level check that fixes every scalar base type's braced-initializer
+🚽 bug at once.
+skibidi main {
+    skibidi *ptrs[1] = { test_ptr_source() };
+    edgy (ptrs[0] != 0) {
+        yapping("alive");
+    }
+    bussin 0;
+}

@@ -152,7 +152,7 @@ lands. Suggested path: support both forms for one release, warn on the old one.
 
 ## Phase 2 — A typed native ABI
 
-**Status: not started · Priority: P0 · Depends on: Phase 1**
+**Status: in review (#223) · Priority: P0 · Depends on: Phase 1**
 
 Right now the semantic analyzer cannot check a single builtin argument. Making
 native exports self-describing fixes that and unlocks generated bindings.
@@ -205,10 +205,27 @@ at [semantic_analyzer.c:352](../semantic_analyzer.c#L352).
 ### The string boundary
 
 Brainrot uses `String { char *data; size_t len; }`; C libraries want
-`const char *`. Define the conversion **once**, in the ABI layer, rather than
-scattering `malloc(len+1)/memcpy/'\0'` through every wrapper. Ownership rule to
-decide up front: adapter-owned scratch buffer, freed after the call, unless the
-signature is annotated as escaping.
+`const char *`. Defined **once**, in the ABI layer (`coerce_arg_to_param()`,
+`stdrot.c`), rather than scattering `malloc(len+1)/memcpy/'\0'` through every
+wrapper. Ownership rule, as actually implemented: `STDROT_CSTRING` arguments
+are **strictly non-escaping** -- adapter-owned scratch, freed immediately
+after the call (see `STDROT_CSTRING`'s own comment, `stdrot_api.h`). Return
+values get the mirror treatment: a native's `STDROT_STRING` return is
+materialized (deep-copied) into independent memory before any of that call's
+own argument scratch is released, so an identity-style native (`T -> T`,
+`STDROT_EXPORT_SIG_IDENTITY`) can safely hand back one of its own string
+arguments unchanged without triggering a use-after-free once the adapter's
+cleanup runs.
+
+**Deliberately out of scope for Phase 2**: an escaping-string annotation (a
+native's C implementation retaining a `const char *` past its own return --
+e.g. a C API like `set_global_name(const char *)` that keeps the pointer).
+Nothing in `StdrotParam` currently expresses that a parameter escapes, and
+none of Phase 2's natives need it. A future phase needs to either add an
+explicit `escapes` flag to `StdrotParam` with a defined ownership-transfer
+mechanism, or otherwise formally support escaping strings, before any native
+requiring one is written -- writing one against the current ABI is a
+guaranteed use-after-free, not an oversight to work around silently.
 
 ### Definition of done
 

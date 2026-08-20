@@ -22,6 +22,31 @@ STDROT_DIR := stdrot
 STDROT_SRCS := $(wildcard $(STDROT_DIR)/*.c) $(SRC_DIR)/input.c
 STDROT_LIB := libstdrot.so
 
+# Test-only stdrot library: production natives plus tests/stdrot/*.c
+# (bindings that exist solely so test_cases/*.brainrot can exercise ABI
+# paths no production builtin uses, e.g. STDROT_PTR -- see that
+# directory's own file comment). Deliberately a SEPARATE output from
+# $(STDROT_LIB): a self-registering native compiled into libstdrot.so is
+# a real, permanently-shipped Brainrot builtin the instant it compiles,
+# so test-only natives must never be part of that file, `make install`,
+# or the wasm build. `make test`/`make valgrind` point the interpreter at
+# this one instead via stdrot_load()'s STDROT_LIB_PATH override
+# (stdrot.c); every other target (`all`, `install`, `wasm`) never
+# references it and stays exactly as before.
+TEST_STDROT_DIR := tests/stdrot
+TEST_STDROT_SRCS := $(wildcard $(TEST_STDROT_DIR)/*.c)
+TEST_STDROT_LIB := tests/libstdrot.so
+
+# Deliberately malformed native registries (see tests/badnatives/ own file
+# comment): each .c file there registers exactly one StdrotEntry that
+# validate_native_registry() (stdrot.c) must reject at stdrot_load() time.
+# Built as one minimal .so per file -- registry.c (stdrot_get_api_v2()) plus
+# that single malformed entry, no production natives -- since these tests
+# only care whether loading aborts before any Brainrot program runs.
+BADNATIVES_DIR := tests/badnatives
+BADNATIVES_SRCS := $(wildcard $(BADNATIVES_DIR)/*.c)
+BADNATIVES_LIBS := $(BADNATIVES_SRCS:.c=.so)
+
 # Output files
 TARGET := brainrot
 BISON_OUTPUT := lang.tab.c
@@ -86,6 +111,56 @@ $(STDROT_LIB): $(STDROT_SRCS)
 	$(CC) $(SO_CFLAGS) -I. -o $@ $^ -lm
 	@echo "libstdrot.so compiled with max rizz."
 
+# Test-only stdrot shared library build (production natives + tests/stdrot/
+# test-only natives). -I$(STDROT_DIR) so tests/stdrot/*.c can #include
+# "stdrot_api.h" the same bare way every production stdrot/*.c file already
+# does, despite living in a different directory.
+$(TEST_STDROT_LIB): $(STDROT_SRCS) $(TEST_STDROT_SRCS)
+	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $^ -lm
+	@echo "tests/libstdrot.so (production + test-only natives) compiled."
+
+# Malformed-registry .so's: one per tests/badnatives/*.c, each linked
+# against only registry.c (never the rest of $(STDROT_SRCS) -- these don't
+# need, and shouldn't get, any production natives alongside the one
+# deliberately broken entry).
+$(BADNATIVES_DIR)/%.so: $(BADNATIVES_DIR)/%.c $(STDROT_DIR)/registry.c
+	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $(STDROT_DIR)/registry.c $< -lm
+
+# Two exceptions to the pattern rule above (GNU Make prefers an explicit
+# target rule over a pattern rule for the same file, regardless of
+# ordering): these implement stdrot_get_api_v2() DIRECTLY themselves,
+# returning a hand-crafted malformed StdrotAPI table, rather than going
+# through registry.c's normal linker-section self-registration --
+# linking registry.c alongside them would collide (both would define
+# stdrot_get_api_v2()). See their own file comments.
+$(BADNATIVES_DIR)/bad_api_table_negative_count.so: \
+	$(BADNATIVES_DIR)/bad_api_table_negative_count.c
+	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $<
+
+$(BADNATIVES_DIR)/bad_api_table_null_functions.so: \
+	$(BADNATIVES_DIR)/bad_api_table_null_functions.c
+	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $<
+
+.PHONY: badnatives
+badnatives: $(BADNATIVES_LIBS)
+	@echo "tests/badnatives/*.so (malformed registries) compiled."
+
+# Simulated pre-ABI-versioning libstdrot.so (see tests/old_abi_sim/ own file
+# comment): built standalone, with no dependency on stdrot_api.h or
+# registry.c, so it genuinely only exports the OLD "stdrot_get_api" symbol
+# under the OLD layout -- proving stdrot_load() (stdrot.c) detects the
+# missing stdrot_get_api_v2() and fails loudly instead of misreading this
+# .so's memory as the current ABI shape.
+OLD_ABI_SIM_DIR := tests/old_abi_sim
+OLD_ABI_SIM_LIB := $(OLD_ABI_SIM_DIR)/fake_pre_v2_registry.so
+
+$(OLD_ABI_SIM_LIB): $(OLD_ABI_SIM_DIR)/fake_pre_v2_registry.c
+	$(CC) $(SO_CFLAGS) -o $@ $<
+
+.PHONY: old-abi-sim
+old-abi-sim: $(OLD_ABI_SIM_LIB)
+	@echo "tests/old_abi_sim/fake_pre_v2_registry.so (simulated pre-ABI-versioning .so) compiled."
+
 # Main executable build
 $(TARGET): $(ALL_SRCS) $(STDROT_LIB)
 	$(CC) $(CFLAGS) -o $@ $(ALL_SRCS) $(LDFLAGS)
@@ -99,6 +174,26 @@ wasm: $(GENERATED_SRCS)
 	$(EMCC) $(WASM_CFLAGS) -I. -o $(WASM_JS) $(SRCS) $(STDROT_SRCS) $(GENERATED_SRCS) $(WASM_LDFLAGS)
 	@echo "brainrot.wasm compiled. Skibidi in the browser."
 
+# Test-augmented WebAssembly build: same as `wasm` but with
+# tests/stdrot/*.c (test-only natives, see that directory's own file
+# comment) statically linked in too, mirroring tests/libstdrot.so's
+# relationship to the native $(STDROT_LIB) build. Needed because the
+# pointer-ABI/return-type-enforcement fixtures that depend on those
+# natives exercise void*/uintptr_t/pointer_level/pointer-sized boxes
+# whose representation genuinely differs between wasm32 (ILP32) and
+# native (LP64) -- skipping them under wasm entirely would mean the one
+# target where that representation difference actually matters never
+# runs them. Output (tests/brainrot-test.wasm/.mjs) is a separate
+# artifact from `wasm`'s, used only by tests/run_wasm_tests.mjs -- never
+# uploaded, installed, or otherwise shipped.
+.PHONY: wasm-test
+wasm-test: $(GENERATED_SRCS)
+	@command -v $(EMCC) >/dev/null 2>&1 || { echo "Error: emcc not found. Install the Emscripten SDK (emsdk) first."; exit 1; }
+	$(EMCC) $(WASM_CFLAGS) -I. -I$(STDROT_DIR) -o tests/brainrot-test.mjs \
+		$(SRCS) $(STDROT_SRCS) $(TEST_STDROT_SRCS) $(GENERATED_SRCS) \
+		$(WASM_LDFLAGS)
+	@echo "tests/brainrot-test.wasm (production + test-only natives) compiled."
+
 # Generate parser files using Bison
 $(BISON_OUTPUT): lang.y
 	$(BISON) -d -Wcounterexamples $< -o $@
@@ -111,22 +206,25 @@ $(FLEX_OUTPUT): lang.l
 
 # Run tests
 .PHONY: test
-test: ensure-stdrot $(TARGET)
-	$(PYTHON) -m pytest -v
+test: $(TARGET) $(TEST_STDROT_LIB) badnatives old-abi-sim
+	STDROT_LIB_PATH=$(CURDIR)/$(TEST_STDROT_LIB) $(PYTHON) -m pytest -v
 	@echo "Tests ran bussin', no cap."
 
 # Clean build artifacts
 .PHONY: clean
 clean:
-	rm -f $(TARGET) $(STDROT_LIB) $(GENERATED_SRCS) lang.tab.h
+	rm -f $(TARGET) $(STDROT_LIB) $(TEST_STDROT_LIB) $(GENERATED_SRCS) lang.tab.h
 	rm -f $(WASM_TARGET) $(WASM_JS)
+	rm -f tests/brainrot-test.wasm tests/brainrot-test.mjs
+	rm -f $(BADNATIVES_LIBS)
+	rm -f $(OLD_ABI_SIM_LIB)
 	rm -f *.o
 	@echo "Blud cleaned up the mess like a true sigma coder."
 
 # Run Valgrind on all .brainrot tests
 .PHONY: valgrind
-valgrind: ensure-stdrot $(TARGET)
-	@./run_valgrind_tests.sh
+valgrind: $(TARGET) $(TEST_STDROT_LIB)
+	@STDROT_LIB_PATH=$(CURDIR)/$(TEST_STDROT_LIB) ./run_valgrind_tests.sh
 	@echo "Valgrind check done. If anything was sus, it'll show up with a non-zero exit code. No cap."
 
 # Install target

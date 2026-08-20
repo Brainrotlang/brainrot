@@ -1,0 +1,9 @@
+🚽 Test case: ragequit's declared parameter is rizz (STDROT_INT), but the
+🚽 semantic analyzer's numeric-compatibility group also accepts a chad
+🚽 (double) argument for it -- the runtime must actually convert the
+🚽 argument to match the declared type before the native wrapper reads it,
+🚽 not just statically approve the call and hand the wrapper a StdrotValue
+🚽 tagged STDROT_DOUBLE while it reads .val.i.
+skibidi main {
+    ragequit(3.9);
+}

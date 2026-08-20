@@ -316,7 +316,7 @@ static void interpreter_execute_call_statement(ASTNode *node)
          * result was a struct, free the blob handle_return_statement
          * allocated for it rather than leaving it to a later call's
          * cleanup (or leaking it, if this was the last call). */
-        free_pending_struct_return_value();
+        free_pending_return_value();
     }
 }
 
@@ -353,7 +353,7 @@ void *interpreter_visit_function_call(Visitor *self, ASTNode *node)
     {
         execute_function_call(node->data.func_call.function_name,
                               node->data.func_call.arguments);
-        free_pending_struct_return_value();
+        free_pending_return_value();
     }
 
     return NULL;
@@ -502,7 +502,7 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
                         /* Ownership transfers to us on return; always free
                            our copy of the temporary, whether or not the
                            type check above allowed the memcpy. */
-                        free_pending_struct_return_value();
+                        free_pending_return_value();
                     }
                 }
                 else if (src_expr->type == NODE_IDENTIFIER)

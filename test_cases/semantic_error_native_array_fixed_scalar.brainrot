@@ -1,0 +1,14 @@
+🚽 Test case: round-15 review finding #1 -- Variable's own value union
+🚽 (ast.h) aliases a scalar's storage with an array's backing pointer, so
+🚽 passing a non-char array where a FIXED scalar parameter is expected
+🚽 would reinterpret the array's backing pointer as the declared scalar
+🚽 type -- ragequit(arr) previously type-checked (arr's element VarType is
+🚽 VAR_INT, matching ragequit's declared STDROT_INT parameter) despite
+🚽 `arr` never being a scalar at all. Only STDROT_ANY had this guard before
+🚽 this fix; is_unmarshallable_array_arg() (semantic_analyzer.c) now covers
+🚽 every fixed scalar parameter too.
+skibidi main {
+    rizz arr[2];
+    ragequit(arr);
+    bussin 0;
+}

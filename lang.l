@@ -335,7 +335,7 @@ extern int yylineno;
 
 %%
 
-"skibidi"        { return SKIBIDI; }
+"skibidi"        { current_var_type = VAR_VOID; return SKIBIDI; }
 "bussin"         { return BUSSIN; }
 "flex"           { return FLEX; }
 "rizz"           { current_var_type = VAR_INT; return RIZZ; }

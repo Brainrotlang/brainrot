@@ -11,6 +11,21 @@ extern void yyerror(const char *s);
 extern String safe_strdup(const String *str);
 extern Scope *current_scope;
 
+/* Forward declaration: infer_expression_type()'s own NODE_FUNC_CALL/
+   return_like_arg case needs this (mutual recursion -- see
+   infer_expression_abi_type()'s own definition and comment, below
+   infer_expression_type()). */
+static VarType infer_expression_abi_type(ASTNode *expr,
+                                         SemanticAnalyzer *analyzer);
+
+/* Forward declaration: infer_expression_pointer_level()'s own
+   NODE_STRUCT_ACCESS case (round-21 review, finding #2) needs this --
+   defined below both (it recurses on a struct-access chain's own
+   object, the same shape infer_expression_type()'s own NODE_STRUCT_
+   ACCESS case already resolves this way). */
+static StructDef *infer_struct_def_static(ASTNode *expr,
+                                          SemanticAnalyzer *analyzer);
+
 /* Create a new semantic analyzer */
 SemanticAnalyzer *semantic_analyzer_new(void)
 {
@@ -158,10 +173,21 @@ const char *vartype_to_string(VarType type)
         return "string";
     case VAR_ENUM:
         return "enum";
-    case NONE:
+    case VAR_STRUCT:
+        return "struct";
+    case VAR_PTR:
+        return "pointer";
+    case VAR_VOID:
         return "void";
+    case NONE:
     default:
-        return "unknown";
+        /* NONE means "couldn't determine a type," not "determined it to
+           be void" -- that's VAR_VOID's own case, just above. Reusing
+           "void" for NONE was itself an instance of the sentinel-
+           collision bug VAR_VOID exists to close: an error message that
+           printed "expected int, got void" for a genuinely INDETERMINATE
+           expression would misreport why the mismatch happened. */
+        return "indeterminate";
     }
 }
 
@@ -275,8 +301,51 @@ bool check_type_compatibility_ex(VarType expected, int expected_pointer_level,
         return false;
     if (expected_pointer_level > 0)
     {
+        /* VAR_PTR (an opaque native pointer -- STDROT_PTR) has no
+           concrete base type by design, so it's wildcard-compatible with
+           any base type once pointer *levels* already match (checked
+           above). This makes `rizz *p = get_ptr();` type-check without
+           needing VAR_PTR to equal every possible base VarType.
+           Deliberately NOT the same guarantee as C's void* conversion
+           rule, despite the surface resemblance: void* <-> T* is sound
+           for exactly one level of indirection, but void** <-> T** is
+           not (writing an unrelated pointer through a void** silently
+           corrupts whatever the T** side believes it points to). This
+           check applies the wildcard at every depth uniformly --
+           STDROT_PTR level N is opaque all the way down, not just at the
+           outermost level -- because StdrotParam (stdrot_api.h) has no
+           field to express a *partially* erased pointer ("pointer to
+           pointer to known-int" vs. "...to known-double"); only
+           pointer_level exists, no base type at any depth. That is an
+           intentional simplification for now, not an oversight: a
+           binding generator emitting STDROT_PTR at depth > 1 should
+           treat the whole pointed-to graph as opaque, not assume any
+           C-void**-like base-type safety this check does not provide.
+           NONE, deliberately, gets no such exception here: unlike
+           VAR_PTR it means "couldn't determine a type at all", and
+           granting it pointer-compatibility would silently accept any
+           pointer assignment whose type inference happened to fail for
+           an unrelated reason -- exactly the fail-open hole VAR_PTR
+           exists to avoid. */
+        if (expected == VAR_PTR || actual == VAR_PTR)
+            return true;
         return expected == actual;
     }
+    /* VAR_VOID (ast.h's own comment has the full reasoning) is
+       compatible with NOTHING -- not even itself. Every other type in
+       this checker means "some concrete representation exists"; VAR_VOID
+       means "no value exists to have a representation at all." There is
+       no context where consuming a certainly-void expression as a value
+       is ever correct, so this has to be checked before the `expected ==
+       actual` shortcut below (which would otherwise wave through
+       `rizz x = a_void_native();` whenever both source and destination
+       "type" happened to be reported as VAR_VOID -- structurally
+       possible only for the RHS today, but the guard belongs here,
+       unconditionally, not on the strength of what currently calls
+       it). */
+    if (expected == VAR_VOID || actual == VAR_VOID)
+        return false;
+
     if (expected == actual)
         return true;
 
@@ -313,6 +382,25 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
     }
     case NODE_ARRAY_ACCESS:
     {
+        /* Round-22 review, finding #2 -- mirrors NODE_IDENTIFIER's own
+           case just above (find_symbol() first, get_variable() as a
+           fallback for whenever runtime Variable state genuinely is
+           available), for the identical reason: semantic_check_native_
+           call() (NODE_FUNC_CALL's own case, below) runs BEFORE the
+           argument-list loop visits an array-access argument, so
+           get_variable() alone -- returning NULL during that single
+           static pass, since no runtime Variable exists yet (semantic_
+           analyze()'s own "Phase 1"/"Phase 2" comment) -- fell through
+           to node->pointer_level, unpopulated at that point. A pointer
+           array (`rizz *ptrs[4];`) element was falsely rejected against
+           a STDROT_PTR parameter (pointer_level read as 0) and falsely
+           *accepted* against a scalar one (also read as 0, hiding the
+           mismatch until runtime ABI enforcement caught it) -- the
+           identical bug NODE_STRUCT_ACCESS had (round 21, finding #2),
+           just for arrays instead of struct fields. */
+        SymbolEntry *symbol = find_symbol(analyzer, node->data.array.name);
+        if (symbol)
+            return symbol->pointer_level;
         Variable *var = get_variable(node->data.array.name);
         return var ? var->pointer_level : node->pointer_level;
     }
@@ -333,6 +421,21 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
                                               analyzer);
     case NODE_FUNC_CALL:
     {
+        if (is_builtin_function(node->data.func_call.function_name))
+        {
+            const StdrotEntry *entry =
+                get_native_function(node->data.func_call.function_name);
+            /* Only STDROT_PTR has a pointer_level to report -- an opaque
+               pointer is inherently one level of indirection
+               (param->pointer_level counts any *further* indirection
+               beyond that, e.g. a "pointer to a pointer"). Every other
+               native return (including the unmarshalled STDROT_HANDLE,
+               rejected elsewhere) is pointer_level 0 as far as static
+               analysis is concerned. */
+            if (entry && entry->return_type.type == STDROT_PTR)
+                return entry->return_type.pointer_level + 1;
+            return 0;
+        }
         SymbolEntry *symbol =
             find_symbol(analyzer, node->data.func_call.function_name);
         if (symbol && symbol->is_function)
@@ -360,9 +463,117 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
         default:
             return 0;
         }
+    case NODE_STRUCT_ACCESS:
+    {
+        /* Round-21 review, finding #2 -- mirrors infer_expression_type()'s
+           own NODE_STRUCT_ACCESS case (below) exactly, for the identical
+           reason: semantic_check_native_call() (called from NODE_FUNC_
+           CALL's own case in semantic_analyze_with_scope_tracking(),
+           BEFORE that switch's argument-list loop visits a struct-access
+           argument) needs this expression's pointer_level before the
+           visitor that would normally populate node->pointer_level
+           (this function's own `default:` fallback, just below) has
+           ever run. Without this case, EVERY struct-access argument's
+           static pointer_level was 0, unconditionally, regardless of
+           the field's actual declared pointer_level -- silently
+           disabling STDROT_PTR argument-type checking for any native
+           call passing one (false rejection of a genuinely PTR-typed
+           field against a PTR parameter, since the level 0 vs 1
+           mismatch alone was enough to reject it) and, worse, false
+           ACCEPTANCE of a non-pointer field mistakenly checked against
+           a scalar parameter as if it were pointer-free, only for the
+           runtime ABI to discover the field is actually a pointer once
+           the argument is really marshalled (ast_expr_to_stdrot_value()
+           unconditionally checks get_expression_pointer_level() > 0
+           first). resolve_struct_access() only works once runtime
+           Variable state exists (semantic_analyze()'s own "Phase 1"/
+           "Phase 2" comment) -- falls back to infer_struct_def_static()
+           (below), which resolves purely from the global struct-
+           definition registry and the analyzer's own symbol table, the
+           same static path infer_expression_type() already uses. */
+        StructDef *def = NULL;
+        void *base = NULL;
+        StructField *fld = NULL;
+        if (resolve_struct_access(node, &def, &base, &fld, false))
+            return fld->pointer_level;
+
+        StructDef *static_def =
+            infer_struct_def_static(node->data.struct_access.object, analyzer);
+        if (!static_def)
+            return 0;
+        StructField *f =
+            find_struct_field(static_def, node->data.struct_access.member_name);
+        return f ? f->pointer_level : 0;
+    }
     default:
         return node->pointer_level;
     }
+}
+
+/* Purely static struct-type resolution for a struct-typed expression node
+ * (NODE_IDENTIFIER, or a nested NODE_STRUCT_ACCESS for a chain like
+ * `a.b.c`), used by infer_expression_type()'s NODE_STRUCT_ACCESS case
+ * below to resolve a member-access chain of ANY depth using only the
+ * analyzer's own symbol table (find_symbol) and the global struct-
+ * definition registry (get_struct_def) -- never get_variable()/runtime
+ * Variable storage, which (like resolve_struct_access()) isn't populated
+ * yet during this single static pass (see semantic_analyze()'s own
+ * comment).
+ *
+ * This mirrors the recursive parent-type resolution semantic_analyze_
+ * with_scope_tracking()'s own NODE_STRUCT_ACCESS case performs (which
+ * additionally falls back to get_variable() and mutates node->var_type on
+ * the AST node) -- but that mutation can't be relied on here: semantic_
+ * check_native_call() (which calls infer_expression_type() on each
+ * argument via infer_expression_abi_type()) runs from that same case's
+ * NODE_FUNC_CALL handling BEFORE the arguments themselves get visited by
+ * that case's own argument loop, so a struct-access argument's node->
+ * var_type may still be its unpopulated default the first time this asks
+ * about it. Recursing independently here, purely off static type
+ * metadata, doesn't depend on visit order at all.
+ *
+ * Returns NULL if `expr` doesn't statically resolve to a struct-typed
+ * value this way (unknown symbol, non-struct type, or a pointer-typed
+ * intermediate field -- chaining `.` through a pointer isn't supported,
+ * matching semantic_analyze_with_scope_tracking()'s own rejection of it).
+ */
+static StructDef *infer_struct_def_static(ASTNode *expr,
+                                          SemanticAnalyzer *analyzer)
+{
+    if (!expr)
+        return NULL;
+
+    if (expr->type == NODE_IDENTIFIER)
+    {
+        /* No pointer_level check here, matching resolve_struct_access()'s
+           own top-level NODE_IDENTIFIER case (ast.c) and semantic_
+           analyze_with_scope_tracking()'s NODE_STRUCT_ACCESS case (this
+           file) -- neither rejects a pointer-typed *object* itself, only
+           a pointer-typed *intermediate field* partway through a chain
+           (checked below, for the NODE_STRUCT_ACCESS branch, matching
+           both of those). */
+        SymbolEntry *sym = find_symbol(analyzer, expr->data.name);
+        if (!sym || sym->type != VAR_STRUCT || !sym->struct_name.data)
+            return NULL;
+        return get_struct_def(sym->struct_name);
+    }
+
+    if (expr->type == NODE_STRUCT_ACCESS)
+    {
+        StructDef *parent_def =
+            infer_struct_def_static(expr->data.struct_access.object, analyzer);
+        if (!parent_def)
+            return NULL;
+
+        StructField *fld =
+            find_struct_field(parent_def, expr->data.struct_access.member_name);
+        if (!fld || fld->type != VAR_STRUCT || fld->pointer_level > 0 ||
+            !fld->struct_name.data)
+            return NULL;
+        return get_struct_def(fld->struct_name);
+    }
+
+    return NULL;
 }
 
 /* Infer the type of an expression */
@@ -409,6 +620,34 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
         {
             return VAR_INT;
         }
+        return NONE;
+    }
+
+    case NODE_ARRAY_ACCESS:
+    {
+        /* Previously missing entirely (fell to `default: return NONE`),
+           which meant EVERY array-access expression's static type was
+           unknown, unconditionally -- not just the VAR_CHAR ones
+           infer_expression_abi_type() cares about. That silently
+           disabled argument type-checking for any native call passing
+           one (semantic_check_native_call()'s `actual == NONE`
+           fallthrough), regardless of the array's actual element type.
+           Reports the ELEMENT type (the array's own declared type, same
+           as NODE_IDENTIFIER just above) -- infer_expression_abi_type()
+           is what narrows a VAR_CHAR one to VAR_INT to match how
+           ast_expr_to_stdrot_value() (stdrot.c) actually marshals it. */
+        const String array_name = node->data.array.name;
+        if (!array_name.data)
+            return NONE;
+
+        SymbolEntry *symbol = find_symbol(analyzer, array_name);
+        if (symbol)
+            return symbol->type;
+
+        Variable *var = get_variable(array_name);
+        if (var)
+            return var->var_type;
+
         return NONE;
     }
 
@@ -465,7 +704,50 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
         /* Check if it's a built-in function */
         if (is_builtin_function(node->data.func_call.function_name))
         {
-            return NONE; /* Most built-in functions return void */
+            const StdrotEntry *entry =
+                get_native_function(node->data.func_call.function_name);
+            if (!entry)
+                return NONE;
+
+            /* return_like_arg is an explicit declaration (set via
+               STDROT_EXPORT_SIG_IDENTITY(), e.g. slorp<T>(T) -> T), never
+               inferred from return_type/params happening to both say
+               STDROT_ANY -- that shape is ambiguous on its own: a legacy
+               STDROT_EXPORT() also has an STDROT_ANY return, for a
+               completely different reason (genuinely unknown, not "same
+               as this argument"). Uses infer_expression_abi_type(), not
+               plain infer_expression_type(), because the *identity*
+               this call promises is "same ABI representation as this
+               argument," not "same Brainrot source-level VarType" --
+               those two differ for a char array (`yap buf[32]`):
+               source-level it's VAR_CHAR, but ast_expr_to_stdrot_value()
+               (stdrot.c) marshals it as STDROT_STRING, and slorp's own
+               dispatch returns STDROT_STRING right back. Reporting plain
+               VAR_CHAR here would let `chad c = slorp(buf);` type-check
+               (WRONG -- the runtime result is a string) while rejecting
+               `rant s = slorp(buf);` (WRONG -- the runtime result IS a
+               string, just not by the source-level type). */
+            if (entry->return_like_arg >= 0)
+            {
+                int idx = 0;
+                for (ArgumentList *a = node->data.func_call.arguments; a;
+                     a = a->next, idx++)
+                {
+                    if (idx == entry->return_like_arg)
+                        return a->expr ? infer_expression_abi_type(a->expr,
+                                                                   analyzer)
+                                       : NONE;
+                }
+                return NONE;
+            }
+
+            if (entry->return_type.type == STDROT_ANY)
+            {
+                /* Legacy/untyped STDROT_EXPORT(): genuinely unknown. */
+                return NONE;
+            }
+
+            return stdrot_type_to_vartype(entry->return_type.type);
         }
 
         /* Look up user-defined function */
@@ -483,9 +765,33 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
         StructDef *def = NULL;
         void *base = NULL;
         StructField *fld = NULL;
-        if (!resolve_struct_access(node, &def, &base, &fld, false))
+        if (resolve_struct_access(node, &def, &base, &fld, false))
+            return fld->type;
+
+        /* resolve_struct_access() only works at runtime -- its object
+           resolution goes through get_variable(), which is always NULL
+           during this single static pass (see semantic_analyze(),
+           "Phase 1: Collect all declarations" then "Phase 2" -- the
+           whole program is analyzed before the interpreter executes
+           anything). Without a static fallback, EVERY struct-field
+           access's type was unconditionally NONE, silently disabling
+           argument type-checking for any native call passing one
+           (semantic_check_native_call()'s `actual == NONE` fallthrough)
+           regardless of the field's actual type. A struct's field
+           *types* don't depend on any particular instance, though --
+           get_struct_def() is a global type-definition registry,
+           independent of runtime Variable state -- so infer_struct_def_
+           static() (above) resolves the object -- direct (`foo.c`) or a
+           chain of any depth (`foo.inner.c`, `foo.inner.deeper.c`) --
+           using only that registry and the analyzer's own symbol table. */
+        StructDef *static_def =
+            infer_struct_def_static(node->data.struct_access.object, analyzer);
+        if (!static_def)
             return NONE;
-        return fld->type;
+
+        StructField *f =
+            find_struct_field(static_def, node->data.struct_access.member_name);
+        return f ? f->type : NONE;
     }
 
     default:
@@ -493,10 +799,147 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
     }
 }
 
+/* The static VarType a native-ABI marshalling call (ast_expr_to_stdrot_
+ * value(), stdrot.c) will actually produce for this expression --
+ * distinct from infer_expression_type() because that function reports
+ * the SOURCE-LEVEL type, while the ABI boundary sometimes lowers it to
+ * something else. Two independent exceptions, both delegated to a
+ * single shared rule each side consults instead of encoding its own
+ * copy (so this function and ast_expr_to_stdrot_value() cannot
+ * independently drift out of agreement, the way they briefly did):
+ *
+ *   1. stdrot_char_narrows_to_int() (stdrot.h) -- binary operations,
+ *      unary arithmetic negation, and (deliberately NOT) array access,
+ *      struct access, dereference, or increment/decrement never preserve
+ *      a VAR_CHAR base type as STDROT_CHAR for the ones that DO narrow;
+ *      they lower through plain int instead, matching the specific C
+ *      rule that actually applies to each shape (see that function's own
+ *      per-case reasoning, stdrot.c) rather than a single blanket "sub-
+ *      int expression" rule. `takes_char(c + c)` must be checked as a
+ *      VAR_INT argument; `takes_char(buf[0])` and `takes_char(foo.c)`
+ *      must NOT -- a subscript or member-access expression is an
+ *      ordinary lvalue of its element/field's own declared type in C,
+ *      promoted to int only for an unprototyped call or a variadic tail,
+ *      never merely for appearing as a normally-prototyped argument.
+ *
+ *   2. A VAR_CHAR *array identifier* (`yap buf[32]`) marshals as
+ *      STDROT_STRING (ast_expr_to_stdrot_value()'s VAR_CHAR/is_array
+ *      branch), which stdrot_type_to_vartype() maps back to VAR_STRING
+ *      -- but infer_expression_type() reports the ELEMENT type
+ *      (VAR_CHAR) for any VAR_CHAR expression, array or not, so it
+ *      can't tell "a single char" and "a char buffer used as a string"
+ *      apart. Only NODE_IDENTIFIER is checked here: that's the only
+ *      expression shape SymbolEntry.is_array is populated for (see its
+ *      own comment, semantic_analyzer.h), and is mutually exclusive
+ *      with exception 1 above (an identifier is never one of the node
+ *      shapes that narrows).
+ *
+ * Used wherever static checking needs to agree with what the ABI
+ * boundary will actually construct: slorp<T>(T)->T's return_like_arg
+ * identity (infer_expression_type()'s own NODE_FUNC_CALL case, above)
+ * and native argument type-checking (semantic_check_native_call()). */
+static VarType infer_expression_abi_type(ASTNode *expr,
+                                         SemanticAnalyzer *analyzer)
+{
+    VarType t = infer_expression_type(expr, analyzer);
+    if (!expr)
+        return t;
+
+    /* No StdrotType exists for an enum (stdrot_api.h's StdrotType enum
+       has no ENUM member) -- ast_expr_to_stdrot_value()'s NODE_IDENTIFIER/
+       VAR_ENUM case (stdrot.c) always marshals an enum-typed expression
+       as STDROT_INT, the exact same representation a bare int gets.
+       Every OTHER reachable enum-typed expression shape (array access,
+       struct access -- there's no dedicated VAR_ENUM handling for either,
+       so they fall to ast_expr_to_stdrot_value()'s unconditional
+       NODE_ARRAY_ACCESS/NODE_STRUCT_ACCESS -> STDROT_INT catch-all)
+       marshals the same way. Normalized here unconditionally, before the
+       VAR_CHAR-specific handling below, so identity<T>(T)'s static T
+       (infer_expression_type() alone still faithfully reports VAR_ENUM,
+       which callers that care about the *source* type still want) can't
+       diverge from the runtime T an enum argument/identity-return
+       actually marshals as. */
+    if (t == VAR_ENUM)
+        return VAR_INT;
+
+    if (t != VAR_CHAR)
+        return t;
+
+    if (stdrot_char_narrows_to_int(
+            expr->type,
+            expr->type == NODE_UNARY_OPERATION ? expr->data.unary.op : OP_PLUS))
+        return VAR_INT;
+
+    if (expr->type != NODE_IDENTIFIER)
+        return t;
+
+    SymbolEntry *sym = find_symbol(analyzer, expr->data.name);
+    if (sym && sym->is_array)
+        return VAR_STRING;
+    return t;
+}
+
+/* Round-19 review, finding #1 -- VAR_VOID (ast.h's own comment has the
+ * full reasoning) is "known with certainty to produce no value," so
+ * consuming one as a value anywhere -- an operator operand, a
+ * condition, a switch discriminant, ... -- is never correct, the same
+ * way a declared-type mismatch never is. Without a single shared check,
+ * VAR_VOID stopped being enforced the moment it left the one context
+ * (a declaration initializer) that happened to already reject it: a
+ * binary operation's arithmetic-type validation only ever treated
+ * VAR_STRING/VAR_BOOL as "clearly incompatible," so `yapping("hi") + 1`
+ * fell through its `return true` default, got promoted to VAR_INT by
+ * infer_expression_type()'s own widening rule (neither operand being
+ * VAR_DOUBLE/VAR_FLOAT, matching VAR_INT's fallthrough), and type-
+ * checked -- laundering "known to produce nothing" into a real int at
+ * the type-checking level, even though nothing about VAR_VOID's own
+ * definition changed. `if`/`while`/`do`-`while` conditions and a
+ * `switch` discriminant had the identical gap: each recursively visits
+ * its condition/discriminant expression, but never asked whether it
+ * actually produced a value at all. One shared check here, called from
+ * every value-consuming context below, instead of teaching each context
+ * individually that void is bad. */
+static bool require_value_expression(SemanticAnalyzer *analyzer, ASTNode *expr,
+                                     const char *context_name)
+{
+    if (!expr)
+        return true;
+    /* Round-21 review, finding #1 -- a type is (base VarType, pointer_
+       level), and that composite is what determines whether an
+       expression genuinely produces no value, not the base type alone.
+       (VAR_VOID, 0) is void -- no value, ever. (VAR_VOID, 1) is `void *`
+       -- a perfectly real pointer value (e.g. test_ptr_source(), a
+       STDROT_PTR-returning native, statically typed as VAR_VOID with
+       pointer_level 1 by marshal_native_return_value()'s own STDROT_PTR
+       branch, ast.c). Checking base type alone rejected `skibidi *p =
+       test_ptr_source(); edgy (p) { ... }` -- a coherent, valid program
+       under the very (base, pointer_level) model check_type_
+       compatibility_ex() and semantic_visit_declaration() already use --
+       as if `p` held no value at all. */
+    if (infer_expression_type(expr, analyzer) != VAR_VOID ||
+        infer_expression_pointer_level(expr, analyzer) > 0)
+        return true;
+
+    char error_msg[MAX_BUFFER_LEN];
+    snprintf(error_msg, sizeof(error_msg),
+             "Native call result (void) cannot be used in a %s context",
+             context_name);
+    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                       STRING_LITERAL(error_msg),
+                       expr->line_number > 0 ? expr->line_number : 1);
+    return false;
+}
+
 /* Validate binary operation types */
 bool validate_binary_operation(ASTNode *left, ASTNode *right, OperatorType op,
                                SemanticAnalyzer *analyzer)
 {
+    if (!require_value_expression(analyzer, left, "binary operator operand") ||
+        !require_value_expression(analyzer, right, "binary operator operand"))
+    {
+        return false;
+    }
+
     VarType left_type = infer_expression_type(left, analyzer);
     VarType right_type = infer_expression_type(right, analyzer);
     int left_pointer_level = infer_expression_pointer_level(left, analyzer);
@@ -514,6 +957,51 @@ bool validate_binary_operation(ASTNode *left, ASTNode *right, OperatorType op,
     case OP_MINUS:
         if (left_pointer_level > 0 || right_pointer_level > 0)
         {
+            /* Round-23 review, finding #4 -- a single-level opaque
+               pointer (VAR_PTR, this codebase's own "no concrete base
+               type by design" native-pointer type -- see its own
+               comment, ast.h -- or VAR_VOID/`void *`) has no known
+               pointee size, so `ptr + n` has no defined element stride:
+               get_type_size_for_descriptor() (ast.c) returns 0 for
+               either base type at pointer_level 0 (the level the
+               arithmetic's own pointee is AT, one below the pointer's
+               own level 1), and evaluate_expression_pointer()'s own
+               NODE_OPERATION case used to silently default an unknown
+               scale to 1 -- meaning `test_ptr_source() + 1` quietly
+               meant "advance exactly one byte" for a type the ABI
+               explicitly documents as pointee-erased, not "the runtime
+               genuinely doesn't know, so ask the type system before
+               guessing." Rejected here, before arithmetic is even
+               considered valid, for the identical reason a bare
+               dereference of the same shape is already rejected
+               (NODE_UNARY_OPERATION's own OP_DEREFERENCE case, above):
+               a MULTI-level opaque pointer (`void **`, pointer_level >
+               1) is NOT rejected by this -- arithmetic on it advances by
+               sizeof(uintptr_t), a perfectly well-defined stride,
+               regardless of what the innermost pointee eventually
+               turns out to be. */
+            if (left_pointer_level == 1 &&
+                (left_type == VAR_PTR || left_type == VAR_VOID))
+            {
+                add_semantic_error(
+                    analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                    STRING_LITERAL("Cannot perform pointer arithmetic on a "
+                                   "type-erased pointer -- its pointee size "
+                                   "is unknown"),
+                    1);
+                return false;
+            }
+            if (right_pointer_level == 1 &&
+                (right_type == VAR_PTR || right_type == VAR_VOID))
+            {
+                add_semantic_error(
+                    analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                    STRING_LITERAL("Cannot perform pointer arithmetic on a "
+                                   "type-erased pointer -- its pointee size "
+                                   "is unknown"),
+                    1);
+                return false;
+            }
             if (left_pointer_level > 0 && right_pointer_level == 0 &&
                 (right_type == VAR_INT || right_type == VAR_SHORT ||
                  right_type == VAR_CHAR || right_type == VAR_BOOL))
@@ -694,6 +1182,487 @@ void *semantic_visit_identifier(Visitor *self, ASTNode *node)
     return NULL;
 }
 
+/* True when `expr` is a non-char array identifier -- Variable's own value
+ * union (ast.h) aliases a scalar's storage with an array's backing
+ * pointer, so any code path that reads that union as a scalar (int,
+ * short, float, double, bool, or an enum, all of which ast_expr_to_
+ * stdrot_value() marshals by reading the scalar member unconditionally)
+ * would actually read the array's backing pointer's raw bytes instead --
+ * an address silently reinterpreted as whatever scalar type the
+ * descriptor declared. VAR_CHAR arrays are the one exception: they have
+ * a real StdrotValue representation (STDROT_STRING, via ast_expr_to_
+ * stdrot_value()'s own VAR_CHAR/is_array branch), so they're excluded
+ * here and handled by ordinary type-compatibility checking instead.
+ *
+ * find_symbol(), not get_variable(): this runs during the single static
+ * analysis pass, before the interpreter creates any runtime Variable
+ * (see semantic_analyze()'s own "Phase 1"/"Phase 2" comment) --
+ * SymbolEntry.is_array (semantic_analyzer.h) is the field actually
+ * populated at this point. */
+static bool is_unmarshallable_array_arg(ASTNode *expr,
+                                        SemanticAnalyzer *analyzer)
+{
+    if (!expr || expr->type != NODE_IDENTIFIER)
+        return false;
+
+    SymbolEntry *sym = find_symbol(analyzer, expr->data.name);
+    return sym && sym->is_array && sym->type != VAR_CHAR;
+}
+
+/* True when `expr` has NO valid StdrotValue representation ast_expr_to_
+ * stdrot_value() (stdrot.c) can honestly construct for it -- generalizes
+ * is_unmarshallable_array_arg() from "one specific representation bug"
+ * (a non-char array's backing pointer read as a scalar) to the actual
+ * invariant: does a real StdrotValue exist for this expression at all.
+ * That function's own closed accepted-type comment (VAR_INT/SHORT/FLOAT/
+ * DOUBLE/BOOL/CHAR/STRING/ENUM) already states the rule; this is that
+ * same rule applied everywhere an expression needs to become a native
+ * argument, not just where STDROT_ANY happens to ask.
+ *
+ * A struct identifier is the clearest failure case: ast_expr_to_stdrot_
+ * value() has no VAR_STRUCT branch in its NODE_IDENTIFIER switch, so
+ * out->type survives at its initialized STDROT_NONE -- the native
+ * receives "no value" where source code plainly supplied one, and (for
+ * a variadic consumer with no fixed parameter to have rejected this
+ * argument earlier) nothing downstream would otherwise notice.
+ *
+ * A pointer-level expression is NOT flagged here, unlike STDROT_ANY's
+ * own additional pointer rejection (semantic_check_native_call()'s
+ * STDROT_ANY branch) -- a pointer marshals honestly as STDROT_PTR, a
+ * real representation, just one STDROT_ANY specifically refuses to
+ * accept for its own reasons (no scalar/string to dispatch on). Callers
+ * that need STDROT_ANY's stricter rule check pointer-level themselves,
+ * on top of this.
+ *
+ * Returns false (does not flag) when the expression's static type is
+ * NONE -- genuinely unknowable ahead of time, e.g. an argument that is
+ * itself a legacy STDROT_ANY-returning call whose real runtime type
+ * this analyzer cannot see. Failing open there matches every other
+ * static check in this analyzer; it is NOT a soundness gap, because
+ * execute_native_call() (stdrot.c) independently rejects a variadic-tail
+ * argument that marshals to STDROT_NONE at the runtime ABI boundary --
+ * the same reasoning enforce_arg_type() already applies to fixed
+ * parameters, now covering the case no static check could. */
+static bool is_unmarshallable_expr(ASTNode *expr, SemanticAnalyzer *analyzer)
+{
+    if (is_unmarshallable_array_arg(expr, analyzer))
+        return true;
+
+    if (infer_expression_pointer_level(expr, analyzer) > 0)
+        return false;
+
+    switch (infer_expression_type(expr, analyzer))
+    {
+    case VAR_INT:
+    case VAR_SHORT:
+    case VAR_FLOAT:
+    case VAR_DOUBLE:
+    case VAR_BOOL:
+    case VAR_CHAR:
+    case VAR_STRING:
+    case VAR_ENUM:
+    case NONE:
+        return false;
+    default:
+        return true;
+    }
+}
+
+/* Type-checks a native call's fixed/checked argument prefix against its
+   registered StdrotEntry -- arity plus, for each checked parameter actually
+   supplied, that the argument's inferred type is compatible. STDROT_ANY
+   parameters (e.g. slorp's) accept anything. Arguments beyond param_count
+   are only reached when is_variadic is true, and are left unchecked
+   (format-string tails, legacy/untyped exports). */
+static void semantic_check_native_call(SemanticAnalyzer *analyzer,
+                                       ASTNode *node, const StdrotEntry *entry)
+{
+    const String func_name = node->data.func_call.function_name;
+
+    int arg_count = 0;
+    ArgumentList *cur = node->data.func_call.arguments;
+    while (cur)
+    {
+        arg_count++;
+        cur = cur->next;
+    }
+
+    int line = node->line_number > 0 ? node->line_number : 1;
+
+    bool arity_ok = entry->is_variadic ? arg_count >= entry->min_args
+                                       : (arg_count >= entry->min_args &&
+                                          arg_count <= entry->param_count);
+    if (!arity_ok)
+    {
+        char error_msg[MAX_BUFFER_LEN];
+        if (entry->is_variadic || entry->min_args == entry->param_count)
+        {
+            int n = entry->is_variadic ? entry->min_args : entry->param_count;
+            snprintf(error_msg, sizeof(error_msg),
+                     "'%s' expects %s%d argument%s, got %d", func_name.data,
+                     entry->is_variadic ? "at least " : "", n,
+                     n == 1 ? "" : "s", arg_count);
+        }
+        else
+        {
+            snprintf(error_msg, sizeof(error_msg),
+                     "'%s' expects between %d and %d arguments, got %d",
+                     func_name.data, entry->min_args, entry->param_count,
+                     arg_count);
+        }
+        add_semantic_error(analyzer, SEMANTIC_ERROR_ARITY_MISMATCH,
+                           STRING_LITERAL(error_msg), line);
+        return;
+    }
+
+    if (entry->param_count > 0 && !entry->params)
+    {
+        /* A malformed STDROT_EXPORT_SIG (param_count > 0 but no params
+           array) -- reject the call outright rather than silently skipping
+           type checks on it, since accepting it unchecked would be
+           fail-open on exactly the thing this analyzer exists to catch. */
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "'%s' has an inconsistent native signature (param_count "
+                 "> 0 but no params declared)",
+                 func_name.data);
+        add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                           STRING_LITERAL(error_msg), line);
+        return;
+    }
+
+    if (entry->return_type.type == STDROT_HANDLE)
+    {
+        /* STDROT_HANDLE exists in the ABI as reserved groundwork (see
+           stdrot_api.h) but nothing marshals a handle-valued return yet,
+           and -- unlike STDROT_PTR -- a handle isn't just a raw address:
+           it needs a resource-identity/ownership model (type_name-based
+           type checking, who frees it, GC vs manual release) that Phase 2
+           deliberately hasn't designed yet (see the roadmap's Appendix B
+           Q6, "ownership of native resources"). Silently treating that as
+           unchecked would make the descriptor decorative -- claim a type
+           it can't actually deliver. Reject it outright instead of
+           guessing at a design that hasn't been made. STDROT_PTR (a plain
+           opaque address, which this pipeline *can* honestly represent
+           with the existing pointer_level machinery) is handled below,
+           not rejected. */
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "'%s': native handle return types are not marshalled yet",
+                 func_name.data);
+        add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                           STRING_LITERAL(error_msg), line);
+        return;
+    }
+
+    if (entry->return_type.type == STDROT_CSTRING)
+    {
+        /* STDROT_CSTRING is argument-side ABI groundwork only: coerce_arg_
+           to_param() knows how to convert a Brainrot String INTO a const
+           char* for a native to consume, but marshal_native_return_value()
+           (ast.c) has no code path the other way -- a native returning
+           STDROT_CSTRING falls through its switch doing nothing, leaving
+           current_return_value.value.strvalue whatever stale/zeroed state
+           happened to already be in that union. stdrot_type_to_vartype()
+           still honestly maps STDROT_CSTRING to VAR_STRING, so without
+           this check the analyzer would approve `chungus s = a_cstring_
+           native();` as a real string and hand the interpreter a value
+           that was never actually constructed. Same reasoning as the
+           STDROT_HANDLE rejection above: reject outright rather than let
+           the descriptor advertise a return representation the final
+           marshalling layer cannot produce. */
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "'%s': native CSTRING return types are not marshalled yet",
+                 func_name.data);
+        add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                           STRING_LITERAL(error_msg), line);
+        return;
+    }
+
+    cur = node->data.func_call.arguments;
+    for (int i = 0; i < entry->param_count && cur; i++, cur = cur->next)
+    {
+        const StdrotParam *param = &entry->params[i];
+        if (!cur->expr)
+            continue;
+
+        if (param->type == STDROT_HANDLE)
+        {
+            /* Same reasoning as the return-type check above. */
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "'%s' argument %d: native handle parameters are not "
+                     "marshalled yet",
+                     func_name.data, i + 1);
+            add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                               STRING_LITERAL(error_msg), line);
+            continue;
+        }
+
+        if (param->type == STDROT_PTR)
+        {
+            /* An opaque pointer parameter accepts a pointer of *any* base
+               type at the right indirection depth -- erased uniformly at
+               every depth, not just C void*'s one safe level (see
+               STDROT_PTR's own comment in stdrot_api.h for why) -- so
+               this checks pointer_level only, deliberately skipping the
+               base-VarType comparison below (there is no base type to
+               compare; that's what "opaque" means). param->pointer_level
+               counts indirection *beyond* the one level STDROT_PTR itself
+               already represents (a plain STDROT_PTR argument is
+               pointer_level 1). */
+            int actual_pl = infer_expression_pointer_level(cur->expr, analyzer);
+            int expected_pl = param->pointer_level + 1;
+            if (actual_pl != expected_pl)
+            {
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: expected a pointer (level %d), "
+                         "got pointer level %d",
+                         func_name.data, i + 1, expected_pl, actual_pl);
+                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                   STRING_LITERAL(error_msg), line);
+            }
+            continue;
+        }
+
+        if (param->type == STDROT_ANY)
+        {
+            /* STDROT_ANY means "any of the scalar/string types this
+               pipeline can already marshal" (int/short/float/double/bool/
+               char/string) -- not "any value representable at all,
+               pointers included." A pointer-level argument has no
+               scalar/string representation to dispatch on (slorp, the
+               only STDROT_ANY consumer today, has no notion of "read a
+               pointer from stdin"), so without this check a pointer would
+               silently sail through the STDROT_ANY shortcut and reach the
+               native function tagged as whatever the generic non-pointer
+               scalar fallback in ast_expr_to_stdrot_value() produced from
+               its raw address -- not a pointer at all. An opaque-pointer
+               parameter must be declared STDROT_PTR explicitly instead. */
+            if (infer_expression_pointer_level(cur->expr, analyzer) > 0)
+            {
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: pointer arguments require an "
+                         "explicit STDROT_PTR parameter, not STDROT_ANY",
+                         func_name.data, i + 1);
+                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                   STRING_LITERAL(error_msg), line);
+                continue;
+            }
+
+            /* The comment above claims a specific closed set of accepted
+               types -- enforce it, rather than "not a pointer" being the
+               only check. ast_expr_to_stdrot_value() (stdrot.c) only
+               knows how to construct a StdrotValue for VAR_INT/SHORT/
+               FLOAT/DOUBLE/BOOL/CHAR/STRING/ENUM; anything else (a struct
+               identifier, most notably) falls through its switch leaving
+               out->type at its initialized STDROT_NONE, silently handing
+               the native "no value" instead of being rejected here before
+               the call is even approved. */
+            VarType actual_any = infer_expression_type(cur->expr, analyzer);
+            switch (actual_any)
+            {
+            case VAR_INT:
+            case VAR_SHORT:
+            case VAR_FLOAT:
+            case VAR_DOUBLE:
+            case VAR_BOOL:
+            case VAR_CHAR:
+            case VAR_STRING:
+            case VAR_ENUM:
+                break;
+            default:
+            {
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: %s is not a scalar/string type "
+                         "this native can accept",
+                         func_name.data, i + 1, vartype_to_string(actual_any));
+                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                   STRING_LITERAL(error_msg), line);
+                continue;
+            }
+            }
+
+            /* See is_unmarshallable_array_arg()'s own comment for the
+               union-aliasing hazard this guards against: arrays report
+               the same VarType as their element (`rizz arr[2]`'s
+               var_type is VAR_INT, indistinguishable from a scalar
+               `rizz x` by infer_expression_type() alone), but passing
+               one through would reinterpret its backing pointer as a
+               scalar value. */
+            if (is_unmarshallable_array_arg(cur->expr, analyzer))
+            {
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: %s arrays cannot be passed "
+                         "where a scalar/string is expected",
+                         func_name.data, i + 1, vartype_to_string(actual_any));
+                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                   STRING_LITERAL(error_msg), line);
+            }
+            continue;
+        }
+
+        VarType expected = stdrot_type_to_vartype(param->type);
+        /* infer_expression_abi_type(), not infer_expression_type(): a
+           STDROT_STRING/STDROT_CSTRING param maps to VAR_STRING here
+           (stdrot_type_to_vartype()), and the runtime bridge already
+           accepts a char-array argument for either (ast_expr_to_stdrot_
+           value()'s VAR_CHAR/is_array case produces STDROT_STRING;
+           coerce_arg_to_param() already knows STDROT_STRING ->
+           STDROT_CSTRING) -- rejecting it here on the strength of plain
+           infer_expression_type() reporting VAR_CHAR (the array's
+           element type) would be a false negative against a call the
+           ABI can actually service, exactly the same representation gap
+           slorp's return_like_arg identity has (see infer_expression_
+           abi_type()'s own comment). */
+        VarType actual = infer_expression_abi_type(cur->expr, analyzer);
+        int actual_pointer_level =
+            infer_expression_pointer_level(cur->expr, analyzer);
+
+        /* Same union-aliasing hazard the STDROT_ANY branch above already
+           guards against (see is_unmarshallable_array_arg()'s own
+           comment) -- a FIXED, non-ANY scalar parameter is just as
+           vulnerable: infer_expression_abi_type() reports a non-char
+           array identifier's ELEMENT type (e.g. VAR_INT for `rizz
+           arr[2]`), indistinguishable here from a scalar `rizz x`, and
+           check_type_compatibility_ex() below has no way to know the
+           argument is actually an array backed by a pointer the runtime
+           marshaller would read as if it were that scalar's own value.
+           Checked before the ordinary type-compatibility check, not
+           folded into it, so this fires with a clear "array, not a
+           scalar" diagnostic instead of a confusing "expected int, got
+           int" non-mismatch. */
+        if (is_unmarshallable_array_arg(cur->expr, analyzer))
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "'%s' argument %d: %s arrays cannot be passed where a "
+                     "scalar/string is expected",
+                     func_name.data, i + 1, vartype_to_string(actual));
+            add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                               STRING_LITERAL(error_msg), line);
+            continue;
+        }
+
+        if (expected == NONE || actual == NONE)
+            continue;
+
+        if (!check_type_compatibility_ex(expected, param->pointer_level, actual,
+                                         actual_pointer_level))
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            /* Round-21 review, finding #2 -- when the base VarType
+               strings are identical (e.g. a pointer-typed struct field
+               like `rizz *p;` reports the same base VAR_INT a plain
+               `rizz` parameter does), the mismatch is entirely in
+               pointer_level, and the plain "expected %s, got %s" form
+               below prints the nonsensical "expected int, got int" --
+               correct about THERE being a mismatch (check_type_
+               compatibility_ex() above already used actual_pointer_level
+               to find it), useless about WHAT it actually is. Reported
+               explicitly whenever either side is a pointer, matching the
+               pointer-specific mismatch messages elsewhere in this
+               file. */
+            if (param->pointer_level > 0 || actual_pointer_level > 0)
+            {
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: expected %s (pointer level %d), "
+                         "got %s (pointer level %d)",
+                         func_name.data, i + 1, vartype_to_string(expected),
+                         param->pointer_level, vartype_to_string(actual),
+                         actual_pointer_level);
+            }
+            else
+            {
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: expected %s, got %s",
+                         func_name.data, i + 1, vartype_to_string(expected),
+                         vartype_to_string(actual));
+            }
+            add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                               STRING_LITERAL(error_msg), line);
+        }
+    }
+
+    /* `cur` now sits at the first argument beyond param_count -- the
+       unchecked variadic tail (format-string arguments, or every
+       argument to a legacy/untyped STDROT_EXPORT() export, which is
+       also is_variadic == true with param_count == 0, see promote_
+       variadic_tail's own comment for why those two are NOT the same
+       concept). Its TYPE is deliberately left unchecked -- the whole
+       point of is_variadic is that this pipeline doesn't know what type
+       each tail argument ought to be -- but "unchecked type" is not the
+       same claim as "unchecked representation validity": is_
+       unmarshallable_expr() (its own comment has the full reasoning)
+       still has to hold for every argument that reaches ast_expr_to_
+       stdrot_value(), fixed-parameter or not. Deliberately worded as
+       "has no supported native ABI representation", not "is a variadic
+       argument" or "cannot be passed to a variadic argument" -- this
+       same check, and this same message, applies whether entry is a
+       genuine C-style variadic native or a legacy/untyped export with
+       an unrelated reason for leaving its arity unchecked; calling both
+       "variadic" here would blur exactly the distinction promote_
+       variadic_tail exists to keep separate. */
+    if (entry->is_variadic)
+    {
+        int tail_index = entry->param_count;
+        for (; cur; cur = cur->next, tail_index++)
+        {
+            if (!cur->expr)
+                continue;
+
+            if (is_unmarshallable_expr(cur->expr, analyzer))
+            {
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: %s has no supported native ABI "
+                         "representation",
+                         func_name.data, tail_index + 1,
+                         vartype_to_string(
+                             infer_expression_type(cur->expr, analyzer)));
+                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                   STRING_LITERAL(error_msg), line);
+            }
+        }
+    }
+}
+
+/* Walks a braced initializer's expression list (`{1, 2, bet(2)}`, and
+   nested sublists for `{ {1, 2}, 3 }`-style matrix init), running the same
+   checks -- native-call arity/type included -- on every leaf expression as
+   semantic_analyze_with_scope_tracking() runs on any other expression. */
+static void semantic_check_expression_list(SemanticAnalyzer *analyzer,
+                                           ExpressionList *list)
+{
+    if (!list)
+        return;
+
+    /* ExpressionList is a circular doubly-linked list (see
+       create_expression_list()/append_expression_list_node() in ast.c --
+       a single element's next/prev both point back to itself), not
+       NULL-terminated, so this has to stop on returning to the start
+       (matching count_expression_list()/free_expression_list()'s own
+       traversal), not on next == NULL. */
+    ExpressionList *current = list;
+    do
+    {
+        if (current->expr)
+        {
+            semantic_analyze_with_scope_tracking(analyzer, current->expr);
+        }
+        else if (current->sublist)
+        {
+            semantic_check_expression_list(analyzer, current->sublist);
+        }
+        current = current->next;
+    } while (current != list);
+}
+
 void *semantic_visit_function_call(Visitor *self, ASTNode *node)
 {
     SemanticAnalyzer *analyzer = (SemanticAnalyzer *)self;
@@ -702,8 +1671,13 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
         return NULL;
 
     const String func_name = node->data.func_call.function_name;
+    const StdrotEntry *native_entry = get_native_function(func_name);
 
-    if (!is_builtin_function(func_name))
+    if (native_entry)
+    {
+        semantic_check_native_call(analyzer, node, native_entry);
+    }
+    else
     {
         Function *func = get_function(func_name);
         if (!func)
@@ -720,6 +1694,15 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
     return NULL;
 }
 
+/* Type-validates a binary operation's operands. Does NOT walk them --
+   both callers (ast_accept()'s NODE_OPERATION case, via visit_children();
+   and semantic_analyze_with_scope_tracking()'s own NODE_OPERATION case)
+   already recurse into left/right themselves before calling this. This
+   used to also call ast_accept() on both operands here, which double-
+   visited them through either caller -- harmless when nothing the second
+   pass touches reports errors, but it double-reports for anything that
+   does (e.g. two "Undefined variable" errors for `undefined_var + 1`, or
+   two arity errors for a native call in an operand). */
 void *semantic_visit_binary_operation(Visitor *self, ASTNode *node)
 {
     SemanticAnalyzer *analyzer = (SemanticAnalyzer *)self;
@@ -727,15 +1710,16 @@ void *semantic_visit_binary_operation(Visitor *self, ASTNode *node)
     if (!node || !node->data.op.left || !node->data.op.right)
         return NULL;
 
-    ast_accept(node->data.op.left, self);
-    ast_accept(node->data.op.right, self);
-
     validate_binary_operation(node->data.op.left, node->data.op.right,
                               node->data.op.op, analyzer);
 
     return NULL;
 }
 
+/* Validates this declaration node only -- pending_initializer/
+   struct_init_expr/data.op.right are walked by the switch's
+   NODE_DECLARATION case before this is called, per the traversal
+   invariant on semantic_analyze_with_scope_tracking(). */
 void semantic_visit_declaration(Visitor *self, ASTNode *node)
 {
     SemanticAnalyzer *analyzer = (SemanticAnalyzer *)self;
@@ -744,6 +1728,28 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node)
         return;
 
     const String var_name = node->data.op.left->data.name;
+
+    /* Round-20 review, finding #1 -- `skibidi` (ast.h's own VAR_VOID
+       comment: "no declaration syntax produces a void-typed Variable")
+       now maps to VAR_VOID, not NONE, so a void-typed function's return
+       type is correctly distinguishable from "genuinely unknown" -- but
+       `type` (lang.y) is the SAME grammar nonterminal a variable
+       declaration's own type comes from, so `skibidi x;` now parses to
+       a VAR_VOID-typed declaration too, unless something rejects it.
+       Checked unconditionally (not gated behind node->data.op.right,
+       unlike the initializer-compatibility check below) so a bare
+       `skibidi x;` with no initializer is caught just as surely as
+       `skibidi x = 5;`. */
+    if (node->var_type == VAR_VOID && node->pointer_level == 0)
+    {
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "Cannot declare '%s' with type void", var_name.data);
+        add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                           STRING_LITERAL(error_msg),
+                           node->line_number > 0 ? node->line_number : 1);
+        return;
+    }
 
     if (node->data.op.right && node->data.op.right->type == NODE_STRUCT_DEF)
     {
@@ -769,9 +1775,42 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node)
         int init_pointer_level =
             infer_expression_pointer_level(node->data.op.right, analyzer);
 
-        if (declared_type != NONE && init_type != NONE &&
-            !check_type_compatibility_ex(declared_type, declared_pointer_level,
-                                         init_type, init_pointer_level))
+        /* Pointer-level compatibility is knowable even when the base
+           type isn't (init_type == NONE -- e.g. a legacy STDROT_ANY-
+           returning native call used as an initializer, whose actual
+           scalar type the analyzer genuinely can't predict). What IS
+           always knowable is whether the call's own descriptor declared
+           a pointer result at all: infer_expression_pointer_level()
+           reports pointer_level > 0 only for an entry whose return_type.
+           type is literally STDROT_PTR (see its own NODE_FUNC_CALL
+           case), and enforce_return_type() (stdrot.c) already guarantees
+           a legacy STDROT_ANY export can never actually return one --
+           there is no legitimate dynamic case where "unknown base type"
+           should also mean "unknown pointer-ness." Checked before, and
+           independently of, the base-type compatibility check below, so
+           `rizz *p = legacy_int();` (declared_pointer_level=1,
+           init_pointer_level=0) is rejected instead of silently
+           skipping all checking because init_type happens to be NONE
+           too. declared_pointer_level == 0 with any init_pointer_level
+           falls through to the ordinary check below unaffected (a
+           pointer-valued initializer for a non-pointer destination is
+           already caught there via check_type_compatibility_ex()'s own
+           pointer_level comparison). */
+        if (declared_pointer_level > 0 &&
+            declared_pointer_level != init_pointer_level)
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Type mismatch in initialization of '%s': expected a "
+                     "pointer (level %d), got pointer level %d",
+                     var_name.data, declared_pointer_level, init_pointer_level);
+            add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                               STRING_LITERAL(error_msg), 1);
+        }
+        else if (declared_type != NONE && init_type != NONE &&
+                 !check_type_compatibility_ex(declared_type,
+                                              declared_pointer_level, init_type,
+                                              init_pointer_level))
         {
             char error_msg[MAX_BUFFER_LEN];
             snprintf(
@@ -785,6 +1824,10 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node)
     }
 }
 
+/* Validates this assignment node only -- data.op.right and the
+   array-index/struct-access/dereference-operand shapes of data.op.left
+   are walked by the switch's NODE_ASSIGNMENT case before this is called,
+   per the traversal invariant on semantic_analyze_with_scope_tracking(). */
 void semantic_visit_assignment(Visitor *self, ASTNode *node)
 {
     SemanticAnalyzer *analyzer = (SemanticAnalyzer *)self;
@@ -792,20 +1835,41 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node)
     if (!node || !node->data.op.left)
         return;
 
-    if (node->data.op.right)
-    {
-        ast_accept(node->data.op.right, self);
-    }
-
     if (node->data.op.left->type == NODE_UNARY_OPERATION &&
         node->data.op.left->data.unary.op == OP_DEREFERENCE)
     {
         ASTNode *operand = node->data.op.left->data.unary.operand;
-        if (infer_expression_pointer_level(operand, analyzer) <= 0)
+        int operand_pointer_level =
+            infer_expression_pointer_level(operand, analyzer);
+        if (operand_pointer_level <= 0)
         {
             add_semantic_error(
                 analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
                 STRING_LITERAL("Cannot dereference a non-pointer expression"),
+                node->line_number > 0 ? node->line_number : 1);
+            return;
+        }
+        /* Round-22 review, finding #3, extended by round-23 finding #2
+           -- same check as the general NODE_UNARY_OPERATION case (above
+           in this file, see its own comment for the VAR_PTR reasoning),
+           needed independently here because an assignment's dereference
+           LHS (`*p = 42;`) is deliberately NOT walked as a whole unary
+           node by semantic_analyze_with_scope_tracking()'s own NODE_
+           ASSIGNMENT case (only `operand` is visited, to avoid this
+           exact pointer-ness check running twice) -- meaning THIS is
+           the only place that validates a dereference LHS's pointee
+           type at all. A `void *`/opaque-VAR_PTR LHS (operand_pointer_
+           level == 1) has no pointee representation to write through; a
+           `void **`/pointer-to-VAR_PTR LHS (operand_pointer_level > 1)
+           dereferences fine, down to a `void *`/VAR_PTR value. */
+        if (operand_pointer_level == 1 &&
+            (infer_expression_type(operand, analyzer) == VAR_VOID ||
+             infer_expression_type(operand, analyzer) == VAR_PTR))
+        {
+            add_semantic_error(
+                analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                STRING_LITERAL("Cannot dereference a type-erased pointer -- "
+                               "its pointee type is unknown"),
                 node->line_number > 0 ? node->line_number : 1);
             return;
         }
@@ -910,7 +1974,7 @@ void semantic_visit_function_definition(Visitor *self, ASTNode *node)
 void add_symbol(SemanticAnalyzer *analyzer, const String name, VarType type,
                 int pointer_level, bool is_const, bool is_function,
                 VarType return_type, int return_pointer_level, int line_number,
-                const String struct_name)
+                const String struct_name, bool is_array)
 {
     if (!analyzer || !name.data)
         return;
@@ -924,6 +1988,7 @@ void add_symbol(SemanticAnalyzer *analyzer, const String name, VarType type,
     entry->pointer_level = pointer_level;
     entry->is_const = is_const;
     entry->is_function = is_function;
+    entry->is_array = is_array;
     entry->return_type = return_type;
     entry->return_pointer_level = return_pointer_level;
     entry->line_number = line_number;
@@ -1025,7 +2090,7 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
             add_symbol(analyzer, var_name, var_type, node->pointer_level,
                        is_const, false, NONE, 0,
                        node->line_number > 0 ? node->line_number : 1,
-                       struct_name);
+                       struct_name, node->is_array);
         }
         if (node->data.op.right)
         {
@@ -1055,7 +2120,7 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
                            false, true, node->data.function_def.return_type,
                            node->pointer_level,
                            node->line_number > 0 ? node->line_number : 1,
-                           (String){0});
+                           (String){0}, false);
             }
         }
 
@@ -1073,7 +2138,7 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
                     add_symbol(analyzer, param->name, param->type,
                                param->pointer_level, false, false, NONE, 0,
                                node->line_number > 0 ? node->line_number : 1,
-                               param->struct_name);
+                               param->struct_name, false);
                 }
                 param = param->next;
             }
@@ -1161,7 +2226,35 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
     depth--;
 }
 
-/* Scope-aware semantic analysis that tracks scope depth during traversal */
+/* Scope-aware semantic analysis that tracks scope depth during traversal.
+ *
+ * TRAVERSAL INVARIANT: this function is the sole owner of recursion into
+ * an AST node's children during semantic analysis. Every case below that
+ * has children calls itself (or a small node-specific helper, like
+ * semantic_check_expression_list() for ExpressionList) on each child
+ * exactly once; the semantic_visit_*() functions it calls out to
+ * (semantic_visit_declaration, semantic_visit_assignment,
+ * semantic_visit_function_call, semantic_visit_binary_operation,
+ * semantic_visit_identifier) validate *only* the node passed to them --
+ * none of them may call ast_accept() or semantic_analyze_with_scope_
+ * tracking() on a child this function has already visited or is about to.
+ *
+ * This isn't cosmetic. semantic_visit_binary_operation() used to call
+ * ast_accept() on both operands *in addition to* this function's own
+ * NODE_OPERATION case having already recursed into them -- every operand
+ * of every binary operation was visited twice, silently, until something
+ * that reports on the second visit (arity/type errors, "Undefined
+ * variable") made it visible as duplicate error messages. Multiple
+ * rounds of native-call-checking work then had to individually rediscover
+ * and route around node kinds this function didn't yet have a case for
+ * (array indices, sizeof, return, do-while, switch, ...), each visited
+ * exactly once nowhere. Both problems are the same root cause: no single
+ * place owned "does the child get visited, and by whom."
+ *
+ * A visitor that genuinely needs to inspect a child's shape (not walk
+ * its children) may call infer_expression_type()/infer_expression_pointer_
+ * level() -- those are pure queries, not traversal, and are safe to call
+ * as many times as needed. */
 void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                                           ASTNode *node)
 {
@@ -1234,6 +2327,8 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         {
             semantic_analyze_with_scope_tracking(analyzer,
                                                  node->data.for_stmt.cond);
+            require_value_expression(analyzer, node->data.for_stmt.cond,
+                                     "condition");
         }
         if (node->data.for_stmt.incr)
         {
@@ -1258,6 +2353,8 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         {
             semantic_analyze_with_scope_tracking(analyzer,
                                                  node->data.while_stmt.cond);
+            require_value_expression(analyzer, node->data.while_stmt.cond,
+                                     "condition");
         }
 
         /* Enter loop scope for body */
@@ -1278,6 +2375,8 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         {
             semantic_analyze_with_scope_tracking(analyzer,
                                                  node->data.if_stmt.condition);
+            require_value_expression(analyzer, node->data.if_stmt.condition,
+                                     "condition");
         }
 
         /* Process then branch in new scope */
@@ -1309,7 +2408,37 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
 
     case NODE_ASSIGNMENT:
     {
-        /* Use the visitor method for assignment checking */
+        /* Per the traversal invariant above: walk everything that can
+           contain a native call before calling semantic_visit_assignment(),
+           which then validates the node only. A plain-identifier LHS is
+           deliberately not walked -- semantic_visit_identifier() would
+           double-report "Undefined variable" on top of the assignment-
+           specific undefined-variable check semantic_visit_assignment()
+           already does for it. A dereference LHS only has its operand
+           walked, not the whole node -- semantic_visit_assignment()
+           already fully validates the dereference itself (pointer-ness of
+           the operand); walking the whole node here would re-run that
+           exact check a second time via this same switch's own
+           NODE_UNARY_OPERATION case. */
+        if (node->data.op.right)
+        {
+            semantic_analyze_with_scope_tracking(analyzer, node->data.op.right);
+        }
+        if (node->data.op.left)
+        {
+            if (node->data.op.left->type == NODE_ARRAY_ACCESS ||
+                node->data.op.left->type == NODE_STRUCT_ACCESS)
+            {
+                semantic_analyze_with_scope_tracking(analyzer,
+                                                     node->data.op.left);
+            }
+            else if (node->data.op.left->type == NODE_UNARY_OPERATION &&
+                     node->data.op.left->data.unary.op == OP_DEREFERENCE)
+            {
+                semantic_analyze_with_scope_tracking(
+                    analyzer, node->data.op.left->data.unary.operand);
+            }
+        }
         semantic_visit_assignment((Visitor *)analyzer, node);
         break;
     }
@@ -1378,8 +2507,9 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         }
         else if (node->data.unary.op == OP_DEREFERENCE)
         {
-            if (infer_expression_pointer_level(node->data.unary.operand,
-                                               analyzer) <= 0)
+            int operand_pointer_level = infer_expression_pointer_level(
+                node->data.unary.operand, analyzer);
+            if (operand_pointer_level <= 0)
             {
                 add_semantic_error(
                     analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
@@ -1387,13 +2517,86 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                         "Cannot dereference a non-pointer expression"),
                     node->line_number > 0 ? node->line_number : 1);
             }
+            /* Round-22 review, finding #3, extended by round-23 finding
+               #2 -- `void *` is a real value (round 21), but that
+               doesn't make `*(void *)` valid: a pointer needs a pointee
+               TYPE to know what representation and size to read, and
+               VAR_VOID has none. VAR_PTR (this codebase's OWN opaque-
+               native-pointer type, per its own comment just above its
+               declaration, ast.h) has the identical problem for the
+               identical reason -- "an opaque native pointer with no
+               concrete base type by design" -- so `*test_ptr_source()`
+               (a bare STDROT_PTR-returning native call) was rejected no
+               more than `*(void *)` originally was: nothing here checked
+               VAR_PTR at all, so a dereferenced opaque pointer's
+               resulting type/pointer_level (VAR_PTR, 0) sailed through,
+               and whichever scalar evaluator happened to consume it
+               (evaluate_expression_bool()'s OP_DEREFERENCE case,
+               evaluate_expression_int()'s, ...) silently DECIDED the
+               pointee's representation after the fact -- the exact
+               opposite of a typed ABI, where the descriptor is supposed
+               to be authoritative. The invalidity in both cases is
+               specifically that dereferencing would PRODUCE pointer_
+               level 0 with a type-erased base (VAR_VOID or VAR_PTR) --
+               not that the operand's base happens to be one of those at
+               ANY depth: `void **q`/a pointer-to-VAR_PTR dereferences
+               fine, landing back at (VAR_VOID, 1)/(VAR_PTR, 1), still a
+               perfectly good opaque pointer VALUE one level down.
+               Checked as its own case (not folded into the `<= 0`
+               rejection above) because pointer_level 2 legitimately
+               passes that check and must not be rejected by it. */
+            else if (operand_pointer_level == 1 &&
+                     (infer_expression_type(node->data.unary.operand,
+                                            analyzer) == VAR_VOID ||
+                      infer_expression_type(node->data.unary.operand,
+                                            analyzer) == VAR_PTR))
+            {
+                add_semantic_error(
+                    analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                    STRING_LITERAL(
+                        "Cannot dereference a type-erased pointer -- its "
+                        "pointee type is unknown"),
+                    node->line_number > 0 ? node->line_number : 1);
+            }
+        }
+        else
+        {
+            /* Every other unary operator (arithmetic negation, logical
+               not, increment/decrement, ...) genuinely consumes its
+               operand as a value -- unlike ADDRESS_OF (wants an lvalue
+               location, not a value; already rejects a non-lvalue
+               operand shape like a call above) and DEREFERENCE (wants a
+               pointer; already rejected by the pointer_level check
+               above), neither of which needed this. */
+            require_value_expression(analyzer, node->data.unary.operand,
+                                     "unary operator operand");
         }
         break;
     }
 
     case NODE_DECLARATION:
     {
-        /* Use visitor method for declaration checking */
+        /* A braced initializer (`rizz arr[1] = {bet(2)};`) lives on
+           pending_initializer, not data.op.right -- create_multi_array_
+           declaration_node() leaves data.op.right NULL. A struct's plain-
+           expression initializer (`gang Point r = make_point(1, 2);`)
+           lives on struct_init_expr; data.op.right there is a
+           NODE_STRUCT_DEF type placeholder, not the initializer.
+           Per the traversal invariant above, this switch walks all three
+           -- semantic_visit_declaration() validates the node only. */
+        if (node->pending_initializer)
+        {
+            semantic_check_expression_list(analyzer, node->pending_initializer);
+        }
+        if (node->struct_init_expr)
+        {
+            semantic_analyze_with_scope_tracking(analyzer,
+                                                 node->struct_init_expr);
+        }
+        if (node->data.op.right)
+        {
+            semantic_analyze_with_scope_tracking(analyzer, node->data.op.right);
+        }
         semantic_visit_declaration((Visitor *)analyzer, node);
         break;
     }
@@ -1504,6 +2707,215 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         node->pointer_level = fld->pointer_level;
         if (fld->type == VAR_STRUCT && fld->struct_name.data)
             node->data.struct_access.struct_name = fld->struct_name;
+        break;
+    }
+
+    case NODE_ARRAY_ACCESS:
+    {
+        /* Mirrors ast_accept()'s NODE_ARRAY_ACCESS handling (visitor.c):
+           num_dimensions > 0 means the multi-dimensional indices[] form is
+           in use, otherwise it's the single-dimension index. Needed so an
+           index expression like `arr[bet(2)]` gets the same native-call
+           arity/type checking as any other expression. */
+        if (node->data.array.num_dimensions > 0)
+        {
+            for (int i = 0; i < node->data.array.num_dimensions; i++)
+            {
+                if (node->data.array.indices[i])
+                {
+                    semantic_analyze_with_scope_tracking(
+                        analyzer, node->data.array.indices[i]);
+                    require_value_expression(
+                        analyzer, node->data.array.indices[i], "subscript");
+                }
+            }
+        }
+        else if (node->data.array.index)
+        {
+            semantic_analyze_with_scope_tracking(analyzer,
+                                                 node->data.array.index);
+            require_value_expression(analyzer, node->data.array.index,
+                                     "subscript");
+        }
+        break;
+    }
+
+    case NODE_SIZEOF:
+    {
+        if (node->data.sizeof_stmt.expr)
+        {
+            semantic_analyze_with_scope_tracking(analyzer,
+                                                 node->data.sizeof_stmt.expr);
+            /* sizeof's own operand isn't consumed as a VALUE (it's never
+               evaluated at all -- handle_sizeof()'s own comment, ast.c),
+               but a VAR_VOID operand is still a statically-known type
+               error worth rejecting here rather than deferring to
+               handle_sizeof()'s runtime "Invalid type in sizeof" -- the
+               type is already fully known without running anything. */
+            require_value_expression(analyzer, node->data.sizeof_stmt.expr,
+                                     "sizeof operand");
+        }
+        break;
+    }
+
+    case NODE_RETURN:
+    {
+        if (node->data.op.left)
+        {
+            semantic_analyze_with_scope_tracking(analyzer, node->data.op.left);
+
+            /* Round-22 review, finding #4 -- a return expression was
+               traversed (so a nested native call inside it still got
+               its own signature checked), but never compared against
+               the enclosing function's declared (return_type,
+               return_pointer_level) at all. `rizz terrible() { bussin
+               yapping("oops"); }` -- yapping() statically resolves to
+               VAR_VOID -- passed semantic analysis outright; only
+               ast.c's handle_return_statement() (at actual call time)
+               would eventually reject it. Skipped for VAR_STRUCT: that
+               return shape has its own dedicated struct-name-aware
+               check already (handle_return_statement(), ast.c) that
+               this VarType-only comparison can't replicate (VAR_STRUCT
+               == VAR_STRUCT alone says nothing about WHICH struct).
+               Skipped for a genuinely void-declared function
+               (VAR_VOID, pointer_level 0): `bussin <anything>;` inside
+               one is deliberately accepted and its value ignored
+               (handle_return_statement()'s own VAR_VOID case) -- the
+               same convention this codebase already uses for `bussin
+               0;` ending a `skibidi` function, not something this new
+               check should start rejecting. `skibidi *` (a void-
+               pointer-declared function) is NOT skipped: that's a real
+               pointer type with a real compatibility rule, just like
+               any other pointer return. */
+            Function *current_func =
+                get_function(analyzer->current_function_name);
+            if (current_func && current_func->return_type != VAR_STRUCT &&
+                !(current_func->return_type == VAR_VOID &&
+                  current_func->return_pointer_level == 0))
+            {
+                VarType declared_type = current_func->return_type;
+                int declared_pointer_level = current_func->return_pointer_level;
+                VarType actual_type =
+                    infer_expression_type(node->data.op.left, analyzer);
+                int actual_pointer_level = infer_expression_pointer_level(
+                    node->data.op.left, analyzer);
+
+                if (declared_pointer_level > 0 &&
+                    declared_pointer_level != actual_pointer_level)
+                {
+                    char error_msg[MAX_BUFFER_LEN];
+                    snprintf(error_msg, sizeof(error_msg),
+                             "Return type mismatch in '%s': expected a "
+                             "pointer (level %d), got pointer level %d",
+                             current_func->name.data, declared_pointer_level,
+                             actual_pointer_level);
+                    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                       STRING_LITERAL(error_msg),
+                                       node->line_number > 0 ? node->line_number
+                                                             : 1);
+                }
+                else if (declared_type != NONE && actual_type != NONE &&
+                         !check_type_compatibility_ex(
+                             declared_type, declared_pointer_level, actual_type,
+                             actual_pointer_level))
+                {
+                    char error_msg[MAX_BUFFER_LEN];
+                    snprintf(error_msg, sizeof(error_msg),
+                             "Return type mismatch in '%s': expected %s, "
+                             "got %s",
+                             current_func->name.data,
+                             vartype_to_string(declared_type),
+                             vartype_to_string(actual_type));
+                    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                       STRING_LITERAL(error_msg),
+                                       node->line_number > 0 ? node->line_number
+                                                             : 1);
+                }
+            }
+        }
+        break;
+    }
+
+    case NODE_DO_WHILE_STATEMENT:
+    {
+        /* Unlike while, the body runs before the condition is first
+           tested and its scope is still open when the condition runs
+           (`mewing { rizz i = 5; } goon (i < 10);` is legal) -- so, like
+           NODE_FOR_STATEMENT, enter the loop scope once and process both
+           body and condition inside it. */
+        analyzer->scope_depth++;
+        if (node->data.while_stmt.body)
+        {
+            semantic_analyze_with_scope_tracking(analyzer,
+                                                 node->data.while_stmt.body);
+        }
+        if (node->data.while_stmt.cond)
+        {
+            semantic_analyze_with_scope_tracking(analyzer,
+                                                 node->data.while_stmt.cond);
+            require_value_expression(analyzer, node->data.while_stmt.cond,
+                                     "condition");
+        }
+        analyzer->scope_depth--;
+        break;
+    }
+
+    case NODE_SWITCH_STATEMENT:
+    {
+        if (node->data.switch_stmt.expression)
+        {
+            semantic_analyze_with_scope_tracking(
+                analyzer, node->data.switch_stmt.expression);
+            require_value_expression(analyzer,
+                                     node->data.switch_stmt.expression,
+                                     "switch discriminant");
+        }
+        analyzer->scope_depth++;
+        for (CaseNode *c = node->data.switch_stmt.cases; c; c = c->next)
+        {
+            if (c->value)
+            {
+                semantic_analyze_with_scope_tracking(analyzer, c->value);
+                require_value_expression(analyzer, c->value, "case value");
+            }
+            if (c->statements)
+            {
+                semantic_analyze_with_scope_tracking(analyzer, c->statements);
+            }
+        }
+        analyzer->scope_depth--;
+        break;
+    }
+
+    /* Round-20 review, finding #3 -- interpreter_visit_error_statement()
+       (interpreter.c) hands this node's own expression straight to
+       execute_func_call("baka", ...), which marshals it as `baka`'s real
+       (typed, STDROT_STRING-format) argument -- but this switch had no
+       case for NODE_ERROR_STATEMENT at all, falling to the generic
+       `default:` below, which does nothing. That meant any native call
+       NESTED inside `baka(...)`'s argument (`baka(yapping(42))`) never
+       reached semantic_check_native_call() at all: `yapping`'s own
+       fixed-format-argument type checking never ran, silently tunneling
+       a statically-detectable ABI violation past semantic analysis
+       entirely, caught only by the runtime enforcement this PR's whole
+       point was to make redundant. Recursing into the expression (same
+       as every other statement form that wraps one) makes any nested
+       native call visited normally, and require_value_expression()
+       rejects a VAR_VOID argument the same way every other value-
+       consuming context now does. NODE_PRINT_STATEMENT (ast.h) is
+       structurally identical but not actually reachable from the
+       grammar (yapping() is an ordinary call now, not a dedicated
+       statement form) -- handled here anyway, defensively, so it can't
+       silently regain this exact hole if that ever changes. */
+    case NODE_ERROR_STATEMENT:
+    case NODE_PRINT_STATEMENT:
+    {
+        if (node->data.op.left)
+        {
+            semantic_analyze_with_scope_tracking(analyzer, node->data.op.left);
+            require_value_expression(analyzer, node->data.op.left,
+                                     "baka/yapping argument");
+        }
         break;
     }
 

@@ -1,0 +1,20 @@
+🚽 Test case: round-22 review finding #3 -- `void *` is a real value
+🚽 (round 21), but that doesn't make `*(void *)` valid: a pointer needs a
+🚽 pointee TYPE to know what representation/size to read or write, and
+🚽 VAR_VOID has none. The dereference-LHS check inside semantic_visit_
+🚽 assignment() only verified pointer_level > 0 (true for `void *`),
+🚽 never that the dereference wouldn't land at bare (VAR_VOID, 0). This
+🚽 is a SEPARATE check from the general NODE_UNARY_OPERATION case's own
+🚽 (same-named) fix, because an assignment's dereference LHS is
+🚽 deliberately only partially walked by semantic_analyze_with_scope_
+🚽 tracking()'s own NODE_ASSIGNMENT case (to avoid double-reporting the
+🚽 pointer-ness check) -- meaning semantic_visit_assignment() is the
+🚽 ONLY place that validates a dereference LHS's pointee type. Previously
+🚽 reached only ast.c's write_value_to_address(), whose switch has no
+🚽 VAR_VOID case, landing in "Unsupported assignment type" -- a runtime
+🚽 symptom for a statically-knowable error.
+skibidi main {
+    skibidi *p = test_ptr_source();
+    *p = 42;
+    bussin 0;
+}

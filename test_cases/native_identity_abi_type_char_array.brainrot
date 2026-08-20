@@ -1,0 +1,23 @@
+🚽 Test case: round-18 review finding #2, exhibit A, corrected per round-19
+🚽 finding #3 -- get_native_call_static_type()'s identity-argument case
+🚽 (ast.c) must report the ABI type a native argument actually marshals
+🚽 as, not the plain source-level type get_expression_type() reports. A
+🚽 char *array* identifier (`yap buf[32]`) marshals as STDROT_STRING
+🚽 (ast_expr_to_stdrot_value()'s VAR_CHAR/is_array branch, stdrot.c), not
+🚽 the element type VAR_CHAR -- so identity(buf) statically resolves to
+🚽 VAR_STRING. Round 18's version of this fixture asserted that maxxing()
+🚽 of that correctly REJECTED -- but that was itself wrong: get_type_
+🚽 size_for_descriptor() has always defined VAR_STRING as sizeof(String),
+🚽 and a plain identifier's sizeof already uses it (`rant s = "hi";
+🚽 maxxing(s);` never rejected) -- handle_sizeof()'s generic expression
+🚽 path just had no VAR_STRING case to reach that same definition, an
+🚽 AST-shape accident, not an actual "strings have no size" rule. Fixed
+🚽 to add the missing case; this fixture now asserts maxxing(identity(buf))
+🚽 correctly reports sizeof(String), same as maxxing() of any other
+🚽 STRING-typed expression would.
+skibidi main {
+    yap buf[32];
+    rizz n = maxxing(identity(buf));
+    yapping("%d", n);
+    bussin 0;
+}

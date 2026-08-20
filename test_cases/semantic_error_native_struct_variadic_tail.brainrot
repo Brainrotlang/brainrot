@@ -1,0 +1,19 @@
+🚽 Test case: round-16 review finding #2 -- the array-shape hazard was only
+🚽 one instance of a broader problem with a variadic native's unchecked
+🚽 tail: "unchecked type" was being treated as "unchecked representation
+🚽 validity". A struct identifier has no VAR_STRUCT case in
+🚽 ast_expr_to_stdrot_value()'s NODE_IDENTIFIER switch (stdrot.c), so it
+🚽 would fall through leaving the marshalled StdrotValue at its
+🚽 initialized STDROT_NONE -- yapping("%d", f) would silently hand its
+🚽 formatter "no value" where the source plainly supplied a struct.
+🚽 is_unmarshallable_expr() (semantic_analyzer.c) now rejects this
+🚽 statically, the same way it already rejects an unmarshallable array.
+gang Foo {
+    rizz x;
+};
+
+skibidi main {
+    gang Foo f = { 42 };
+    yapping("%d", f);
+    bussin 0;
+}

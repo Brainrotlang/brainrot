@@ -76,6 +76,46 @@ typedef enum
     VAR_STRING,
     VAR_STRUCT,
     VAR_ENUM,
+    /* An opaque native pointer (STDROT_PTR): a real, known expression
+       category -- "this is a pointer, its base type is intentionally
+       erased" -- not to be confused with NONE ("unknown, skip
+       checking"). Deliberately its own VarType rather than reusing NONE:
+       every existing "type == NONE, don't validate" shortcut throughout
+       this analyzer (binary-op validation, declaration/assignment type
+       checks, native-argument checks) would otherwise silently wave a
+       real pointer expression through unchecked wherever it appears, and
+       whatever consumes it downstream (a scalar evaluator, a native
+       expecting a different type) would reinterpret its raw bits as
+       whatever that context assumed instead. VAR_PTR only ever appears
+       with pointer_level > 0; check_type_compatibility_ex() treats it as
+       wildcard-compatible with any base type once pointer_level already
+       matches, not as "give up checking." NOT the same guarantee as C's
+       void* conversion rule, despite the surface resemblance: void* <->
+       T* is sound for exactly one level of indirection, but opaque** <->
+       T** is not (see check_type_compatibility_ex()'s own comment,
+       semantic_analyzer.c, and STDROT_PTR's comment in stdrot_api.h, for
+       why this is an intentional simplification -- the base type is
+       erased uniformly at every depth, not just the outermost one). */
+    VAR_PTR,
+    /* A genuinely void expression -- a call whose descriptor return type
+       is STDROT_NONE, known with total certainty to produce no value.
+       Deliberately its own VarType, distinct from NONE, for exactly the
+       reason VAR_PTR (above) is distinct from NONE: NONE means "I do not
+       know what this expression returns" (epistemology), VAR_VOID means
+       "I know precisely what it returns: nothing" (semantics). Those are
+       not the same claim, and collapsing them into one sentinel meant
+       every "type == NONE, fail open" shortcut in this analyzer also
+       silently waved through an ACTUALLY KNOWN void expression wherever
+       one was used as a value -- `rizz x = yapping("hi");` type-checked,
+       because `yapping`'s return type read as NONE, and NONE always
+       means "can't tell, don't block it." A void-typed expression should
+       be rejected everywhere a real value is required, with the same
+       confidence any other declared type mismatch is rejected -- not
+       waved through because the checker mistook "certainly nothing" for
+       "unknown." check_type_compatibility_ex() treats VAR_VOID as
+       compatible with nothing (not even itself, since there's no context
+       where consuming "no value" as a value is ever correct). */
+    VAR_VOID,
     NONE,
 } VarType;
 
@@ -178,6 +218,22 @@ typedef struct
        the comment on handle_return_statement's VAR_STRUCT case. */
     String struct_name;
     String enum_name; /* enum tag, set when type == VAR_ENUM */
+    /* Set when type == VAR_STRING: true iff value.strvalue.data is a
+       heap buffer this ReturnValue is responsible for freeing once
+       consumed. Two independent sources set it true, both meaning the
+       same thing ("this specific buffer is freshly materialized and
+       nothing else references it"): a native call, via the owns_string
+       field of the NativeResult (stdrot.h) marshal_native_return_value()
+       consumed to populate this slot (see execute_native_call()'s own
+       comment for when that's true); and, since round 23, a Brainrot-
+       defined function's own `bussin "some string";` return statement
+       (handle_return_statement()'s VAR_STRING case), whose evaluate_
+       expression_string() result is always an independently safe_
+       strdup'd copy no one else holds. False for a native result that
+       doesn't own its string (a literal, a live variable's own backing
+       storage the ABI boundary is only borrowing), matching the
+       existing, deliberately conservative default. */
+    bool owns_strvalue;
 } ReturnValue;
 
 /* Symbol table structure */
@@ -502,7 +558,7 @@ CaseNode *create_case_node(ASTNode *value, ASTNode *statements);
 CaseNode *create_default_case_node(ASTNode *statements);
 CaseNode *append_case_list(CaseNode *list, CaseNode *case_node);
 ASTNode *create_break_node(void);
-ASTNode *create_default_node(VarType var_type);
+ASTNode *create_default_node(VarType var_type, int pointer_level);
 ASTNode *create_return_node(ASTNode *expr);
 ExpressionList *create_expression_list(ASTNode *expr);
 ExpressionList *append_expression_list(ExpressionList *list, ASTNode *expr);
@@ -593,14 +649,15 @@ ASTNode *create_function_def_node_enum(String name, String enum_name,
                                        int pointer_level, Parameter *params,
                                        ASTNode *body);
 void handle_return_statement(ASTNode *expr);
-/* Frees current_return_value's struct blob/tag (see handle_return_statement's
-   VAR_STRUCT case) if one is pending and unconsumed, and clears the slot.
-   Idempotent -- safe to call whether or not there's anything to free. Must
-   be called by whichever consumes or discards a struct-returning call's
-   result: interpreter_visit_declaration's struct_init_expr handling,
+/* Frees current_return_value's struct blob/tag or owned VAR_STRING buffer
+   (see handle_return_statement's VAR_STRUCT/VAR_STRING cases) if one is
+   pending and unconsumed, and clears the slot. Idempotent -- safe to call
+   whether or not there's anything to free. Must be called by whichever
+   consumes or discards a struct- or owned-string-returning call's result:
+   interpreter_visit_declaration's struct_init_expr handling,
    execute_function_call (for a leftover from a previous call), and any
-   context that gets a struct return but has nowhere to put it. */
-void free_pending_struct_return_value(void);
+   context that gets such a return but has nowhere to put it. */
+void free_pending_return_value(void);
 void *handle_binary_operation(ASTNode *node);
 void free_function_table(void);
 void free_static_variable_map(void);

@@ -1,0 +1,18 @@
+🚽 Test case: round-19 review finding #1 -- VAR_VOID existing (round 18)
+🚽 didn't mean every value-consuming context actually rejected it.
+🚽 `yapping("hi")` (a TYPED native whose descriptor return type is
+🚽 STDROT_NONE) statically resolves to VAR_VOID, but validate_binary_
+🚽 operation()'s arithmetic-type check only ever treated VAR_STRING/
+🚽 VAR_BOOL as "clearly incompatible" -- everything else, including
+🚽 VAR_VOID, fell through to its `return true` default. infer_expression_
+🚽 type()'s NODE_OPERATION widening then promoted `yapping("hi") + 1` to
+🚽 plain VAR_INT (neither operand being VAR_DOUBLE/VAR_FLOAT), so the
+🚽 declaration below type-checked as int = int, laundering "known to
+🚽 produce nothing" into a real integer at the type-checking level. Now
+🚽 caught by require_value_expression() (semantic_analyzer.c), called for
+🚽 both operands of every binary operation before any arithmetic-type
+🚽 logic runs.
+skibidi main {
+    rizz x = yapping("hi") + 1;
+    bussin 0;
+}

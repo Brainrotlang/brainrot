@@ -1,0 +1,19 @@
+🚽 Test case: round-18 review finding #2, exhibit B -- get_native_call_
+🚽 static_type()'s identity-argument case (ast.c) must report the ABI
+🚽 type a native argument actually marshals as, not the plain source-
+🚽 level type get_expression_type() reports. A bare char literal ('a')
+🚽 marshals as STDROT_CHAR (ast_expr_to_stdrot_value(), stdrot.c) --
+🚽 unnarrowed, since it isn't one of the node shapes stdrot_char_narrows_
+🚽 to_int() (stdrot.h) says narrow to int -- so identity('a') statically
+🚽 resolves to VAR_CHAR. maxxing() of that must therefore report
+🚽 sizeof(char) == 1, not sizeof(int) == 4: confirmed via a temporary A/B
+🚽 test (reverting the identity case back to plain get_expression_type())
+🚽 that the pre-fix code silently reported 4 here instead of erroring or
+🚽 reporting 1 -- source type (NODE_CHAR -> VAR_INT, get_expression_
+🚽 type()'s own deliberately different rule) leaking through where the
+🚽 ABI type was required.
+skibidi main {
+    rizz n = maxxing(identity('a'));
+    yapping("%d", n);
+    bussin 0;
+}
