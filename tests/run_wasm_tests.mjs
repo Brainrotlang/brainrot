@@ -114,16 +114,19 @@ function stdinFor(example) {
   return hit ? hit[1] : "";
 }
 
-// wasm32 uses the ILP32 data model (long = 4 bytes) vs native's LP64
-// (long = 8 bytes), so sizeof(giga) genuinely differs — inherent to the
-// wasm32 target, not a bug in Brainrot's sizeof logic (see ast.c's use of
-// the real C sizeof(long)). These fixtures still run; they're just checked
-// against the wasm-correct value instead of native's, so a real regression
-// (wrong output, not just "still doesn't match native") still fails here.
+// wasm32 uses the ILP32 data model (long = 4 bytes, pointers = 4 bytes) vs
+// native's LP64 (long = 8 bytes, pointers = 8 bytes), so sizeof(giga) and
+// sizeof(a pointer) genuinely differ — inherent to the wasm32 target, not
+// a bug in Brainrot's sizeof logic (see ast.c's use of the real C
+// sizeof(long)/sizeof(uintptr_t)). These fixtures still run; they're just
+// checked against the wasm-correct value instead of native's, so a real
+// regression (wrong output, not just "still doesn't match native") still
+// fails here.
 // https://github.com/Brainrotlang/brainrot/issues/177
 const WASM_EXPECTED_OVERRIDES = {
   giga: "4\n4",
   giga_array: "1\n2\n3\n12",
+  native_sizeof_ptr_result: "4",
 };
 
 // Fixtures that call a tests/stdrot/*.c native (poke_int, peek_int,
