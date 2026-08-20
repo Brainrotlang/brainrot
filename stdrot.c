@@ -92,7 +92,6 @@ void baka(const String format, ...);
 void ragequit(int exit_code);
 void chill(unsigned int seconds);
 char slorp_char(char chr);
-String slorp_string(String string, size_t size);
 int slorp_int(int val);
 short slorp_short(short val);
 float slorp_float(float var);
@@ -171,8 +170,47 @@ static void *stdrot_lookup_symbol(const String symbol_name)
  * exporting one reserved-but-unimplemented capability refuses to load at
  * all, taking down every unrelated, fully-supported native alongside it,
  * for a call that might never even happen. */
+/* An intentionally generous upper bound on how many natives a single
+ * libstdrot.so could plausibly export -- this codebase ships roughly a
+ * dozen production natives plus another dozen or so test-only ones; four
+ * orders of magnitude more than that is not "a large but legitimate
+ * library," it's a corrupt or hostile StdrotAPI.count that would
+ * otherwise send validate_native_registry()'s loop below walking through
+ * arbitrary address space one StdrotEntry pointer at a time. */
+#define STDROT_MAX_PLAUSIBLE_FUNCTION_COUNT 4096
+
 static void validate_native_registry(void)
 {
+    /* Validate the table itself before ever indexing into it --
+       stdrot_get_api_v2() (registry.c) is trusted to return a StdrotAPI
+       shaped the way this header currently declares, but "the ABI is
+       versioned" only means the STRUCT LAYOUT is trustworthy, not that
+       every possible bit pattern inside it is coherent. A negative
+       count would make the loop below execute zero times, silently
+       accepting a nonsensical table as if it legitimately had no
+       exports; a positive count paired with a NULL functions pointer,
+       or an implausibly large count (a corrupt or hostile library,
+       intentionally or not), would walk this loop into a NULL
+       dereference or arbitrary out-of-bounds memory well before any
+       individual entry's own fields are ever examined. */
+    if (function_count < 0 ||
+        function_count > STDROT_MAX_PLAUSIBLE_FUNCTION_COUNT)
+    {
+        fprintf(stderr,
+                "stdrot: registry function_count (%d) is not a plausible "
+                "value (expected 0 <= count <= %d)\n",
+                function_count, STDROT_MAX_PLAUSIBLE_FUNCTION_COUNT);
+        exit(1);
+    }
+    if (function_count > 0 && !functions)
+    {
+        fprintf(stderr,
+                "stdrot: registry function_count (%d) is > 0 but "
+                "functions is NULL\n",
+                function_count);
+        exit(1);
+    }
+
     for (int i = 0; i < function_count; i++)
     {
         const StdrotEntry *entry = functions[i];
@@ -1445,23 +1483,44 @@ NativeResult execute_native_call(const String func_name, ArgumentList *args)
             : NULL;
     enforce_return_type(func_name, &result, entry, identity_arg);
 
-    /* Materialize an escaping string result BEFORE releasing argument
-     * scratch below, while any buffer it might alias is still valid.
-     * STDROT_ANY/STDROT_EXPORT_SIG_IDENTITY (e.g. a plausible `identity`
-     * native: `return args[0];`) can hand back the SAME StdrotValue --
-     * same .val.str.data pointer -- that was just marshalled as this
-     * call's own argument. That pointer is exactly one of
-     * owned_string_bufs[]: a nested call's result (`identity(legacy_
-     * string())`) is marshalled by ast_expr_to_stdrot_value() into a
-     * freshly allocated buffer, tracked here so it gets freed once this
-     * call is done with it -- but if the native's result aliases that
-     * same buffer, "done with it" isn't true anymore: the cleanup loop
-     * right below would free the exact memory `result` is about to be
-     * returned pointing at, and the caller (marshal_native_return_value()/
-     * handle_function_call(), ast.c) would then copy from already-freed
-     * memory. A copy here breaks the alias cleanly: the cleanup loop
-     * frees the original owned buffer as it always did, and `result`
-     * now points at independent memory nothing else references.
+    /* Materialize EVERY STDROT_STRING result BEFORE releasing argument
+     * scratch below, unconditionally -- not just the ones this function
+     * can prove alias a specific tracked scratch buffer. The public
+     * contract this ABI documents (STDROT_STRING's own comment,
+     * stdrot_api.h) is "the adapter deep-copies the returned string
+     * immediately after the call, before releasing any argument-owned
+     * scratch, so a native may safely return a borrowed/aliased buffer
+     * including one of its own arguments" -- that promise has to hold
+     * for ANY argument-owned buffer a result might alias, not just the
+     * ones this function happens to recognize.
+     *
+     * The previous version only checked owned_string_bufs[] (a nested
+     * native call's STDROT_STRING result, marshalled fresh for this
+     * call's own argument) -- but coerce_arg_to_param()'s STDROT_CSTRING
+     * conversion allocates an ADDITIONAL, independently-tracked buffer
+     * per argument (owned_cstring_bufs[]), and nothing stopped a
+     * (legitimately typed, STDROT_CSTRING-parameter) native from handing
+     * back a STDROT_STRING result built by pointing straight at that
+     * cstring buffer (e.g. `out.val.str.data = (char *)args[0].val.
+     * cstr;`). That alias was never checked, so it sailed through
+     * unmaterialized, got freed by the owned_cstring_bufs[] cleanup loop
+     * below like any other argument scratch, and the caller (marshal_
+     * native_return_value()/handle_function_call(), ast.c) copied from
+     * already-freed memory -- the exact same class of use-after-free the
+     * original owned_string_bufs[]-only check existed to close, just
+     * through the OTHER scratch array.
+     *
+     * Rather than extending the alias search to also check owned_
+     * cstring_bufs[] (and being one undiscovered scratch-buffer type away
+     * from the next version of this exact bug), copy every STDROT_STRING
+     * result unconditionally: whichever buffer it happens to point at --
+     * argument-owned scratch of either kind, a string literal, a live
+     * Brainrot variable's own backing storage -- the copy is independent
+     * of all of them, so it no longer matters which one (if any) `result`
+     * was aliasing. A copy of a buffer that wasn't scratch at all (a
+     * literal, a live variable) is simply an extra copy, not a
+     * correctness problem -- the original is never touched by anything
+     * this function frees.
      *
      * That copy still needs an owner, though -- owns_string, on the
      * NativeResult this function returns (stdrot.h), is how this
@@ -1471,41 +1530,17 @@ NativeResult execute_native_call(const String func_name, ArgumentList *args)
      * up holding this result next, and ultimately to handle_function_
      * call()'s VAR_STRING case (ast.c), which frees current_return_
      * value.value.strvalue.data right after copying it into the box the
-     * caller actually consumes -- but ONLY when this flag says that
-     * source is safe to free (a native's result can otherwise alias a
-     * string literal or a live Brainrot variable's own backing storage,
-     * e.g. slorp's deprecated identity pass-through, and unconditionally
-     * freeing THOSE would corrupt still-live state -- see the same
-     * reasoning documented on that VAR_STRING case for why it never
-     * freed its source unconditionally in the first place). Every other
-     * native result leaves this false, matching that existing,
-     * deliberately-conservative behavior exactly.
-     *
-     * This is a local, scoped to exactly this invocation's own result --
-     * not a global -- precisely because evaluating this call's own
-     * arguments (ast_expr_to_stdrot_value(), above) can recursively
-     * invoke execute_native_call() again for a nested call, each
-     * producing its own independent NativeResult. A shared global set by
-     * the innermost nested call would still read as true here even when
-     * *this* call's own result isn't a string at all (the check below is
-     * gated on `result.type == STDROT_STRING`, so a non-string result
-     * would never touch a global to reset it) -- silently making an
-     * unrelated caller free whatever this result's non-string union
-     * member happens to contain, reinterpreted as a pointer. See
+     * caller actually consumes. This is a local, scoped to exactly this
+     * invocation's own result -- not a global -- precisely because
+     * evaluating this call's own arguments (ast_expr_to_stdrot_value(),
+     * above) can recursively invoke execute_native_call() again for a
+     * nested call, each producing its own independent NativeResult. See
      * NativeResult's own comment (stdrot.h) for the full reasoning. */
     bool owns_string = false;
     if (result.type == STDROT_STRING)
     {
-        for (int i = 0; i < arg_count; i++)
-        {
-            if (owned_string_bufs[i] &&
-                owned_string_bufs[i] == result.val.str.data)
-            {
-                result.val.str = safe_strdup(&result.val.str);
-                owns_string = true;
-                break;
-            }
-        }
+        result.val.str = safe_strdup(&result.val.str);
+        owns_string = true;
     }
 
     /* Reached: entry->fn() returned normally rather than exit()ing, so
@@ -1730,14 +1765,6 @@ char slorp_char(char chr)
     String s = {.data = "slorp_char", .len = sizeof("slorp_char") - 1};
     char (*fn)(char) = (char (*)(char))stdrot_lookup_symbol(s);
     return fn ? fn(chr) : chr;
-}
-
-String slorp_string(String string, size_t size)
-{
-    String s = {.data = "slorp_string", .len = sizeof("slorp_string") - 1};
-    String (*fn)(String, size_t) =
-        (String(*)(String, size_t))stdrot_lookup_symbol(s);
-    return fn ? fn(string, size) : string;
 }
 
 int slorp_int(int val)

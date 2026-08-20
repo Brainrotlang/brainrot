@@ -70,18 +70,22 @@ String evaluate_expression_string(ASTNode *node);
  * slorp(b)`) peeks *both* operands (get_expression_type on each, to decide
  * the promoted type) before either is consumed -- so this can't be a single
  * pending slot, or peeking the second call would evict the first call's
- * still-unconsumed entry and force a spurious re-invocation. A small table
- * of independently-tracked entries, keyed by node identity, avoids that.
- * Expressions nest nowhere near NATIVE_CALL_CACHE_SIZE simultaneously-
- * pending native calls deep in practice; if that bound is ever hit,
- * native_call_peek() reports an unknown (STDROT_NONE) type rather than
- * invoking without a slot to cache the result in -- invoking there with
- * nowhere to store the result would make the guaranteed-single-invocation
- * promise from native_call_consume() a lie for whichever call got evicted.
- * The call is still invoked exactly once, for real, whenever it's actually
- * consumed; overflow only degrades type inference for that one call, never
- * invocation count. */
-#define NATIVE_CALL_CACHE_SIZE 16
+ * still-unconsumed entry and force a spurious re-invocation. A table of
+ * independently-tracked entries, keyed by node identity, avoids that --
+ * grown dynamically (native_call_cache_ensure_capacity(), below) rather
+ * than a fixed-size array. A fixed cap here is not a harmless
+ * implementation detail: it would mean the type this pipeline reports
+ * for a legacy/untyped native call (see get_native_call_static_type()'s
+ * own comment for why a TYPED native no longer needs this cache at all)
+ * depends on how many OTHER pending type-probes happen to already be in
+ * flight when it's asked -- the same expression's static type changing
+ * depending on unrelated cache occupancy is exactly the kind of
+ * capacity-dependent language semantics this pipeline must never have.
+ * Growth failure (allocator exhaustion) is the one case still reported
+ * as an unknown (STDROT_NONE) type rather than crashing -- indistinguishable
+ * from any other allocation failure elsewhere in this interpreter, not a
+ * deliberately-designed capacity limit. */
+#define NATIVE_CALL_CACHE_INITIAL_CAPACITY 16
 typedef struct
 {
     ASTNode *node;
@@ -94,12 +98,65 @@ typedef struct
     NativeResult result;
     bool valid;
 } NativeCallCacheEntry;
-static NativeCallCacheEntry native_call_cache[NATIVE_CALL_CACHE_SIZE];
+static NativeCallCacheEntry *native_call_cache = NULL;
+static int native_call_cache_capacity = 0;
+static bool native_call_cache_cleanup_registered = false;
+
+/* Frees native_call_cache itself (the entries it holds need no per-entry
+ * cleanup -- a NativeResult's own owned string, if any, is either already
+ * consumed by the time this runs or was orphaned earlier for reasons
+ * unrelated to this array's own lifetime, same as any other interpreter
+ * state still standing at process exit). Registered via atexit() -- see
+ * native_call_cache_grow() -- the same lazy-registration pattern stdrot.c's
+ * free_pending_native_call_args() already uses for its own atexit hook,
+ * since this array (unlike the old fixed-size one it replaced) is now a
+ * genuine heap allocation that would otherwise leak. */
+static void free_native_call_cache(void)
+{
+    SAFE_FREE(native_call_cache);
+    native_call_cache_capacity = 0;
+}
+
+/* Doubles native_call_cache's capacity (or allocates the initial one),
+ * preserving every existing entry -- SAFE_MALLOC_ARRAY() zero-initializes
+ * the new buffer, so every newly added slot's `valid` already reads
+ * false with no separate init loop needed. Returns false (leaving the
+ * existing cache, if any, untouched and fully usable) only on genuine
+ * allocation failure -- the sole case native_call_peek() below still
+ * reports STDROT_NONE for, same as any other out-of-memory condition in
+ * this interpreter. */
+static bool native_call_cache_grow(void)
+{
+    int new_capacity = native_call_cache_capacity == 0
+                           ? NATIVE_CALL_CACHE_INITIAL_CAPACITY
+                           : native_call_cache_capacity * 2;
+    NativeCallCacheEntry *grown =
+        SAFE_MALLOC_ARRAY(NativeCallCacheEntry, new_capacity);
+    if (!grown)
+        return false;
+
+    if (native_call_cache_capacity > 0)
+    {
+        memcpy(grown, native_call_cache,
+               sizeof(NativeCallCacheEntry) *
+                   (size_t)native_call_cache_capacity);
+        SAFE_FREE(native_call_cache);
+    }
+    native_call_cache = grown;
+    native_call_cache_capacity = new_capacity;
+
+    if (!native_call_cache_cleanup_registered)
+    {
+        atexit(free_native_call_cache);
+        native_call_cache_cleanup_registered = true;
+    }
+    return true;
+}
 
 static NativeResult native_call_peek(ASTNode *node)
 {
     int free_slot = -1;
-    for (int i = 0; i < NATIVE_CALL_CACHE_SIZE; i++)
+    for (int i = 0; i < native_call_cache_capacity; i++)
     {
         if (native_call_cache[i].valid && native_call_cache[i].node == node)
         {
@@ -113,7 +170,11 @@ static NativeResult native_call_peek(ASTNode *node)
 
     if (free_slot < 0)
     {
-        return (NativeResult){{STDROT_NONE, {0}}, false};
+        free_slot = native_call_cache_capacity;
+        if (!native_call_cache_grow())
+        {
+            return (NativeResult){{STDROT_NONE, {0}}, false};
+        }
     }
 
     NativeResult result = execute_native_call(
@@ -126,7 +187,7 @@ static NativeResult native_call_peek(ASTNode *node)
 
 static NativeResult native_call_consume(ASTNode *node)
 {
-    for (int i = 0; i < NATIVE_CALL_CACHE_SIZE; i++)
+    for (int i = 0; i < native_call_cache_capacity; i++)
     {
         if (native_call_cache[i].valid && native_call_cache[i].node == node)
         {
@@ -1355,6 +1416,11 @@ int get_expression_pointer_level(ASTNode *node)
     }
 }
 
+/* Forward declaration: get_expression_type()'s own NODE_FUNC_CALL case
+   calls this (defined below it, since it in turn calls get_expression_
+   type() for the identity-arg case -- see its own comment). */
+static VarType get_native_call_static_type(ASTNode *node);
+
 VarType get_expression_type(ASTNode *node)
 {
     if (!node)
@@ -1459,6 +1525,25 @@ VarType get_expression_type(ASTNode *node)
         const String func_name = node->data.func_call.function_name;
         if (is_builtin_function(func_name))
         {
+            /* get_native_call_static_type() (below) answers this from
+               the registered StdrotEntry alone, no execution, for every
+               TYPED native (a fixed return_type, or an identity-
+               polymorphic return_like_arg) -- Phase 2 (issue #205) made
+               that statically knowable, so this no longer has to run
+               arbitrary native C code merely to learn what type a call
+               produces. Only a genuine legacy/untyped STDROT_EXPORT()
+               export (return_type.type == STDROT_ANY, no return_like_arg)
+               falls back to native_call_peek()'s execute-to-discover
+               behavior -- unavoidable there since nothing describes its
+               real return type ahead of time, and safe here specifically
+               because THIS caller (unlike handle_sizeof(), which uses
+               get_native_call_static_type() directly and never falls
+               back) always goes on to actually evaluate the call for its
+               value regardless of what this type-probe reports. */
+            VarType static_type = get_native_call_static_type(node);
+            if (static_type != NONE)
+                return static_type;
+
             NativeResult result = native_call_peek(node);
             return stdrot_type_to_vartype(result.value.type);
         }
@@ -1483,6 +1568,65 @@ VarType get_expression_type(ASTNode *node)
         yyerror("Unknown node type in get_expression_type");
         return NONE;
     }
+}
+
+/* Purely static return type for a call to a builtin (stdrot) native,
+ * using only its registered StdrotEntry -- NEVER executing the native.
+ * The runtime-side counterpart of semantic_analyzer.c's own static
+ * native-call type inference (infer_expression_type()'s NODE_FUNC_CALL
+ * case): Phase 2 (issue #205) gave every native a real, registered
+ * signature, so the type a TYPED native's call produces is knowable
+ * ahead of time from that descriptor alone, the same way a Brainrot-
+ * defined function's return type already was before this file ever
+ * needed to execute anything to answer that question.
+ *
+ * Returns NONE when the type genuinely cannot be known without running
+ * the native -- a legacy/untyped STDROT_EXPORT() export (return_type.type
+ * == STDROT_ANY, return_like_arg == -1, "signature unknown" by design,
+ * see StdrotEntry's own comment, stdrot_api.h). get_expression_type()'s
+ * own NODE_FUNC_CALL case still falls back to native_call_peek() (which
+ * actually executes) for exactly that remaining case -- safe there
+ * specifically because that caller always goes on to evaluate the call
+ * for its value regardless. handle_sizeof() (this file) calls this
+ * function directly instead, and does NOT fall back to executing
+ * anything when it returns NONE: sizeof's operand must never be
+ * evaluated, full stop, and "the type is only knowable by running the
+ * native" is exactly the situation where honoring that contract means
+ * reporting the size as unknowable rather than quietly violating it. */
+static VarType get_native_call_static_type(ASTNode *node)
+{
+    const String func_name = node->data.func_call.function_name;
+    const StdrotEntry *entry = get_native_function(func_name);
+    if (!entry)
+        return NONE;
+
+    if (entry->return_like_arg >= 0)
+    {
+        /* Identity-polymorphic (slorp<T>(T) -> T, STDROT_EXPORT_SIG_
+           IDENTITY()): the call's real type is whatever the referenced
+           argument's own type turns out to be -- return_like_arg is only
+           ever validated (validate_native_registry(), stdrot.c) to name
+           a STDROT_ANY parameter, so there is no fixed StdrotType to read
+           off return_type here at all. Delegating to get_expression_
+           type() on the argument expression itself is still execution-
+           free for this same reason recursively: a nested builtin call
+           there hits this same static-first path, and every other
+           expression shape get_expression_type() knows about (literals,
+           identifiers, arithmetic, ...) never executes anything either. */
+        int idx = 0;
+        for (ArgumentList *a = node->data.func_call.arguments; a;
+             a = a->next, idx++)
+        {
+            if (idx == entry->return_like_arg)
+                return a->expr ? get_expression_type(a->expr) : NONE;
+        }
+        return NONE;
+    }
+
+    if (entry->return_type.type == STDROT_ANY)
+        return NONE;
+
+    return stdrot_type_to_vartype(entry->return_type.type);
 }
 
 void *handle_binary_operation(ASTNode *node)
@@ -2689,6 +2833,39 @@ size_t handle_sizeof(ASTNode *node)
     }
     else
     {
+        /* sizeof's operand is never evaluated -- that's its defining
+           property, matching C. get_expression_type() alone doesn't
+           honor that for a bare native call: its own NODE_FUNC_CALL
+           case falls back to actually invoking a legacy/untyped native
+           to learn a type this function has no way to know is only
+           needed for a byte count, not a value. A direct builtin call
+           as sizeof's operand is checked here, via get_native_call_
+           static_type() (never executes anything, by construction --
+           see its own comment), instead of going through get_expression_
+           type() at all: NONE here means "genuinely unknowable without
+           running it," which for sizeof means reject, not "fall back to
+           running it anyway." A native call nested inside a larger
+           expression (`maxxing(a + slorp(x))`) still reaches get_
+           expression_type() below, same as before -- narrowing this
+           check to the direct-operand shape covers the case Phase 2
+           actually made staticaly answerable (a bare native call as the
+           whole operand) without a full non-executing reimplementation
+           of every expression shape get_expression_type() already
+           handles. */
+        if (expr->type == NODE_FUNC_CALL &&
+            is_builtin_function(expr->data.func_call.function_name))
+        {
+            VarType static_type = get_native_call_static_type(expr);
+            if (static_type == NONE)
+            {
+                yyerror("maxxing (sizeof) of a native call whose return "
+                        "type is not statically known -- sizeof's operand "
+                        "is never evaluated, so this native cannot be "
+                        "invoked to discover it");
+                return 0;
+            }
+        }
+
         // For non-identifiers (like literals), use get_expression_type
         VarType type = get_expression_type(expr);
         switch (type)

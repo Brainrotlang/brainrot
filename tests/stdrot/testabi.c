@@ -101,6 +101,29 @@ static StdrotValue stdrot_legacy_int(StdrotValue *args, int argc)
 
 STDROT_EXPORT("legacy_int", stdrot_legacy_int);
 
+/* Round-17 review, finding #3 -- a second legacy/untyped export, this
+ * one returning a fractional STDROT_DOUBLE, reused alongside legacy_int()
+ * to build a chain of MORE than NATIVE_CALL_CACHE_INITIAL_CAPACITY (16)
+ * simultaneously-pending native-call type-probes in one expression
+ * (get_expression_type()'s NODE_OPERATION case recursively probes every
+ * leaf's type before any of them are evaluated for their value). Proves
+ * the native-call memo cache (ast.c) growing dynamically, instead of
+ * silently reporting STDROT_NONE once a fixed-size cap filled up, means
+ * this native's fractional value survives correctly regardless of how
+ * many OTHER pending type-probes happen to be in flight at the same
+ * time -- the whole expression's promoted type (and therefore its
+ * computed value) must not depend on cache occupancy. */
+static StdrotValue stdrot_legacy_half(StdrotValue *args, int argc)
+{
+    (void)args;
+    (void)argc;
+    StdrotValue out = {STDROT_DOUBLE, {0}};
+    out.val.d = 0.5;
+    return out;
+}
+
+STDROT_EXPORT("legacy_half", stdrot_legacy_half);
+
 /* Legacy/untyped export whose actual runtime result is a STDROT_STRING
  * -- not numerically coercible at all, so a numeric evaluator consuming
  * this must reject it outright rather than reinterpret the String*
@@ -201,13 +224,15 @@ STDROT_EXPORT_SIG("takes_cstring", stdrot_takes_cstring,
                   1, false);
 
 /* Takes a plain STDROT_CHAR parameter, returns it widened to int --
- * exercises the stdrot_char_narrows_to_int() fix (stdrot.h): a char
- * ARRAY-ACCESS argument (`buf[0]`) is source-level VAR_CHAR, but both
- * ast_expr_to_stdrot_value() and infer_expression_abi_type() must agree
- * it lowers to (STDROT_)INT, not (STDROT_)CHAR, for this call --
- * declared STDROT_CHAR -- to correctly be REJECTED (a genuine type
- * mismatch, argument is INT not CHAR), while a bare char identifier
- * (`c`) is correctly ACCEPTED. */
+ * exercises stdrot_char_narrows_to_int() (stdrot.h): a char ARRAY-ACCESS
+ * argument (`buf[0]`) is an ordinary char lvalue in C, the same as a
+ * bare char identifier -- both ast_expr_to_stdrot_value() and
+ * infer_expression_abi_type() must agree it stays (STDROT_)CHAR for
+ * this call -- declared STDROT_CHAR -- to correctly be ACCEPTED, the
+ * same as a bare char identifier (`c`). Only a genuinely promoting
+ * shape (unary arithmetic negation, binary arithmetic/comparison, the
+ * variadic tail of a variadic native) narrows to int -- see that
+ * function's own per-case reasoning for the full rule. */
 static StdrotValue stdrot_takes_char(StdrotValue *args, int argc)
 {
     (void)argc;
@@ -263,3 +288,35 @@ static StdrotValue stdrot_legacy_type_probe(StdrotValue *args, int argc)
 }
 
 STDROT_EXPORT("legacy_type_probe", stdrot_legacy_type_probe);
+
+/* Round-17 review, finding #1 -- the exact scenario from the review:
+ * a typed native declaring a STDROT_CSTRING parameter and a STDROT_STRING
+ * return, whose C implementation points its STDROT_STRING result
+ * straight at the SAME buffer coerce_arg_to_param() (stdrot.c) converted
+ * its own argument into. That CSTRING conversion buffer is tracked in
+ * owned_cstring_bufs[], a completely separate array from owned_string_
+ * bufs[] (nested-native-call STDROT_STRING results) -- execute_native_
+ * call()'s materialize-before-free logic previously only ever checked
+ * the latter, so a result aliasing the FORMER sailed through
+ * unmaterialized, got freed by the owned_cstring_bufs[] cleanup loop
+ * like any other argument scratch, and the caller copied from already-
+ * freed memory. Exists specifically to prove execute_native_call()'s
+ * fix (unconditional materialization of every STDROT_STRING result,
+ * regardless of which scratch array -- if any -- it happens to alias)
+ * actually closes this, not just the one alias source the previous
+ * round's fix recognized. */
+static StdrotValue stdrot_cstring_as_string(StdrotValue *args, int argc)
+{
+    (void)argc;
+    StdrotValue out = {STDROT_STRING, {0}};
+    out.val.str.data = (char *)args[0].val.cstr;
+    out.val.str.len = strlen(args[0].val.cstr);
+    return out;
+}
+
+static const StdrotParam cstring_as_string_params[] = {
+    {STDROT_CSTRING, NULL, 0},
+};
+STDROT_EXPORT_SIG("cstring_as_string", stdrot_cstring_as_string,
+                  ((StdrotParam){STDROT_STRING, NULL, 0}),
+                  cstring_as_string_params, 1, 1, false);

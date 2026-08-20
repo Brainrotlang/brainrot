@@ -1,0 +1,21 @@
+🚽 Test case: round-17 review finding #1 -- execute_native_call()'s
+🚽 string-return materialization previously only recognized an alias into
+🚽 owned_string_bufs[] (a nested native call's STDROT_STRING result,
+🚽 marshalled fresh for this call's own argument). coerce_arg_to_param()'s
+🚽 STDROT_CSTRING conversion allocates an ADDITIONAL, independently-tracked
+🚽 buffer per argument (owned_cstring_bufs[]) that was never checked --
+🚽 cstring_as_string() (a typed native declaring STDROT_CSTRING param,
+🚽 STDROT_STRING return) points its result straight at that CSTRING
+🚽 conversion buffer, which the owned_cstring_bufs[] cleanup loop then
+🚽 freed like any other argument scratch, before the caller copied from
+🚽 it. Confirmed via a temporary A/B test (reverting to the old owned_
+🚽 string_bufs[]-only alias check) that this crashes under ASan with the
+🚽 exact free-then-read sequence through safe_strdup() the review
+🚽 predicted; the fix (unconditionally materializing every STDROT_STRING
+🚽 result, regardless of which scratch array -- if any -- it aliases)
+🚽 closes it.
+skibidi main {
+    rant s = cstring_as_string("hello");
+    yapping("%s", s);
+    bussin 0;
+}

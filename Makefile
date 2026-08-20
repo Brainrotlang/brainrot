@@ -126,6 +126,21 @@ $(TEST_STDROT_LIB): $(STDROT_SRCS) $(TEST_STDROT_SRCS)
 $(BADNATIVES_DIR)/%.so: $(BADNATIVES_DIR)/%.c $(STDROT_DIR)/registry.c
 	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $(STDROT_DIR)/registry.c $< -lm
 
+# Two exceptions to the pattern rule above (GNU Make prefers an explicit
+# target rule over a pattern rule for the same file, regardless of
+# ordering): these implement stdrot_get_api_v2() DIRECTLY themselves,
+# returning a hand-crafted malformed StdrotAPI table, rather than going
+# through registry.c's normal linker-section self-registration --
+# linking registry.c alongside them would collide (both would define
+# stdrot_get_api_v2()). See their own file comments.
+$(BADNATIVES_DIR)/bad_api_table_negative_count.so: \
+	$(BADNATIVES_DIR)/bad_api_table_negative_count.c
+	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $<
+
+$(BADNATIVES_DIR)/bad_api_table_null_functions.so: \
+	$(BADNATIVES_DIR)/bad_api_table_null_functions.c
+	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $<
+
 .PHONY: badnatives
 badnatives: $(BADNATIVES_LIBS)
 	@echo "tests/badnatives/*.so (malformed registries) compiled."

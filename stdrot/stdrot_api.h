@@ -214,10 +214,14 @@ typedef struct
 typedef StdrotValue (*StdrotFn)(StdrotValue *args, int argc);
 
 /* ── Function registry entry ─────────────────────────────────────────────── *
- * libstdrot.so MUST export two symbols:
- *
- *   extern StdrotEntry stdrot_exports[];
- *   extern int         stdrot_export_count;
+ * libstdrot.so MUST export one versioned entrypoint function --
+ * stdrot_get_api_v2() (see STDROT_ABI_VERSION's own comment below, and
+ * registry.c) -- which returns a StdrotAPI built from every StdrotEntry
+ * self-registered via STDROT_EXPORT_SIG()/STDROT_EXPORT_SIG_IDENTITY()/
+ * STDROT_EXPORT_SIG_VARIADIC()/STDROT_EXPORT() below. There is no bare
+ * `stdrot_exports[]`/`stdrot_export_count` pair to export directly --
+ * that was this ABI's very first shape, before entries were even
+ * self-registered into a linker section, let alone versioned.
  *
  * fn != NULL  →  generic function, called with pre-evaluated StdrotValue args
  *

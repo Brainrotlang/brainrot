@@ -1,0 +1,20 @@
+🚽 Test case: round-17 review finding #2 -- maxxing (sizeof)'s operand
+🚽 must never be evaluated, matching C. Before this fix, a bare native
+🚽 call as sizeof's direct operand reached get_expression_type(), whose
+🚽 NODE_FUNC_CALL case unconditionally invoked native_call_peek() (which
+🚽 actually calls the native) to discover its type -- even though Phase 2
+🚽 (issue #205) already made a TYPED native's return type statically
+🚽 knowable from its own StdrotEntry, with no execution required.
+🚽 get_native_call_static_type() (ast.c) now answers this from the
+🚽 descriptor alone; proven here by reading stdin exactly once, from the
+🚽 SECOND (real, statement-position) slorp(x) call -- if maxxing(slorp(x))
+🚽 had actually executed slorp, it would have consumed the one line of
+🚽 stdin this test provides, leaving nothing for the second call to read.
+skibidi main {
+    rizz x = 0;
+    rizz n = maxxing(slorp(x));
+    yapping("%d", n);
+    rizz y = slorp(x);
+    yapping("%d", y);
+    bussin 0;
+}

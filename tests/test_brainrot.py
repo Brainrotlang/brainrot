@@ -39,7 +39,7 @@ def test_brainrot_examples(example, expected_output):
         command = f"echo 'hello' | {brainrot_path} {example_file_path}"
     elif example == "native_char_param_scalar":
         command = f"echo 'c' | {brainrot_path} {example_file_path}"
-    elif example == "native_call_self_init":
+    elif example in ("native_call_self_init", "native_sizeof_no_execution"):
         command = f"echo '42' | {brainrot_path} {example_file_path}"
     elif example == "native_call_loop":
         command = f"printf '1\\n2\\n3\\n' | {brainrot_path} {example_file_path}"
@@ -104,6 +104,10 @@ REGISTRY_REJECTION_CASES = [
      "return_type.type (999) is not a valid StdrotType"),
     ("invalid_param_type.so",
      "params[0].type (999) is not a valid StdrotType"),
+    ("bad_api_table_negative_count.so",
+     "registry function_count (-1) is not a plausible value"),
+    ("bad_api_table_null_functions.so",
+     "registry function_count (1) is > 0 but functions is NULL"),
 ]
 
 
