@@ -39,15 +39,16 @@ make test
 
 ### Running Memory Leak Tests
 
-Make `run_valgrind_tests.sh` executable:
+Memory leak tests are run using Valgrind against the non-sanitized binary (`brainrot-valgrind`):
 
 ```bash
-sudo chmod +x run_valgrind_tests.sh
+make valgrind
 ```
 
-Run:
+Alternatively, make `run_valgrind_tests.sh` executable and run it directly (defaults to `./brainrot-valgrind`):
 
 ```bash
+chmod +x run_valgrind_tests.sh
 ./run_valgrind_tests.sh
 ```
 

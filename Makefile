@@ -6,7 +6,9 @@ PYTHON := python3
 EMCC := emcc
 
 # Compiler and linker flags
-CFLAGS := -Wall -Wextra -Wpedantic -Werror -O2 -Wuninitialized -fsanitize=address,undefined -fno-omit-frame-pointer -g
+SANITIZER_FLAGS := -fsanitize=address,undefined
+CFLAGS := -Wall -Wextra -Wpedantic -Werror -O2 -Wuninitialized $(SANITIZER_FLAGS) -fno-omit-frame-pointer -g
+VALGRIND_CFLAGS := $(filter-out $(SANITIZER_FLAGS),$(CFLAGS))
 LDFLAGS := -lfl -lm -ldl -rdynamic
 SO_CFLAGS := -fPIC -shared
 
@@ -49,6 +51,7 @@ BADNATIVES_LIBS := $(BADNATIVES_SRCS:.c=.so)
 
 # Output files
 TARGET := brainrot
+VALGRIND_TARGET := brainrot-valgrind
 BISON_OUTPUT := lang.tab.c
 FLEX_OUTPUT := lex.yy.c
 
@@ -166,6 +169,11 @@ $(TARGET): $(ALL_SRCS) $(STDROT_LIB)
 	$(CC) $(CFLAGS) -o $@ $(ALL_SRCS) $(LDFLAGS)
 	@echo "Skibidi toilet: $(TARGET) compiled with max gyatt."
 
+# Valgrind executable build (built without ASan/UBSan for Valgrind compatibility)
+$(VALGRIND_TARGET): $(ALL_SRCS) $(STDROT_LIB)
+	$(CC) $(VALGRIND_CFLAGS) -o $@ $(ALL_SRCS) $(LDFLAGS)
+	@echo "brainrot-valgrind compiled without sanitizers."
+
 # WebAssembly build: stdrot sources go straight into the same binary
 # instead of a separate $(STDROT_LIB), so this does NOT depend on it.
 .PHONY: wasm
@@ -213,7 +221,7 @@ test: $(TARGET) $(TEST_STDROT_LIB) badnatives old-abi-sim
 # Clean build artifacts
 .PHONY: clean
 clean:
-	rm -f $(TARGET) $(STDROT_LIB) $(TEST_STDROT_LIB) $(GENERATED_SRCS) lang.tab.h
+	rm -f $(TARGET) $(VALGRIND_TARGET) $(STDROT_LIB) $(TEST_STDROT_LIB) $(GENERATED_SRCS) lang.tab.h
 	rm -f $(WASM_TARGET) $(WASM_JS)
 	rm -f tests/brainrot-test.wasm tests/brainrot-test.mjs
 	rm -f $(BADNATIVES_LIBS)
@@ -223,8 +231,8 @@ clean:
 
 # Run Valgrind on all .brainrot tests
 .PHONY: valgrind
-valgrind: $(TARGET) $(TEST_STDROT_LIB)
-	@STDROT_LIB_PATH=$(CURDIR)/$(TEST_STDROT_LIB) ./run_valgrind_tests.sh
+valgrind: $(VALGRIND_TARGET) $(TEST_STDROT_LIB)
+	@STDROT_LIB_PATH=$(CURDIR)/$(TEST_STDROT_LIB) ./run_valgrind_tests.sh ./$(VALGRIND_TARGET)
 	@echo "Valgrind check done. If anything was sus, it'll show up with a non-zero exit code. No cap."
 
 # Install target

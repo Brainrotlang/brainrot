@@ -70,6 +70,10 @@ static Interpreter *global_interpreter = NULL;
     EnumConstant *econst;
 }
 
+/* Free heap-allocated strings when bison discards symbols during parse error recovery */
+%destructor { SAFE_FREE($$.data); } <strval>
+%destructor { SAFE_FREE($$.name.data); } <declarator>
+
 /* Define token types */
 %token SKIBIDI RIZZ YAP BAKA MAIN BUSSIN FLEX CAP RANT
 %token PLUS MINUS TIMES DIVIDE MOD SEMICOLON COLON COMMA
@@ -268,13 +272,10 @@ struct_field
                (sizeof(uintptr_t)) doesn't depend on the pointee being
                complete yet.
 
-               Note: we deliberately don't YYABORT here. Aborting mid-way
-               through the still-open outer struct_def rule would strand
-               that rule's own pending IDENTIFIER token on the parser value
-               stack un-freed (this grammar has no %destructor entries), so
-               instead we record the error and let parsing finish normally;
-               main() checks struct_def_had_error after yyparse() and exits
-               the same way it does for a hard parse failure. */
+               Note: we deliberately don't YYABORT here. Finishing the outer
+               struct_def rule keeps struct_def_had_error and the partially
+               computed layout coherent; main() checks the flag after
+               yyparse() and exits as it does for a hard parse failure. */
             bool is_self = current_struct_def_name.data &&
                           strcmp($2.data, current_struct_def_name.data) == 0;
             if (is_self && $3.pointer_level == 0)
@@ -442,7 +443,8 @@ param_list
                 snprintf(msg, sizeof(msg),
                         "Parameter '%s' cannot have type void", $3.name.data);
                 yyerror(msg);
-                exit(1);
+                SAFE_FREE($3.name);
+                YYABORT;
             }
             $$ = create_parameter_ex($3.name, $2, $3.pointer_level, NULL, get_current_modifiers());
             SAFE_FREE($3.name);
@@ -455,7 +457,8 @@ param_list
                 snprintf(msg, sizeof(msg),
                         "Parameter '%s' cannot have type void", $5.name.data);
                 yyerror(msg);
-                exit(1);
+                SAFE_FREE($5.name);
+                YYABORT;
             }
             $$ = create_parameter_ex($5.name, $4, $5.pointer_level, $1, get_current_modifiers());
             SAFE_FREE($5.name);
@@ -604,6 +607,12 @@ type:
 declaration:
     optional_modifiers type declarator
         {
+            if ($2 == VAR_VOID && $3.pointer_level == 0)
+            {
+                yyerror("Cannot declare a variable with type void");
+                SAFE_FREE($3.name);
+                YYABORT;
+            }
             $$ = create_declaration_node_ex($3.name, create_default_node($2, $3.pointer_level), $3.pointer_level);
             SAFE_FREE($3.name);
         }

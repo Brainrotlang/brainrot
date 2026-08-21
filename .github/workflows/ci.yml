@@ -74,6 +74,7 @@ jobs:
       - name: Build Brainrot
         run: |
           make
+          make brainrot-valgrind
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
@@ -81,6 +82,7 @@ jobs:
           name: brainrot
           path: |
             brainrot
+            brainrot-valgrind
             libstdrot.so
 
   test:
@@ -98,7 +100,7 @@ jobs:
           path: .
 
       - name: Grant execute permissions to Brainrot
-        run: chmod +x brainrot
+        run: chmod +x brainrot brainrot-valgrind
 
       - name: Force Ubuntu archive mirror
         run: |
