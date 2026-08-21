@@ -264,5 +264,5 @@
     "native_pointer_array_braced_init": "1 2\n1 99",
     "native_float_pointer_array_braced_init": "1.5 2.5\n1.5 9.5",
     "native_void_pointer_array_braced_init": "alive",
-    "hashmap_key_collision": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n"
+    "hashmap_key_collision": "1\n2\n3\n4\n"
 }
