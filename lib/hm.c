@@ -138,7 +138,7 @@ void *hm_get(HashMap *hm, const void *key, size_t key_size)
         if (!node)
             return NULL; // Empty slot means key not found
 
-        if (key_equal(node->key, key, key_size))
+        if (node->key_size == key_size && key_equal(node->key, key, key_size))
         {
             return node->value;
         }
@@ -176,7 +176,7 @@ void hm_put(HashMap *hm, const void *key, size_t key_size, void *value,
     while (hm->nodes[index])
     {
         HashMapNode *node = hm->nodes[index];
-        if (key_equal(node->key, key, key_size))
+        if (node->key_size == key_size && key_equal(node->key, key, key_size))
         {
             // Update existing value
             void *new_value = safe_malloc(value_size);

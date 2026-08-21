@@ -1,0 +1,45 @@
+skibidi main {
+    rizz a;
+    rizz ab;
+    rizz abc;
+    rizz abcd;
+    rizz abcde;
+    rizz abcdef;
+    rizz abcdefg;
+    rizz abcdefgh;
+    rizz a1;
+    rizz ab1;
+    rizz abc1;
+    rizz abcd1;
+    rizz abcde1;
+
+    a = 1;
+    ab = 2;
+    abc = 3;
+    abcd = 4;
+    abcde = 5;
+    abcdef = 6;
+    abcdefg = 7;
+    abcdefgh = 8;
+    a1 = 9;
+    ab1 = 10;
+    abc1 = 11;
+    abcd1 = 12;
+    abcde1 = 13;
+
+    yapping("%d", a);
+    yapping("%d", ab);
+    yapping("%d", abc);
+    yapping("%d", abcd);
+    yapping("%d", abcde);
+    yapping("%d", abcdef);
+    yapping("%d", abcdefg);
+    yapping("%d", abcdefgh);
+    yapping("%d", a1);
+    yapping("%d", ab1);
+    yapping("%d", abc1);
+    yapping("%d", abcd1);
+    yapping("%d", abcde1);
+
+    bussin 0;
+}
