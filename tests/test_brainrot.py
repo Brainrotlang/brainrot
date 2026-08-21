@@ -71,6 +71,35 @@ def test_brainrot_examples(example, expected_output):
         )
 
 
+# Regression test for the canonical `yap[N]` buffer form (#229/#230):
+# `yap name[32]; slorp(name);` must not print the deprecated scalar
+# write-back warning (execute_func_call(), stdrot.c) -- that warning is
+# for the pre-#204 scalar witness convention (`rizz x; slorp(x);`), not
+# for a char-array buffer slorp() already wrote into in place. The
+# JSON-driven test above only inspects stderr when stdout is empty, so a
+# stray warning alongside real stdout would otherwise go unnoticed.
+def test_slorp_buffer_form_has_no_deprecation_warning():
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    example_file_path = os.path.abspath(
+        os.path.join(script_dir, "../test_cases/slorp_buffer_no_deprecation_warning.brainrot"))
+
+    result = subprocess.run(
+        [brainrot_path, example_file_path],
+        input="Chad\n",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    assert result.stdout.strip() == "hello Chad", (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert "deprecated" not in result.stderr, (
+        f"yap[N] buffer form should not warn as deprecated\n"
+        f"Stderr:\n{result.stderr}"
+    )
+
+
 # ── validate_native_registry() rejection tests ──────────────────────────────
 # Each tests/badnatives/*.c file (built by `make badnatives`) registers
 # exactly one deliberately malformed StdrotEntry; validate_native_registry()

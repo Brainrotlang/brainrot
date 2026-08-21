@@ -52,6 +52,7 @@
     "slorp_double": "You typed: 3.141592",
     "slorp_char": "You typed: c",
     "slorp_string": "You typed: skibidi bop bop yes yes",
+    "slorp_buffer_no_deprecation_warning": "hello Chad",
     "slorp_bool": "You typed: 1",
     "slorp_contextual_int": "You typed: 42",
     "slorp_contextual_short": "You typed: 69",
