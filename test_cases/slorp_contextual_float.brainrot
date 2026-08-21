@@ -1,0 +1,5 @@
+skibidi main {
+      chad f = slorp();
+      yapping("You typed: %f", f);
+      bussin 0;
+}

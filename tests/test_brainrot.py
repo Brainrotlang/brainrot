@@ -32,6 +32,24 @@ def test_brainrot_examples(example, expected_output):
         command = f"echo '1' | {brainrot_path} {example_file_path}"
     elif example.startswith("slorp_string"):
         command = f"echo 'skibidi bop bop yes yes' | {brainrot_path} {example_file_path}"
+    elif example == "slorp_contextual_int":
+        command = f"echo '42' | {brainrot_path} {example_file_path}"
+    elif example == "slorp_contextual_short":
+        command = f"echo '69' | {brainrot_path} {example_file_path}"
+    elif example == "slorp_contextual_float":
+        command = f"echo '3.14' | {brainrot_path} {example_file_path}"
+    elif example == "slorp_contextual_double":
+        command = f"echo '3.141592' | {brainrot_path} {example_file_path}"
+    elif example == "slorp_contextual_char":
+        command = f"echo 'c' | {brainrot_path} {example_file_path}"
+    elif example == "slorp_contextual_bool":
+        command = f"echo '1' | {brainrot_path} {example_file_path}"
+    elif example == "slorp_contextual_return":
+        command = f"echo '99' | {brainrot_path} {example_file_path}"
+    elif example == "slorp_contextual_native_arg":
+        command = f"echo '1' | {brainrot_path} {example_file_path}"
+    elif example == "slorp_contextual_user_arg":
+        command = f"echo '7' | {brainrot_path} {example_file_path}"
     elif example in ("slorp_identity_char_array", "native_cstring_param_char_array",
                       "native_char_array_access",
                       "identity_string_use_after_free",

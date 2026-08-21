@@ -1,0 +1,5 @@
+skibidi main {
+      cap b = slorp();
+      yapping("You typed: %d", b);
+      bussin 0;
+}

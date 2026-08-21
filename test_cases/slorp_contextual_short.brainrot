@@ -1,0 +1,5 @@
+skibidi main {
+      smol s = slorp();
+      yapping("You typed: %d", s);
+      bussin 0;
+}

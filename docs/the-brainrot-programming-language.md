@@ -775,7 +775,7 @@ Output:
 Every function below is a native call, and every native call is an ordinary
 expression: it can be used in a declaration's initializer, a condition, a
 binary operand, or an argument to another call, not just as its own bare
-statement. `cap ok = bet(some_condition);` and `rizz n = slorp(n);` are both
+statement. `cap ok = bet(some_condition);` and `rizz n = slorp();` are both
 valid; a discarded return value in statement position (`bet(some_condition);`
 on its own line) is fine too.
 
@@ -860,32 +860,47 @@ chill(2);
 ### 8.6. `slorp`
 
 ```c
-var_type slorp(var_type var_name);
+var_type slorp();
+rant slorp(yap buffer[N]);
 ```
 
-- Reads user input and returns it, like every other native function call
-  (see [§8](#8-extended-user-documentation)).
-- `var_name`'s current value/type is only used as a hint for what to parse
-  (int, float, string, ...); assign the result to use it.
+`slorp` reads user input and returns it, like every other native function
+call (see [§8](#8-extended-user-documentation)). It has two shapes:
+
+- **Scalar** -- `slorp()` takes no arguments. Its result type is inferred
+  from the surrounding typed context: a declaration's declared type, an
+  assignment's target type, an enclosing function's return type, or a
+  typed native/user-function argument position. Supported scalar types
+  are `rizz`, `smol`, `chad`, `gigachad`, `cap`, and `yap` (a single
+  character); a scalar `rant` isn't supported this way (dynamic string
+  allocation is a separate concern) -- use the buffer form below instead.
+  If no unique context can supply a type, this is a semantic error:
+  `cannot infer type for slorp(); use it in a typed context`.
+- **Buffer** -- `slorp(buffer)`, where `buffer` is a `yap buffer[N]`
+  character array, reads a line into that fixed-size buffer and returns it
+  (usable as a `rant`).
 
 **Example**:
 
 ```c
 skibidi main {
-    rizz num;
     yapping("Enter a number:");
-    num = slorp(num);
+    rizz num = slorp();
     yapping("You typed: %d", num);
+
+    yap name[32];
+    slorp(name);
+    yapping("Hello, %s!", name);
     bussin 0;
 }
 ```
 
-**Deprecated form**: for one release, calling `slorp(var_name);` as a bare
-statement still writes the result back into `var_name` in place, matching
-the old (pre-native-calls-as-expressions) behavior -- with a deprecation
-warning on stderr pointing at the `var_name = slorp(...)` form above. This
-write-back only fires for a genuine bare statement call; `slorp(x)` used
-inside a larger expression must be assigned or consumed directly.
+**Deprecated form**: `rizz num; rizz i = slorp(num);` -- passing an
+already-declared variable purely as a type witness -- and the bare
+write-back statement `slorp(num);` (which assigns back into `num` with a
+deprecation warning on stderr) both still work for one release, matching
+the pre-#229 calling convention. Prefer the contextual `slorp()` form
+above for new code.
 
 ```c
 skibidi main {

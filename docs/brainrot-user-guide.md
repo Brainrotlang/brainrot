@@ -488,7 +488,8 @@ skibidi main {
 **Prototype**
 
 ```c
-var_type slorp(var_type var_name);
+var_type slorp();
+rant slorp(yap buffer[N]);
 ```
 
 **Key Points**
@@ -496,18 +497,28 @@ var_type slorp(var_type var_name);
 - Reads user input (similar to C's `scanf` but safer) and returns it --
   like every native call, `slorp` is an ordinary expression: assign it,
   compare it, pass it as an argument, and so on.
-- `var_name`'s current value/type is only used as a hint for what to parse.
-- **Deprecated**: calling `slorp(var_name);` as a bare statement still
-  writes the result back into `var_name` for one release, with a
-  deprecation warning on stderr. Prefer assigning the result directly.
+- **Scalar form**: `slorp()` takes no arguments -- its result type is
+  inferred from context (a declaration's declared type, an assignment's
+  target type, a function's return type, or a typed argument position).
+  Supported scalar types: `rizz`, `smol`, `chad`, `gigachad`, `cap`, and a
+  single-character `yap`. A bare `slorp();` with no typed context is a
+  semantic error.
+- **Buffer form**: `slorp(buffer)`, where `buffer` is a `yap buffer[N]`
+  character array, reads a line into it and returns it as a `rant`. A
+  scalar `rant` isn't available through the contextual form -- use a
+  buffer.
+- **Deprecated**: passing an already-declared variable purely as a type
+  witness (`rizz i = slorp(n);`), and calling `slorp(var_name);` as a bare
+  statement (which still writes the result back into `var_name`, with a
+  deprecation warning on stderr), both still work for one release. Prefer
+  the contextual `slorp()` form for new code.
 
 ### Example
 
 ```c
 skibidi main {
-    rizz num;
     yapping("Enter a number:");
-    num = slorp(num);
+    rizz num = slorp();
     yapping("You typed: %d", num);
     bussin 0;
 }

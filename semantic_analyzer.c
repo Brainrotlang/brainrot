@@ -1268,6 +1268,80 @@ static bool is_unmarshallable_expr(ASTNode *expr, SemanticAnalyzer *analyzer)
     }
 }
 
+/* Builds a throwaway literal node whose sole purpose is to carry `type`
+   through the existing return_like_arg machinery as a zero-argument
+   identity-polymorphic call's (currently only slorp()) type witness -- its
+   VALUE is never read (see stdrot/slorp.c: every slorp_TYPE() ignores the
+   value it's handed and only uses argument 0 to select which slorp_TYPE()
+   to call). Returns NULL for a type this contextual form doesn't support
+   (VAR_STRING/rant included -- a scalar rant needs dynamic allocation,
+   issue #144, not just a type tag; the buffer form `slorp(yap_buf)` still
+   covers strings). */
+static ASTNode *create_type_witness_node(VarType type)
+{
+    switch (type)
+    {
+    case VAR_INT:
+        return create_int_node(0);
+    case VAR_SHORT:
+        return create_short_node(0);
+    case VAR_FLOAT:
+        return create_float_node(0.0f);
+    case VAR_DOUBLE:
+        return create_double_node(0.0);
+    case VAR_BOOL:
+        return create_boolean_node(false);
+    case VAR_CHAR:
+        return create_char_node(0);
+    default:
+        return NULL;
+    }
+}
+
+/* Resolves a zero-argument, identity-polymorphic native call (slorp<T>() ->
+   T, marked by StdrotEntry.return_like_arg) from `expected`, a type already
+   statically known at this AST position (a declaration's declared type, an
+   assignment target's type, an enclosing function's return type, or a
+   typed parameter's type). On success, rewrites `node` in place to carry a
+   synthetic type-witness argument (see create_type_witness_node() above),
+   so every existing return_like_arg-based check -- infer_expression_type(),
+   semantic_check_native_call(), and, at runtime, ast_expr_to_stdrot_value()
+   -- keeps working completely unmodified: `slorp()` becomes indistinguishable
+   from `slorp(<value of the right type>)` everywhere downstream.
+
+   Does nothing if `node` isn't such a call, or already has an argument (an
+   explicit `slorp(x)` call, or a call this function already resolved --
+   idempotent, so it's safe to call from more than one context site without
+   worrying about re-entry).
+
+   Leaves `node->var_type` set to `expected` even when resolution fails (a
+   pointer-typed or otherwise unsupported `expected`), purely so semantic_
+   visit_function_call()'s own still-unresolved check can report a specific
+   reason (e.g. "rant needs a buffer") instead of a generic "no context"
+   message. */
+static void propagate_contextual_call_type(ASTNode *node, VarType expected,
+                                           int expected_pointer_level)
+{
+    if (!node || node->type != NODE_FUNC_CALL || node->data.func_call.arguments)
+        return;
+
+    const StdrotEntry *entry =
+        get_native_function(node->data.func_call.function_name);
+    if (!entry || entry->return_like_arg < 0)
+        return;
+
+    node->var_type = expected;
+
+    if (expected_pointer_level != 0)
+        return;
+
+    ASTNode *witness = create_type_witness_node(expected);
+    if (!witness)
+        return;
+
+    node->data.func_call.arguments = create_argument_list(witness, NULL);
+}
+
 /* Type-checks a native call's fixed/checked argument prefix against its
    registered StdrotEntry -- arity plus, for each checked parameter actually
    supplied, that the argument's inferred type is compatible. STDROT_ANY
@@ -1386,6 +1460,21 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
         const StdrotParam *param = &entry->params[i];
         if (!cur->expr)
             continue;
+
+        /* A typed native parameter (anything but STDROT_ANY/PTR/HANDLE,
+           none of which name a single concrete type) is a "typed
+           argument" context per propagate_contextual_call_type()'s own
+           contract -- resolves a zero-argument `slorp()` passed here
+           (e.g. a hypothetical `some_native(slorp())`) before the type
+           checks below run, so they see the desugared 1-argument call
+           like any other. A no-op for anything that isn't such a call. */
+        if (param->type != STDROT_ANY && param->type != STDROT_PTR &&
+            param->type != STDROT_HANDLE)
+        {
+            propagate_contextual_call_type(cur->expr,
+                                           stdrot_type_to_vartype(param->type),
+                                           param->pointer_level);
+        }
 
         if (param->type == STDROT_HANDLE)
         {
@@ -1675,6 +1764,44 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
 
     if (native_entry)
     {
+        /* A zero-argument identity-polymorphic call (slorp()) that no
+           context site (NODE_DECLARATION/NODE_ASSIGNMENT/NODE_RETURN
+           cases, or the typed-native-parameter check above, all in this
+           file) managed to resolve via propagate_contextual_call_type().
+           Reported here, not left to semantic_check_native_call()'s
+           ordinary arity check, because entry->min_args == 0 for this
+           shape (see slorp's own STDROT_EXPORT_SIG_IDENTITY) -- zero
+           arguments is a legal ARITY, just one this call's own context
+           failed to give a TYPE for, a distinction the generic arity
+           message can't express. node->var_type carries the type a
+           context site found but rejected (propagate_contextual_call_
+           type() sets it even on failure), so a rant/#144 case gets its
+           own message instead of the generic one. */
+        if (native_entry->return_like_arg >= 0 &&
+            !node->data.func_call.arguments)
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            if (node->var_type == VAR_STRING)
+            {
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s()' cannot infer a scalar 'rant' result from "
+                         "context -- pass a 'yap[N]' buffer instead (e.g. "
+                         "%s(buf))",
+                         func_name.data, func_name.data);
+            }
+            else
+            {
+                snprintf(error_msg, sizeof(error_msg),
+                         "cannot infer type for %s(); use it in a typed "
+                         "context",
+                         func_name.data);
+            }
+            add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                               STRING_LITERAL(error_msg),
+                               node->line_number > 0 ? node->line_number : 1);
+            return NULL;
+        }
+
         semantic_check_native_call(analyzer, node, native_entry);
     }
     else
@@ -1688,6 +1815,28 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
             add_semantic_error(analyzer, SEMANTIC_ERROR_UNDEFINED_FUNCTION,
                                STRING_LITERAL(error_msg),
                                node->line_number > 0 ? node->line_number : 1);
+        }
+        else
+        {
+            /* Same "typed argument" context as the native-parameter check
+               above, for a user-defined function's declared parameter
+               types -- resolves a zero-argument `slorp()` passed as an
+               argument here (e.g. `takes_int(slorp())`) before the
+               generic per-argument recursion (this function's caller,
+               semantic_analyze_with_scope_tracking()'s NODE_FUNC_CALL
+               case) walks into it. */
+            Parameter *param = func->parameters;
+            ArgumentList *arg = node->data.func_call.arguments;
+            while (param && arg)
+            {
+                if (arg->expr)
+                {
+                    propagate_contextual_call_type(arg->expr, param->type,
+                                                   param->pointer_level);
+                }
+                param = param->next;
+                arg = arg->next;
+            }
         }
     }
 
@@ -2422,6 +2571,15 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
            NODE_UNARY_OPERATION case. */
         if (node->data.op.right)
         {
+            /* An assignment target's type is already fully known (it
+               doesn't depend on the right-hand side) -- resolve a
+               zero-argument `slorp()` on the right against it before
+               walking the right-hand side, same "typed context" idea as
+               the NODE_DECLARATION case below. */
+            propagate_contextual_call_type(
+                node->data.op.right,
+                infer_expression_type(node->data.op.left, analyzer),
+                infer_expression_pointer_level(node->data.op.left, analyzer));
             semantic_analyze_with_scope_tracking(analyzer, node->data.op.right);
         }
         if (node->data.op.left)
@@ -2595,6 +2753,14 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         }
         if (node->data.op.right)
         {
+            /* A declaration's declared type is already fully known at
+               this point -- resolve a zero-argument `slorp()` initializer
+               against it before walking the initializer, so semantic_
+               check_native_call() (reached below, via this same
+               recursive call) sees an ordinary desugared 1-argument call
+               like any other. */
+            propagate_contextual_call_type(node->data.op.right, node->var_type,
+                                           node->pointer_level);
             semantic_analyze_with_scope_tracking(analyzer, node->data.op.right);
         }
         semantic_visit_declaration((Visitor *)analyzer, node);
@@ -2762,6 +2928,22 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
     {
         if (node->data.op.left)
         {
+            /* A `bussin` expression's expected type is the enclosing
+               function's own declared return type, already known before
+               the expression itself is walked -- resolve a zero-argument
+               `slorp()` return value against it here (moved ahead of the
+               get_function() lookup just below, which used to run only
+               after the walk), same "typed context" idea as the
+               NODE_DECLARATION/NODE_ASSIGNMENT cases above. */
+            Function *current_func =
+                get_function(analyzer->current_function_name);
+            if (current_func)
+            {
+                propagate_contextual_call_type(
+                    node->data.op.left, current_func->return_type,
+                    current_func->return_pointer_level);
+            }
+
             semantic_analyze_with_scope_tracking(analyzer, node->data.op.left);
 
             /* Round-22 review, finding #4 -- a return expression was
@@ -2787,8 +2969,6 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                pointer-declared function) is NOT skipped: that's a real
                pointer type with a real compatibility rule, just like
                any other pointer return. */
-            Function *current_func =
-                get_function(analyzer->current_function_name);
             if (current_func && current_func->return_type != VAR_STRUCT &&
                 !(current_func->return_type == VAR_VOID &&
                   current_func->return_pointer_level == 0))
