@@ -87,37 +87,16 @@ function listFilesRecursive(dir, base = dir) {
 
 const testCaseFiles = listFilesRecursive(testCasesDir);
 
-// Mirrors the stdin fixtures test_brainrot.py feeds via `echo '...' | brainrot`
-// (and, for the native_call_* entries, `printf '...' | brainrot`).
-const STDIN_BY_PREFIX = [
-  ["slorp_int", "42\n"],
-  ["slorp_short", "69\n"],
-  ["slorp_float", "3.14\n"],
-  ["slorp_double", "3.141592\n"],
-  ["slorp_char", "c\n"],
-  ["slorp_bool", "1\n"],
-  ["slorp_string", "skibidi bop bop yes yes\n"],
-  ["slorp_identity_char_array", "hello\n"],
-  ["slorp_contextual_int", "42\n"],
-  ["slorp_contextual_short", "69\n"],
-  ["slorp_contextual_float", "3.14\n"],
-  ["slorp_contextual_double", "3.141592\n"],
-  ["slorp_contextual_char", "c\n"],
-  ["slorp_contextual_bool", "1\n"],
-  ["slorp_contextual_return", "99\n"],
-  ["slorp_contextual_native_arg", "1\n"],
-  ["slorp_contextual_user_arg", "7\n"],
-  ["native_cstring_param_char_array", "hello\n"],
-  ["native_char_array_access", "hello\n"],
-  ["native_char_param_scalar", "c\n"],
-  ["identity_string_use_after_free", "hello\n"],
-  ["identity_ownership_nonstring_result", "hello\n"],
-  ["native_call_self_init", "42\n"],
-  ["native_sizeof_no_execution", "42\n"],
-  ["native_call_loop", "1\n2\n3\n"],
-  ["native_call_string_arg", "skibidi\nq\n"],
-  ["native_call_do_while", "5\n50\n6\n150\n"],
-];
+// Single source of truth for which fixtures read stdin and what to feed
+// them -- an ordered list of [prefix, stdin] pairs, first startsWith() match
+// wins. Loaded from the same tests/stdin_fixtures.json tests/test_brainrot.py
+// (Python) reads, rather than each harness keeping its own copy: a fixture
+// added to only one of them previously shipped broken (PR #230's wasm job
+// failed on 9 fixtures whose stdin only existed in test_brainrot.py's old
+// inline elif-chain, not in this file's separate hardcoded table).
+const STDIN_BY_PREFIX = JSON.parse(
+  readFileSync(path.join(scriptDir, "stdin_fixtures.json"), "utf8"),
+);
 
 function stdinFor(example) {
   const hit = STDIN_BY_PREFIX.find(([prefix]) => example.startsWith(prefix));

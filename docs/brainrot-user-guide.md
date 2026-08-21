@@ -494,19 +494,26 @@ rant slorp(yap buffer[N]);
 
 **Key Points**
 
-- Reads user input (similar to C's `scanf` but safer) and returns it --
-  like every native call, `slorp` is an ordinary expression: assign it,
-  compare it, pass it as an argument, and so on.
-- **Scalar form**: `slorp()` takes no arguments -- its result type is
-  inferred from context (a declaration's declared type, an assignment's
-  target type, a function's return type, or a typed argument position).
+- Reads user input (similar to C's `scanf` but safer) and returns it.
+- **Scalar form**: `slorp()` takes no arguments. This is a desugaring, not
+  a general expression -- it only resolves when it is the *entire*
+  expression at one of four specific sites: a declaration's initializer
+  (including each leaf of a braced array initializer, e.g. `rizz a[2] = {
+  slorp(), 1 };`), an assignment's right-hand side, a function's `bussin`
+  return value, or an argument to a native/user-defined function whose
+  parameter has one fixed type. At that site, the already-known type
+  (declared type / target type / return type / parameter type) becomes
+  `slorp()`'s type. It does **not** resolve as a condition, a binary
+  operand (`slorp() + 1`, `slorp() == 1`), or a variadic argument (e.g. to
+  `yapping`) -- those fail with the same diagnostic as no context at all.
   Supported scalar types: `rizz`, `smol`, `chad`, `gigachad`, `cap`, and a
-  single-character `yap`. A bare `slorp();` with no typed context is a
-  semantic error.
+  single-character `yap`. A bare `slorp();`, or one used somewhere none of
+  the four sites applies, is a semantic error.
 - **Buffer form**: `slorp(buffer)`, where `buffer` is a `yap buffer[N]`
-  character array, reads a line into it and returns it as a `rant`. A
-  scalar `rant` isn't available through the contextual form -- use a
-  buffer.
+  character array, reads a line into it and returns it as a `rant` --
+  unlike the scalar form, this one *is* an ordinary expression: assign it,
+  compare it, pass it as an argument. A scalar `rant` isn't available
+  through the contextual form -- use a buffer.
 - **Deprecated**: passing an already-declared variable purely as a type
   witness (`rizz i = slorp(n);`), and calling `slorp(var_name);` as a bare
   statement (which still writes the result back into `var_name`, with a

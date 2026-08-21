@@ -1066,6 +1066,7 @@ static ASTNode *create_node(NodeType type, VarType var_type,
     node->is_valid_symbol = false;
     node->pointer_level = 0;
     node->line_number = yylineno;
+    node->contextual_type_hint = NONE;
     return node;
 }
 
