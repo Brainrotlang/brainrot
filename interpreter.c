@@ -337,25 +337,15 @@ static void interpreter_execute_call_statement(ASTNode *node)
    cached; for a do-while condition, the pre-visit runs before the loop
    body has executed even once, so the first real check reads a stale
    pre-loop value instead of re-evaluating. Do nothing here and let the
-   downstream evaluate_expression_*() call populate the memo cache itself,
-   at the right time. (Bare statement-position and for-loop init/incr
-   calls never reach here at all -- see interpreter_execute_call_statement()
-   above.) User-defined functions have no such cache and are still invoked
-   from both places -- a pre-existing gap, not introduced here, tracked
-   separately from native-call support. */
+   downstream evaluate_expression_*() call execute the function itself, at
+   the right time. (Bare statement-position and for-loop init/incr calls
+   never reach here at all -- see interpreter_execute_call_statement()
+   above.) This applies equally to built-in and user-defined functions: a
+   structural pre-visit must not execute either kind of call. */
 void *interpreter_visit_function_call(Visitor *self, ASTNode *node)
 {
     (void)self;
-    if (!node)
-        return NULL;
-
-    if (!is_builtin_function(node->data.func_call.function_name))
-    {
-        execute_function_call(node->data.func_call.function_name,
-                              node->data.func_call.arguments);
-        free_pending_return_value();
-    }
-
+    (void)node;
     return NULL;
 }
 

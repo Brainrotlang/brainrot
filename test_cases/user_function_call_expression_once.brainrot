@@ -1,0 +1,14 @@
+rizz noisy() {
+    yappin("BANG\n");
+    bussin 3;
+}
+
+gigachad widen() {
+    bussin noisy();
+}
+
+skibidi main {
+    gigachad x = widen();
+    yappin("%f\n", x);
+    bussin 0;
+}
