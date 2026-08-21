@@ -1,0 +1,29 @@
+skibidi main {
+    🚽 A matching numbered case must win even when `based` (default) is
+    🚽 declared before it in source order. Regression for issue #179.
+    rizz a = 2;
+    ohio (a) {
+        based:
+            yapping("default A");
+            bruh;
+        sigma rule 1:
+            yapping("A one");
+            bruh;
+        sigma rule 2:
+            yapping("A two");
+            bruh;
+    }
+
+    🚽 With `based` first and nothing matching, default must still fire --
+    🚽 guards against over-correcting the fix.
+    rizz b = 9;
+    ohio (b) {
+        based:
+            yapping("default B");
+            bruh;
+        sigma rule 1:
+            yapping("B one");
+            bruh;
+    }
+    bussin 0;
+}
