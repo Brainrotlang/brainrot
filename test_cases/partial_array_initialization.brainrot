@@ -1,0 +1,10 @@
+skibidi main {
+    rizz a[3] = { 7 };
+    yappin("%d %d %d\n", a[0], a[1], a[2]);
+
+    rizz x = 42;
+    rizz *ptrs[3] = { &x };
+    yappin("%d %d %d\n", *ptrs[0], ptrs[1] != 0, ptrs[2] != 0);
+
+    bussin 0;
+}

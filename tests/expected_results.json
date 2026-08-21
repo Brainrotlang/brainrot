@@ -36,6 +36,8 @@
     "int_array": "1\n2\n3\n",
     "short_array": "1\n2\n3\n",
     "array_initialization": "1\n2\n3\n1\n2\n3\n",
+    "partial_array_initialization": "7 0 0\n42 0 0\n",
+    "partial_struct_initialization": "7 0 0\n1 2 0 0\n",
     "bool_array": "W\nL\nW\n",
     "float_array": "3.140000\n3.141500\n3.141592\n",
     "double_array": "3.140000\n3.141500\n3.141592\n",
