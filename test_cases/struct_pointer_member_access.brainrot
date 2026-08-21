@@ -1,0 +1,34 @@
+🚽 Member access through a pointer-to-struct/union must follow the
+🚽 pointer, not read a separate zeroed blob (issue #196).
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+chungus Tag {
+    rizz i;
+    chad f;
+};
+
+skibidi main {
+    gang Point p;
+    p.x = 5;
+    p.y = 9;
+
+    🚽 read through the pointer
+    gang Point *pp = &p;
+    yapping("%d %d", pp.x, pp.y);
+
+    🚽 write through the pointer is visible on the original
+    pp.x = 42;
+    pp.y = 43;
+    yapping("%d %d", p.x, p.y);
+
+    🚽 same for a union
+    chungus Tag t;
+    t.i = 7;
+    chungus Tag *tp = &t;
+    yapping("%d", tp.i);
+    tp.i = 100;
+    yapping("%d", t.i);
+}

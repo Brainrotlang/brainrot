@@ -143,6 +143,8 @@
     "struct_in_union_init": "7 9\n",
     "array_local_in_function": "15\n",
     "struct_local_in_function": "7\n",
+    "struct_pointer_member_access": "5 9\n42 43\n7\n100\n",
+    "struct_pointer_param": "param 5 9\nafter 99 88\ntag 1\nafter 7\n",
     "recursive_local_array": "15\n",
     "same_name_locals_no_collision": "100 200\n",
     "struct_param_by_value": "999\n3\n",

@@ -635,20 +635,37 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                 yyerror("Unknown struct or union type");
             return false;
         }
-        /* Lazily allocate blob if missing — handles cases where parse-time
-           pointer was invalidated by hashmap resize during semantic
-           analysis. */
-        if (!var->value.array_data)
+        if (var->pointer_level > 0)
         {
-            var->value.array_data = calloc(1, parent_def->total_size);
-            if (!var->value.array_data)
+            /* Pointer-to-struct/union: value.pvalue holds the address of
+               the pointed-at struct; dereference it rather than treating
+               the variable's own storage as the blob. */
+            parent_base = (void *)var->value.pvalue;
+            if (!parent_base)
             {
                 if (report_errors)
-                    yyerror("Out of memory for struct/union blob");
+                    yyerror("Member access through a null struct/union "
+                            "pointer");
                 return false;
             }
         }
-        parent_base = var->value.array_data;
+        else
+        {
+            /* Lazily allocate blob if missing — handles cases where
+               parse-time pointer was invalidated by hashmap resize during
+               semantic analysis. */
+            if (!var->value.array_data)
+            {
+                var->value.array_data = calloc(1, parent_def->total_size);
+                if (!var->value.array_data)
+                {
+                    if (report_errors)
+                        yyerror("Out of memory for struct/union blob");
+                    return false;
+                }
+            }
+            parent_base = var->value.array_data;
+        }
     }
     else if (obj && obj->type == NODE_STRUCT_ACCESS)
     {
@@ -2238,6 +2255,11 @@ void *evaluate_lvalue_address(ASTNode *node)
             return &var->value.strvalue;
         case VAR_ENUM:
             return &var->value.ivalue;
+        case VAR_STRUCT:
+            /* The struct's storage is the blob itself, so its address is
+               array_data directly (not &array_data). Lets `&s` feed a
+               pointer-to-struct variable. */
+            return var->value.array_data;
         default:
             yyerror("Unsupported lvalue type");
             return NULL;
@@ -6117,6 +6139,12 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             {
                 bound->pointer_level = curr_param->pointer_level;
                 bound->value.pvalue = arg_values[i].pvalue;
+                /* Carry the struct/union tag onto the bound pointer so
+                   member access through it can resolve the type -- the
+                   by-value path below does the same via safe_strdup. */
+                if (curr_param->type == VAR_STRUCT &&
+                    curr_param->struct_name.data)
+                    bound->struct_name = safe_strdup(&curr_param->struct_name);
             }
             curr_param = curr_param->next;
             continue;

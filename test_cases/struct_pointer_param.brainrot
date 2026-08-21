@@ -1,0 +1,35 @@
+🚽 A struct/union passed by pointer parameter must resolve its type and
+🚽 follow the pointer: reads see the caller's values and writes through the
+🚽 parameter are visible on the original (issue #196 follow-up).
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+chungus Tag {
+    rizz i;
+};
+
+skibidi bump(gang Point *pp) {
+    yapping("param %d %d", pp.x, pp.y);
+    pp.x = 99;
+    pp.y = 88;
+}
+
+skibidi tag_bump(chungus Tag *tp) {
+    yapping("tag %d", tp.i);
+    tp.i = 7;
+}
+
+skibidi main {
+    gang Point p;
+    p.x = 5;
+    p.y = 9;
+    bump(&p);
+    yapping("after %d %d", p.x, p.y);
+
+    chungus Tag t;
+    t.i = 1;
+    tag_bump(&t);
+    yapping("after %d", t.i);
+}
