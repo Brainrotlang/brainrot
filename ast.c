@@ -4973,7 +4973,13 @@ void validate_struct_initializer_shape(StructDef *def, ExpressionList *list)
 
     StructField *fld = def->fields;
     ExpressionList *cur = list;
-    while (fld && cur)
+    // ExpressionList is circular (see create_expression_list()), so a
+    // `cur` NULL check never terminates; bound by initializer_count
+    // instead and leave unspecified trailing fields unvalidated (they
+    // stay at their zero-initialized default -- see populate_struct_fields()).
+    size_t initializer_count = count_expression_list(list);
+    size_t index = 0;
+    while (fld && index < initializer_count)
     {
         bool is_nested_aggregate =
             (fld->type == VAR_STRUCT && fld->pointer_level == 0);
@@ -5005,6 +5011,7 @@ void validate_struct_initializer_shape(StructDef *def, ExpressionList *list)
             break;
         fld = fld->next;
         cur = cur->next;
+        index++;
     }
 }
 
@@ -5025,7 +5032,14 @@ static void populate_struct_fields(StructDef *def, void *base,
        initialized, mirroring C's brace-init rule for unions. */
     StructField *fld = def->fields;
     ExpressionList *cur = list;
-    while (fld && cur)
+    // ExpressionList is circular (see create_expression_list()), so a
+    // `cur` NULL check never terminates; bound by initializer_count
+    // instead and leave every field beyond it at its calloc()'d zero
+    // default, the same fix applied to populate_multi_array_variable()
+    // for issue #226.
+    size_t initializer_count = count_expression_list(list);
+    size_t index = 0;
+    while (fld && index < initializer_count)
     {
         void *addr = (char *)base + fld->offset;
         bool is_nested_aggregate =
@@ -5082,6 +5096,7 @@ static void populate_struct_fields(StructDef *def, void *base,
             break;
         fld = fld->next;
         cur = cur->next;
+        index++;
     }
 }
 
