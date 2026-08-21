@@ -874,7 +874,10 @@ rant slorp(yap buffer[N]);
   four site shapes where `slorp()` is the *entire* expression --
     - a declaration's initializer (`rizz i = slorp();`), including each
       leaf of a braced array/matrix initializer (`rizz a[2] = { slorp(), 1
-      };`);
+      };`) -- and, for a braced struct initializer (`gang Point p = {
+      slorp(), 1 };`), each leaf against *that field's own type*, not one
+      shared element type (`Point.x`'s type here, not `Point`'s), the same
+      "entire expression" restriction applying leaf-by-leaf;
     - an assignment's right-hand side (`i = slorp();`, `*p = slorp();`);
     - a function's `bussin` return value (`rizz f() { bussin slorp(); }`);
     - a native or user-defined function's argument, when that parameter

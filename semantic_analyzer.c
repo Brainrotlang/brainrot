@@ -1815,12 +1815,12 @@ static void propagate_contextual_type_into_expression_list(
    {1, 2}, 3 };`, a struct-typed field with its own braced sub-initializer)
    recurses using THAT field's own struct definition, mirroring validate_
    struct_initializer_shape()'s (ast.c) shape-only check of the same
-   nesting at parse time. `field` NULL (fewer fields than leaves, or no
-   StructDef resolved at all -- e.g. an array-of-structs declaration,
-   which does not carry a struct-tag placeholder on data.op.right the way
-   a plain struct declaration does) leaves the remaining/all leaves
-   untouched, same as propagate_contextual_call_type() no-op'ing on any
-   node it doesn't recognize. */
+   nesting at parse time. `field` NULL (no StructDef resolved for the tag
+   at all -- e.g. an unregistered/misspelled struct name -- or fewer
+   fields than leaves, a shape mismatch validate_struct_initializer_
+   shape() at parse time already rejects most instances of) leaves the
+   remaining/all leaves untouched, same as propagate_contextual_call_
+   type() no-op'ing on any node it doesn't recognize. */
 static void
 propagate_contextual_type_into_struct_initializer(ExpressionList *list,
                                                   StructField *field)
@@ -2903,12 +2903,18 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                struct-declarator productions), but its leaves are each a
                different FIELD's type -- node->var_type is just VAR_STRUCT
                here, not one shared element type the way an array's is.
-               The NODE_STRUCT_DEF placeholder on data.op.right (only the
-               plain, non-array struct-declaration grammar productions
-               create one; create_multi_array_declaration_node() never
-               does) is what distinguishes this from an array-of-structs
-               declaration, and carries the struct tag needed to look up
-               each field's real type. */
+               The split below is exactly "plain struct declaration" vs.
+               "homogeneous scalar array declaration" (`rizz a[2] = {...}`)
+               -- not "struct" vs. "array of structs": this grammar has no
+               array-of-structs declaration syntax at all (struct
+               declarators, lang.y, have no `dimensions` production the
+               way the scalar/array ones do; `gang Point arr[2] = {...}`
+               is a parse error). The NODE_STRUCT_DEF placeholder on
+               data.op.right (only the plain struct-declaration grammar
+               productions create one; create_multi_array_declaration_
+               node() never does) is what tells the two apart here, and
+               carries the struct tag needed to look up each field's real
+               type. */
             if (node->var_type == VAR_STRUCT && node->data.op.right &&
                 node->data.op.right->type == NODE_STRUCT_DEF)
             {

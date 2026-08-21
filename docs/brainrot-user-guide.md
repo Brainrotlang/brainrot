@@ -499,9 +499,11 @@ rant slorp(yap buffer[N]);
   a general expression -- it only resolves when it is the *entire*
   expression at one of four specific sites: a declaration's initializer
   (including each leaf of a braced array initializer, e.g. `rizz a[2] = {
-  slorp(), 1 };`), an assignment's right-hand side, a function's `bussin`
-  return value, or an argument to a native/user-defined function whose
-  parameter has one fixed type. At that site, the already-known type
+  slorp(), 1 };`, or a braced struct initializer, e.g. `gang Point p = {
+  slorp(), 1 };`, where each leaf resolves against *that field's own
+  type*, not one shared element type), an assignment's right-hand side, a
+  function's `bussin` return value, or an argument to a native/user-defined
+  function whose parameter has one fixed type. At that site, the already-known type
   (declared type / target type / return type / parameter type) becomes
   `slorp()`'s type. It does **not** resolve as a condition, a binary
   operand (`slorp() + 1`, `slorp() == 1`), or a variadic argument (e.g. to
