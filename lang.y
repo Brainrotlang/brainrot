@@ -443,7 +443,8 @@ param_list
                 snprintf(msg, sizeof(msg),
                         "Parameter '%s' cannot have type void", $3.name.data);
                 yyerror(msg);
-                exit(1);
+                SAFE_FREE($3.name);
+                YYABORT;
             }
             $$ = create_parameter_ex($3.name, $2, $3.pointer_level, NULL, get_current_modifiers());
             SAFE_FREE($3.name);
@@ -456,7 +457,8 @@ param_list
                 snprintf(msg, sizeof(msg),
                         "Parameter '%s' cannot have type void", $5.name.data);
                 yyerror(msg);
-                exit(1);
+                SAFE_FREE($5.name);
+                YYABORT;
             }
             $$ = create_parameter_ex($5.name, $4, $5.pointer_level, $1, get_current_modifiers());
             SAFE_FREE($5.name);
@@ -605,6 +607,12 @@ type:
 declaration:
     optional_modifiers type declarator
         {
+            if ($2 == VAR_VOID && $3.pointer_level == 0)
+            {
+                yyerror("Cannot declare a variable with type void");
+                SAFE_FREE($3.name);
+                YYABORT;
+            }
             $$ = create_declaration_node_ex($3.name, create_default_node($2, $3.pointer_level), $3.pointer_level);
             SAFE_FREE($3.name);
         }

@@ -15,6 +15,7 @@ fi
 for f in test_cases/*.brainrot; do
     echo "Running Valgrind on $f..."
     base=$(basename "$f" .brainrot)
+    expected_exit=0
 
     case "$base" in
         slorp_int)                            input="42" ;;
@@ -34,6 +35,7 @@ for f in test_cases/*.brainrot; do
         native_call_loop)                      input=$'1\n2\n3' ;;
         native_call_string_arg)                input=$'skibidi\nq' ;;
         native_call_do_while)                  input=$'5\n50\n6\n150' ;;
+        native_call_numeric_coercion)          input=""; expected_exit=3 ;;
         *)                                     input="" ;;
     esac
 
@@ -52,8 +54,10 @@ for f in test_cases/*.brainrot; do
             exit 1
             ;;
         *)
-            echo "Valgrind failed while running $f (exit $valgrind_exit_code)" >&2
-            exit 1
+            if [[ $valgrind_exit_code -ne $expected_exit ]]; then
+                echo "Valgrind failed while running $f (exit $valgrind_exit_code)" >&2
+                exit 1
+            fi
             ;;
     esac
 
