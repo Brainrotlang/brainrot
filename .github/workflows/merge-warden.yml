@@ -51,7 +51,7 @@ jobs:
           echo "number=${pr_number}" >> "$GITHUB_OUTPUT"
 
       - name: Review PR
-        uses: leo-aa88/merge-warden@809ebdbf6e81e0bf907cb6f2aa29c0b9a93cf8cd
+        uses: leo-aa88/merge-warden@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           xai-api-key: ${{ secrets.XAI_API_KEY }}
