@@ -1,0 +1,12 @@
+🚽 Test case: the canonical `yap[N]` buffer form (#229/#230) --
+🚽 `yap name[32]; slorp(name);` -- must NOT trigger the deprecated
+🚽 scalar write-back warning (stdrot.c's execute_func_call()). That
+🚽 warning is for the pre-#204 scalar witness convention (`rizz x;
+🚽 slorp(x);`); slorp() already writes into a char-array buffer's own
+🚽 backing storage in place, so flagging this as deprecated is wrong.
+skibidi main {
+    yap name[32];
+    slorp(name);
+    yapping("hello %s", name);
+    bussin 0;
+}

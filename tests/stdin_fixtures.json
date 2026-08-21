@@ -6,6 +6,7 @@
   ["slorp_char", "c\n"],
   ["slorp_bool", "1\n"],
   ["slorp_string", "skibidi bop bop yes yes\n"],
+  ["slorp_buffer_no_deprecation_warning", "Chad\n"],
   ["slorp_contextual_int", "42\n"],
   ["slorp_contextual_short", "69\n"],
   ["slorp_contextual_float", "3.14\n"],
