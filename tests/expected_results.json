@@ -1,5 +1,6 @@
 {
     "comparison_edge_case": "1\n",
+    "user_function_call_expression_once": "BANG\n3.000000\n",
     "division_edge_cases": "inf\n-nan\n-nan",
     "float_precision": "0.000000\n",
     "integer_overflow": "-2147483648\n2147483647\n",
