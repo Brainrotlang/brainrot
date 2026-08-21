@@ -775,9 +775,12 @@ Output:
 Every function below is a native call, and every native call is an ordinary
 expression: it can be used in a declaration's initializer, a condition, a
 binary operand, or an argument to another call, not just as its own bare
-statement. `cap ok = bet(some_condition);` and `rizz n = slorp(n);` are both
+statement. `cap ok = bet(some_condition);` and `rizz n = slorp();` are both
 valid; a discarded return value in statement position (`bet(some_condition);`
-on its own line) is fine too.
+on its own line) is fine too. **One exception**: `slorp()`'s zero-argument
+scalar form (see [§8.6](#86-slorp)) is not a general expression -- it only
+resolves at a handful of specific typed sites, not as a condition, a binary
+operand, or a variadic argument.
 
 ### 8.1. `yapping`
 
@@ -860,32 +863,68 @@ chill(2);
 ### 8.6. `slorp`
 
 ```c
-var_type slorp(var_type var_name);
+var_type slorp();
+rant slorp(yap buffer[N]);
 ```
 
-- Reads user input and returns it, like every other native function call
-  (see [§8](#8-extended-user-documentation)).
-- `var_name`'s current value/type is only used as a hint for what to parse
-  (int, float, string, ...); assign the result to use it.
+`slorp` reads user input and returns it. It has two shapes:
+
+- **Scalar** -- `slorp()` takes no arguments. It is a desugaring, not a
+  general type-inference feature: the semantic analyzer recognizes exactly
+  four site shapes where `slorp()` is the *entire* expression --
+    - a declaration's initializer (`rizz i = slorp();`), including each
+      leaf of a braced array/matrix initializer (`rizz a[2] = { slorp(), 1
+      };`) -- and, for a braced struct initializer (`gang Point p = {
+      slorp(), 1 };`), each leaf against *that field's own type*, not one
+      shared element type (`Point.x`'s type here, not `Point`'s), the same
+      "entire expression" restriction applying leaf-by-leaf;
+    - an assignment's right-hand side (`i = slorp();`, `*p = slorp();`);
+    - a function's `bussin` return value (`rizz f() { bussin slorp(); }`);
+    - a native or user-defined function's argument, when that parameter
+      has a single fixed type (`bet(slorp());`, `takes_int(slorp());` --
+      not `yapping`'s variadic tail, which has no single fixed type to
+      give).
+  At one of those four sites, the type already known there (the
+  declaration's declared type, the assignment target's type, the
+  function's return type, or the parameter's type) becomes `slorp()`'s
+  type, and it desugars into an ordinary `slorp<T>(T) -> T` call under the
+  hood. **`slorp()` used as a sub-expression of something larger at one of
+  those sites is not resolved** -- `slorp() + 1`, `slorp() == 1`, and a
+  `slorp()` argument to a variadic native (`yapping`, `baka`) all fail with
+  the same diagnostic as no context at all, because nothing propagates a
+  type into an arithmetic/comparison operand or a variadic slot. Supported
+  scalar types are `rizz`, `smol`, `chad`, `gigachad`, `cap`, and `yap` (a
+  single character); a scalar `rant` isn't supported this way (dynamic
+  string allocation is a separate concern) -- use the buffer form below
+  instead. If none of the four sites applies, or the type found there
+  isn't one of the above, this is a semantic error: `cannot infer type for
+  slorp(); use it in a typed context`.
+- **Buffer** -- `slorp(buffer)`, where `buffer` is a `yap buffer[N]`
+  character array, reads a line into that fixed-size buffer and returns it
+  (usable as a `rant`). Unlike the scalar form, this one *is* an ordinary
+  expression -- assign it, compare it, pass it anywhere a `rant` fits.
 
 **Example**:
 
 ```c
 skibidi main {
-    rizz num;
     yapping("Enter a number:");
-    num = slorp(num);
+    rizz num = slorp();
     yapping("You typed: %d", num);
+
+    yap name[32];
+    slorp(name);
+    yapping("Hello, %s!", name);
     bussin 0;
 }
 ```
 
-**Deprecated form**: for one release, calling `slorp(var_name);` as a bare
-statement still writes the result back into `var_name` in place, matching
-the old (pre-native-calls-as-expressions) behavior -- with a deprecation
-warning on stderr pointing at the `var_name = slorp(...)` form above. This
-write-back only fires for a genuine bare statement call; `slorp(x)` used
-inside a larger expression must be assigned or consumed directly.
+**Deprecated form**: `rizz num; rizz i = slorp(num);` -- passing an
+already-declared variable purely as a type witness -- and the bare
+write-back statement `slorp(num);` (which assigns back into `num` with a
+deprecation warning on stderr) both still work for one release, matching
+the pre-#229 calling convention. Prefer the contextual `slorp()` form
+above for new code.
 
 ```c
 skibidi main {

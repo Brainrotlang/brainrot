@@ -918,6 +918,19 @@ function_call:
                 create_argument_list($3, NULL)
             );
         }
+    | SLORP LPAREN RPAREN
+        {
+            /* Zero-argument contextual form (issue #229): the semantic
+             * analyzer resolves the input type from the surrounding
+             * expression context (declaration/assignment/return/typed
+             * argument) and rewrites this node's argument list in place
+             * -- see propagate_contextual_call_type() in
+             * semantic_analyzer.c. */
+            $$ = create_function_call_node(
+                (String){ .data = "slorp", .len = sizeof("slorp") - 1 },
+                NULL
+            );
+        }
     | IDENTIFIER LPAREN arg_list RPAREN
         { 
             $$ = create_function_call_node($1, $3);

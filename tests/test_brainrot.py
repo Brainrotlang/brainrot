@@ -13,44 +13,34 @@ file_path = os.path.join(script_dir, "expected_results.json")
 with open(file_path, "r") as file:
     expected_results = json.load(file)
 
+# Single source of truth for which fixtures read stdin and what to feed
+# them -- an ordered list of [prefix, stdin] pairs, first startswith() match
+# wins. Shared verbatim with tests/run_wasm_tests.mjs (Node): both harnesses
+# load this same file rather than keeping their own copy, since a fixture
+# added to only one of them previously shipped broken (PR #230's wasm job
+# failed on 9 fixtures whose stdin only existed in this file's old inline
+# elif-chain, not in the wasm runner's separate hardcoded table).
+with open(os.path.join(script_dir, "stdin_fixtures.json"), "r") as file:
+    stdin_by_prefix = json.load(file)
+
+def stdin_for(example):
+    for prefix, stdin in stdin_by_prefix:
+        if example.startswith(prefix):
+            return stdin
+    return None
+
 @pytest.mark.parametrize("example,expected_output", expected_results.items())
 def test_brainrot_examples(example, expected_output):
     brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
     example_file_path = os.path.abspath(os.path.join(script_dir, f"../test_cases/{example}.brainrot"))
 
-    if example.startswith("slorp_int"):
-        command = f"echo '42' | {brainrot_path} {example_file_path}"
-    elif example.startswith("slorp_short"):
-        command = f"echo '69' | {brainrot_path} {example_file_path}"
-    elif example.startswith("slorp_float"):
-        command = f"echo '3.14' | {brainrot_path} {example_file_path}"
-    elif example.startswith("slorp_double"):
-        command = f"echo '3.141592' | {brainrot_path} {example_file_path}"
-    elif example.startswith("slorp_char"):
-        command = f"echo 'c' | {brainrot_path} {example_file_path}"
-    elif example.startswith("slorp_bool"):
-        command = f"echo '1' | {brainrot_path} {example_file_path}"
-    elif example.startswith("slorp_string"):
-        command = f"echo 'skibidi bop bop yes yes' | {brainrot_path} {example_file_path}"
-    elif example in ("slorp_identity_char_array", "native_cstring_param_char_array",
-                      "native_char_array_access",
-                      "identity_string_use_after_free",
-                      "identity_ownership_nonstring_result"):
-        command = f"echo 'hello' | {brainrot_path} {example_file_path}"
-    elif example == "native_char_param_scalar":
-        command = f"echo 'c' | {brainrot_path} {example_file_path}"
-    elif example in ("native_call_self_init", "native_sizeof_no_execution"):
-        command = f"echo '42' | {brainrot_path} {example_file_path}"
-    elif example == "native_call_loop":
-        command = f"printf '1\\n2\\n3\\n' | {brainrot_path} {example_file_path}"
-    elif example == "native_call_string_arg":
-        command = f"printf 'skibidi\\nq\\n' | {brainrot_path} {example_file_path}"
-    elif example == "native_call_do_while":
-        command = f"printf '5\\n50\\n6\\n150\\n' | {brainrot_path} {example_file_path}"
-    else:
-        command = f"{brainrot_path} {example_file_path}"
-
-    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True)
+    result = subprocess.run(
+        [brainrot_path, example_file_path],
+        input=stdin_for(example),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
 
     # "ExitCode:N" asserts only the process's exit code -- for cases whose
     # observable behavior *is* the exit code (e.g. ragequit(1.5) truncating

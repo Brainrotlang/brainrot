@@ -387,6 +387,19 @@ struct ASTNode
     int array_length;
     ArrayDimensions array_dimensions;
     int line_number; /* Line number for error reporting */
+    /* Diagnostic-only scratch field for a NODE_FUNC_CALL: the type
+       propagate_contextual_call_type() (semantic_analyzer.c) found in this
+       call's surrounding typed context, set whether or not that type was
+       actually usable (a synthetic type-witness argument was attached).
+       NONE until a context site has looked at this call. Lets semantic_
+       visit_function_call()'s "cannot infer type" diagnostic pick a
+       specific reason (e.g. a scalar rant needs a buffer instead) without
+       var_type -- which every other pass treats as "this node's actual,
+       resolved type" -- ever claiming a call resolved when no witness was
+       attached. Never read by infer_expression_type()/anything else: a
+       call's real type always comes from its (possibly still-empty)
+       argument list via return_like_arg. */
+    VarType contextual_type_hint;
     /* Array/struct declaration initializer values (e.g. the `{1, 2, 3}` in
        `rizz arr[3] = {1, 2, 3};`), carried from parse time to the runtime
        declaration visitor -- which allocates and populates storage in

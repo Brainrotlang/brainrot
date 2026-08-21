@@ -131,6 +131,12 @@ bool slorp_bool(bool var)
 
 static StdrotValue stdrot_slorp(StdrotValue *args, int argc)
 {
+    /* Defensive only: the semantic analyzer rewrites a contextual
+     * `slorp()` (issue #229) into a synthetic 1-argument call, or rejects
+     * the program outright when no typed context resolves one -- see
+     * propagate_contextual_call_type()/semantic_visit_function_call() in
+     * semantic_analyzer.c. A program that passed semantic analysis never
+     * calls this native with argc == 0. */
     if (argc <= 0)
     {
         return (StdrotValue){STDROT_NONE, {0}};
@@ -193,4 +199,13 @@ static const StdrotParam slorp_params[] = {
     {STDROT_ANY, NULL, 0},
 };
 
+/* min_args stays 1 (a mandatory argument -- required by the registry's own
+ * "return_like_arg must name a mandatory argument" validation): the
+ * contextual form `slorp()` (issue #229) parses with zero AST-level
+ * arguments, but the semantic analyzer rewrites it into a synthetic
+ * 1-argument call -- or rejects the program outright when no surrounding
+ * typed context can supply a type -- before it ever reaches a native-call
+ * arity check (propagate_contextual_call_type()/semantic_visit_function_
+ * call(), semantic_analyzer.c). This native itself never sees argc == 0
+ * from a program that passed semantic analysis. */
 STDROT_EXPORT_SIG_IDENTITY("slorp", stdrot_slorp, slorp_params, 1, 1);
