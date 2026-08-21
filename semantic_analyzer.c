@@ -1506,6 +1506,25 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
                                            param->pointer_level);
         }
 
+        /* A still-unresolved contextual `slorp()` argument -- either the
+           propagate attempt just above never applied (an STDROT_PTR/ANY/
+           HANDLE param has no single concrete VarType to give it) or it
+           applied and failed (an unsupported concrete type) -- already
+           gets its own "cannot infer type" error from semantic_visit_
+           function_call() when the argument-list recursion below (this
+           switch's own NODE_FUNC_CALL case) reaches it. Checking its
+           necessarily NONE/0 inferred type/pointer-level against this
+           parameter here -- HANDLE, PTR, ANY, or the generic scalar
+           branch alike -- would raise a second, misleading error for the
+           same argument (e.g. `peek_int(slorp());`, an STDROT_PTR param,
+           used to print both "cannot infer type" and "expected a pointer
+           (level 1), got pointer level 0"); skip straight to the next
+           parameter instead, matching semantic_visit_declaration()'s/
+           semantic_visit_assignment()'s/the NODE_RETURN case's identical
+           guard (see is_unresolved_contextual_call()'s own comment). */
+        if (is_unresolved_contextual_call(cur->expr))
+            continue;
+
         if (param->type == STDROT_HANDLE)
         {
             /* Same reasoning as the return-type check above. */
@@ -1781,6 +1800,52 @@ static void propagate_contextual_type_into_expression_list(
         {
             propagate_contextual_type_into_expression_list(
                 current->sublist, expected, expected_pointer_level);
+        }
+        current = current->next;
+    } while (current != list);
+}
+
+/* Same job as propagate_contextual_type_into_expression_list() above, but
+   for a braced STRUCT initializer (`gang Point p = { slorp(), 1 };`),
+   whose leaves are NOT homogeneous -- each one has its own field's type,
+   not one shared element type. `field` walks StructDef.fields in lockstep
+   with `list`, positionally (this grammar has no designated initializers,
+   see struct_field/struct_initializer_list in lang.y), so leaf i gets
+   field i's (type, pointer_level). A nested sublist (`gang Outer o = {
+   {1, 2}, 3 };`, a struct-typed field with its own braced sub-initializer)
+   recurses using THAT field's own struct definition, mirroring validate_
+   struct_initializer_shape()'s (ast.c) shape-only check of the same
+   nesting at parse time. `field` NULL (fewer fields than leaves, or no
+   StructDef resolved at all -- e.g. an array-of-structs declaration,
+   which does not carry a struct-tag placeholder on data.op.right the way
+   a plain struct declaration does) leaves the remaining/all leaves
+   untouched, same as propagate_contextual_call_type() no-op'ing on any
+   node it doesn't recognize. */
+static void
+propagate_contextual_type_into_struct_initializer(ExpressionList *list,
+                                                  StructField *field)
+{
+    if (!list)
+        return;
+
+    ExpressionList *current = list;
+    do
+    {
+        if (field)
+        {
+            if (current->expr)
+            {
+                propagate_contextual_call_type(current->expr, field->type,
+                                               field->pointer_level);
+            }
+            else if (current->sublist && field->type == VAR_STRUCT &&
+                     field->pointer_level == 0)
+            {
+                StructDef *nested_def = get_struct_def(field->struct_name);
+                propagate_contextual_type_into_struct_initializer(
+                    current->sublist, nested_def ? nested_def->fields : NULL);
+            }
+            field = field->next;
         }
         current = current->next;
     } while (current != list);
@@ -2176,11 +2241,16 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node)
         infer_expression_pointer_level(node->data.op.right, analyzer);
 
     /* Same reasoning as semantic_visit_declaration()'s identical guard --
-       a still-unresolved contextual `slorp()` (e.g. `*p = slorp();`)
-       already gets its own "cannot infer type" error from semantic_visit_
-       function_call(); comparing its necessarily NONE/0 inferred type/
-       pointer-level against the target here would raise a second,
-       misleading error for the same node. */
+       a still-unresolved contextual `slorp()` assigned to a pointer-typed
+       TARGET (e.g. `p = slorp();`, not `*p = slorp();` -- dereferencing
+       `p` first makes the target the POINTEE's type, which a witness
+       resolves against successfully; see propagate_contextual_call_type()'s
+       own call site above, which already computes the dereferenced
+       target's type/pointer_level, not `p`'s own) already gets its own
+       "cannot infer type" error from semantic_visit_function_call();
+       comparing its necessarily NONE/0 inferred type/pointer-level
+       against the target here would raise a second, misleading error for
+       the same node. */
     if ((target_pointer_level > 0 || value_pointer_level > 0) &&
         !is_unresolved_contextual_call(node->data.op.right) &&
         !check_type_compatibility_ex(target_type, target_pointer_level,
@@ -2828,8 +2898,31 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
            -- semantic_visit_declaration() validates the node only. */
         if (node->pending_initializer)
         {
-            propagate_contextual_type_into_expression_list(
-                node->pending_initializer, node->var_type, node->pointer_level);
+            /* A struct's braced initializer (`gang Point p = { slorp(), 1
+               };`) reuses this same pending_initializer field (lang.y's
+               struct-declarator productions), but its leaves are each a
+               different FIELD's type -- node->var_type is just VAR_STRUCT
+               here, not one shared element type the way an array's is.
+               The NODE_STRUCT_DEF placeholder on data.op.right (only the
+               plain, non-array struct-declaration grammar productions
+               create one; create_multi_array_declaration_node() never
+               does) is what distinguishes this from an array-of-structs
+               declaration, and carries the struct tag needed to look up
+               each field's real type. */
+            if (node->var_type == VAR_STRUCT && node->data.op.right &&
+                node->data.op.right->type == NODE_STRUCT_DEF)
+            {
+                StructDef *def =
+                    get_struct_def(node->data.op.right->data.struct_def.name);
+                propagate_contextual_type_into_struct_initializer(
+                    node->pending_initializer, def ? def->fields : NULL);
+            }
+            else
+            {
+                propagate_contextual_type_into_expression_list(
+                    node->pending_initializer, node->var_type,
+                    node->pointer_level);
+            }
             semantic_check_expression_list(analyzer, node->pending_initializer);
         }
         if (node->struct_init_expr)

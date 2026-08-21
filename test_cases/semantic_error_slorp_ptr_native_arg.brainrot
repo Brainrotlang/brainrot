@@ -1,0 +1,12 @@
+🚽 Test case: a zero-argument slorp() passed to a test-only native's
+🚽 STDROT_PTR parameter (peek_int, tests/stdrot/testptr.c) is an
+🚽 unsupported contextual type -- propagate_contextual_call_type() never
+🚽 even attempts it (STDROT_PTR has no single concrete VarType to give
+🚽 it) -- and must produce exactly one clear diagnostic, not a second,
+🚽 misleading "expected a pointer" error from semantic_check_native_
+🚽 call()'s own STDROT_PTR argument check (issue #229). Requires
+🚽 STDROT_LIB_PATH pointed at tests/libstdrot.so.
+skibidi main {
+    peek_int(slorp());
+    bussin 0;
+}

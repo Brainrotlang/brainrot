@@ -1,0 +1,14 @@
+🚽 Test case: a zero-argument slorp() assigned through a dereferenced
+🚽 pointer (*p = slorp();) resolves its type from the POINTEE's type, not
+🚽 the pointer's -- distinct from p = slorp(); (assigning to the pointer
+🚽 itself), which is unsupported (see semantic_error_slorp_pointer_
+🚽 context.brainrot). Documented as a working assignment site in both
+🚽 docs/the-brainrot-programming-language.md and docs/brainrot-user-
+🚽 guide.md (issue #229).
+skibidi main {
+    rizz x = 0;
+    rizz *p = &x;
+    *p = slorp();
+    yapping("%d", x);
+    bussin 0;
+}

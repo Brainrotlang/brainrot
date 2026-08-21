@@ -17,6 +17,8 @@
   ["slorp_contextual_user_arg", "7\n"],
   ["slorp_contextual_assignment", "8\n"],
   ["slorp_contextual_braced_init", "5\n"],
+  ["slorp_contextual_dereference_assignment", "17\n"],
+  ["slorp_contextual_struct_braced_init", "5\n"],
   ["slorp_identity_char_array", "hello\n"],
   ["native_cstring_param_char_array", "hello\n"],
   ["native_char_array_access", "hello\n"],

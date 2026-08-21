@@ -174,6 +174,7 @@ const WASM_PRODUCTION_SKIP = new Set([
   "native_void_pointer_parameter",
   "native_user_pointer_return",
   "native_pointer_array_element_arg",
+  "semantic_error_slorp_ptr_native_arg",
   "semantic_error_void_pointer_dereference_write",
   "semantic_error_void_pointer_dereference_read",
   "native_void_double_pointer_dereference",
