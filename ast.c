@@ -5122,10 +5122,14 @@ void populate_multi_array_variable(String name, ExpressionList *list,
     }
 
     // Initialize the array elements
+    // NOTE: ExpressionList is circular (see create_expression_list()), so
+    // `current` never becomes NULL. Bound the loop by initializer_count
+    // (already validated <= total_elements above) and leave every
+    // remaining element at its zero-initialized default.
     size_t index = 0;
     ExpressionList *current = list;
 
-    while (current != NULL && index < total_elements)
+    while (index < initializer_count)
     {
         /* Round-24 review, finding #2 -- pointer_level dominates element
            representation here too, the same rule round 23 already
