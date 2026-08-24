@@ -8,4 +8,8 @@ memleak:lib/mem.c
 # __stop_stdrot_exports - __start_stdrot_exports. Those are linker-provided
 # section bounds, so they are by construction not "the same object" as far as
 # the standard is concerned; this is the intended ELF section-iteration idiom.
+# The check ID for this differs by cppcheck version (subtractPointers on
+# 2.17.x, comparePointers on 2.13.x, the version CI installs) -- suppress
+# both so the suppression survives either.
 subtractPointers:stdrot/registry.c:63
+comparePointers:stdrot/registry.c:63
