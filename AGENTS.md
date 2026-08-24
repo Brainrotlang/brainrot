@@ -13,6 +13,7 @@ make test       # build, then run tests/test_brainrot.py against test_cases/*.br
 make valgrind   # build, then run run_valgrind_tests.sh over every test_cases/*.brainrot
 make format     # clang-format all .c/.h files
 make format-check # check formatting without modifying files (what CI's `lint` job runs)
+make cppcheck   # static analysis (what CI's `static-analysis` job runs); needs cppcheck >= 2.13
 make clean      # remove build artifacts (does NOT touch source)
 ```
 
@@ -68,6 +69,8 @@ Issue, Type of Change, Checklist) — fill it in, don't strip it out.
 - **Always**: run `make test` and `make valgrind` before calling a change done.
 - **Always**: run `make format-check` (or `make format` to fix) before opening
   a PR — the CI `lint` job blocks on any diff.
+- **Always**: run `make cppcheck` before opening a PR — the CI
+  `static-analysis` job blocks on any finding.
 - **Always**: fill out `.github/PULL_REQUEST_TEMPLATE.md` in full when opening a PR.
 - **Ask first**: changing existing keyword syntax/semantics in `lang.l`/`lang.y`
   (README's keyword table is a public compatibility surface).

@@ -1042,6 +1042,12 @@ void execute_switch_statement(ASTNode *node)
             else
             {
                 // Default case
+                // Known bug tracked in #179: a `based` default placed
+                // before a matching numbered case fires unconditionally
+                // instead of only as a true fallthrough/default. Fixing
+                // this is a switch/default semantics change that needs
+                // its own test_cases fixture; not addressed here.
+                // cppcheck-suppress incorrectLogicOperator
                 if (matched || !matched)
                 {
                     execute_statements(current_case->statements);
@@ -3635,7 +3641,7 @@ int evaluate_expression_int(ASTNode *node)
             if (!left)
                 return 0;
             int right = evaluate_expression_int(node->data.op.right);
-            return left && right;
+            return right != 0;
         }
         if (node->data.op.op == OP_OR)
         {
@@ -3643,7 +3649,7 @@ int evaluate_expression_int(ASTNode *node)
             if (left)
                 return 1;
             int right = evaluate_expression_int(node->data.op.right);
-            return left || right;
+            return right != 0;
         }
 
         // Regular integer operations
@@ -4051,7 +4057,7 @@ bool evaluate_expression_bool(ASTNode *node)
             if (!left)
                 return false;
             bool right = evaluate_expression_bool(node->data.op.right);
-            return left && right;
+            return right;
         }
         if (node->data.op.op == OP_OR)
         {
@@ -4059,7 +4065,7 @@ bool evaluate_expression_bool(ASTNode *node)
             if (left)
                 return true;
             bool right = evaluate_expression_bool(node->data.op.right);
-            return left || right;
+            return right;
         }
 
         // Regular integer operations
@@ -4533,13 +4539,6 @@ void execute_statement(ASTNode *node)
         break;
     }
     case NODE_ARRAY_ACCESS:
-        if (node->data.array.name.data && node->data.array.index)
-        {
-            if (!(node->data.array.name.data))
-            {
-                yyerror("Failed to create array");
-            }
-        }
         break;
     case NODE_OPERATION:
     case NODE_UNARY_OPERATION:

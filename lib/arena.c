@@ -1,4 +1,5 @@
 #include "arena.h"
+#include <stdbool.h>
 
 /*
  * @brref Create a new arena with a given size.
@@ -9,6 +10,10 @@ Region *region_new(size_t size)
 {
     size_t total_size = sizeof(Region) + sizeof(uintptr_t) * size;
     Region *region = (Region *)malloc(total_size);
+    if (region == NULL)
+    {
+        return (Region *)handle_malloc_error(total_size);
+    }
     region->capacity = size;
     region->count = 0;
     region->next = NULL;
@@ -32,11 +37,17 @@ void region_free(Region *region)
  */
 void *arena_alloc(Arena *arena, size_t size_bytes)
 {
+    bool owns_arena = false;
     if (arena == NULL)
     {
         arena = (Arena *)malloc(sizeof(struct Arena));
+        if (arena == NULL)
+        {
+            return handle_malloc_error(sizeof(struct Arena));
+        }
         arena->start = NULL;
         arena->end = NULL;
+        owns_arena = true;
     }
     size_t size = (size_bytes + sizeof(uintptr_t) - 1) / sizeof(uintptr_t);
     if (arena->end == NULL)
@@ -46,6 +57,12 @@ void *arena_alloc(Arena *arena, size_t size_bytes)
         if (size > capacity)
             capacity = size;
         arena->end = region_new(capacity);
+        if (arena->end == NULL)
+        {
+            if (owns_arena)
+                free(arena);
+            return NULL;
+        }
         arena->start = arena->end;
     }
 
@@ -62,6 +79,10 @@ void *arena_alloc(Arena *arena, size_t size_bytes)
         if (size > cap)
             cap = size;
         arena->end->next = region_new(cap);
+        if (arena->end->next == NULL)
+        {
+            return NULL;
+        }
         arena->end = arena->end->next;
     }
 
