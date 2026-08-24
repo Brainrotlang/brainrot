@@ -130,7 +130,8 @@ debug: clean all
 # clean then all, so a prior sanitizer build can't be reused.
 .PHONY: release
 ifeq ($(UNAME_S),Darwin)
-release: CFLAGS := $(RELEASE_CFLAGS) -Wno-strict-prototypes $(FLEX_CPPFLAGS)
+release: CFLAGS := $(RELEASE_CFLAGS) -Wno-strict-prototypes \
+	-Wno-tautological-negation-compare $(FLEX_CPPFLAGS)
 release: LDFLAGS := $(FLEX_LIB) -lfl -lm -rdynamic -Wl,-rpath,@loader_path
 else
 release: CFLAGS := $(RELEASE_CFLAGS) $(FLEX_CPPFLAGS)
