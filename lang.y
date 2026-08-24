@@ -136,6 +136,27 @@ static Parameter *create_alias_parameter(String name, TypeDescriptor descriptor,
     return param;
 }
 
+/* Parameter whose name is a TYPE_NAME (a lit alias). typedef_name_declarator
+   has pointer_level 0, so a skibidi (void) parameter is always invalid. */
+static Parameter *create_typedef_name_parameter(String name, VarType type,
+                                                Parameter *next)
+{
+    if (type == VAR_VOID)
+    {
+        char msg[MAX_BUFFER_LEN];
+        snprintf(msg, sizeof(msg), "Parameter '%s' cannot have type void",
+                 name.data ? name.data : "?");
+        yyerror(msg);
+        parse_error_already_reported = true;
+        SAFE_FREE(name);
+        return NULL;
+    }
+    Parameter *param =
+        create_parameter_ex(name, type, 0, next, get_current_modifiers());
+    SAFE_FREE(name);
+    return param;
+}
+
 static ASTNode *create_alias_function_def(String name,
                                           TypeDescriptor descriptor,
                                           int declarator_pointer_level,
@@ -911,6 +932,90 @@ param_list
             $$ = create_parameter_ex($5.name, $4, $5.pointer_level, $1, get_current_modifiers());
             SAFE_FREE($5.name);
         }
+    | optional_modifiers RIZZ typedef_name_declarator
+        {
+            $$ = create_typedef_name_parameter($3.name, VAR_INT, NULL);
+            if (!$$)
+                YYABORT;
+        }
+    | optional_modifiers CHAD typedef_name_declarator
+        {
+            $$ = create_typedef_name_parameter($3.name, VAR_FLOAT, NULL);
+            if (!$$)
+                YYABORT;
+        }
+    | optional_modifiers GIGACHAD typedef_name_declarator
+        {
+            $$ = create_typedef_name_parameter($3.name, VAR_DOUBLE, NULL);
+            if (!$$)
+                YYABORT;
+        }
+    | optional_modifiers SMOL typedef_name_declarator
+        {
+            $$ = create_typedef_name_parameter($3.name, VAR_SHORT, NULL);
+            if (!$$)
+                YYABORT;
+        }
+    | optional_modifiers YAP typedef_name_declarator
+        {
+            $$ = create_typedef_name_parameter($3.name, VAR_CHAR, NULL);
+            if (!$$)
+                YYABORT;
+        }
+    | optional_modifiers RANT typedef_name_declarator
+        {
+            $$ = create_typedef_name_parameter($3.name, VAR_STRING, NULL);
+            if (!$$)
+                YYABORT;
+        }
+    | optional_modifiers SKIBIDI typedef_name_declarator
+        {
+            $$ = create_typedef_name_parameter($3.name, VAR_VOID, NULL);
+            if (!$$)
+                YYABORT;
+        }
+    | param_list COMMA optional_modifiers RIZZ typedef_name_declarator
+        {
+            $$ = create_typedef_name_parameter($5.name, VAR_INT, $1);
+            if (!$$)
+                YYABORT;
+        }
+    | param_list COMMA optional_modifiers CHAD typedef_name_declarator
+        {
+            $$ = create_typedef_name_parameter($5.name, VAR_FLOAT, $1);
+            if (!$$)
+                YYABORT;
+        }
+    | param_list COMMA optional_modifiers GIGACHAD typedef_name_declarator
+        {
+            $$ = create_typedef_name_parameter($5.name, VAR_DOUBLE, $1);
+            if (!$$)
+                YYABORT;
+        }
+    | param_list COMMA optional_modifiers SMOL typedef_name_declarator
+        {
+            $$ = create_typedef_name_parameter($5.name, VAR_SHORT, $1);
+            if (!$$)
+                YYABORT;
+        }
+    | param_list COMMA optional_modifiers YAP typedef_name_declarator
+        {
+            $$ = create_typedef_name_parameter($5.name, VAR_CHAR, $1);
+            if (!$$)
+                YYABORT;
+        }
+    | param_list COMMA optional_modifiers RANT typedef_name_declarator
+        {
+            $$ = create_typedef_name_parameter($5.name, VAR_STRING, $1);
+            if (!$$)
+                YYABORT;
+        }
+    | param_list COMMA optional_modifiers SKIBIDI typedef_name_declarator
+        {
+            $$ = create_typedef_name_parameter($5.name, VAR_VOID, $1);
+            if (!$$)
+                YYABORT;
+        }
     | optional_modifiers alias_type declarator
         {
             int pointer_level = $2.pointer_level + $3.pointer_level;
@@ -928,6 +1033,38 @@ param_list
             SAFE_FREE($3.name);
         }
     | param_list COMMA optional_modifiers alias_type declarator
+        {
+            int pointer_level = $4.pointer_level + $5.pointer_level;
+            if ($4.type == VAR_VOID && pointer_level == 0)
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg),
+                        "Parameter '%s' cannot have type void", $5.name.data);
+                yyerror(msg);
+                parse_error_already_reported = true;
+                SAFE_FREE($5.name);
+                YYABORT;
+            }
+            $$ = create_alias_parameter($5.name, $4, $5.pointer_level, $1);
+            SAFE_FREE($5.name);
+        }
+    | optional_modifiers alias_type typedef_name_declarator
+        {
+            int pointer_level = $2.pointer_level + $3.pointer_level;
+            if ($2.type == VAR_VOID && pointer_level == 0)
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg),
+                        "Parameter '%s' cannot have type void", $3.name.data);
+                yyerror(msg);
+                parse_error_already_reported = true;
+                SAFE_FREE($3.name);
+                YYABORT;
+            }
+            $$ = create_alias_parameter($3.name, $2, $3.pointer_level, NULL);
+            SAFE_FREE($3.name);
+        }
+    | param_list COMMA optional_modifiers alias_type typedef_name_declarator
         {
             int pointer_level = $4.pointer_level + $5.pointer_level;
             if ($4.type == VAR_VOID && pointer_level == 0)

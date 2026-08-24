@@ -276,6 +276,8 @@
     "lit_salty_alias_use": "2 4",
     "lit_alias_redefinition_fail": "Error: Typedef alias 'Count' is already defined at line 2\nParsing failed",
     "semantic_error_lit_function_alias_conflict": "Error: Typedef alias 'Count' is already defined at line 1",
+    "semantic_error_lit_variable_alias_conflict": "Error: Typedef alias 'Count' is already defined at line 4",
+    "semantic_error_lit_parameter_alias_conflict": "Error: Typedef alias 'Count' is already defined at line 1",
     "lit_array_typedef_fail": "Error: Array typedef alias 'Values' is not supported at line 1\nParsing failed",
     "lit_modifier_conflict_fail": "Error: Conflicting signedness modifiers for typedef alias 'Count' at line 4\nParsing failed",
     "lit_top_level_only_fail": "Error: lit declarations are only allowed at top level at line 1\nParsing failed",

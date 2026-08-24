@@ -776,7 +776,7 @@ Current limitations:
 - Storage-class modifiers such as `salty` are not accepted on `lit`
   declarations; apply them where the alias is used instead.
 - Alias names are reserved type names and cannot be reused as variables,
-  functions, enum constants, or other aliases. Aggregate tags
+  parameters, functions, enum constants, or other aliases. Aggregate tags
   (`gang`/`chungus`/`gyatt`) live in a separate namespace, so a typedef name can
   share a spelling with a tag in either declaration order, matching C
   typedef/tag behavior.

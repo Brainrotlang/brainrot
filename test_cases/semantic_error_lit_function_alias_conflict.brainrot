@@ -1,3 +1,6 @@
+🚽 After `lit rizz Count`, Count is a TYPE_NAME. The grammar still accepts
+🚽 it as a declarator so this is a semantic reverse-namespace error, not a
+🚽 parse failure.
 lit rizz Count;
 
 rizz Count() {
@@ -7,3 +10,4 @@ rizz Count() {
 skibidi main {
     bussin 0;
 }
+
