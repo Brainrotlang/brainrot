@@ -1,0 +1,6 @@
+🚽 Test case: typedef aliases cannot target an unknown struct/union tag.
+lit gang Ghost Alias;
+
+skibidi main {
+    bussin 0;
+}

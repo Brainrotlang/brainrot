@@ -1,0 +1,23 @@
+🚽 Test case: C-style anonymous aggregate typedef aliases.
+lit gang {
+    rizz x;
+    rizz y;
+} Point;
+
+lit chungus {
+    rizz i;
+    chad f;
+} Data;
+
+Point make_point(rizz x, rizz y) {
+    Point p = {x, y};
+    bussin p;
+}
+
+skibidi main {
+    Point p = make_point(6, 7);
+    Data d = {42};
+
+    yapping("%d %d %d", p.x, p.y, d.i);
+    bussin 0;
+}

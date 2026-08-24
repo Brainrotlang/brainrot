@@ -255,7 +255,7 @@ Join our community on:
 | L          | false        | ✅           |
 | thicc      | long long    | ✅           |
 | rant       | string type  | ✅           |
-| lit        | typedef      | ❌           |
+| lit        | typedef      | ✅           |
 
 ### Preprocessor directives
 

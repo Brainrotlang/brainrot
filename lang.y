@@ -50,6 +50,212 @@ static String current_struct_def_name = {0};
 
 /* Global interpreter for cleanup */
 static Interpreter *global_interpreter = NULL;
+
+static TypeDescriptor resolve_alias_use(String alias_name)
+{
+    TypeAlias *alias = get_type_alias(alias_name);
+    if (!alias)
+    {
+        char msg[MAX_BUFFER_LEN];
+        snprintf(msg, sizeof(msg), "Unknown typedef alias '%s'",
+                 alias_name.data ? alias_name.data : "?");
+        yyerror(msg);
+        struct_def_had_error = true;
+        return make_type_descriptor(NONE, 0, (TypeModifiers){0});
+    }
+
+    TypeDescriptor descriptor = type_descriptor_from_alias(alias);
+    TypeModifiers use_modifiers = get_current_modifiers();
+    TypeModifiers merged = {0};
+    if (!merge_type_modifiers(descriptor.modifiers, use_modifiers, &merged,
+                              alias_name))
+    {
+        struct_def_had_error = true;
+    }
+    descriptor.modifiers = merged;
+    return descriptor;
+}
+
+static ASTNode *create_alias_declaration(String name, TypeDescriptor descriptor,
+                                         int declarator_pointer_level,
+                                         ASTNode *initializer)
+{
+    int pointer_level = descriptor.pointer_level + declarator_pointer_level;
+    current_var_type = descriptor.type;
+    current_modifiers = descriptor.modifiers;
+
+    ASTNode *node = NULL;
+    if (descriptor.type == VAR_STRUCT)
+    {
+        StructDef *def = get_struct_def(descriptor.struct_name);
+        node = create_declaration_node_ex(
+            name,
+            create_struct_def_node(descriptor.struct_name,
+                                   def ? def->fields : NULL),
+            pointer_level);
+        node->var_type = VAR_STRUCT;
+        if (node->data.op.right)
+            node->data.op.right->data.name =
+                ARENA_STRDUP(descriptor.struct_name);
+        if (initializer)
+            node->struct_init_expr = initializer;
+    }
+    else
+    {
+        node = create_declaration_node_ex(
+            name,
+            initializer ? initializer
+                        : create_default_node(descriptor.type, pointer_level),
+            pointer_level);
+        node->var_type = descriptor.type;
+        if (descriptor.type == VAR_ENUM)
+            node->enum_name = ARENA_STRDUP(descriptor.enum_name);
+    }
+
+    return node;
+}
+
+static Parameter *create_alias_parameter(String name, TypeDescriptor descriptor,
+                                         int declarator_pointer_level,
+                                         Parameter *next)
+{
+    int pointer_level = descriptor.pointer_level + declarator_pointer_level;
+    Parameter *param = create_parameter_ex(name, descriptor.type, pointer_level,
+                                           next, descriptor.modifiers);
+    if (descriptor.type == VAR_STRUCT)
+        param->struct_name = ARENA_STRDUP(descriptor.struct_name);
+    else if (descriptor.type == VAR_ENUM)
+        param->enum_name = ARENA_STRDUP(descriptor.enum_name);
+    return param;
+}
+
+static ASTNode *create_alias_function_def(String name,
+                                          TypeDescriptor descriptor,
+                                          int declarator_pointer_level,
+                                          Parameter *params, ASTNode *body)
+{
+    int pointer_level = descriptor.pointer_level + declarator_pointer_level;
+    if (descriptor.type == VAR_STRUCT)
+        return create_function_def_node_struct(
+            name, descriptor.struct_name, pointer_level, params, body);
+    if (descriptor.type == VAR_ENUM)
+        return create_function_def_node_enum(
+            name, descriptor.enum_name, pointer_level, params, body);
+    return create_function_def_node_ex(name, descriptor.type, pointer_level,
+                                       params, body);
+}
+
+static bool ensure_type_alias_name_available(String name)
+{
+    if (get_type_alias(name) || get_struct_def(name) || get_enum_def(name) ||
+        get_function(name) || get_variable(name) ||
+        find_global_enum_constant(name))
+    {
+        char msg[MAX_BUFFER_LEN];
+        snprintf(msg, sizeof(msg), "Typedef alias '%s' is already defined",
+                 name.data ? name.data : "?");
+        yyerror(msg);
+        struct_def_had_error = true;
+        return false;
+    }
+    return true;
+}
+
+static String make_anonymous_typedef_name(String alias_name)
+{
+    const char *prefix = "__lit_aggregate_";
+    size_t prefix_len = strlen(prefix);
+    size_t alias_len = alias_name.data ? alias_name.len : 0;
+    String hidden = {0};
+    hidden.len = prefix_len + alias_len;
+    hidden.data = safe_malloc(hidden.len + 1);
+    if (!hidden.data)
+    {
+        yyerror("Memory allocation failed");
+        exit(EXIT_FAILURE);
+    }
+    memcpy(hidden.data, prefix, prefix_len);
+    if (alias_len > 0)
+        memcpy(hidden.data + prefix_len, alias_name.data, alias_len);
+    hidden.data[hidden.len] = '\0';
+    return hidden;
+}
+
+static StructField *build_struct_fields_from_params(Parameter *params)
+{
+    StructField *fields = NULL;
+    StructField *tail = NULL;
+    Parameter *p = params;
+    while (p)
+    {
+        StructField *f = SAFE_MALLOC(StructField);
+        f->name = safe_strdup(&p->name);
+        f->type = p->type;
+        f->struct_name = safe_strdup(&p->struct_name);
+        f->enum_name = safe_strdup(&p->enum_name);
+        f->pointer_level = p->pointer_level;
+        f->offset = 0;
+        f->next = NULL;
+        if (!tail)
+        {
+            fields = tail = f;
+        }
+        else
+        {
+            tail->next = f;
+            tail = f;
+        }
+        p = p->next;
+    }
+    return fields;
+}
+
+static void register_aggregate_typedef(String tag_name, String alias_name,
+                                        bool is_union, Parameter *params,
+                                        int alias_pointer_level,
+                                        TypeModifiers modifiers)
+{
+    if (!ensure_type_alias_name_available(alias_name))
+        return;
+
+    if (get_struct_def(tag_name))
+    {
+        char msg[MAX_BUFFER_LEN];
+        snprintf(msg, sizeof(msg), "Struct/union type '%s' is already defined",
+                 tag_name.data ? tag_name.data : "?");
+        yyerror(msg);
+        struct_def_had_error = true;
+        return;
+    }
+
+    StructField *fields = build_struct_fields_from_params(params);
+    size_t total =
+        is_union ? compute_union_layout(fields) : compute_struct_layout(fields);
+
+    StructDef *def = SAFE_MALLOC(StructDef);
+    def->name = safe_strdup(&tag_name);
+    def->fields = fields;
+    def->total_size = total;
+    def->is_union = is_union;
+    register_struct_def(def);
+
+    TypeDescriptor descriptor =
+        make_type_descriptor(VAR_STRUCT, alias_pointer_level, modifiers);
+    descriptor.struct_name = tag_name;
+    register_type_alias(alias_name, descriptor);
+}
+
+static void register_anonymous_aggregate_typedef(String alias_name,
+                                                 bool is_union,
+                                                 Parameter *params,
+                                                 int alias_pointer_level,
+                                                 TypeModifiers modifiers)
+{
+    String hidden_name = make_anonymous_typedef_name(alias_name);
+    register_aggregate_typedef(hidden_name, alias_name, is_union, params,
+                               alias_pointer_level, modifiers);
+    SAFE_FREE(hidden_name);
+}
 %}
 
 
@@ -69,6 +275,7 @@ static Interpreter *global_interpreter = NULL;
     Array array;
     Declarator declarator;
     EnumConstant *econst;
+    TypeDescriptor type_desc;
 }
 
 /* Define token types */
@@ -81,7 +288,7 @@ static Interpreter *global_interpreter = NULL;
 %token EXTERN CHAD GIGACHAD FOR GOTO IF LONG SMOL SIGNED LONG_LONG
 %token SIZEOF STATIC STRUCT SWITCH TYPEDEF UNION UNSIGNED VOID VOLATILE GOON 
 %token LBRACKET RBRACKET
-%token <strval> IDENTIFIER
+%token <strval> IDENTIFIER TYPE_NAME
 %token <ival> INT_LITERAL
 %token <sval> SHORT_LITERAL
 %token <strval> STRING_LITERAL
@@ -92,12 +299,13 @@ static Interpreter *global_interpreter = NULL;
 %token SLORP
 %token DOT
 
-%destructor { SAFE_FREE($$.data); } IDENTIFIER STRING_LITERAL
+%destructor { SAFE_FREE($$.data); } IDENTIFIER STRING_LITERAL TYPE_NAME
 %destructor { SAFE_FREE($$.name); } declarator
 
 %type <node>  struct_def struct_access
 %type <param> struct_field_list struct_field   /* reuse Parameter as field carrier */
 %type <ival>  struct_or_union
+%type <type_desc> alias_type
 %type <expr_list> struct_initializer_list struct_initializer_item
 %type <node>  enum_def
 %type <econst> enum_constant_list enum_constant
@@ -127,11 +335,13 @@ static Interpreter *global_interpreter = NULL;
 %type <expr_list> row_list row
 %type <node> function_def
 %type <node> function_def_list
+%type <node> typedef_def
 %type <param> param_list params
 %type <array_dims> dimensions
 %type <array_dims> dimensions_or_unsized
 %type <array> multi_dimension_access
 %type <declarator> declarator
+%type <declarator> typedef_declarator
 %type <ival> pointer_stars
 %type <node> assignment_target
 
@@ -167,6 +377,97 @@ function_def_list
         { $$ = $1; (void)$2; }
     | function_def_list enum_def
         { $$ = $1; (void)$2; }
+    | function_def_list typedef_def
+        { $$ = $1; (void)$2; }
+    ;
+
+alias_type:
+    TYPE_NAME
+        {
+            $$ = resolve_alias_use($1);
+            SAFE_FREE($1);
+        }
+    ;
+
+typedef_def:
+    TYPEDEF optional_modifiers type typedef_declarator SEMICOLON
+        {
+            TypeDescriptor descriptor = make_type_descriptor(
+                $3, $4.pointer_level, get_current_modifiers());
+            register_type_alias($4.name, descriptor);
+            SAFE_FREE($4.name);
+            $$ = NULL;
+        }
+    | TYPEDEF optional_modifiers struct_or_union IDENTIFIER typedef_declarator SEMICOLON
+        {
+            TypeModifiers modifiers = get_current_modifiers();
+            if (!get_struct_def($4))
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg), "Unknown struct/union type '%s'",
+                         $4.data);
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
+            TypeDescriptor descriptor = make_type_descriptor(
+                VAR_STRUCT, $5.pointer_level, modifiers);
+            descriptor.struct_name = $4;
+            register_type_alias($5.name, descriptor);
+            SAFE_FREE($4);
+            SAFE_FREE($5.name);
+            $$ = NULL;
+        }
+    | TYPEDEF optional_modifiers struct_or_union IDENTIFIER
+        {
+            SAFE_FREE(current_struct_def_name.data);
+            current_struct_def_name = safe_strdup(&$4);
+        }
+      LBRACE struct_field_list RBRACE typedef_declarator SEMICOLON
+        {
+            TypeModifiers modifiers = get_current_modifiers();
+            register_aggregate_typedef($4, $9.name, $3 != 0, $7,
+                                       $9.pointer_level, modifiers);
+            SAFE_FREE($4);
+            SAFE_FREE($9.name);
+            SAFE_FREE(current_struct_def_name.data);
+            current_struct_def_name = (String){0};
+            $$ = NULL;
+        }
+    | TYPEDEF optional_modifiers struct_or_union LBRACE struct_field_list RBRACE typedef_declarator SEMICOLON
+        {
+            TypeModifiers modifiers = get_current_modifiers();
+            register_anonymous_aggregate_typedef($7.name, $3 != 0, $5,
+                                                 $7.pointer_level, modifiers);
+            SAFE_FREE($7.name);
+            $$ = NULL;
+        }
+    | TYPEDEF optional_modifiers ENUM IDENTIFIER typedef_declarator SEMICOLON
+        {
+            TypeModifiers modifiers = get_current_modifiers();
+            if (!get_enum_def($4))
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg), "Unknown enum type '%s'",
+                         $4.data);
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
+            TypeDescriptor descriptor = make_type_descriptor(
+                VAR_ENUM, $5.pointer_level, modifiers);
+            descriptor.enum_name = $4;
+            register_type_alias($5.name, descriptor);
+            SAFE_FREE($4);
+            SAFE_FREE($5.name);
+            $$ = NULL;
+        }
+    | TYPEDEF optional_modifiers alias_type typedef_declarator SEMICOLON
+        {
+            TypeDescriptor descriptor = $3;
+            descriptor.pointer_level += $4.pointer_level;
+            register_type_alias($4.name, descriptor);
+            SAFE_FREE($4.name);
+            $$ = NULL;
+        }
     ;
 
 struct_or_union
@@ -184,22 +485,7 @@ struct_def
         }
       LBRACE struct_field_list RBRACE SEMICOLON
         {
-            /* Build StructField list from Parameter list */
-            StructField *fields = NULL, *tail = NULL;
-            Parameter *p = $5;
-            while (p) {
-                StructField *f = SAFE_MALLOC(StructField);
-                f->name          = safe_strdup(&p->name);
-                f->type          = p->type;
-                f->struct_name   = safe_strdup(&p->struct_name);
-                f->enum_name     = safe_strdup(&p->enum_name);
-                f->pointer_level = p->pointer_level;
-                f->offset        = 0; /* filled by compute_struct_layout */
-                f->next          = NULL;
-                if (!tail) { fields = tail = f; }
-                else        { tail->next = f; tail = f; }
-                p = p->next;
-            }
+            StructField *fields = build_struct_fields_from_params($5);
             bool is_union = $1 != 0;
             size_t total = is_union ? compute_union_layout(fields)
                                     : compute_struct_layout(fields);
@@ -260,6 +546,21 @@ struct_field
             }
             $$ = create_parameter_ex($2.name, $1, $2.pointer_level, NULL,
                                      (TypeModifiers){0});
+            SAFE_FREE($2.name);
+        }
+    | alias_type declarator SEMICOLON
+        {
+            int pointer_level = $1.pointer_level + $2.pointer_level;
+            if ($1.type == VAR_VOID && pointer_level == 0)
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg),
+                        "Struct/union field '%s' cannot have type void",
+                        $2.name.data);
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
+            $$ = create_alias_parameter($2.name, $1, $2.pointer_level, NULL);
             SAFE_FREE($2.name);
         }
     | struct_or_union IDENTIFIER declarator SEMICOLON
@@ -402,6 +703,12 @@ enum_constant:
 function_def
     : type declarator LPAREN params RPAREN LBRACE statements RBRACE
         { $$ = create_function_def_node_ex($2.name, $1, $2.pointer_level, $4, $7); SAFE_FREE($2.name); }
+    | alias_type declarator LPAREN params RPAREN LBRACE statements RBRACE
+        {
+            $$ = create_alias_function_def($2.name, $1, $2.pointer_level,
+                                           $4, $7);
+            SAFE_FREE($2.name);
+        }
     | struct_or_union IDENTIFIER declarator LPAREN params RPAREN LBRACE statements RBRACE
         {
             $$ = create_function_def_node_struct($3.name, $2, $3.pointer_level, $5, $8);
@@ -468,6 +775,38 @@ param_list
             $$ = create_parameter_ex($5.name, $4, $5.pointer_level, $1, get_current_modifiers());
             SAFE_FREE($5.name);
         }
+    | optional_modifiers alias_type declarator
+        {
+            int pointer_level = $2.pointer_level + $3.pointer_level;
+            if ($2.type == VAR_VOID && pointer_level == 0)
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg),
+                        "Parameter '%s' cannot have type void", $3.name.data);
+                yyerror(msg);
+                parse_error_already_reported = true;
+                SAFE_FREE($3.name);
+                YYABORT;
+            }
+            $$ = create_alias_parameter($3.name, $2, $3.pointer_level, NULL);
+            SAFE_FREE($3.name);
+        }
+    | param_list COMMA optional_modifiers alias_type declarator
+        {
+            int pointer_level = $4.pointer_level + $5.pointer_level;
+            if ($4.type == VAR_VOID && pointer_level == 0)
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg),
+                        "Parameter '%s' cannot have type void", $5.name.data);
+                yyerror(msg);
+                parse_error_already_reported = true;
+                SAFE_FREE($5.name);
+                YYABORT;
+            }
+            $$ = create_alias_parameter($5.name, $4, $5.pointer_level, $1);
+            SAFE_FREE($5.name);
+        }
     | optional_modifiers struct_or_union IDENTIFIER declarator
         {
             $$ = create_parameter_ex($4.name, VAR_STRUCT, $4.pointer_level, NULL, get_current_modifiers());
@@ -522,6 +861,14 @@ pointer_stars:
     ;
 
 declarator:
+    pointer_stars IDENTIFIER
+        {
+            $$.name = $2;
+            $$.pointer_level = $1;
+        }
+    ;
+
+typedef_declarator:
     pointer_stars IDENTIFIER
         {
             $$.name = $2;
@@ -660,6 +1007,98 @@ declaration:
             $$ = create_multi_array_declaration_node($3.name, tmp_dims, dims.num_dimensions, $2);
             $$->pointer_level = $3.pointer_level;
             $$->modifiers = get_current_modifiers();
+            set_declaration_pending_initializer($$, $6);
+            SAFE_FREE($3.name);
+        }
+    | optional_modifiers alias_type declarator
+        {
+            $$ = create_alias_declaration($3.name, $2, $3.pointer_level, NULL);
+            SAFE_FREE($3.name);
+        }
+    | optional_modifiers alias_type declarator EQUALS expression
+        {
+            $$ = create_alias_declaration($3.name, $2, $3.pointer_level, $5);
+            SAFE_FREE($3.name);
+        }
+    | optional_modifiers alias_type declarator dimensions
+        {
+            if ($2.type == VAR_STRUCT)
+            {
+                yyerror("Arrays of struct/union typedef aliases are not supported");
+                struct_def_had_error = true;
+            }
+            $$ = create_multi_array_declaration_node($3.name, $4.dimensions,
+                                                     $4.num_dimensions,
+                                                     $2.type);
+            $$->pointer_level = $2.pointer_level + $3.pointer_level;
+            $$->modifiers = $2.modifiers;
+            if ($2.type == VAR_ENUM)
+                $$->enum_name = ARENA_STRDUP($2.enum_name);
+            SAFE_FREE($3.name);
+        }
+    | optional_modifiers alias_type declarator dimensions EQUALS array_init
+        {
+            if ($2.type == VAR_STRUCT)
+            {
+                yyerror("Arrays of struct/union typedef aliases are not supported");
+                struct_def_had_error = true;
+            }
+            $$ = create_multi_array_declaration_node($3.name, $4.dimensions,
+                                                     $4.num_dimensions,
+                                                     $2.type);
+            $$->pointer_level = $2.pointer_level + $3.pointer_level;
+            $$->modifiers = $2.modifiers;
+            if ($2.type == VAR_ENUM)
+                $$->enum_name = ARENA_STRDUP($2.enum_name);
+            set_declaration_pending_initializer($$, $6);
+            SAFE_FREE($3.name);
+        }
+    | optional_modifiers alias_type declarator dimensions_or_unsized EQUALS array_init
+        {
+            ArrayDimensions dims = $4;
+            if (dims.num_dimensions == 0) {
+                size_t n = count_expression_list($6);
+                dims.dimensions[0] = (int)n;
+                dims.num_dimensions = 1;
+            } else if (dims.dimensions[0] == 0 && dims.num_dimensions >= 2) {
+                size_t total_inits = count_expression_list($6);
+                size_t trailing = 1;
+                for (int i = 1; i < dims.num_dimensions; i++) trailing *= (size_t)dims.dimensions[i];
+                if (trailing == 0) { yyerror("Invalid array dimensions"); YYABORT; }
+                if (total_inits % trailing != 0) { yyerror("Initializer count does not match array dimensions"); YYABORT; }
+                size_t first = total_inits / trailing;
+                dims.dimensions[0] = (int)first;
+            }
+            if ($2.type == VAR_STRUCT)
+            {
+                yyerror("Arrays of struct/union typedef aliases are not supported");
+                struct_def_had_error = true;
+            }
+            int tmp_dims[MAX_DIMENSIONS];
+            for (int i = 0; i < dims.num_dimensions; i++) tmp_dims[i] = dims.dimensions[i];
+            $$ = create_multi_array_declaration_node($3.name, tmp_dims,
+                                                     dims.num_dimensions,
+                                                     $2.type);
+            $$->pointer_level = $2.pointer_level + $3.pointer_level;
+            $$->modifiers = $2.modifiers;
+            if ($2.type == VAR_ENUM)
+                $$->enum_name = ARENA_STRDUP($2.enum_name);
+            set_declaration_pending_initializer($$, $6);
+            SAFE_FREE($3.name);
+        }
+    | optional_modifiers alias_type declarator EQUALS LBRACE struct_initializer_list RBRACE
+        {
+            if ($2.type != VAR_STRUCT)
+            {
+                yyerror("Braced typedef initializer requires a struct/union alias");
+                struct_def_had_error = true;
+            }
+            StructDef *def = get_struct_def($2.struct_name);
+            validate_struct_initializer_shape(def, $6);
+            $$ = create_alias_declaration($3.name, $2, $3.pointer_level, NULL);
+            if ($$->data.op.right)
+                $$->data.op.right->data.struct_def.initializer_count =
+                    (int)count_expression_list($6);
             set_declaration_pending_initializer($$, $6);
             SAFE_FREE($3.name);
         }
@@ -1218,6 +1657,8 @@ void cleanup() {
     free_struct_registry();
 
     free_enum_registry();
+
+    free_type_alias_registry();
 
     CLEAN_JUMP_BUFFER();
     

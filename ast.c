@@ -21,6 +21,8 @@ static HashMap *struct_registry = NULL;
 static StructDef *struct_registry_list = NULL;
 static HashMap *enum_registry = NULL;
 static EnumDef *enum_registry_list = NULL;
+static HashMap *type_alias_registry = NULL;
+static TypeAlias *type_alias_registry_list = NULL;
 bool struct_def_had_error = false;
 ReturnValue current_return_value;
 Arena arena;
@@ -6346,6 +6348,136 @@ void free_enum_registry(void)
         def = nxt;
     }
     enum_registry_list = NULL;
+}
+
+TypeDescriptor make_type_descriptor(VarType type, int pointer_level,
+                                    TypeModifiers modifiers)
+{
+    TypeDescriptor descriptor = {0};
+    descriptor.type = type;
+    descriptor.pointer_level = pointer_level;
+    descriptor.modifiers = modifiers;
+    return descriptor;
+}
+
+TypeDescriptor type_descriptor_from_alias(const TypeAlias *alias)
+{
+    if (!alias)
+        return make_type_descriptor(NONE, 0, (TypeModifiers){0});
+
+    TypeDescriptor descriptor = make_type_descriptor(
+        alias->type, alias->pointer_level, alias->modifiers);
+    descriptor.struct_name = alias->struct_name;
+    descriptor.enum_name = alias->enum_name;
+    return descriptor;
+}
+
+bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
+                          TypeModifiers *out, const String name)
+{
+    TypeModifiers merged = base;
+
+    if ((base.is_signed && extra.is_unsigned) ||
+        (base.is_unsigned && extra.is_signed))
+    {
+        char msg[MAX_BUFFER_LEN];
+        snprintf(msg, sizeof(msg),
+                 "Conflicting signedness modifiers for typedef alias '%s'",
+                 name.data ? name.data : "?");
+        yyerror(msg);
+        return false;
+    }
+
+    if ((base.is_long && extra.is_long_long) ||
+        (base.is_long_long && extra.is_long))
+    {
+        char msg[MAX_BUFFER_LEN];
+        snprintf(msg, sizeof(msg),
+                 "Conflicting width modifiers for typedef alias '%s'",
+                 name.data ? name.data : "?");
+        yyerror(msg);
+        return false;
+    }
+
+    merged.is_volatile = merged.is_volatile || extra.is_volatile;
+    merged.is_signed = merged.is_signed || extra.is_signed;
+    merged.is_unsigned = merged.is_unsigned || extra.is_unsigned;
+    merged.is_sizeof = merged.is_sizeof || extra.is_sizeof;
+    merged.is_const = merged.is_const || extra.is_const;
+    merged.is_long = merged.is_long || extra.is_long;
+    merged.is_long_long = merged.is_long_long || extra.is_long_long;
+    merged.is_static = merged.is_static || extra.is_static;
+
+    if (out)
+        *out = merged;
+    return true;
+}
+
+bool register_type_alias(String name, TypeDescriptor descriptor)
+{
+    if (!name.data)
+        return false;
+
+    if (get_type_alias(name) || get_struct_def(name) || get_enum_def(name) ||
+        get_function(name) || get_variable(name) ||
+        find_global_enum_constant(name))
+    {
+        char msg[MAX_BUFFER_LEN];
+        snprintf(msg, sizeof(msg), "Typedef alias '%s' is already defined",
+                 name.data);
+        yyerror(msg);
+        struct_def_had_error = true;
+        return false;
+    }
+
+    TypeAlias *alias = SAFE_MALLOC(TypeAlias);
+    alias->name = safe_strdup(&name);
+    alias->type = descriptor.type;
+    alias->pointer_level = descriptor.pointer_level;
+    alias->modifiers = descriptor.modifiers;
+    alias->struct_name = descriptor.struct_name.data
+                             ? safe_strdup(&descriptor.struct_name)
+                             : (String){0};
+    alias->enum_name = descriptor.enum_name.data
+                           ? safe_strdup(&descriptor.enum_name)
+                           : (String){0};
+    alias->next_def = NULL;
+
+    if (!type_alias_registry)
+        type_alias_registry = hm_new();
+    hm_put(type_alias_registry, alias->name.data, alias->name.len, alias,
+           sizeof(TypeAlias));
+    alias->next_def = type_alias_registry_list;
+    type_alias_registry_list = alias;
+    return true;
+}
+
+TypeAlias *get_type_alias(const String name)
+{
+    if (!type_alias_registry || !name.data)
+        return NULL;
+    return (TypeAlias *)hm_get(type_alias_registry, name.data, name.len);
+}
+
+void free_type_alias_registry(void)
+{
+    if (type_alias_registry)
+    {
+        hm_free_shallow(type_alias_registry);
+        type_alias_registry = NULL;
+    }
+
+    TypeAlias *alias = type_alias_registry_list;
+    while (alias)
+    {
+        TypeAlias *next = alias->next_def;
+        SAFE_FREE(alias->name);
+        SAFE_FREE(alias->struct_name);
+        SAFE_FREE(alias->enum_name);
+        SAFE_FREE(alias);
+        alias = next;
+    }
+    type_alias_registry_list = NULL;
 }
 
 EnumConstant *find_global_enum_constant(const String name)

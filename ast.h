@@ -119,6 +119,15 @@ typedef enum
     NONE,
 } VarType;
 
+typedef struct
+{
+    VarType type;
+    int pointer_level;
+    TypeModifiers modifiers;
+    String struct_name;
+    String enum_name;
+} TypeDescriptor;
+
 /* A single field inside a struct definition */
 typedef struct StructField
 {
@@ -154,6 +163,17 @@ typedef struct EnumDef
     EnumConstant *constants;
     struct EnumDef *next_def;
 } EnumDef;
+
+typedef struct TypeAlias
+{
+    String name;
+    VarType type;
+    int pointer_level;
+    TypeModifiers modifiers;
+    String struct_name;
+    String enum_name;
+    struct TypeAlias *next_def;
+} TypeAlias;
 
 /* A struct/union definition (the "template"). Struct and union tags share
    this same registry, matching C's tag-namespace rules. */
@@ -725,6 +745,16 @@ bool finalize_enum_constants(EnumDef *def);
    unscoped enum constant. Returns NULL if none matches. */
 EnumConstant *find_global_enum_constant(const String name);
 ASTNode *create_enum_def_node(String name);
+
+/* Typedef aliases (`lit`). */
+TypeDescriptor make_type_descriptor(VarType type, int pointer_level,
+                                    TypeModifiers modifiers);
+TypeDescriptor type_descriptor_from_alias(const TypeAlias *alias);
+bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
+                          TypeModifiers *out, const String name);
+bool register_type_alias(String name, TypeDescriptor descriptor);
+TypeAlias *get_type_alias(const String name);
+void free_type_alias_registry(void);
 
 extern TypeModifiers current_modifiers;
 

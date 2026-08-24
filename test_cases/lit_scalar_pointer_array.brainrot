@@ -1,0 +1,17 @@
+🚽 Test case: typedef aliases for scalar declarations, pointer aliases,
+🚽 added pointer depth, and scalar arrays.
+lit rizz Count;
+lit rizz *IntPtr;
+
+skibidi main {
+    Count values[3] = {1, 2, 3};
+    rizz x = 7;
+    IntPtr p = &x;
+    IntPtr *pp = &p;
+
+    *p = *p + values[2];
+    **pp = **pp + values[0];
+
+    yapping("%d %d %d", values[0], values[2], x);
+    bussin 0;
+}

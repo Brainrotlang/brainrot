@@ -361,6 +361,7 @@ extern int yylineno;
 "maxxing"        { return SIZEOF; }
 "salty"          { return STATIC; }
 "gang"           { return STRUCT; }
+"lit"            { return TYPEDEF; }
 "."              { return DOT; }
 "ohio"           { return SWITCH; }
 "chungus"        { return UNION; }
@@ -476,6 +477,9 @@ extern int yylineno;
 '.' { yylval.ival = yytext[1]; return CHAR; }
 [a-zA-Z_][a-zA-Z0-9_]* {
     yylval.strval = copy_bytes(yytext, (size_t)yyleng);
+    if (get_type_alias(yylval.strval)) {
+        return TYPE_NAME;
+    }
     return IDENTIFIER;
 }
 \"([^\\\"]|\\.)*\" {
