@@ -9,12 +9,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#if defined(__APPLE__) && defined(__MACH__)
+#include <mach-o/getsect.h>
+#include <mach-o/loader.h>
+
+#if defined(__LP64__)
+extern const struct mach_header_64 _mh_dylib_header;
+#else
+extern const struct mach_header _mh_dylib_header;
+#endif
+#else
 /* Linker provides these symbols marking the start/end of the section. The
  * section holds StdrotEntry pointers (see STDROT_EXPORT_SIG in
  * stdrot_api.h), so these are themselves pointer-typed slots -- taking
  * their address gives the start/end of an array of StdrotEntry *. */
 extern StdrotEntry *__start_stdrot_exports;
 extern StdrotEntry *__stop_stdrot_exports;
+#endif
 
 /* Entry point called by stdrot.c after dlopen() -- named/numbered for
  * STDROT_ABI_VERSION (stdrot_api.h): renaming this alongside a real ABI
@@ -25,6 +36,13 @@ extern StdrotEntry *__stop_stdrot_exports;
  * reasoning. */
 StdrotAPI stdrot_get_api_v2(void)
 {
+#if defined(__APPLE__) && defined(__MACH__)
+    unsigned long section_byte_len = 0;
+    const StdrotEntry *const *functions =
+        (const StdrotEntry *const *)getsectiondata(
+            &_mh_dylib_header, "__DATA", "stdrot_exports", &section_byte_len);
+    ptrdiff_t byte_len = (ptrdiff_t)section_byte_len;
+#else
     /* Every slot in the section is exactly sizeof(StdrotEntry *) --
        there's no variable-sized-struct alignment padding to worry about
        here, unlike when the section held StdrotEntry values directly (see
@@ -34,6 +52,9 @@ StdrotAPI stdrot_get_api_v2(void)
        a genuinely unexpected toolchain, not a load-bearing tripwire. */
     ptrdiff_t byte_len =
         (char *)&__stop_stdrot_exports - (char *)&__start_stdrot_exports;
+    const StdrotEntry *const *functions =
+        (const StdrotEntry *const *)&__start_stdrot_exports;
+#endif
     if (byte_len % (ptrdiff_t)sizeof(StdrotEntry *) != 0)
     {
         fprintf(stderr,
@@ -45,7 +66,7 @@ StdrotAPI stdrot_get_api_v2(void)
     }
 
     StdrotAPI api;
-    api.functions = (const StdrotEntry *const *)&__start_stdrot_exports;
+    api.functions = functions;
     api.count = (int)(byte_len / (ptrdiff_t)sizeof(StdrotEntry *));
     return api;
 }
