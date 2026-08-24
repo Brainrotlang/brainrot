@@ -24,6 +24,9 @@ static EnumDef *enum_registry_list = NULL;
 static HashMap *type_alias_registry = NULL;
 static TypeAlias *type_alias_registry_list = NULL;
 bool struct_def_had_error = false;
+/* Set by lit alias helpers below; lang.y's post-yyparse gate aborts before
+   semantic analysis/execution when true, and cleanup resets it through
+   free_type_alias_registry(). */
 bool typedef_had_error = false;
 ReturnValue current_return_value;
 Arena arena;
@@ -1647,6 +1650,52 @@ VarType get_expression_type(ASTNode *node)
     }
 }
 
+static StructDef *get_struct_def_for_expression(ASTNode *expr)
+{
+    if (!expr)
+        return NULL;
+
+    switch (expr->type)
+    {
+    case NODE_IDENTIFIER:
+    {
+        Variable *var = get_variable(expr->data.name);
+        if (var && var->var_type == VAR_STRUCT && var->struct_name.data)
+            return get_struct_def(var->struct_name);
+        return NULL;
+    }
+    case NODE_ARRAY_ACCESS:
+    {
+        Variable *var = get_variable(expr->data.array.name);
+        if (var && var->is_array && var->var_type == VAR_STRUCT &&
+            var->struct_name.data)
+            return get_struct_def(var->struct_name);
+        return NULL;
+    }
+    case NODE_STRUCT_ACCESS:
+    {
+        StructDef *def = NULL;
+        void *base = NULL;
+        StructField *fld = NULL;
+        if (resolve_struct_access(expr, &def, &base, &fld, false) &&
+            fld->type == VAR_STRUCT && fld->struct_name.data)
+            return get_struct_def(fld->struct_name);
+        return NULL;
+    }
+    case NODE_UNARY_OPERATION:
+        if (expr->data.unary.op == OP_DEREFERENCE)
+        {
+            ASTNode *operand = expr->data.unary.operand;
+            if (get_expression_pointer_level(operand) <= 0)
+                return NULL;
+            return get_struct_def_for_expression(operand);
+        }
+        return NULL;
+    default:
+        return NULL;
+    }
+}
+
 /* A genuinely recursive, execution-free expression type query -- the
  * runtime-side counterpart of semantic_analyzer.c's own infer_expression_
  * type(), reading runtime Variable/Function/enum-constant state
@@ -2222,6 +2271,10 @@ void *evaluate_lvalue_address(ASTNode *node)
             return NULL;
         }
 
+        /* Pointer-typed variables, including `gang T *p`, store the pointer
+           value in pvalue. Assignment to the pointer itself writes that slot;
+           dereference assignment handles the pointee through the unary case
+           below. */
         if (var->pointer_level > 0)
             return &var->value.pvalue;
 
@@ -2244,9 +2297,7 @@ void *evaluate_lvalue_address(ASTNode *node)
         case VAR_ENUM:
             return &var->value.ivalue;
         case VAR_STRUCT:
-            if (var->pointer_level == 0)
-                return var->value.array_data;
-            __attribute__((fallthrough));
+            return var->value.array_data;
         default:
             yyerror("Unsupported lvalue type");
             return NULL;
@@ -3264,48 +3315,10 @@ size_t handle_sizeof(ASTNode *node)
             if (plevel > 0)
                 return get_type_size_for_descriptor(type, plevel,
                                                     expr->modifiers);
-            /* A struct/union-typed field access (e.g. `l.start`) — resolve
-               it to the field's definition and return its layout size. */
-            if (expr->type == NODE_STRUCT_ACCESS)
-            {
-                StructDef *def = NULL;
-                void *base = NULL;
-                StructField *fld = NULL;
-                if (resolve_struct_access(expr, &def, &base, &fld, false))
-                {
-                    StructDef *sdef = get_struct_def(fld->struct_name);
-                    if (sdef != NULL)
-                        return sdef->total_size;
-                }
-            }
-            /* A dereferenced struct/union pointer (e.g. `*q`) — resolve the
-               operand's variable and return the pointed-to layout size. */
-            if (expr->type == NODE_UNARY_OPERATION &&
-                expr->data.unary.op == OP_DEREFERENCE &&
-                expr->data.unary.operand->type == NODE_IDENTIFIER)
-            {
-                Variable *var =
-                    get_variable(expr->data.unary.operand->data.name);
-                if (var != NULL && var->var_type == VAR_STRUCT)
-                {
-                    StructDef *sdef = get_struct_def(var->struct_name);
-                    if (sdef != NULL)
-                        return sdef->total_size;
-                }
-            }
-            if (expr->type == NODE_UNARY_OPERATION &&
-                expr->data.unary.op == OP_DEREFERENCE &&
-                expr->data.unary.operand->type == NODE_ARRAY_ACCESS)
-            {
-                Variable *var =
-                    get_variable(expr->data.unary.operand->data.array.name);
-                if (var != NULL && var->var_type == VAR_STRUCT)
-                {
-                    StructDef *sdef = get_struct_def(var->struct_name);
-                    if (sdef != NULL)
-                        return sdef->total_size;
-                }
-            }
+
+            StructDef *sdef = get_struct_def_for_expression(expr);
+            if (sdef != NULL)
+                return sdef->total_size;
             yyerror("Invalid type in sizeof");
             return 0;
         }
@@ -6467,6 +6480,10 @@ bool register_type_alias(String name, TypeDescriptor descriptor)
     TypeModifiers alias_modifiers = descriptor.modifiers;
     alias_modifiers.is_sizeof = false;
 
+    /* lit aliases live in the top-level ordinary identifier namespace:
+       aliases, functions, variables, and enum constants cannot reuse the name.
+       Struct/union/enum tags deliberately remain separate C-like tag
+       namespaces and are checked by their own registries. */
     if (get_type_alias(name) || get_function(name) || get_variable(name) ||
         find_global_enum_constant(name))
     {

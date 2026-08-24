@@ -244,7 +244,8 @@ void hm_free(HashMap *hm)
                 {
                     SAFE_FREE(var->value.array_data);
                 }
-                else if (var->var_type == VAR_STRUCT && var->value.array_data)
+                else if (var->var_type == VAR_STRUCT &&
+                         var->pointer_level == 0 && var->value.array_data)
                 {
                     free(var->value.array_data);
                     var->value.array_data = NULL;

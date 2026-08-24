@@ -2420,6 +2420,9 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
         {
             SymbolEntry *existing =
                 find_symbol(analyzer, node->data.function_def.name);
+            /* Reverse ordinary-identifier collision: lit aliases are parsed
+               before this collection pass, so a later function definition
+               cannot reuse an alias name. */
             if (get_type_alias(node->data.function_def.name))
             {
                 char error_msg[MAX_BUFFER_LEN];

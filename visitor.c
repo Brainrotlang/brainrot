@@ -100,8 +100,10 @@ void ast_accept(ASTNode *node, Visitor *visitor)
     }
 
     case NODE_SIZEOF:
-        if (node->data.sizeof_stmt.expr)
-            ast_accept(node->data.sizeof_stmt.expr, visitor);
+        /* sizeof inspects operand type/shape without evaluating it. Semantic
+           analysis has its own explicit NODE_SIZEOF recursion; the generic
+           visitor must not walk the operand for the interpreter, because that
+           would execute otherwise-unevaluated dereferences or calls. */
         if (visitor->visit_sizeof)
             visitor->visit_sizeof(visitor, node);
         break;

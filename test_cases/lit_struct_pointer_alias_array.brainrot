@@ -8,12 +8,15 @@ lit gang Point *PointPtr;
 skibidi main {
     gang Point p = {5, 7};
     gang Point q = {11, 13};
+    PointPtr first = &p;
+    PointPtr second;
     PointPtr values[2];
 
+    second = first;
     values[0] = &p;
     values[1] = &q;
 
-    yapping("%d %d %d", values[0] != 0, values[1] != values[0],
-            maxxing(*values[1]) == maxxing(q));
+    yapping("%d %d %d %d", values[0] != 0, values[1] != values[0],
+            second != 0, maxxing(*values[1]) == maxxing(q));
     bussin 0;
 }

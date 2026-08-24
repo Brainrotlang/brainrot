@@ -89,16 +89,19 @@ static ASTNode *create_alias_declaration(String name, TypeDescriptor descriptor,
     if (descriptor.type == VAR_STRUCT)
     {
         StructDef *def = get_struct_def(descriptor.struct_name);
-        node = create_declaration_node_ex(
-            name,
-            create_struct_def_node(descriptor.struct_name,
-                                   def ? def->fields : NULL),
-            pointer_level);
+        ASTNode *type_node =
+            pointer_level == 0
+                ? create_struct_def_node(descriptor.struct_name,
+                                         def ? def->fields : NULL)
+                : initializer;
+        node = create_declaration_node_ex(name, type_node, pointer_level);
         node->var_type = VAR_STRUCT;
-        if (node->data.op.right)
+        node->struct_name = ARENA_STRDUP(descriptor.struct_name);
+        if (node->data.op.right &&
+            node->data.op.right->type == NODE_STRUCT_DEF)
             node->data.op.right->data.name =
                 ARENA_STRDUP(descriptor.struct_name);
-        if (initializer)
+        if (pointer_level == 0 && initializer)
             node->struct_init_expr = initializer;
     }
     else

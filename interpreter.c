@@ -444,8 +444,9 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
     /* Struct/union declarations: same reasoning as arrays above -- create
      * the Variable and its data blob here, at runtime, in the current
      * scope, instead of at parse time. */
-    if (node->var_type == VAR_STRUCT ||
-        (node->data.op.right && node->data.op.right->type == NODE_STRUCT_DEF))
+    if (node->pointer_level == 0 &&
+        (node->var_type == VAR_STRUCT ||
+         (node->data.op.right && node->data.op.right->type == NODE_STRUCT_DEF)))
     {
         const String struct_type =
             node->data.op.right ? node->data.op.right->data.struct_def.name
@@ -567,26 +568,27 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
     if (node->data.op.right)
     {
         Variable *scope_var = get_variable(name);
-        if (scope_var && scope_var->var_type == VAR_STRUCT)
-        {
-            if (!scope_var->value.array_data)
-            {
-                StructDef *def = get_struct_def(scope_var->struct_name);
-                if (def)
-                {
-                    scope_var->value.array_data = calloc(1, def->total_size);
-                    hm_put(current_scope->variables, name.data, name.len,
-                           scope_var, sizeof(Variable));
-                }
-            }
-            return;
-        }
         if (scope_var)
         {
             if (scope_var->pointer_level > 0)
             {
                 scope_var->value.pvalue =
                     evaluate_expression_pointer(node->data.op.right);
+                return;
+            }
+            if (scope_var->var_type == VAR_STRUCT)
+            {
+                if (!scope_var->value.array_data)
+                {
+                    StructDef *def = get_struct_def(scope_var->struct_name);
+                    if (def)
+                    {
+                        scope_var->value.array_data =
+                            calloc(1, def->total_size);
+                        hm_put(current_scope->variables, name.data, name.len,
+                               scope_var, sizeof(Variable));
+                    }
+                }
                 return;
             }
             switch (scope_var->var_type)
