@@ -4,6 +4,7 @@ BISON := bison
 FLEX := flex
 PYTHON := python3
 EMCC := emcc
+CPPCHECK ?= cppcheck
 
 # Compiler and linker flags
 CFLAGS := -Wall -Wextra -Wpedantic -Werror -O2 -Wuninitialized -fsanitize=address,undefined -fno-omit-frame-pointer -g
@@ -41,6 +42,13 @@ ALL_SRCS := $(SRCS) $(GENERATED_SRCS)
 STDROT_DIR := stdrot
 STDROT_SRCS := $(wildcard $(STDROT_DIR)/*.c) $(SRC_DIR)/input.c
 STDROT_LIB := libstdrot.so
+
+# Sources scanned by cppcheck: the same translation units `all` builds, minus
+# the generated Flex/Bison output (never scan or hand-edit lang.tab.c /
+# lex.yy.c). tests/ is deliberately excluded: tests/badnatives/*.c are
+# intentionally malformed registries (see that directory's own file comment),
+# so a clean cppcheck run over them would be meaningless.
+CPPCHECK_SRCS := $(SRCS) $(STDROT_SRCS)
 
 # Test-only stdrot library: production natives plus tests/stdrot/*.c
 # (bindings that exist solely so test_cases/*.brainrot can exercise ABI
@@ -326,6 +334,36 @@ format-check:
 	$(CLANG_FORMAT) --dry-run -Werror $(FORMAT_FILES)
 	@echo "Formatting check passed, no cap."
 
+# --check-level=exhaustive needs cppcheck >= 2.11; nullPointerOutOfMemory
+# needs >= 2.12. Ubuntu 22.04's apt cppcheck (2.7) is too old for either.
+CPPCHECK_MIN_VERSION := 2.13
+
+CPPCHECK_FLAGS := \
+	--enable=warning,performance,portability \
+	--check-level=exhaustive \
+	--inline-suppr \
+	--suppressions-list=cppcheck-suppressions.txt \
+	--error-exitcode=1 \
+	--std=c11 --language=c --platform=unix64 \
+	-I. -I$(SRC_DIR) -I$(STDROT_DIR) \
+	--suppress=missingIncludeSystem \
+	-j4
+
+# Static analysis with cppcheck (used by CI's static-analysis job). `style`
+# checks are deliberately not enabled here -- see cppcheck-suppressions.txt
+# and issue #172 for why that's a separate follow-up, not this gate.
+.PHONY: cppcheck
+cppcheck:
+	@command -v $(CPPCHECK) >/dev/null 2>&1 || { echo "Error: cppcheck not found. Blud, install cppcheck >= $(CPPCHECK_MIN_VERSION)!"; exit 1; }
+	@ver=$$($(CPPCHECK) --version | awk '{print $$2}'); \
+	oldest=$$(printf '%s\n%s\n' "$(CPPCHECK_MIN_VERSION)" "$$ver" | sort -V | head -n1); \
+	if [ "$$oldest" != "$(CPPCHECK_MIN_VERSION)" ]; then \
+		echo "Error: cppcheck $$ver is too old (need >= $(CPPCHECK_MIN_VERSION)). Ratioed by an ancient toolchain."; \
+		exit 1; \
+	fi
+	$(CPPCHECK) $(CPPCHECK_FLAGS) $(CPPCHECK_SRCS)
+	@echo "cppcheck found nothing sus. Certified W."
+
 # Show help
 .PHONY: help
 help:
@@ -341,6 +379,7 @@ help:
 	@echo "  rebuild    : Clean and re-grind the project."
 	@echo "  format     : Format source files using clang-format. No cringe, all kino."
 	@echo "  format-check : Check formatting without modifying files (CI lint job)."
+	@echo "  cppcheck   : Static analysis with cppcheck (CI static-analysis job)."
 	@echo "  valgrind   : Checks for sussy memory leaks with Valgrind."
 	@echo "  help       : Show this help for n00bs."
 	@echo ""

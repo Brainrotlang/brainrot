@@ -20,6 +20,7 @@ By participating in this project, you are expected to uphold our [Code of Conduc
 - Flex and Bison
 - Valgrind
 - clang-format
+- cppcheck (>= 2.13)
 - Make
 
 ### Building the Project
@@ -63,6 +64,19 @@ make format          # apply formatting in-place
 
 `make format-check`/`make format` never touch generated Flex/Bison output
 (`lang.tab.c`, `lang.tab.h`, `lex.yy.c`).
+
+### Static Analysis
+
+The CI `static-analysis` job runs cppcheck via `make cppcheck` (needs cppcheck
+>= 2.13 — Ubuntu 22.04's apt package, 2.7, is too old). Before opening a PR:
+
+```bash
+make cppcheck
+```
+
+Justified suppressions live in `cppcheck-suppressions.txt`; add a new one only
+with a comment explaining why the finding is a false positive, not to silence
+a real issue.
 
 ## Project Structure
 

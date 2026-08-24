@@ -1,0 +1,11 @@
+# lib/mem.c hands out an interior pointer (block->data) from a single malloc
+# of {header + payload}; safe_free() walks back to the header via the
+# MEMORY_GUARD. cppcheck sees only that the malloc'd `block` pointer goes out
+# of scope and calls it a leak. Valgrind (make valgrind) is the real gate here.
+memleak:lib/mem.c
+
+# stdrot/registry.c computes the native registry's byte length as
+# __stop_stdrot_exports - __start_stdrot_exports. Those are linker-provided
+# section bounds, so they are by construction not "the same object" as far as
+# the standard is concerned; this is the intended ELF section-iteration idiom.
+subtractPointers:stdrot/registry.c:63
