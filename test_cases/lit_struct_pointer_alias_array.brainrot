@@ -1,0 +1,11 @@
+gang Point {
+    rizz x;
+};
+
+lit gang Point *PointPtr;
+
+skibidi main {
+    PointPtr values[1];
+    yapping("%d", 1);
+    bussin 0;
+}

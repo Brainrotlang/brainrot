@@ -756,6 +756,8 @@ TypeDescriptor make_type_descriptor(VarType type, int pointer_level,
 TypeDescriptor type_descriptor_from_alias(const TypeAlias *alias);
 bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
                           TypeModifiers *out, const String name);
+/* Copies `name` and any aggregate tag strings from `descriptor`; callers keep
+   ownership of their parser-token strings. */
 bool register_type_alias(String name, TypeDescriptor descriptor);
 TypeAlias *get_type_alias(const String name);
 void free_type_alias_registry(void);

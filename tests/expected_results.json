@@ -269,10 +269,15 @@
     "lit_named_inline_aggregate_alias": "8 9 1 2",
     "lit_same_name_tag_alias": "5 6 7 8 1 0",
     "lit_scalar_pointer_array": "1 3 11",
+    "lit_struct_pointer_alias_array": "1",
     "lit_struct_union_alias": "999 4 2 9 42",
     "lit_enum_alias": "green 2",
-    "lit_alias_redefinition_fail": "Error: Typedef alias 'Count' is already defined at line 1\nParsing failed",
-    "lit_top_level_only_fail": "Error: syntax error, unexpected TYPEDEF at line 1\nParsing failed",
-    "lit_unknown_struct_fail": "Error: Unknown struct/union type 'Ghost' at line 0\nParsing failed",
-    "lit_tag_conflict_fail": "Error: Typedef alias 'Count' is already defined at line 4\nParsing failed"
+    "lit_alias_redefinition_fail": "Error: Typedef alias 'Count' is already defined at line 2\nParsing failed",
+    "lit_top_level_only_fail": "Error: lit declarations are only allowed at top level at line 1\nParsing failed",
+    "lit_unknown_struct_fail": "Error: Unknown struct/union type 'Ghost' at line 1\nParsing failed",
+    "lit_tag_conflict_fail": "Error: Typedef alias 'Count' is already defined at line 4\nParsing failed",
+    "lit_reverse_struct_tag_conflict_fail": "Error: Typedef alias 'Count' is already defined at line 2\nParsing failed",
+    "lit_reverse_enum_tag_conflict_fail": "Error: Typedef alias 'Color' is already defined at line 2\nParsing failed",
+    "lit_enum_constant_alias_conflict_fail": "Error: syntax error, unexpected TYPE_NAME, expecting IDENTIFIER at line 2\nParsing failed",
+    "lit_static_modifier_fail": "Error: Storage-class modifiers are not allowed in typedef aliases at line 1\nParsing failed"
 }

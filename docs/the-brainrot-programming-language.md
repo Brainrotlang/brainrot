@@ -772,6 +772,8 @@ Current limitations:
 - `lit` declarations are top-level only.
 - The alias target must already be defined; there are no forward typedefs.
 - Array typedefs and function-pointer typedefs are not supported.
+- Storage-class modifiers such as `salty` are not accepted on `lit`
+  declarations; apply them where the alias is used instead.
 - Alias names are reserved type names and cannot be reused as variables,
   functions, enum constants, unrelated struct/union tags, unrelated enum tags,
   or other aliases. A `gang`/`chungus`/`gyatt` typedef may use the same name as

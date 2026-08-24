@@ -36,6 +36,7 @@ Scope *current_scope;
 
 /* Include the symbol table functions */
 extern void yyerror(const char *s);
+extern void yyerror_current_line(const char *s);
 extern void cleanup(void);
 extern TypeModifiers get_variable_modifiers(const String name);
 extern const char *vartype_to_string(VarType type);
@@ -5235,6 +5236,7 @@ void free_statement_list(StatementList *list)
 void free_ast()
 {
     free_pending_initializer_registry();
+    free_type_alias_registry();
     arena_free(&arena);
 }
 
@@ -6385,7 +6387,7 @@ bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
         snprintf(msg, sizeof(msg),
                  "Conflicting signedness modifiers for typedef alias '%s'",
                  name.data ? name.data : "?");
-        yyerror(msg);
+        yyerror_current_line(msg);
         return false;
     }
 
@@ -6396,7 +6398,7 @@ bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
         snprintf(msg, sizeof(msg),
                  "Conflicting width modifiers for typedef alias '%s'",
                  name.data ? name.data : "?");
-        yyerror(msg);
+        yyerror_current_line(msg);
         return false;
     }
 
@@ -6417,7 +6419,11 @@ bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
 bool register_type_alias(String name, TypeDescriptor descriptor)
 {
     if (!name.data)
+    {
+        yyerror_current_line("Invalid typedef alias name");
+        typedef_had_error = true;
         return false;
+    }
 
     bool same_struct_tag = descriptor.type == VAR_STRUCT &&
                            descriptor.struct_name.data &&
@@ -6433,7 +6439,7 @@ bool register_type_alias(String name, TypeDescriptor descriptor)
         char msg[MAX_BUFFER_LEN];
         snprintf(msg, sizeof(msg), "Typedef alias '%s' is already defined",
                  name.data);
-        yyerror(msg);
+        yyerror_current_line(msg);
         typedef_had_error = true;
         return false;
     }
