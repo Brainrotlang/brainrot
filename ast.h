@@ -38,9 +38,10 @@ typedef struct
     size_t total_size;
 } ArrayDimensions;
 
-/* Define TypeModifiers first. Add new fields through this list so reset and
-   merge helpers fail visibly during review when modifier state changes. */
-#define TYPE_MODIFIER_TYPE_FIELDS(X)                                           \
+/* Define TypeModifiers first. Keep stored type modifiers separate from parser
+   context flags: typedef alias merging carries only stored type modifiers,
+   while parser-state reset clears every field. */
+#define TYPE_MODIFIER_STORED_FIELDS(X)                                         \
     X(is_volatile)                                                             \
     X(is_signed)                                                               \
     X(is_unsigned)                                                             \
@@ -53,7 +54,7 @@ typedef struct
     X(is_static)
 
 #define TYPE_MODIFIER_FIELDS(X)                                                \
-    TYPE_MODIFIER_TYPE_FIELDS(X)                                               \
+    TYPE_MODIFIER_STORED_FIELDS(X)                                             \
     TYPE_MODIFIER_CONTEXT_FIELDS(X)
 
 typedef struct
@@ -136,10 +137,10 @@ typedef struct
     VarType type;
     int pointer_level;
     TypeModifiers modifiers;
-    /* Borrowed tag names. Persisting users must copy these into their own
-       storage, usually the arena. */
+    /* Aggregate tag names are borrowed unless owns_tag_names is true. */
     String struct_name;
     String enum_name;
+    bool owns_tag_names;
 } TypeDescriptor;
 
 /* A single field inside a struct definition */
@@ -765,8 +766,9 @@ ASTNode *create_enum_def_node(String name);
 /* Typedef aliases (`lit`). */
 TypeDescriptor make_type_descriptor(VarType type, int pointer_level,
                                     TypeModifiers modifiers);
-/* Returned aggregate tag strings are borrowed from the alias registry. */
+/* Returned aggregate tag strings are heap copies owned by the descriptor. */
 TypeDescriptor type_descriptor_from_alias(const TypeAlias *alias);
+void free_type_descriptor(TypeDescriptor *descriptor);
 bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
                           TypeModifiers *out, const String name);
 /* Copies `name` and any aggregate tag strings from `descriptor`; callers keep

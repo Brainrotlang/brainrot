@@ -6364,13 +6364,27 @@ TypeDescriptor type_descriptor_from_alias(const TypeAlias *alias)
     if (!alias)
         return make_type_descriptor(NONE, 0, (TypeModifiers){0});
 
-    /* The tag names below are borrowed from the alias registry. Consumers may
-       copy them, but must not free or mutate these String values. */
     TypeDescriptor descriptor = make_type_descriptor(
         alias->type, alias->pointer_level, alias->modifiers);
-    descriptor.struct_name = alias->struct_name;
-    descriptor.enum_name = alias->enum_name;
+    descriptor.struct_name = alias->struct_name.data
+                                 ? safe_strdup(&alias->struct_name)
+                                 : (String){0};
+    descriptor.enum_name =
+        alias->enum_name.data ? safe_strdup(&alias->enum_name) : (String){0};
+    descriptor.owns_tag_names = true;
     return descriptor;
+}
+
+void free_type_descriptor(TypeDescriptor *descriptor)
+{
+    if (!descriptor || !descriptor->owns_tag_names)
+        return;
+
+    SAFE_FREE(descriptor->struct_name.data);
+    descriptor->struct_name = (String){0};
+    SAFE_FREE(descriptor->enum_name.data);
+    descriptor->enum_name = (String){0};
+    descriptor->owns_tag_names = false;
 }
 
 bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
@@ -6416,7 +6430,7 @@ bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
 
 #define MERGE_TYPE_MODIFIER_FIELD(field)                                       \
     merged.field = base.field || extra.field;
-    TYPE_MODIFIER_TYPE_FIELDS(MERGE_TYPE_MODIFIER_FIELD)
+    TYPE_MODIFIER_STORED_FIELDS(MERGE_TYPE_MODIFIER_FIELD)
 #undef MERGE_TYPE_MODIFIER_FIELD
     merged.is_sizeof = extra.is_sizeof;
     merged.is_static = extra.is_static;

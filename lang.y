@@ -116,6 +116,7 @@ static ASTNode *create_alias_declaration(String name, TypeDescriptor descriptor,
     if (node)
         node->modifiers = descriptor.modifiers;
 
+    free_type_descriptor(&descriptor);
     return node;
 }
 
@@ -130,6 +131,7 @@ static Parameter *create_alias_parameter(String name, TypeDescriptor descriptor,
         param->struct_name = ARENA_STRDUP(descriptor.struct_name);
     else if (descriptor.type == VAR_ENUM)
         param->enum_name = ARENA_STRDUP(descriptor.enum_name);
+    free_type_descriptor(&descriptor);
     return param;
 }
 
@@ -151,6 +153,7 @@ static ASTNode *create_alias_function_def(String name,
                                            params, body);
     if (node)
         node->modifiers = descriptor.modifiers;
+    free_type_descriptor(&descriptor);
     return node;
 }
 
@@ -167,6 +170,15 @@ static bool ensure_type_alias_name_available(String name)
         return false;
     }
     return true;
+}
+
+static void reject_array_typedef(String name)
+{
+    char msg[MAX_BUFFER_LEN];
+    snprintf(msg, sizeof(msg), "Array typedef alias '%s' is not supported",
+             name.data ? name.data : "?");
+    yyerror_current_line(msg);
+    typedef_had_error = true;
 }
 
 static String make_anonymous_typedef_name(String alias_name)
@@ -331,6 +343,7 @@ static void register_anonymous_aggregate_typedef(String alias_name,
 
 %destructor { SAFE_FREE($$.data); } IDENTIFIER STRING_LITERAL TYPE_NAME
 %destructor { SAFE_FREE($$.name); } declarator
+%destructor { free_type_descriptor(&$$); } alias_type
 
 %type <node>  struct_def struct_access
 %type <param> struct_field_list struct_field   /* reuse Parameter as field carrier */
@@ -452,6 +465,16 @@ typedef_def:
             yyerror_current_line(
                 "Storage-class modifiers are not allowed in typedef aliases");
             typedef_had_error = true;
+            free_type_descriptor(&$3);
+            SAFE_FREE($4.name);
+            $$ = NULL;
+        }
+    | TYPEDEF typedef_optional_modifiers type typedef_declarator dimensions SEMICOLON
+        {
+            (void)$3;
+            (void)$5;
+            get_current_modifiers();
+            reject_array_typedef($4.name);
             SAFE_FREE($4.name);
             $$ = NULL;
         }
@@ -473,6 +496,16 @@ typedef_def:
                 descriptor.struct_name = $4;
                 register_type_alias($5.name, descriptor);
             }
+            SAFE_FREE($4);
+            SAFE_FREE($5.name);
+            $$ = NULL;
+        }
+    | TYPEDEF typedef_optional_modifiers struct_or_union name_token typedef_declarator dimensions SEMICOLON
+        {
+            (void)$3;
+            (void)$6;
+            get_current_modifiers();
+            reject_array_typedef($5.name);
             SAFE_FREE($4);
             SAFE_FREE($5.name);
             $$ = NULL;
@@ -523,11 +556,29 @@ typedef_def:
             SAFE_FREE($5.name);
             $$ = NULL;
         }
+    | TYPEDEF typedef_optional_modifiers ENUM name_token typedef_declarator dimensions SEMICOLON
+        {
+            (void)$6;
+            get_current_modifiers();
+            reject_array_typedef($5.name);
+            SAFE_FREE($4);
+            SAFE_FREE($5.name);
+            $$ = NULL;
+        }
     | TYPEDEF typedef_optional_modifiers alias_type typedef_declarator SEMICOLON
         {
             TypeDescriptor descriptor = $3;
             descriptor.pointer_level += $4.pointer_level;
             register_type_alias($4.name, descriptor);
+            free_type_descriptor(&$3);
+            SAFE_FREE($4.name);
+            $$ = NULL;
+        }
+    | TYPEDEF typedef_optional_modifiers alias_type typedef_declarator dimensions SEMICOLON
+        {
+            (void)$5;
+            reject_array_typedef($4.name);
+            free_type_descriptor(&$3);
             SAFE_FREE($4.name);
             $$ = NULL;
         }
@@ -874,6 +925,7 @@ param_list
                         "Parameter '%s' cannot have type void", $3.name.data);
                 yyerror(msg);
                 parse_error_already_reported = true;
+                free_type_descriptor(&$2);
                 SAFE_FREE($3.name);
                 YYABORT;
             }
@@ -890,6 +942,7 @@ param_list
                         "Parameter '%s' cannot have type void", $5.name.data);
                 yyerror(msg);
                 parse_error_already_reported = true;
+                free_type_descriptor(&$4);
                 SAFE_FREE($5.name);
                 YYABORT;
             }
@@ -1179,6 +1232,7 @@ declaration:
             $$->modifiers = $2.modifiers;
             if ($2.type == VAR_ENUM)
                 $$->enum_name = ARENA_STRDUP($2.enum_name);
+            free_type_descriptor(&$2);
             SAFE_FREE($3.name);
         }
     | optional_modifiers alias_type declarator dimensions EQUALS array_init
@@ -1197,6 +1251,7 @@ declaration:
             if ($2.type == VAR_ENUM)
                 $$->enum_name = ARENA_STRDUP($2.enum_name);
             set_declaration_pending_initializer($$, $6);
+            free_type_descriptor(&$2);
             SAFE_FREE($3.name);
         }
     | optional_modifiers alias_type declarator dimensions_or_unsized EQUALS array_init
@@ -1231,6 +1286,7 @@ declaration:
             if ($2.type == VAR_ENUM)
                 $$->enum_name = ARENA_STRDUP($2.enum_name);
             set_declaration_pending_initializer($$, $6);
+            free_type_descriptor(&$2);
             SAFE_FREE($3.name);
         }
     | optional_modifiers alias_type declarator EQUALS LBRACE struct_initializer_list RBRACE
@@ -1745,11 +1801,13 @@ int main(int argc, char *argv[]) {
         if (!parse_error_already_reported) {
             fprintf(stderr, "Parsing failed\n");
         }
+        cleanup();
         return 1;
     }
 
     /* Phase 2: Semantic Analysis and Type Checking */
     if (!semantic_analyze(root)) {
+        cleanup();
         return 1;
     }
 
@@ -1757,6 +1815,7 @@ int main(int argc, char *argv[]) {
     global_interpreter = interpreter_new();
     if (!global_interpreter) {
         fprintf(stderr, "Failed to create interpreter\n");
+        cleanup();
         return 1;
     }
 
@@ -1779,15 +1838,14 @@ void yyerror(const char *s) {
      * more surgical pass at multi-file error attribution.
      *
      * Known pre-existing quirk, unrelated to #cooked but made much more
-     * likely by it: the `yylineno - 1` below is a heuristic that assumes
+     * likely by it: the `yylineno - 1` heuristic below assumes
      * bison's one-token lookahead has already advanced past the error line,
-     * which is wrong for a syntax error on line 1 of *any* file (prints
-     * "line 0"). #cooked resets yylineno to 1 for every included file (see
-     * handle_cooked_directive in lang.l), so a syntax error on an included
-     * file's first line hits this every time. Fixing it properly needs
-     * filename+line attribution on ASTNode, which is the same follow-up
-     * noted above — not fixed here. */
-    fprintf(stderr, "Error: %s at line %d\n", s, yylineno - 1);
+     * which can be wrong for a syntax error on line 1 of any file. Clamp the
+     * result to line 1 so diagnostics never report an impossible line 0.
+     * Fixing it precisely needs filename+line attribution on ASTNode, which is
+     * the same follow-up noted above. */
+    int reported_line = yylineno > 1 ? yylineno - 1 : 1;
+    fprintf(stderr, "Error: %s at line %d\n", s, reported_line);
 }
 
 void yyerror_current_line(const char *s) {

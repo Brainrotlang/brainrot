@@ -770,7 +770,8 @@ make the tag available through normal `gang tag`/`chungus tag` syntax.
 Current limitations:
 
 - `lit` declarations are top-level only.
-- The alias target must already be defined; there are no forward typedefs.
+- The alias target must already be defined; there are no forward typedefs or
+  incomplete aggregate aliases such as `lit gang Ghost Alias;`.
 - Array typedefs and function-pointer typedefs are not supported.
 - Storage-class modifiers such as `salty` are not accepted on `lit`
   declarations; apply them where the alias is used instead.
