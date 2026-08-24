@@ -350,17 +350,22 @@ CPPCHECK_FLAGS := \
 	-j4
 
 # Static analysis with cppcheck (used by CI's static-analysis job). `style`
-# checks are deliberately not enabled here -- see cppcheck-suppressions.txt
-# and issue #172 for why that's a separate follow-up, not this gate.
+# checks are deliberately not enabled here -- see issue #172 for why that's a
+# separate follow-up, not this gate.
 .PHONY: cppcheck
 cppcheck:
 	@command -v $(CPPCHECK) >/dev/null 2>&1 || { echo "Error: cppcheck not found. Blud, install cppcheck >= $(CPPCHECK_MIN_VERSION)!"; exit 1; }
 	@ver=$$($(CPPCHECK) --version | awk '{print $$2}'); \
-	oldest=$$(printf '%s\n%s\n' "$(CPPCHECK_MIN_VERSION)" "$$ver" | sort -V | head -n1); \
-	if [ "$$oldest" != "$(CPPCHECK_MIN_VERSION)" ]; then \
-		echo "Error: cppcheck $$ver is too old (need >= $(CPPCHECK_MIN_VERSION)). Ratioed by an ancient toolchain."; \
-		exit 1; \
-	fi
+	awk -v v="$$ver" -v min="$(CPPCHECK_MIN_VERSION)" 'BEGIN { \
+		split(v, a, "."); split(min, b, "."); \
+		for (i = 1; i <= 3; i++) { \
+			va = (a[i] == "" ? 0 : a[i]) + 0; \
+			vb = (b[i] == "" ? 0 : b[i]) + 0; \
+			if (va > vb) exit 0; \
+			if (va < vb) exit 1; \
+		} \
+		exit 0; \
+	}' || { echo "Error: cppcheck $$ver is too old (need >= $(CPPCHECK_MIN_VERSION)). Ratioed by an ancient toolchain."; exit 1; }
 	$(CPPCHECK) $(CPPCHECK_FLAGS) $(CPPCHECK_SRCS)
 	@echo "cppcheck found nothing sus. Certified W."
 
