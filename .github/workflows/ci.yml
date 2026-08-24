@@ -91,7 +91,7 @@ jobs:
     needs: test
     timeout-minutes: 20
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - runner: ubuntu-latest
