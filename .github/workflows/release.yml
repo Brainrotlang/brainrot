@@ -358,12 +358,22 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git fetch --tags --force
+          created_tag=false
           if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
-            echo "Tag $VERSION already exists" >&2
-            exit 1
+            tag_sha="$(git rev-list -n 1 "$VERSION")"
+            head_sha="$(git rev-parse HEAD)"
+            if [ "$tag_sha" != "$head_sha" ]; then
+              echo "Tag $VERSION already exists at $tag_sha, not $head_sha" >&2
+              exit 1
+            fi
+            echo "Tag $VERSION already points at HEAD; continuing."
+          else
+            git tag -a "$VERSION" -m "$VERSION"
+            created_tag=true
           fi
-          git tag -a "$VERSION" -m "$VERSION"
-          git push origin "$VERSION"
+          if [ "$created_tag" = "true" ]; then
+            git push origin "$VERSION"
+          fi
 
       - name: Publish GitHub Release
         if: needs.version.outputs.dry_run != 'true'
