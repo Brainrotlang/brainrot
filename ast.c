@@ -2301,6 +2301,11 @@ void *evaluate_lvalue_address(ASTNode *node)
                value.array_data (allocated by interpreter_visit_declaration).
                Pointer-to-struct variables are handled above via
                pointer_level > 0 and pvalue. */
+            if (!var->value.array_data)
+            {
+                yyerror("Uninitialized struct lvalue");
+                return NULL;
+            }
             return var->value.array_data;
         default:
             yyerror("Unsupported lvalue type");
@@ -6418,8 +6423,8 @@ bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
 {
     TypeModifiers merged = base;
 
-    if ((base.is_signed && extra.is_unsigned) ||
-        (base.is_unsigned && extra.is_signed))
+    if ((extra.is_signed || extra.is_unsigned) &&
+        (base.is_signed || base.is_unsigned))
     {
         char msg[MAX_BUFFER_LEN];
         snprintf(msg, sizeof(msg),
@@ -6430,8 +6435,8 @@ bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
         return false;
     }
 
-    if ((base.is_long && extra.is_long_long) ||
-        (base.is_long_long && extra.is_long))
+    if ((extra.is_long || extra.is_long_long) &&
+        (base.is_long || base.is_long_long))
     {
         char msg[MAX_BUFFER_LEN];
         snprintf(msg, sizeof(msg),
@@ -6518,6 +6523,9 @@ bool register_type_alias(String name, TypeDescriptor descriptor)
 
     if (!type_alias_registry)
         type_alias_registry = hm_new();
+    /* hm_put copies the key bytes; hm_free_shallow frees that copy. The
+       TypeAlias node and its owned strings are released via the linked
+       list below, not by the hashmap. */
     hm_put(type_alias_registry, alias->name.data, alias->name.len, &alias,
            sizeof(TypeAlias *));
     alias->next_def = type_alias_registry_list;

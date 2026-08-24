@@ -280,14 +280,16 @@
     "semantic_error_lit_parameter_alias_conflict": "Error: Typedef alias 'Count' is already defined at line 1",
     "lit_array_typedef_fail": "Error: Array typedef alias 'Values' is not supported at line 1\nParsing failed",
     "lit_modifier_conflict_fail": "Error: Conflicting signedness modifiers for typedef alias 'Count' at line 4\nParsing failed",
+    "lit_duplicate_width_modifier_fail": "Error: Conflicting width modifiers for typedef alias 'Count' at line 4\nParsing failed",
+    "lit_duplicate_signedness_modifier_fail": "Error: Conflicting signedness modifiers for typedef alias 'Count' at line 4\nParsing failed",
     "lit_top_level_only_fail": "Error: lit declarations are only allowed at top level at line 1\nParsing failed",
     "lit_top_level_only_struct_fail": "Error: lit declarations are only allowed at top level at line 6\nParsing failed",
-    "lit_top_level_only_enum_fail": "Error: lit declarations are only allowed at top level at line 2\nParsing failed",
+    "lit_top_level_only_enum_fail": "Error: lit declarations are only allowed at top level at line 4\nParsing failed",
     "lit_top_level_only_anonymous_fail": "Error: lit declarations are only allowed at top level at line 2\nParsing failed",
     "lit_top_level_only_named_inline_fail": "Error: lit declarations are only allowed at top level at line 2\nParsing failed",
     "lit_top_level_only_alias_fail": "Error: lit declarations are only allowed at top level at line 4\nParsing failed",
     "lit_struct_alias_array_fail": "Error: Arrays of struct/union typedef aliases are not supported at line 9\nParsing failed",
     "lit_forward_struct_typedef_fail": "Error: Unknown struct/union type 'Ghost' at line 1\nParsing failed",
-    "lit_enum_constant_alias_conflict_fail": "Error: Enum constant 'RED' is already defined at line 2\nParsing failed",
+    "lit_enum_constant_alias_conflict_fail": "Error: Enum constant 'RED' is already defined at line 4\nParsing failed",
     "lit_storage_class_typedef_fail": "Error: Storage-class modifiers are not allowed in typedef aliases at line 1\nParsing failed"
 }

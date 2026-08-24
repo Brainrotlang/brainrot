@@ -774,7 +774,9 @@ Current limitations:
   incomplete aggregate aliases such as `lit gang Ghost Alias;`.
 - Array typedefs and function-pointer typedefs are not supported.
 - Storage-class modifiers such as `salty` are not accepted on `lit`
-  declarations; apply them where the alias is used instead.
+  declarations; apply them where the alias is used instead. Repeating a
+  width or signedness specifier the alias already has (`giga` on a `giga`
+  alias, `nut` on a `nut` alias) is rejected as a conflict.
 - Alias names are reserved type names and cannot be reused as variables,
   parameters, functions, enum constants, or other aliases. Aggregate tags
   (`gang`/`chungus`/`gyatt`) live in a separate namespace, so a typedef name can
