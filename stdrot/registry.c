@@ -40,8 +40,17 @@ StdrotAPI stdrot_get_api_v2(void)
     unsigned long section_byte_len = 0;
     const StdrotEntry *const *functions =
         (const StdrotEntry *const *)getsectiondata(
-            &_mh_dylib_header, "__DATA", "stdrot_exports", &section_byte_len);
+            &_mh_dylib_header, STDROT_EXPORT_SEGMENT_NAME,
+            STDROT_EXPORT_SECTION_NAME, &section_byte_len);
     ptrdiff_t byte_len = (ptrdiff_t)section_byte_len;
+    if (!functions || byte_len == 0)
+    {
+        fprintf(stderr,
+                "stdrot: native function registry section %s,%s was not "
+                "found in libstdrot.so\n",
+                STDROT_EXPORT_SEGMENT_NAME, STDROT_EXPORT_SECTION_NAME);
+        exit(1);
+    }
 #else
     /* Every slot in the section is exactly sizeof(StdrotEntry *) --
        there's no variable-sized-struct alignment padding to worry about

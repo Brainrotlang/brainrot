@@ -308,10 +308,15 @@ typedef struct
 #if defined(__GNUC__) || defined(__clang__)
 #define STDROT_CONCAT_IMPL(x, y) x##y
 #define STDROT_CONCAT(x, y) STDROT_CONCAT_IMPL(x, y)
+#define STDROT_EXPORT_SECTION_NAME "stdrot_exports"
 #if defined(__APPLE__) && defined(__MACH__)
-#define STDROT_EXPORT_SECTION "__DATA,stdrot_exports"
+#define STDROT_EXPORT_SEGMENT_NAME "__DATA"
+#define STDROT_EXPORT_SECTION                                                  \
+    STDROT_EXPORT_SEGMENT_NAME "," STDROT_EXPORT_SECTION_NAME
+#define STDROT_EXPORT_ATTR used, no_dead_strip, section(STDROT_EXPORT_SECTION)
 #else
-#define STDROT_EXPORT_SECTION "stdrot_exports"
+#define STDROT_EXPORT_SECTION STDROT_EXPORT_SECTION_NAME
+#define STDROT_EXPORT_ATTR used, section(STDROT_EXPORT_SECTION)
 #endif
 /* The StdrotEntry itself lives in ordinary static storage -- normal
  * variable-sized-struct layout rules apply, nothing unusual about it.
@@ -331,8 +336,7 @@ typedef struct
         .is_variadic = variadic,                                               \
         .return_like_arg = -1,                                                 \
         .fn = func_ptr};                                                       \
-    __attribute__((                                                            \
-        used, section(STDROT_EXPORT_SECTION))) static const StdrotEntry *const \
+    __attribute__((STDROT_EXPORT_ATTR)) static const StdrotEntry *const        \
     STDROT_CONCAT(__stdrot_export_, __LINE__) =                                \
         &STDROT_CONCAT(__stdrot_entry_, __LINE__)
 #define STDROT_EXPORT_SIG_IDENTITY(name_str, func_ptr, params_ptr, pcount,     \
@@ -346,8 +350,7 @@ typedef struct
         .is_variadic = false,                                                  \
         .return_like_arg = 0,                                                  \
         .fn = func_ptr};                                                       \
-    __attribute__((                                                            \
-        used, section(STDROT_EXPORT_SECTION))) static const StdrotEntry *const \
+    __attribute__((STDROT_EXPORT_ATTR)) static const StdrotEntry *const        \
     STDROT_CONCAT(__stdrot_export_, __LINE__) =                                \
         &STDROT_CONCAT(__stdrot_entry_, __LINE__)
 #define STDROT_EXPORT(name_str, func_ptr)                                      \
@@ -374,8 +377,7 @@ typedef struct
         .promote_variadic_tail = true,                                         \
         .return_like_arg = -1,                                                 \
         .fn = func_ptr};                                                       \
-    __attribute__((                                                            \
-        used, section(STDROT_EXPORT_SECTION))) static const StdrotEntry *const \
+    __attribute__((STDROT_EXPORT_ATTR)) static const StdrotEntry *const        \
     STDROT_CONCAT(__stdrot_export_, __LINE__) =                                \
         &STDROT_CONCAT(__stdrot_entry_, __LINE__)
 #else
