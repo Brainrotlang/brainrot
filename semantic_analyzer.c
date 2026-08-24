@@ -2388,7 +2388,7 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
                 node->data.op.right &&
                         node->data.op.right->type == NODE_STRUCT_DEF
                     ? node->data.op.right->data.struct_def.name
-                    : (String){0};
+                    : node->struct_name;
 
             if (get_type_alias(var_name))
             {

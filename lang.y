@@ -116,7 +116,6 @@ static ASTNode *create_alias_declaration(String name, TypeDescriptor descriptor,
     if (node)
         node->modifiers = descriptor.modifiers;
 
-    free_type_descriptor(&descriptor);
     return node;
 }
 
@@ -131,7 +130,6 @@ static Parameter *create_alias_parameter(String name, TypeDescriptor descriptor,
         param->struct_name = ARENA_STRDUP(descriptor.struct_name);
     else if (descriptor.type == VAR_ENUM)
         param->enum_name = ARENA_STRDUP(descriptor.enum_name);
-    free_type_descriptor(&descriptor);
     return param;
 }
 
@@ -153,7 +151,6 @@ static ASTNode *create_alias_function_def(String name,
                                            params, body);
     if (node)
         node->modifiers = descriptor.modifiers;
-    free_type_descriptor(&descriptor);
     return node;
 }
 
@@ -343,7 +340,6 @@ static void register_anonymous_aggregate_typedef(String alias_name,
 
 %destructor { SAFE_FREE($$.data); } IDENTIFIER STRING_LITERAL TYPE_NAME
 %destructor { SAFE_FREE($$.name); } declarator
-%destructor { free_type_descriptor(&$$); } alias_type
 
 %type <node>  struct_def struct_access
 %type <param> struct_field_list struct_field   /* reuse Parameter as field carrier */
@@ -465,7 +461,6 @@ typedef_def:
             yyerror_current_line(
                 "Storage-class modifiers are not allowed in typedef aliases");
             typedef_had_error = true;
-            free_type_descriptor(&$3);
             SAFE_FREE($4.name);
             $$ = NULL;
         }
@@ -570,7 +565,6 @@ typedef_def:
             TypeDescriptor descriptor = $3;
             descriptor.pointer_level += $4.pointer_level;
             register_type_alias($4.name, descriptor);
-            free_type_descriptor(&$3);
             SAFE_FREE($4.name);
             $$ = NULL;
         }
@@ -578,7 +572,6 @@ typedef_def:
         {
             (void)$5;
             reject_array_typedef($4.name);
-            free_type_descriptor(&$3);
             SAFE_FREE($4.name);
             $$ = NULL;
         }
@@ -925,7 +918,6 @@ param_list
                         "Parameter '%s' cannot have type void", $3.name.data);
                 yyerror(msg);
                 parse_error_already_reported = true;
-                free_type_descriptor(&$2);
                 SAFE_FREE($3.name);
                 YYABORT;
             }
@@ -942,7 +934,6 @@ param_list
                         "Parameter '%s' cannot have type void", $5.name.data);
                 yyerror(msg);
                 parse_error_already_reported = true;
-                free_type_descriptor(&$4);
                 SAFE_FREE($5.name);
                 YYABORT;
             }
@@ -1230,9 +1221,10 @@ declaration:
                                                      $2.type);
             $$->pointer_level = pointer_level;
             $$->modifiers = $2.modifiers;
+            if ($2.type == VAR_STRUCT)
+                $$->struct_name = ARENA_STRDUP($2.struct_name);
             if ($2.type == VAR_ENUM)
                 $$->enum_name = ARENA_STRDUP($2.enum_name);
-            free_type_descriptor(&$2);
             SAFE_FREE($3.name);
         }
     | optional_modifiers alias_type declarator dimensions EQUALS array_init
@@ -1248,10 +1240,11 @@ declaration:
                                                      $2.type);
             $$->pointer_level = pointer_level;
             $$->modifiers = $2.modifiers;
+            if ($2.type == VAR_STRUCT)
+                $$->struct_name = ARENA_STRDUP($2.struct_name);
             if ($2.type == VAR_ENUM)
                 $$->enum_name = ARENA_STRDUP($2.enum_name);
             set_declaration_pending_initializer($$, $6);
-            free_type_descriptor(&$2);
             SAFE_FREE($3.name);
         }
     | optional_modifiers alias_type declarator dimensions_or_unsized EQUALS array_init
@@ -1283,10 +1276,11 @@ declaration:
                                                      $2.type);
             $$->pointer_level = pointer_level;
             $$->modifiers = $2.modifiers;
+            if ($2.type == VAR_STRUCT)
+                $$->struct_name = ARENA_STRDUP($2.struct_name);
             if ($2.type == VAR_ENUM)
                 $$->enum_name = ARENA_STRDUP($2.enum_name);
             set_declaration_pending_initializer($$, $6);
-            free_type_descriptor(&$2);
             SAFE_FREE($3.name);
         }
     | optional_modifiers alias_type declarator EQUALS LBRACE struct_initializer_list RBRACE
@@ -1797,6 +1791,8 @@ int main(int argc, char *argv[]) {
     stdrot_load();
 
     /* Phase 1: Parse the source code to build AST */
+    /* typedef_had_error is set by lit alias registration/rejection helpers;
+       those parse-time failures must stop before semantic analysis. */
     if (yyparse() != 0 || struct_def_had_error || typedef_had_error) {
         if (!parse_error_already_reported) {
             fprintf(stderr, "Parsing failed\n");
@@ -1886,6 +1882,8 @@ void cleanup() {
     free_static_variable_map();
 
     free_struct_registry();
+
+    free_type_alias_registry();
 
     free_enum_registry();
 

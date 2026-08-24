@@ -1,11 +1,19 @@
 gang Point {
     rizz x;
+    rizz y;
 };
 
 lit gang Point *PointPtr;
 
 skibidi main {
-    PointPtr values[1];
-    yapping("%d", 1);
+    gang Point p = {5, 7};
+    gang Point q = {11, 13};
+    PointPtr values[2];
+
+    values[0] = &p;
+    values[1] = &q;
+
+    yapping("%d %d %d", values[0] != 0, values[1] != values[0],
+            maxxing(*values[1]) == maxxing(q));
     bussin 0;
 }

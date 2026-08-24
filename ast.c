@@ -970,9 +970,14 @@ bool set_bool_variable(const String name, bool value, TypeModifiers mods)
 
 void reset_modifiers(void)
 {
-#define RESET_TYPE_MODIFIER_FIELD(field) current_modifiers.field = false;
-    TYPE_MODIFIER_FIELDS(RESET_TYPE_MODIFIER_FIELD)
-#undef RESET_TYPE_MODIFIER_FIELD
+    current_modifiers.is_volatile = false;
+    current_modifiers.is_signed = false;
+    current_modifiers.is_unsigned = false;
+    current_modifiers.is_sizeof = false;
+    current_modifiers.is_const = false;
+    current_modifiers.is_long = false;
+    current_modifiers.is_long_long = false;
+    current_modifiers.is_static = false;
 }
 
 TypeModifiers get_current_modifiers(void)
@@ -2238,6 +2243,10 @@ void *evaluate_lvalue_address(ASTNode *node)
             return &var->value.strvalue;
         case VAR_ENUM:
             return &var->value.ivalue;
+        case VAR_STRUCT:
+            if (var->pointer_level == 0)
+                return var->value.array_data;
+            __attribute__((fallthrough));
         default:
             yyerror("Unsupported lvalue type");
             return NULL;
@@ -3277,6 +3286,19 @@ size_t handle_sizeof(ASTNode *node)
             {
                 Variable *var =
                     get_variable(expr->data.unary.operand->data.name);
+                if (var != NULL && var->var_type == VAR_STRUCT)
+                {
+                    StructDef *sdef = get_struct_def(var->struct_name);
+                    if (sdef != NULL)
+                        return sdef->total_size;
+                }
+            }
+            if (expr->type == NODE_UNARY_OPERATION &&
+                expr->data.unary.op == OP_DEREFERENCE &&
+                expr->data.unary.operand->type == NODE_ARRAY_ACCESS)
+            {
+                Variable *var =
+                    get_variable(expr->data.unary.operand->data.array.name);
                 if (var != NULL && var->var_type == VAR_STRUCT)
                 {
                     StructDef *sdef = get_struct_def(var->struct_name);
@@ -5232,7 +5254,6 @@ void free_statement_list(StatementList *list)
 void free_ast()
 {
     free_pending_initializer_registry();
-    free_type_alias_registry();
     arena_free(&arena);
 }
 
@@ -6366,25 +6387,9 @@ TypeDescriptor type_descriptor_from_alias(const TypeAlias *alias)
 
     TypeDescriptor descriptor = make_type_descriptor(
         alias->type, alias->pointer_level, alias->modifiers);
-    descriptor.struct_name = alias->struct_name.data
-                                 ? safe_strdup(&alias->struct_name)
-                                 : (String){0};
-    descriptor.enum_name =
-        alias->enum_name.data ? safe_strdup(&alias->enum_name) : (String){0};
-    descriptor.owns_tag_names = true;
+    descriptor.struct_name = alias->struct_name;
+    descriptor.enum_name = alias->enum_name;
     return descriptor;
-}
-
-void free_type_descriptor(TypeDescriptor *descriptor)
-{
-    if (!descriptor || !descriptor->owns_tag_names)
-        return;
-
-    SAFE_FREE(descriptor->struct_name.data);
-    descriptor->struct_name = (String){0};
-    SAFE_FREE(descriptor->enum_name.data);
-    descriptor->enum_name = (String){0};
-    descriptor->owns_tag_names = false;
 }
 
 bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
@@ -6428,10 +6433,12 @@ bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
         return false;
     }
 
-#define MERGE_TYPE_MODIFIER_FIELD(field)                                       \
-    merged.field = base.field || extra.field;
-    TYPE_MODIFIER_STORED_FIELDS(MERGE_TYPE_MODIFIER_FIELD)
-#undef MERGE_TYPE_MODIFIER_FIELD
+    merged.is_volatile = base.is_volatile || extra.is_volatile;
+    merged.is_signed = base.is_signed || extra.is_signed;
+    merged.is_unsigned = base.is_unsigned || extra.is_unsigned;
+    merged.is_const = base.is_const || extra.is_const;
+    merged.is_long = base.is_long || extra.is_long;
+    merged.is_long_long = base.is_long_long || extra.is_long_long;
     merged.is_sizeof = extra.is_sizeof;
     merged.is_static = extra.is_static;
 

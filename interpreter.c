@@ -416,6 +416,8 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
         Variable *var = variable_new(name);
         var->pointer_level = node->pointer_level;
         var->modifiers = node->modifiers;
+        if (node->var_type == VAR_STRUCT)
+            var->struct_name = safe_strdup(&node->struct_name);
         add_variable_to_scope(name, var);
         SAFE_FREE(var);
 
@@ -547,6 +549,8 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
        return frees only the wrapper Variable, not enum_name's heap string. */
     if (node->var_type == VAR_ENUM)
         var->enum_name = safe_strdup(&node->enum_name);
+    if (node->var_type == VAR_STRUCT && node->struct_name.data)
+        var->struct_name = safe_strdup(&node->struct_name);
 
     /* Detect struct declaration: right node is a NODE_STRUCT_DEF */
     if (node->data.op.right && node->data.op.right->type == NODE_STRUCT_DEF)

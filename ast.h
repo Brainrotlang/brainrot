@@ -38,30 +38,19 @@ typedef struct
     size_t total_size;
 } ArrayDimensions;
 
-/* Define TypeModifiers first. Keep stored type modifiers separate from parser
-   context flags: typedef alias merging carries only stored type modifiers,
-   while parser-state reset clears every field. */
-#define TYPE_MODIFIER_STORED_FIELDS(X)                                         \
-    X(is_volatile)                                                             \
-    X(is_signed)                                                               \
-    X(is_unsigned)                                                             \
-    X(is_const)                                                                \
-    X(is_long)                                                                 \
-    X(is_long_long)
-
-#define TYPE_MODIFIER_CONTEXT_FIELDS(X)                                        \
-    X(is_sizeof)                                                               \
-    X(is_static)
-
-#define TYPE_MODIFIER_FIELDS(X)                                                \
-    TYPE_MODIFIER_STORED_FIELDS(X)                                             \
-    TYPE_MODIFIER_CONTEXT_FIELDS(X)
-
+/* Define TypeModifiers first. Stored type modifiers may be carried through
+   typedef aliases; parser context flags are reset with the same parser state
+   but are not alias storage. */
 typedef struct
 {
-#define DECLARE_TYPE_MODIFIER_FIELD(field) bool field;
-    TYPE_MODIFIER_FIELDS(DECLARE_TYPE_MODIFIER_FIELD)
-#undef DECLARE_TYPE_MODIFIER_FIELD
+    bool is_volatile;
+    bool is_signed;
+    bool is_unsigned;
+    bool is_sizeof;
+    bool is_const;
+    bool is_long;
+    bool is_long_long;
+    bool is_static;
 } TypeModifiers;
 
 typedef struct JumpBuffer
@@ -137,10 +126,9 @@ typedef struct
     VarType type;
     int pointer_level;
     TypeModifiers modifiers;
-    /* Aggregate tag names are borrowed unless owns_tag_names is true. */
+    /* Non-owning type view. Stored declarations copy tag names they keep. */
     String struct_name;
     String enum_name;
-    bool owns_tag_names;
 } TypeDescriptor;
 
 /* A single field inside a struct definition */
@@ -450,6 +438,10 @@ struct ASTNode
        copy-init) -- evaluated at runtime by the declaration visitor. NULL
        for the no-initializer and braced-initializer declaration forms. */
     ASTNode *struct_init_expr;
+    /* Struct/union tag for declaration nodes whose var_type == VAR_STRUCT
+       and do not carry a NODE_STRUCT_DEF child, such as pointer arrays
+       declared through a typedef alias. */
+    String struct_name;
     /* Enum tag for a NODE_DECLARATION node with var_type == VAR_ENUM; not
        in the union below since it carries no blob/fields to go with it. */
     String enum_name;
@@ -766,9 +758,8 @@ ASTNode *create_enum_def_node(String name);
 /* Typedef aliases (`lit`). */
 TypeDescriptor make_type_descriptor(VarType type, int pointer_level,
                                     TypeModifiers modifiers);
-/* Returned aggregate tag strings are heap copies owned by the descriptor. */
+/* Returned aggregate tag strings are borrowed from the alias registry. */
 TypeDescriptor type_descriptor_from_alias(const TypeAlias *alias);
-void free_type_descriptor(TypeDescriptor *descriptor);
 bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
                           TypeModifiers *out, const String name);
 /* Copies `name` and any aggregate tag strings from `descriptor`; callers keep
