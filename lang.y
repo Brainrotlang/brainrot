@@ -60,7 +60,7 @@ static TypeDescriptor resolve_alias_use(String alias_name)
         snprintf(msg, sizeof(msg), "Unknown typedef alias '%s'",
                  alias_name.data ? alias_name.data : "?");
         yyerror(msg);
-        struct_def_had_error = true;
+        typedef_had_error = true;
         return make_type_descriptor(NONE, 0, (TypeModifiers){0});
     }
 
@@ -70,7 +70,7 @@ static TypeDescriptor resolve_alias_use(String alias_name)
     if (!merge_type_modifiers(descriptor.modifiers, use_modifiers, &merged,
                               alias_name))
     {
-        struct_def_had_error = true;
+        typedef_had_error = true;
     }
     descriptor.modifiers = merged;
     return descriptor;
@@ -155,7 +155,7 @@ static bool ensure_type_alias_name_available(String name)
         snprintf(msg, sizeof(msg), "Typedef alias '%s' is already defined",
                  name.data ? name.data : "?");
         yyerror(msg);
-        struct_def_had_error = true;
+        typedef_had_error = true;
         return false;
     }
     return true;
@@ -342,6 +342,7 @@ static void register_anonymous_aggregate_typedef(String alias_name,
 %type <array> multi_dimension_access
 %type <declarator> declarator
 %type <declarator> typedef_declarator
+%type <strval> name_token
 %type <ival> pointer_stars
 %type <node> assignment_target
 
@@ -381,6 +382,13 @@ function_def_list
         { $$ = $1; (void)$2; }
     ;
 
+name_token:
+    IDENTIFIER
+        { $$ = $1; }
+    | TYPE_NAME
+        { $$ = $1; }
+    ;
+
 alias_type:
     TYPE_NAME
         {
@@ -390,7 +398,7 @@ alias_type:
     ;
 
 typedef_def:
-    TYPEDEF optional_modifiers type typedef_declarator SEMICOLON
+    TYPEDEF typedef_optional_modifiers type typedef_declarator SEMICOLON
         {
             TypeDescriptor descriptor = make_type_descriptor(
                 $3, $4.pointer_level, get_current_modifiers());
@@ -398,7 +406,7 @@ typedef_def:
             SAFE_FREE($4.name);
             $$ = NULL;
         }
-    | TYPEDEF optional_modifiers struct_or_union IDENTIFIER typedef_declarator SEMICOLON
+    | TYPEDEF typedef_optional_modifiers struct_or_union name_token typedef_declarator SEMICOLON
         {
             TypeModifiers modifiers = get_current_modifiers();
             if (!get_struct_def($4))
@@ -407,17 +415,20 @@ typedef_def:
                 snprintf(msg, sizeof(msg), "Unknown struct/union type '%s'",
                          $4.data);
                 yyerror(msg);
-                struct_def_had_error = true;
+                typedef_had_error = true;
             }
-            TypeDescriptor descriptor = make_type_descriptor(
-                VAR_STRUCT, $5.pointer_level, modifiers);
-            descriptor.struct_name = $4;
-            register_type_alias($5.name, descriptor);
+            else
+            {
+                TypeDescriptor descriptor = make_type_descriptor(
+                    VAR_STRUCT, $5.pointer_level, modifiers);
+                descriptor.struct_name = $4;
+                register_type_alias($5.name, descriptor);
+            }
             SAFE_FREE($4);
             SAFE_FREE($5.name);
             $$ = NULL;
         }
-    | TYPEDEF optional_modifiers struct_or_union IDENTIFIER
+    | TYPEDEF typedef_optional_modifiers struct_or_union name_token
         {
             SAFE_FREE(current_struct_def_name.data);
             current_struct_def_name = safe_strdup(&$4);
@@ -433,7 +444,7 @@ typedef_def:
             current_struct_def_name = (String){0};
             $$ = NULL;
         }
-    | TYPEDEF optional_modifiers struct_or_union LBRACE struct_field_list RBRACE typedef_declarator SEMICOLON
+    | TYPEDEF typedef_optional_modifiers struct_or_union LBRACE struct_field_list RBRACE typedef_declarator SEMICOLON
         {
             TypeModifiers modifiers = get_current_modifiers();
             register_anonymous_aggregate_typedef($7.name, $3 != 0, $5,
@@ -441,7 +452,7 @@ typedef_def:
             SAFE_FREE($7.name);
             $$ = NULL;
         }
-    | TYPEDEF optional_modifiers ENUM IDENTIFIER typedef_declarator SEMICOLON
+    | TYPEDEF typedef_optional_modifiers ENUM name_token typedef_declarator SEMICOLON
         {
             TypeModifiers modifiers = get_current_modifiers();
             if (!get_enum_def($4))
@@ -450,17 +461,20 @@ typedef_def:
                 snprintf(msg, sizeof(msg), "Unknown enum type '%s'",
                          $4.data);
                 yyerror(msg);
-                struct_def_had_error = true;
+                typedef_had_error = true;
             }
-            TypeDescriptor descriptor = make_type_descriptor(
-                VAR_ENUM, $5.pointer_level, modifiers);
-            descriptor.enum_name = $4;
-            register_type_alias($5.name, descriptor);
+            else
+            {
+                TypeDescriptor descriptor = make_type_descriptor(
+                    VAR_ENUM, $5.pointer_level, modifiers);
+                descriptor.enum_name = $4;
+                register_type_alias($5.name, descriptor);
+            }
             SAFE_FREE($4);
             SAFE_FREE($5.name);
             $$ = NULL;
         }
-    | TYPEDEF optional_modifiers alias_type typedef_declarator SEMICOLON
+    | TYPEDEF typedef_optional_modifiers alias_type typedef_declarator SEMICOLON
         {
             TypeDescriptor descriptor = $3;
             descriptor.pointer_level += $4.pointer_level;
@@ -476,7 +490,7 @@ struct_or_union
     ;
 
 struct_def
-    : struct_or_union IDENTIFIER
+    : struct_or_union name_token
         {
             /* Mid-rule: remember the tag being defined so struct_field can
                reject direct self-embedding while the body is parsed. */
@@ -563,7 +577,7 @@ struct_field
             $$ = create_alias_parameter($2.name, $1, $2.pointer_level, NULL);
             SAFE_FREE($2.name);
         }
-    | struct_or_union IDENTIFIER declarator SEMICOLON
+    | struct_or_union name_token declarator SEMICOLON
         {
             /* A struct/union embedding itself BY VALUE has no finite size
                (offset/self-check is only meaningful here, synchronously
@@ -607,7 +621,7 @@ struct_field
             SAFE_FREE($3.name);
             SAFE_FREE($2);
         }
-    | ENUM IDENTIFIER declarator SEMICOLON
+    | ENUM name_token declarator SEMICOLON
         {
             /* Nested enum field (e.g. `gang Foo { gyatt Color c; };`) --
                same "must already be defined above" ordering rule as
@@ -631,7 +645,7 @@ struct_field
 /* Enum tag defined at top level. Auto-increment and duplicate-name
    checking happen in ast.c, not inline here, same as struct layout. */
 enum_def:
-    ENUM IDENTIFIER LBRACE enum_constant_list RBRACE SEMICOLON
+    ENUM name_token LBRACE enum_constant_list RBRACE SEMICOLON
         {
             EnumDef *def = SAFE_MALLOC(EnumDef);
             def->name = safe_strdup(&$2);
@@ -668,7 +682,7 @@ enum_constant_list:
     ;
 
 enum_constant:
-    IDENTIFIER
+    name_token
         {
             EnumConstant *c = SAFE_MALLOC(EnumConstant);
             c->name = safe_strdup(&$1);
@@ -678,7 +692,7 @@ enum_constant:
             $$ = c;
             SAFE_FREE($1.data);
         }
-    | IDENTIFIER EQUALS INT_LITERAL
+    | name_token EQUALS INT_LITERAL
         {
             EnumConstant *c = SAFE_MALLOC(EnumConstant);
             c->name = safe_strdup(&$1);
@@ -688,7 +702,7 @@ enum_constant:
             $$ = c;
             SAFE_FREE($1.data);
         }
-    | IDENTIFIER EQUALS MINUS INT_LITERAL
+    | name_token EQUALS MINUS INT_LITERAL
         {
             EnumConstant *c = SAFE_MALLOC(EnumConstant);
             c->name = safe_strdup(&$1);
@@ -709,13 +723,13 @@ function_def
                                            $4, $7);
             SAFE_FREE($2.name);
         }
-    | struct_or_union IDENTIFIER declarator LPAREN params RPAREN LBRACE statements RBRACE
+    | struct_or_union name_token declarator LPAREN params RPAREN LBRACE statements RBRACE
         {
             $$ = create_function_def_node_struct($3.name, $2, $3.pointer_level, $5, $8);
             SAFE_FREE($2);
             SAFE_FREE($3.name);
         }
-    | ENUM IDENTIFIER declarator LPAREN params RPAREN LBRACE statements RBRACE
+    | ENUM name_token declarator LPAREN params RPAREN LBRACE statements RBRACE
         {
             if (!get_enum_def($2))
             {
@@ -807,21 +821,21 @@ param_list
             $$ = create_alias_parameter($5.name, $4, $5.pointer_level, $1);
             SAFE_FREE($5.name);
         }
-    | optional_modifiers struct_or_union IDENTIFIER declarator
+    | optional_modifiers struct_or_union name_token declarator
         {
             $$ = create_parameter_ex($4.name, VAR_STRUCT, $4.pointer_level, NULL, get_current_modifiers());
             $$->struct_name = ARENA_STRDUP($3);
             SAFE_FREE($3);
             SAFE_FREE($4.name);
         }
-    | param_list COMMA optional_modifiers struct_or_union IDENTIFIER declarator
+    | param_list COMMA optional_modifiers struct_or_union name_token declarator
         {
             $$ = create_parameter_ex($6.name, VAR_STRUCT, $6.pointer_level, $1, get_current_modifiers());
             $$->struct_name = ARENA_STRDUP($5);
             SAFE_FREE($5);
             SAFE_FREE($6.name);
         }
-    | optional_modifiers ENUM IDENTIFIER declarator
+    | optional_modifiers ENUM name_token declarator
         {
             if (!get_enum_def($3))
             {
@@ -836,7 +850,7 @@ param_list
             SAFE_FREE($3);
             SAFE_FREE($4.name);
         }
-    | param_list COMMA optional_modifiers ENUM IDENTIFIER declarator
+    | param_list COMMA optional_modifiers ENUM name_token declarator
         {
             if (!get_enum_def($5))
             {
@@ -869,7 +883,7 @@ declarator:
     ;
 
 typedef_declarator:
-    pointer_stars IDENTIFIER
+    pointer_stars name_token
         {
             $$.name = $2;
             $$.pointer_level = $1;
@@ -1102,7 +1116,7 @@ declaration:
             set_declaration_pending_initializer($$, $6);
             SAFE_FREE($3.name);
         }
-    | optional_modifiers struct_or_union IDENTIFIER declarator
+    | optional_modifiers struct_or_union name_token declarator
         {
             /* Variable creation + blob allocation happens at runtime, in
                interpreter_visit_declaration, in whatever scope is current
@@ -1120,7 +1134,7 @@ declaration:
             SAFE_FREE($3);
             SAFE_FREE($4.name);
         }
-    | optional_modifiers struct_or_union IDENTIFIER declarator EQUALS LBRACE struct_initializer_list RBRACE
+    | optional_modifiers struct_or_union name_token declarator EQUALS LBRACE struct_initializer_list RBRACE
         {
             StructDef *def = get_struct_def($3);
             /* Shape-only check (bare value vs. `{ ... }` for a nested
@@ -1142,7 +1156,7 @@ declaration:
             SAFE_FREE($3);
             SAFE_FREE($4.name);
         }
-    | optional_modifiers struct_or_union IDENTIFIER declarator EQUALS expression
+    | optional_modifiers struct_or_union name_token declarator EQUALS expression
         {
             /* Plain-expression struct initializer: a function call
                returning a struct by value (e.g. `gang Point r =
@@ -1161,7 +1175,7 @@ declaration:
             SAFE_FREE($3);
             SAFE_FREE($4.name);
         }
-    | optional_modifiers ENUM IDENTIFIER declarator
+    | optional_modifiers ENUM name_token declarator
         {
             /* Enum variable, e.g. `gyatt Color c;`. Unlike struct/union,
                an enum variable is just a plain int at runtime (no blob),
@@ -1184,7 +1198,7 @@ declaration:
             SAFE_FREE($3);
             SAFE_FREE($4.name);
         }
-    | optional_modifiers ENUM IDENTIFIER declarator EQUALS expression
+    | optional_modifiers ENUM name_token declarator EQUALS expression
         {
             if (!get_enum_def($3))
             {
@@ -1300,6 +1314,13 @@ optional_modifiers:
         { /* No action needed */ }
     ;
 
+typedef_optional_modifiers:
+      /* empty */
+        { /* No action needed */ }
+    | typedef_optional_modifiers typedef_modifier
+        { /* No action needed */ }
+    ;
+
 modifier:
     VOLATILE
         { current_modifiers.is_volatile = true; }
@@ -1317,6 +1338,23 @@ modifier:
         { current_modifiers.is_const = true; }
     | CAP
         { current_var_type = VAR_BOOL; } 
+    ;
+
+typedef_modifier:
+    VOLATILE
+        { current_modifiers.is_volatile = true; }
+    | STATIC
+        { current_modifiers.is_static = true; }
+    | LONG
+        { current_modifiers.is_long = true; }
+    | LONG_LONG
+        { current_modifiers.is_long_long = true; }
+    | SIGNED
+        { current_modifiers.is_signed = true; }
+    | UNSIGNED
+        { current_modifiers.is_unsigned = true; }
+    | DEADASS
+        { current_modifiers.is_const = true; }
     ;
 
 for_statement:
@@ -1451,7 +1489,7 @@ literal:
     ;
 
 identifier:
-      IDENTIFIER         
+      IDENTIFIER
         { 
             $$ = create_identifier_node($1); 
             SAFE_FREE($1);  
@@ -1572,7 +1610,7 @@ int main(int argc, char *argv[]) {
     stdrot_load();
 
     /* Phase 1: Parse the source code to build AST */
-    if (yyparse() != 0 || struct_def_had_error) {
+    if (yyparse() != 0 || struct_def_had_error || typedef_had_error) {
         if (!parse_error_already_reported) {
             fprintf(stderr, "Parsing failed\n");
         }

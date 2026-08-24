@@ -741,6 +741,11 @@ lit gang point {
     rizz x;
     rizz y;
 } Point;
+
+lit gang Point {
+    rizz x;
+    rizz y;
+} Point;
 ```
 
 After an alias is defined, use it anywhere a type can be declared:
@@ -768,7 +773,10 @@ Current limitations:
 - The alias target must already be defined; there are no forward typedefs.
 - Array typedefs and function-pointer typedefs are not supported.
 - Alias names are reserved type names and cannot be reused as variables,
-  functions, enum constants, struct/union tags, enum tags, or other aliases.
+  functions, enum constants, unrelated struct/union tags, unrelated enum tags,
+  or other aliases. A `gang`/`chungus`/`gyatt` typedef may use the same name as
+  its own underlying tag, matching the common C `typedef struct Point Point;`
+  pattern.
 
 ### 7.13. Modules (`#cooked`)
 

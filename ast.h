@@ -124,6 +124,8 @@ typedef struct
     VarType type;
     int pointer_level;
     TypeModifiers modifiers;
+    /* Borrowed tag names. Persisting users must copy these into their own
+       storage, usually the arena. */
     String struct_name;
     String enum_name;
 } TypeDescriptor;
@@ -170,6 +172,7 @@ typedef struct TypeAlias
     VarType type;
     int pointer_level;
     TypeModifiers modifiers;
+    /* Owned by the alias registry. */
     String struct_name;
     String enum_name;
     struct TypeAlias *next_def;
@@ -731,6 +734,7 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
    same way it does for a hard parse failure; see lang.y's struct_field
    for why we don't YYABORT for these instead. */
 extern bool struct_def_had_error;
+extern bool typedef_had_error;
 
 /* Enum types (see the comment on EnumDef above for the registry split). */
 void register_enum_def(EnumDef *def);

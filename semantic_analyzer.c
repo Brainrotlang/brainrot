@@ -2390,10 +2390,24 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
                     ? node->data.op.right->data.struct_def.name
                     : (String){0};
 
-            add_symbol(analyzer, var_name, var_type, node->pointer_level,
-                       is_const, false, NONE, 0,
-                       node->line_number > 0 ? node->line_number : 1,
-                       struct_name, node->is_array);
+            if (get_type_alias(var_name))
+            {
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "Typedef alias '%s' is already defined",
+                         var_name.data);
+                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                   STRING_LITERAL(error_msg),
+                                   node->line_number > 0 ? node->line_number
+                                                         : 1);
+            }
+            else
+            {
+                add_symbol(analyzer, var_name, var_type, node->pointer_level,
+                           is_const, false, NONE, 0,
+                           node->line_number > 0 ? node->line_number : 1,
+                           struct_name, node->is_array);
+            }
         }
         if (node->data.op.right)
         {
@@ -2406,7 +2420,18 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
         {
             SymbolEntry *existing =
                 find_symbol(analyzer, node->data.function_def.name);
-            if (existing && existing->is_function)
+            if (get_type_alias(node->data.function_def.name))
+            {
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "Typedef alias '%s' is already defined",
+                         node->data.function_def.name.data);
+                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                   STRING_LITERAL(error_msg),
+                                   node->line_number > 0 ? node->line_number
+                                                         : 1);
+            }
+            else if (existing && existing->is_function)
             {
                 char error_msg[MAX_BUFFER_LEN];
                 snprintf(error_msg, sizeof(error_msg),

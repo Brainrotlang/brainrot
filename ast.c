@@ -24,6 +24,7 @@ static EnumDef *enum_registry_list = NULL;
 static HashMap *type_alias_registry = NULL;
 static TypeAlias *type_alias_registry_list = NULL;
 bool struct_def_had_error = false;
+bool typedef_had_error = false;
 ReturnValue current_return_value;
 Arena arena;
 
@@ -6418,15 +6419,22 @@ bool register_type_alias(String name, TypeDescriptor descriptor)
     if (!name.data)
         return false;
 
-    if (get_type_alias(name) || get_struct_def(name) || get_enum_def(name) ||
-        get_function(name) || get_variable(name) ||
-        find_global_enum_constant(name))
+    bool same_struct_tag = descriptor.type == VAR_STRUCT &&
+                           descriptor.struct_name.data &&
+                           strcmp(name.data, descriptor.struct_name.data) == 0;
+    bool same_enum_tag = descriptor.type == VAR_ENUM &&
+                         descriptor.enum_name.data &&
+                         strcmp(name.data, descriptor.enum_name.data) == 0;
+
+    if (get_type_alias(name) || (get_struct_def(name) && !same_struct_tag) ||
+        (get_enum_def(name) && !same_enum_tag) || get_function(name) ||
+        get_variable(name) || find_global_enum_constant(name))
     {
         char msg[MAX_BUFFER_LEN];
         snprintf(msg, sizeof(msg), "Typedef alias '%s' is already defined",
                  name.data);
         yyerror(msg);
-        struct_def_had_error = true;
+        typedef_had_error = true;
         return false;
     }
 
@@ -6445,8 +6453,8 @@ bool register_type_alias(String name, TypeDescriptor descriptor)
 
     if (!type_alias_registry)
         type_alias_registry = hm_new();
-    hm_put(type_alias_registry, alias->name.data, alias->name.len, alias,
-           sizeof(TypeAlias));
+    hm_put(type_alias_registry, alias->name.data, alias->name.len, &alias,
+           sizeof(TypeAlias *));
     alias->next_def = type_alias_registry_list;
     type_alias_registry_list = alias;
     return true;
@@ -6456,7 +6464,9 @@ TypeAlias *get_type_alias(const String name)
 {
     if (!type_alias_registry || !name.data)
         return NULL;
-    return (TypeAlias *)hm_get(type_alias_registry, name.data, name.len);
+    TypeAlias **alias =
+        (TypeAlias **)hm_get(type_alias_registry, name.data, name.len);
+    return alias ? *alias : NULL;
 }
 
 void free_type_alias_registry(void)
@@ -6526,7 +6536,8 @@ bool finalize_enum_constants(EnumDef *def)
             }
             prev = prev->next;
         }
-        if (ok && find_global_enum_constant(c->name))
+        if (ok &&
+            (find_global_enum_constant(c->name) || get_type_alias(c->name)))
         {
             char msg[MAX_BUFFER_LEN];
             snprintf(msg, sizeof(msg), "Enum constant '%s' is already defined",
