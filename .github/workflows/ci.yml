@@ -46,6 +46,7 @@ jobs:
 
   build:
     runs-on: ubuntu-24.04
+    needs: lint
 
     steps:
       - name: Checkout code
@@ -82,6 +83,39 @@ jobs:
           path: |
             brainrot
             libstdrot.so
+
+  release-dry-run:
+    name: Release dry-run ${{ matrix.os }}/${{ matrix.arch }}
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ matrix.runner }}
+    needs: test
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            os: linux
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+          - runner: macos-15-intel
+            os: darwin
+            arch: amd64
+          - runner: macos-latest
+            os: darwin
+            arch: arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Build native release artifact
+        uses: ./.github/actions/native-release-build
+        with:
+          os: ${{ matrix.os }}
+          artifact-name: brainrot-release-${{ matrix.os }}-${{ matrix.arch }}
 
   test:
     runs-on: ubuntu-24.04
@@ -166,8 +200,9 @@ jobs:
         working-directory: .
 
   wasm:
+    name: Release dry-run wasm
     runs-on: ubuntu-24.04
-    needs: build
+    needs: test
 
     steps:
       - name: Checkout code
