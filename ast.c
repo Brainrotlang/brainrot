@@ -970,14 +970,9 @@ bool set_bool_variable(const String name, bool value, TypeModifiers mods)
 
 void reset_modifiers(void)
 {
-    current_modifiers.is_volatile = false;
-    current_modifiers.is_signed = false;
-    current_modifiers.is_unsigned = false;
-    current_modifiers.is_sizeof = false;
-    current_modifiers.is_const = false;
-    current_modifiers.is_long = false;
-    current_modifiers.is_long_long = false;
-    current_modifiers.is_static = false;
+#define RESET_TYPE_MODIFIER_FIELD(field) current_modifiers.field = false;
+    TYPE_MODIFIER_FIELDS(RESET_TYPE_MODIFIER_FIELD)
+#undef RESET_TYPE_MODIFIER_FIELD
 }
 
 TypeModifiers get_current_modifiers(void)
@@ -6391,6 +6386,7 @@ bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
                  "Conflicting signedness modifiers for typedef alias '%s'",
                  name.data ? name.data : "?");
         yyerror_current_line(msg);
+        typedef_had_error = true;
         return false;
     }
 
@@ -6402,6 +6398,7 @@ bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
                  "Conflicting width modifiers for typedef alias '%s'",
                  name.data ? name.data : "?");
         yyerror_current_line(msg);
+        typedef_had_error = true;
         return false;
     }
 
@@ -6413,16 +6410,15 @@ bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
                  "'%s'",
                  name.data ? name.data : "?");
         yyerror_current_line(msg);
+        typedef_had_error = true;
         return false;
     }
 
-    merged.is_volatile = merged.is_volatile || extra.is_volatile;
-    merged.is_signed = merged.is_signed || extra.is_signed;
-    merged.is_unsigned = merged.is_unsigned || extra.is_unsigned;
+#define MERGE_TYPE_MODIFIER_FIELD(field)                                       \
+    merged.field = base.field || extra.field;
+    TYPE_MODIFIER_TYPE_FIELDS(MERGE_TYPE_MODIFIER_FIELD)
+#undef MERGE_TYPE_MODIFIER_FIELD
     merged.is_sizeof = extra.is_sizeof;
-    merged.is_const = merged.is_const || extra.is_const;
-    merged.is_long = merged.is_long || extra.is_long;
-    merged.is_long_long = merged.is_long_long || extra.is_long_long;
     merged.is_static = extra.is_static;
 
     if (out)

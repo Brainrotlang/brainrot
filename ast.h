@@ -38,17 +38,29 @@ typedef struct
     size_t total_size;
 } ArrayDimensions;
 
-/* Define TypeModifiers first */
+/* Define TypeModifiers first. Add new fields through this list so reset and
+   merge helpers fail visibly during review when modifier state changes. */
+#define TYPE_MODIFIER_TYPE_FIELDS(X)                                           \
+    X(is_volatile)                                                             \
+    X(is_signed)                                                               \
+    X(is_unsigned)                                                             \
+    X(is_const)                                                                \
+    X(is_long)                                                                 \
+    X(is_long_long)
+
+#define TYPE_MODIFIER_CONTEXT_FIELDS(X)                                        \
+    X(is_sizeof)                                                               \
+    X(is_static)
+
+#define TYPE_MODIFIER_FIELDS(X)                                                \
+    TYPE_MODIFIER_TYPE_FIELDS(X)                                               \
+    TYPE_MODIFIER_CONTEXT_FIELDS(X)
+
 typedef struct
 {
-    bool is_volatile;
-    bool is_signed;
-    bool is_unsigned;
-    bool is_sizeof;
-    bool is_const;
-    bool is_long;
-    bool is_long_long;
-    bool is_static;
+#define DECLARE_TYPE_MODIFIER_FIELD(field) bool field;
+    TYPE_MODIFIER_FIELDS(DECLARE_TYPE_MODIFIER_FIELD)
+#undef DECLARE_TYPE_MODIFIER_FIELD
 } TypeModifiers;
 
 typedef struct JumpBuffer

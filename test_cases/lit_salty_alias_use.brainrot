@@ -9,6 +9,8 @@ rizz next_count() {
 }
 
 skibidi main {
-    yapping("%d %d", next_count(), next_count());
+    rizz first = next_count();
+    rizz second = next_count();
+    yapping("%d %d", first, second);
     bussin 0;
 }

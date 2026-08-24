@@ -113,6 +113,9 @@ static ASTNode *create_alias_declaration(String name, TypeDescriptor descriptor,
             node->enum_name = ARENA_STRDUP(descriptor.enum_name);
     }
 
+    if (node)
+        node->modifiers = descriptor.modifiers;
+
     return node;
 }
 
@@ -368,6 +371,7 @@ static void register_anonymous_aggregate_typedef(String alias_name,
 %type <array_dims> dimensions_or_unsized
 %type <array> multi_dimension_access
 %type <declarator> declarator
+%type <declarator> typedef_name_declarator
 %type <declarator> typedef_declarator
 %type <strval> name_token
 %type <ival> pointer_stars
@@ -768,7 +772,27 @@ enum_constant:
 function_def
     : type declarator LPAREN params RPAREN LBRACE statements RBRACE
         { $$ = create_function_def_node_ex($2.name, $1, $2.pointer_level, $4, $7); SAFE_FREE($2.name); }
+    | RIZZ typedef_name_declarator LPAREN params RPAREN LBRACE statements RBRACE
+        { $$ = create_function_def_node_ex($2.name, VAR_INT, $2.pointer_level, $4, $7); SAFE_FREE($2.name); }
+    | CHAD typedef_name_declarator LPAREN params RPAREN LBRACE statements RBRACE
+        { $$ = create_function_def_node_ex($2.name, VAR_FLOAT, $2.pointer_level, $4, $7); SAFE_FREE($2.name); }
+    | GIGACHAD typedef_name_declarator LPAREN params RPAREN LBRACE statements RBRACE
+        { $$ = create_function_def_node_ex($2.name, VAR_DOUBLE, $2.pointer_level, $4, $7); SAFE_FREE($2.name); }
+    | SMOL typedef_name_declarator LPAREN params RPAREN LBRACE statements RBRACE
+        { $$ = create_function_def_node_ex($2.name, VAR_SHORT, $2.pointer_level, $4, $7); SAFE_FREE($2.name); }
+    | YAP typedef_name_declarator LPAREN params RPAREN LBRACE statements RBRACE
+        { $$ = create_function_def_node_ex($2.name, VAR_CHAR, $2.pointer_level, $4, $7); SAFE_FREE($2.name); }
+    | RANT typedef_name_declarator LPAREN params RPAREN LBRACE statements RBRACE
+        { $$ = create_function_def_node_ex($2.name, VAR_STRING, $2.pointer_level, $4, $7); SAFE_FREE($2.name); }
+    | SKIBIDI typedef_name_declarator LPAREN params RPAREN LBRACE statements RBRACE
+        { $$ = create_function_def_node_ex($2.name, VAR_VOID, $2.pointer_level, $4, $7); SAFE_FREE($2.name); }
     | alias_type declarator LPAREN params RPAREN LBRACE statements RBRACE
+        {
+            $$ = create_alias_function_def($2.name, $1, $2.pointer_level,
+                                           $4, $7);
+            SAFE_FREE($2.name);
+        }
+    | alias_type typedef_name_declarator LPAREN params RPAREN LBRACE statements RBRACE
         {
             $$ = create_alias_function_def($2.name, $1, $2.pointer_level,
                                            $4, $7);
@@ -933,6 +957,14 @@ declarator:
         }
     ;
 
+typedef_name_declarator:
+    TYPE_NAME
+        {
+            $$.name = $1;
+            $$.pointer_level = 0;
+        }
+    ;
+
 typedef_declarator:
     pointer_stars name_token
         {
@@ -1036,11 +1068,39 @@ declaration:
             $$ = create_declaration_node_ex($3.name, create_default_node($2, $3.pointer_level), $3.pointer_level);
             SAFE_FREE($3.name);
         }
+    | optional_modifiers RIZZ typedef_name_declarator
+        { $$ = create_declaration_node_ex($3.name, create_default_node(VAR_INT, $3.pointer_level), $3.pointer_level); SAFE_FREE($3.name); }
+    | optional_modifiers CHAD typedef_name_declarator
+        { $$ = create_declaration_node_ex($3.name, create_default_node(VAR_FLOAT, $3.pointer_level), $3.pointer_level); SAFE_FREE($3.name); }
+    | optional_modifiers GIGACHAD typedef_name_declarator
+        { $$ = create_declaration_node_ex($3.name, create_default_node(VAR_DOUBLE, $3.pointer_level), $3.pointer_level); SAFE_FREE($3.name); }
+    | optional_modifiers SMOL typedef_name_declarator
+        { $$ = create_declaration_node_ex($3.name, create_default_node(VAR_SHORT, $3.pointer_level), $3.pointer_level); SAFE_FREE($3.name); }
+    | optional_modifiers YAP typedef_name_declarator
+        { $$ = create_declaration_node_ex($3.name, create_default_node(VAR_CHAR, $3.pointer_level), $3.pointer_level); SAFE_FREE($3.name); }
+    | optional_modifiers RANT typedef_name_declarator
+        { $$ = create_declaration_node_ex($3.name, create_default_node(VAR_STRING, $3.pointer_level), $3.pointer_level); SAFE_FREE($3.name); }
+    | optional_modifiers SKIBIDI typedef_name_declarator
+        { $$ = create_declaration_node_ex($3.name, create_default_node(VAR_VOID, $3.pointer_level), $3.pointer_level); SAFE_FREE($3.name); }
     | optional_modifiers type declarator EQUALS expression
         {
             $$ = create_declaration_node_ex($3.name, $5, $3.pointer_level);
             SAFE_FREE($3.name);
         }
+    | optional_modifiers RIZZ typedef_name_declarator EQUALS expression
+        { $$ = create_declaration_node_ex($3.name, $5, $3.pointer_level); SAFE_FREE($3.name); }
+    | optional_modifiers CHAD typedef_name_declarator EQUALS expression
+        { $$ = create_declaration_node_ex($3.name, $5, $3.pointer_level); SAFE_FREE($3.name); }
+    | optional_modifiers GIGACHAD typedef_name_declarator EQUALS expression
+        { $$ = create_declaration_node_ex($3.name, $5, $3.pointer_level); SAFE_FREE($3.name); }
+    | optional_modifiers SMOL typedef_name_declarator EQUALS expression
+        { $$ = create_declaration_node_ex($3.name, $5, $3.pointer_level); SAFE_FREE($3.name); }
+    | optional_modifiers YAP typedef_name_declarator EQUALS expression
+        { $$ = create_declaration_node_ex($3.name, $5, $3.pointer_level); SAFE_FREE($3.name); }
+    | optional_modifiers RANT typedef_name_declarator EQUALS expression
+        { $$ = create_declaration_node_ex($3.name, $5, $3.pointer_level); SAFE_FREE($3.name); }
+    | optional_modifiers SKIBIDI typedef_name_declarator EQUALS expression
+        { $$ = create_declaration_node_ex($3.name, $5, $3.pointer_level); SAFE_FREE($3.name); }
     | optional_modifiers type declarator dimensions
         {
             /* Storage is allocated at runtime by the declaration visitor
@@ -1089,7 +1149,17 @@ declaration:
             $$ = create_alias_declaration($3.name, $2, $3.pointer_level, NULL);
             SAFE_FREE($3.name);
         }
+    | optional_modifiers alias_type typedef_name_declarator
+        {
+            $$ = create_alias_declaration($3.name, $2, $3.pointer_level, NULL);
+            SAFE_FREE($3.name);
+        }
     | optional_modifiers alias_type declarator EQUALS expression
+        {
+            $$ = create_alias_declaration($3.name, $2, $3.pointer_level, $5);
+            SAFE_FREE($3.name);
+        }
+    | optional_modifiers alias_type typedef_name_declarator EQUALS expression
         {
             $$ = create_alias_declaration($3.name, $2, $3.pointer_level, $5);
             SAFE_FREE($3.name);

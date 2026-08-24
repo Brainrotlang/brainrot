@@ -1,5 +1,5 @@
 🚽 Test case: typedef aliases for scalar declarations, pointer aliases,
-🚽 added pointer depth, and scalar arrays.
+🚽 added pointer depth, and array declarations that use scalar aliases.
 lit rizz Count;
 lit rizz *IntPtr;
 
