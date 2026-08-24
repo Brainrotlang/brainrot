@@ -1,0 +1,68 @@
+name: Native release build
+description: Build, verify, and upload one native Brainrot release artifact.
+
+inputs:
+  os:
+    description: Target OS name from the release matrix.
+    required: true
+  artifact-name:
+    description: Name for the uploaded native release artifact.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install release dependencies (Linux)
+      if: ${{ inputs.os == 'linux' }}
+      shell: bash
+      run: |
+        sudo sed -i \
+          's|azure.archive.ubuntu.com|archive.ubuntu.com|g' \
+          /etc/apt/apt-mirrors.txt
+        cat /etc/apt/apt-mirrors.txt
+        sudo apt-get \
+          -o Acquire::Retries=3 \
+          -o Acquire::http::Timeout=15 \
+          -o Acquire::https::Timeout=15 \
+          update
+        sudo apt-get \
+          -o Acquire::Retries=3 \
+          -o Acquire::http::Timeout=15 \
+          -o Acquire::https::Timeout=15 \
+          install gcc flex bison libfl-dev -y
+
+    - name: Install release dependencies (macOS)
+      if: ${{ inputs.os == 'darwin' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        brew install flex bison
+        echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+        echo "$(brew --prefix flex)/bin" >> "$GITHUB_PATH"
+        echo "FLEX_PREFIX=$(brew --prefix flex)" >> "$GITHUB_ENV"
+
+    - name: Build release binaries
+      shell: bash
+      run: make release FLEX_PREFIX="${FLEX_PREFIX:-}"
+
+    - name: Verify release binary
+      shell: bash
+      run: |
+        set -euo pipefail
+        tmpdir="$(mktemp -d)"
+        cp brainrot libstdrot.so "$tmpdir/"
+        chmod +x "$tmpdir/brainrot"
+        (cd / && "$tmpdir/brainrot" \
+          "$GITHUB_WORKSPACE/examples/hello_world.brainrot")
+        file "$tmpdir/brainrot"
+        file "$tmpdir/libstdrot.so"
+
+    - name: Upload binaries
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: |
+          brainrot
+          libstdrot.so
+        if-no-files-found: error
+        retention-days: 1

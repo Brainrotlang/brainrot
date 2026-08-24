@@ -24,6 +24,9 @@ FLEX_CPPFLAGS := -I$(FLEX_PREFIX)/include
 FLEX_LIB := -L$(FLEX_PREFIX)/lib
 endif
 ifeq ($(UNAME_S),Darwin)
+# Mach-O dylibs loaded with dlopen() resolve host-owned globals such as
+# g_exec_context at load time. ELF gets the same behavior from the main
+# binary's -rdynamic link; Darwin needs the dylib link to allow it.
 SO_LDFLAGS := -Wl,-undefined,dynamic_lookup
 endif
 
@@ -130,6 +133,9 @@ debug: clean all
 # clean then all, so a prior sanitizer build can't be reused.
 .PHONY: release
 ifeq ($(UNAME_S),Darwin)
+# Apple Clang enables the same warnings that the wasm/Clang build already
+# documents and suppresses above; keep Darwin release CI focused on packaging
+# the existing interpreter until those behavior-neutral cleanups land.
 release: CFLAGS := $(RELEASE_CFLAGS) -Wno-strict-prototypes \
 	-Wno-tautological-negation-compare $(FLEX_CPPFLAGS)
 release: LDFLAGS := $(FLEX_LIB) -lfl -lm -rdynamic -Wl,-rpath,@loader_path
