@@ -312,8 +312,9 @@ typedef struct
 #if defined(__APPLE__) && defined(__MACH__)
 #define STDROT_EXPORT_SEGMENT_NAME "__DATA"
 #define STDROT_EXPORT_SECTION                                                  \
-    STDROT_EXPORT_SEGMENT_NAME "," STDROT_EXPORT_SECTION_NAME
-#define STDROT_EXPORT_ATTR used, no_dead_strip, section(STDROT_EXPORT_SECTION)
+    STDROT_EXPORT_SEGMENT_NAME "," STDROT_EXPORT_SECTION_NAME                  \
+                               ",regular,no_dead_strip"
+#define STDROT_EXPORT_ATTR used, section(STDROT_EXPORT_SECTION)
 #else
 #define STDROT_EXPORT_SECTION STDROT_EXPORT_SECTION_NAME
 #define STDROT_EXPORT_ATTR used, section(STDROT_EXPORT_SECTION)

@@ -46,6 +46,7 @@ jobs:
 
   build:
     runs-on: ubuntu-24.04
+    needs: lint
 
     steps:
       - name: Checkout code
@@ -87,6 +88,7 @@ jobs:
     name: Release dry-run ${{ matrix.os }}/${{ matrix.arch }}
     if: github.event_name == 'pull_request'
     runs-on: ${{ matrix.runner }}
+    needs: test
     timeout-minutes: 20
     strategy:
       fail-fast: true
@@ -243,8 +245,9 @@ jobs:
         working-directory: .
 
   wasm:
+    name: Release dry-run wasm
     runs-on: ubuntu-24.04
-    needs: build
+    needs: test
 
     steps:
       - name: Checkout code

@@ -9,6 +9,7 @@ EMCC := emcc
 CFLAGS := -Wall -Wextra -Wpedantic -Werror -O2 -Wuninitialized -fsanitize=address,undefined -fno-omit-frame-pointer -g
 LDFLAGS := -lfl -lm -ldl -rdynamic
 SO_CFLAGS := -fPIC -shared
+SO_LDFLAGS :=
 
 # `make release` ships binaries (GitHub Actions release matrix). Drop
 # sanitizers so the artifact doesn't need libasan/libubsan at runtime.
@@ -21,6 +22,9 @@ FLEX_LIB :=
 ifneq ($(FLEX_PREFIX),)
 FLEX_CPPFLAGS := -I$(FLEX_PREFIX)/include
 FLEX_LIB := -L$(FLEX_PREFIX)/lib
+endif
+ifeq ($(UNAME_S),Darwin)
+SO_LDFLAGS := -Wl,-undefined,dynamic_lookup
 endif
 
 # Source files and directories
@@ -137,7 +141,7 @@ release: clean all
 
 # stdrot shared library build
 $(STDROT_LIB): $(STDROT_SRCS)
-	$(CC) $(SO_CFLAGS) -I. -o $@ $^ -lm
+	$(CC) $(SO_CFLAGS) -I. -o $@ $^ -lm $(SO_LDFLAGS)
 	@echo "libstdrot.so compiled with max rizz."
 
 # Test-only stdrot shared library build (production natives + tests/stdrot/
@@ -145,7 +149,7 @@ $(STDROT_LIB): $(STDROT_SRCS)
 # "stdrot_api.h" the same bare way every production stdrot/*.c file already
 # does, despite living in a different directory.
 $(TEST_STDROT_LIB): $(STDROT_SRCS) $(TEST_STDROT_SRCS)
-	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $^ -lm
+	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $^ -lm $(SO_LDFLAGS)
 	@echo "tests/libstdrot.so (production + test-only natives) compiled."
 
 # Malformed-registry .so's: one per tests/badnatives/*.c, each linked
@@ -153,7 +157,7 @@ $(TEST_STDROT_LIB): $(STDROT_SRCS) $(TEST_STDROT_SRCS)
 # need, and shouldn't get, any production natives alongside the one
 # deliberately broken entry).
 $(BADNATIVES_DIR)/%.so: $(BADNATIVES_DIR)/%.c $(STDROT_DIR)/registry.c
-	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $(STDROT_DIR)/registry.c $< -lm
+	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $(STDROT_DIR)/registry.c $< -lm $(SO_LDFLAGS)
 
 # Two exceptions to the pattern rule above (GNU Make prefers an explicit
 # target rule over a pattern rule for the same file, regardless of
@@ -164,11 +168,11 @@ $(BADNATIVES_DIR)/%.so: $(BADNATIVES_DIR)/%.c $(STDROT_DIR)/registry.c
 # stdrot_get_api_v2()). See their own file comments.
 $(BADNATIVES_DIR)/bad_api_table_negative_count.so: \
 	$(BADNATIVES_DIR)/bad_api_table_negative_count.c
-	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $<
+	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $< $(SO_LDFLAGS)
 
 $(BADNATIVES_DIR)/bad_api_table_null_functions.so: \
 	$(BADNATIVES_DIR)/bad_api_table_null_functions.c
-	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $<
+	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $< $(SO_LDFLAGS)
 
 .PHONY: badnatives
 badnatives: $(BADNATIVES_LIBS)
@@ -184,7 +188,7 @@ OLD_ABI_SIM_DIR := tests/old_abi_sim
 OLD_ABI_SIM_LIB := $(OLD_ABI_SIM_DIR)/fake_pre_v2_registry.so
 
 $(OLD_ABI_SIM_LIB): $(OLD_ABI_SIM_DIR)/fake_pre_v2_registry.c
-	$(CC) $(SO_CFLAGS) -o $@ $<
+	$(CC) $(SO_CFLAGS) -o $@ $< $(SO_LDFLAGS)
 
 .PHONY: old-abi-sim
 old-abi-sim: $(OLD_ABI_SIM_LIB)
