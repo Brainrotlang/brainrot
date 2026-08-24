@@ -100,12 +100,16 @@ void ast_accept(ASTNode *node, Visitor *visitor)
     }
 
     case NODE_SIZEOF:
-        /* sizeof inspects operand type/shape without evaluating it. Semantic
-           analysis has its own explicit NODE_SIZEOF recursion; the generic
-           visitor must not walk the operand for the interpreter, because that
-           would execute otherwise-unevaluated dereferences or calls. */
+        /* sizeof inspects operand type/shape without evaluating it. The
+           interpreter sets visit_sizeof and must not auto-walk the operand,
+           because that would execute otherwise-unevaluated dereferences or
+           calls. Other ast_accept consumers still recurse so they can
+           inspect the operand; semantic analysis uses its own explicit
+           NODE_SIZEOF walk in semantic_analyze_with_scope_tracking(). */
         if (visitor->visit_sizeof)
             visitor->visit_sizeof(visitor, node);
+        else if (node->data.sizeof_stmt.expr)
+            ast_accept(node->data.sizeof_stmt.expr, visitor);
         break;
 
     case NODE_DECLARATION:

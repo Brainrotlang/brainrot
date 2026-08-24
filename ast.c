@@ -2297,6 +2297,10 @@ void *evaluate_lvalue_address(ASTNode *node)
         case VAR_ENUM:
             return &var->value.ivalue;
         case VAR_STRUCT:
+            /* Non-pointer struct/union values live in the layout blob at
+               value.array_data (allocated by interpreter_visit_declaration).
+               Pointer-to-struct variables are handled above via
+               pointer_level > 0 and pvalue. */
             return var->value.array_data;
         default:
             yyerror("Unsupported lvalue type");
@@ -6398,6 +6402,10 @@ TypeDescriptor type_descriptor_from_alias(const TypeAlias *alias)
     if (!alias)
         return make_type_descriptor(NONE, 0, (TypeModifiers){0});
 
+    /* struct_name/enum_name are borrowed from the registry. Callers may
+       copy them onto AST/symbol objects they own, but must not free or
+       mutate these strings, and must not keep the descriptor after
+       free_type_alias_registry(). */
     TypeDescriptor descriptor = make_type_descriptor(
         alias->type, alias->pointer_level, alias->modifiers);
     descriptor.struct_name = alias->struct_name;
