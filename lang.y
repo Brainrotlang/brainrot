@@ -31,6 +31,7 @@ void cooked_cleanup(void);
 
 /* Root of the AST */
 ASTNode *root = NULL;
+static bool parse_error_already_reported = false;
 
 /* Tag of the struct/union currently being defined, used to reject direct
    self-embedding (e.g. `gang Foo { gang Foo x; };`). Empty when not inside
@@ -90,6 +91,10 @@ static Interpreter *global_interpreter = NULL;
 %token <dval> DOUBLE_LITERAL
 %token SLORP
 %token DOT
+
+%destructor { SAFE_FREE($$.data); } IDENTIFIER STRING_LITERAL
+%destructor { SAFE_FREE($$.name); } declarator
+
 %type <node>  struct_def struct_access
 %type <param> struct_field_list struct_field   /* reuse Parameter as field carrier */
 %type <ival>  struct_or_union
@@ -268,11 +273,10 @@ struct_field
                (sizeof(uintptr_t)) doesn't depend on the pointee being
                complete yet.
 
-               Note: we deliberately don't YYABORT here. Aborting mid-way
-               through the still-open outer struct_def rule would strand
-               that rule's own pending IDENTIFIER token on the parser value
-               stack un-freed (this grammar has no %destructor entries), so
-               instead we record the error and let parsing finish normally;
+               Note: we deliberately don't YYABORT here. Bison does not run
+               destructors for the current rule's RHS on YYABORT, and this
+               action owns values that still need the normal cleanup below.
+               Instead we record the error and let parsing finish normally;
                main() checks struct_def_had_error after yyparse() and exits
                the same way it does for a hard parse failure. */
             bool is_self = current_struct_def_name.data &&
@@ -442,7 +446,9 @@ param_list
                 snprintf(msg, sizeof(msg),
                         "Parameter '%s' cannot have type void", $3.name.data);
                 yyerror(msg);
-                exit(1);
+                parse_error_already_reported = true;
+                SAFE_FREE($3.name);
+                YYABORT;
             }
             $$ = create_parameter_ex($3.name, $2, $3.pointer_level, NULL, get_current_modifiers());
             SAFE_FREE($3.name);
@@ -455,7 +461,9 @@ param_list
                 snprintf(msg, sizeof(msg),
                         "Parameter '%s' cannot have type void", $5.name.data);
                 yyerror(msg);
-                exit(1);
+                parse_error_already_reported = true;
+                SAFE_FREE($5.name);
+                YYABORT;
             }
             $$ = create_parameter_ex($5.name, $4, $5.pointer_level, $1, get_current_modifiers());
             SAFE_FREE($5.name);
@@ -1126,7 +1134,9 @@ int main(int argc, char *argv[]) {
 
     /* Phase 1: Parse the source code to build AST */
     if (yyparse() != 0 || struct_def_had_error) {
-        fprintf(stderr, "Parsing failed\n");
+        if (!parse_error_already_reported) {
+            fprintf(stderr, "Parsing failed\n");
+        }
         return 1;
     }
 

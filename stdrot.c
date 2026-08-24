@@ -477,10 +477,11 @@ void stdrot_load(void)
         }
     }
 
-    /* Open libstdrot.so from the same directory as the binary, or
-     * LD_LIBRARY_PATH Use RTLD_GLOBAL so the library can access symbols from
-     * the main binary (e.g., g_exec_context)
-     */
+    /* Try cwd-relative ./libstdrot.so first, then the dynamic linker's
+     * search path. Release builds add rpath so the leaf-name lookup can find
+     * libstdrot.so next to the binary after the cwd lookup misses. Use
+     * RTLD_GLOBAL so the library can access symbols from the main binary
+     * (e.g., g_exec_context). */
     if (!lib_handle)
     {
         lib_handle = dlopen("./libstdrot.so", RTLD_LAZY | RTLD_GLOBAL);

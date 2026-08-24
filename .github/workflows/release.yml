@@ -1,24 +1,274 @@
-name: Release wasm build
+# Publish native + wasm Brainrot artifacts for a v* tag.
+#
+# Triggered by pushing a tag, or manually with a semver bump. Manual release
+# runs build the dispatch commit and create the tag only after archives and
+# checksums exist. Releases are not auto-cut on merges to main.
+#
+# Native binaries are built on NATIVE runners (linux/amd64, linux/arm64,
+# darwin/amd64, darwin/arm64) because the interpreter is C + Flex/Bison and
+# dlopen's libstdrot.so at runtime — there is no useful cross-compile path
+# that still produces a runnable artifact. Windows is omitted: the loader
+# and stdrot are POSIX (dlfcn.h, libstdrot.so, unistd.h).
+#
+# wasm stays a separate job (Emscripten, statically linked stdrot) and still
+# publishes brainrot.wasm / brainrot.mjs under those exact names so existing
+# playground download URLs keep working.
+name: Release
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Semver bump over the latest v*.*.* tag"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      dry_run:
+        description: "Build and upload artifacts without tagging or publishing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
 
 jobs:
-  release:
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      checkout_ref: ${{ steps.version.outputs.checkout_ref }}
+      dry_run: ${{ steps.version.outputs.dry_run }}
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Force Ubuntu archive mirror
+        run: |
+          sudo sed -i \
+            's|azure.archive.ubuntu.com|archive.ubuntu.com|g' \
+            /etc/apt/apt-mirrors.txt
+          cat /etc/apt/apt-mirrors.txt
+
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+            update
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+            install gcc flex bison libfl-dev libasan8 libubsan1 \
+              python3 python3-pip python3-venv -y
+
+      # Gate the release packaging on pytest via `make test`. The full
+      # Linux valgrind suite remains in ci.yml; this job does not prove that
+      # every dispatch or hand-tagged SHA has already passed it.
+      - name: Test
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install -r tests/requirements.txt
+          make test PYTHON="$PWD/.venv/bin/python3"
+
+      - name: Resolve release tag
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_BUMP: ${{ github.event.inputs.bump }}
+          INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+          REF_NAME: ${{ github.ref_name }}
+          CHECKOUT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          dry_run="${INPUT_DRY_RUN:-false}"
+
+          if [ "$EVENT_NAME" != "workflow_dispatch" ]; then
+            next="$REF_NAME"
+            checkout_ref="$REF_NAME"
+            echo "Tag push: $next"
+          else
+            BUMP="${INPUT_BUMP:-patch}"
+            git fetch --tags --force
+            checkout_ref="$CHECKOUT_SHA"
+
+            latest=""
+            while IFS= read -r t; do
+              if [[ "$t" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                latest="$t"
+                break
+              fi
+            done < <(git tag -l 'v*' --sort=-v:refname)
+
+            if [ -z "$latest" ]; then
+              case "$BUMP" in
+                major) next="v1.0.0" ;;
+                *) next="v0.1.0" ;;
+              esac
+              echo "Latest stable tag: <none>"
+              echo "First release ($BUMP) -> $next"
+            else
+              ver="${latest#v}"
+              major="${ver%%.*}"
+              rest="${ver#*.}"
+              minor="${rest%%.*}"
+              patch="${rest#*.}"
+
+              case "$BUMP" in
+                major) major=$((major + 1)); minor=0; patch=0 ;;
+                minor) minor=$((minor + 1)); patch=0 ;;
+                patch) patch=$((patch + 1)) ;;
+                *) echo "unknown bump: $BUMP" >&2; exit 1 ;;
+              esac
+
+              next="v${major}.${minor}.${patch}"
+              echo "Latest stable tag: $latest"
+              echo "Bump: $BUMP -> $next"
+            fi
+
+            if [ "$dry_run" = "true" ]; then
+              echo "Dry run: artifacts will use $next but no tag/release will be created."
+            fi
+          fi
+
+          # v1.2.3-rc.1 and friends publish as GitHub pre-releases.
+          if [[ "$next" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=$next" >> "$GITHUB_OUTPUT"
+          echo "checkout_ref=$checkout_ref" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$dry_run" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.os }}/${{ matrix.arch }}
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            os: linux
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+          - runner: macos-15-intel
+            os: darwin
+            arch: amd64
+          - runner: macos-latest
+            os: darwin
+            arch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.checkout_ref }}
+
+      - name: Install build dependencies (Linux)
+        if: matrix.os == 'linux'
+        run: |
+          sudo sed -i \
+            's|azure.archive.ubuntu.com|archive.ubuntu.com|g' \
+            /etc/apt/apt-mirrors.txt
+          cat /etc/apt/apt-mirrors.txt
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+            update
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+            install gcc flex bison libfl-dev -y
+
+      - name: Install build dependencies (macOS)
+        if: matrix.os == 'darwin'
+        run: |
+          set -euo pipefail
+          brew install flex bison
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix flex)/bin" >> "$GITHUB_PATH"
+          echo "FLEX_PREFIX=$(brew --prefix flex)" >> "$GITHUB_ENV"
+
+      - name: Build release binaries
+        run: make release FLEX_PREFIX="${FLEX_PREFIX:-}"
+
+      # Native runner, so the artifact we just built is runnable here.
+      # Run from a directory that is *not* the build tree so the check
+      # actually exercises rpath / dlopen("libstdrot.so") rather than
+      # the cwd-relative ./libstdrot.so fallback in stdrot_load().
+      - name: Verify release binary
+        run: |
+          set -euo pipefail
+          tmpdir="$(mktemp -d)"
+          cp brainrot libstdrot.so "$tmpdir/"
+          chmod +x "$tmpdir/brainrot"
+          (cd / && "$tmpdir/brainrot" \
+            "$GITHUB_WORKSPACE/examples/hello_world.brainrot")
+          file "$tmpdir/brainrot"
+          file "$tmpdir/libstdrot.so"
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: brainrot-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            brainrot
+            libstdrot.so
+          if-no-files-found: error
+          retention-days: 1
+
+  wasm:
+    name: Build wasm
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.checkout_ref }}
+
+      - name: Force Ubuntu archive mirror
+        run: |
+          sudo sed -i \
+            's|azure.archive.ubuntu.com|archive.ubuntu.com|g' \
+            /etc/apt/apt-mirrors.txt
+          cat /etc/apt/apt-mirrors.txt
 
       - name: Install build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install bison flex -y
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+            update
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+            install bison flex -y
 
       - name: Set up Emscripten
         # mymindstorm/setup-emsdk was transferred to emscripten-core/setup-emsdk;
@@ -31,11 +281,113 @@ jobs:
       - name: Build brainrot.wasm
         run: make wasm
 
-      - name: Create GitHub Release
+      - name: Run wasm smoke tests (production artifact)
+        run: node tests/run_wasm_tests.mjs production
+
+      - name: Upload wasm
+        uses: actions/upload-artifact@v7
+        with:
+          name: brainrot-wasm
+          path: |
+            brainrot.wasm
+            brainrot.mjs
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Package and publish release
+    needs: [version, build, wasm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.checkout_ref }}
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      # Archiving is centralised here so the per-OS runners don't each need
+      # matching tar/sha256sum tooling. wasm files are also copied to dist/
+      # under their historical names so playground download URLs keep working.
+      - name: Package archives
+        env:
+          VERSION: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          out="$PWD/dist"
+
+          for dir in artifacts/brainrot-*; do
+            name="$(basename "$dir")"
+            if [ "$name" = "brainrot-wasm" ]; then
+              chmod a+r "$dir/brainrot.wasm" "$dir/brainrot.mjs"
+              tar -czf "$out/brainrot-${VERSION}-wasm.tar.gz" \
+                -C "$dir" brainrot.wasm brainrot.mjs
+              cp "$dir/brainrot.wasm" "$dir/brainrot.mjs" "$out/"
+              continue
+            fi
+            platform="${name#brainrot-}"
+            chmod +x "$dir/brainrot"
+            tar -czf "$out/brainrot-${VERSION}-${platform}.tar.gz" \
+              -C "$dir" brainrot libstdrot.so
+          done
+
+          (cd dist && sha256sum ./* | sed 's|\./||' | tee SHA256SUMS.txt)
+          ls -l dist
+
+      - name: Upload dry-run package
+        if: needs.version.outputs.dry_run == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-dry-run-${{ needs.version.outputs.tag }}
+          path: dist
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Create release tag
+        if: github.event_name == 'workflow_dispatch' && needs.version.outputs.dry_run != 'true'
+        env:
+          VERSION: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch --tags --force
+          created_tag=false
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            tag_sha="$(git rev-list -n 1 "$VERSION")"
+            head_sha="$(git rev-parse HEAD)"
+            if [ "$tag_sha" != "$head_sha" ]; then
+              echo "Tag $VERSION already exists at $tag_sha, not $head_sha" >&2
+              exit 1
+            fi
+            echo "Tag $VERSION already points at HEAD; continuing."
+          else
+            git tag -a "$VERSION" -m "$VERSION"
+            created_tag=true
+          fi
+          if [ "$created_tag" = "true" ]; then
+            git push origin "$VERSION"
+          fi
+
+      - name: Publish GitHub Release
+        if: needs.version.outputs.dry_run != 'true'
         # SHA-pinned (v2): this step runs with contents: write.
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
-          generate_release_notes: true
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.tag }}
+          prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
           files: |
-            brainrot.wasm
-            brainrot.mjs
+            dist/*.tar.gz
+            dist/brainrot.wasm
+            dist/brainrot.mjs
+            dist/SHA256SUMS.txt
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

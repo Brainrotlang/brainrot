@@ -225,7 +225,7 @@
     "native_zero_arg_string_ownership": "Error: Native call result (string) cannot be used in an integer context at line 26",
     "semantic_error_void_function_native_arg": "Error: 'yapping' argument 2: void has no supported native ABI representation at line 18",
     "semantic_error_void_variable_declaration": "Error: Cannot declare 'x' with type void at line 12",
-    "semantic_error_void_variable_declaration_no_init": "Error: Cannot declare a variable with type void at line 12",
+    "semantic_error_void_variable_declaration_no_init": "Error: Cannot declare 'x' with type void at line 8",
     "semantic_error_native_void_array_index": "Error: Native call result (void) cannot be used in a subscript context at line 14",
     "semantic_error_native_void_unary_operand": "Error: Type mismatch in initialization of 'x': expected int, got void at line 1\nError: Native call result (void) cannot be used in a unary operator operand context at line 11",
     "semantic_error_native_void_sizeof_operand": "Error: Native call result (void) cannot be used in a sizeof operand context at line 10",

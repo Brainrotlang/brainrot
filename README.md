@@ -140,6 +140,26 @@ NOTE: The gcc version we use to test is v13 if you get any warnings remove `-Wer
 sudo make install
 ```
 
+### Prebuilt binaries
+
+Each `v*` GitHub release attaches native archives plus the wasm module:
+
+- `brainrot-<tag>-linux-amd64.tar.gz`, `linux-arm64`,
+  `darwin-amd64`, `darwin-arm64` -- `brainrot` and `libstdrot.so`.
+  Extract both files and run `./brainrot file.brainrot` from that
+  directory. At startup the interpreter honors `STDROT_LIB_PATH` if set;
+  otherwise it tries cwd-relative `./libstdrot.so`, then the dynamic
+  linker's `libstdrot.so` search path. Release binaries include an rpath
+  (`$ORIGIN` / `@loader_path`) so that second lookup can find the
+  `libstdrot.so` next to `brainrot` when no cwd copy is loaded first.
+- `brainrot.wasm` and `brainrot.mjs` -- same names as previous wasm-only
+  releases, for the in-browser playground.
+- `SHA256SUMS.txt` -- checksums for every attached file.
+
+Windows is not a native target (`dlopen` / POSIX stdrot). A release can
+also be cut from the Actions UI with a patch/minor/major bump over the
+latest stable tag.
+
 ## Uninstall
 
 ```bash
