@@ -1,0 +1,9 @@
+🚽 Test case: a zero-argument slorp() on the right-hand side of a plain
+🚽 assignment (not a declaration) resolves its type from the target
+🚽 variable's already-declared type (issue #229).
+skibidi main {
+    rizz i;
+    i = slorp();
+    yapping("You typed: %d", i);
+    bussin 0;
+}

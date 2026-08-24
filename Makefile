@@ -298,18 +298,20 @@ rebuild: clean all
 FORMAT_FILES := $(shell find . -name "*.c" -o -name "*.h" | \
 	grep -v -E '^\./(lang\.tab\.c|lang\.tab\.h|lex\.yy\.c)$$')
 
-# Format source files (requires clang-format)
+CLANG_FORMAT ?= clang-format-15
+
+# Format source files (requires clang-format-15)
 .PHONY: format
 format:
-	@command -v clang-format >/dev/null 2>&1 || { echo "Error: clang-format not found. Ratioed by clang."; exit 1; }
-	clang-format -i $(FORMAT_FILES)
+	@command -v $(CLANG_FORMAT) >/dev/null 2>&1 || { echo "Error: clang-format not found. Ratioed by clang."; exit 1; }
+	$(CLANG_FORMAT) -i $(FORMAT_FILES)
 	@echo "Source files got the rizz treatment, goated with the sauce."
 
 # Check formatting without modifying files (used by CI's lint job)
 .PHONY: format-check
 format-check:
-	@command -v clang-format >/dev/null 2>&1 || { echo "Error: clang-format not found. Ratioed by clang."; exit 1; }
-	clang-format --dry-run -Werror $(FORMAT_FILES)
+	@command -v $(CLANG_FORMAT) >/dev/null 2>&1 || { echo "Error: clang-format not found. Ratioed by clang."; exit 1; }
+	$(CLANG_FORMAT) --dry-run -Werror $(FORMAT_FILES)
 	@echo "Formatting check passed, no cap."
 
 # Show help

@@ -1,0 +1,9 @@
+🚽 Test case: a zero-argument slorp() as one leaf of a braced array
+🚽 initializer resolves its type from the array's element type (issue
+🚽 #229) -- exercises propagate_contextual_type_into_expression_list(),
+🚽 not just the data.op.right path a plain scalar declaration uses.
+skibidi main {
+    rizz a[2] = { slorp(), 1 };
+    yapping("%d %d", a[0], a[1]);
+    bussin 0;
+}

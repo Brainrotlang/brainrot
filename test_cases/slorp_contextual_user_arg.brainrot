@@ -1,0 +1,10 @@
+🚽 Test case: a zero-argument slorp() passed as a user-defined function's
+🚽 argument resolves its type from that parameter's declared type (issue
+🚽 #229).
+skibidi takes_int(rizz x) {
+    yapping("%d", x);
+}
+skibidi main {
+    takes_int(slorp());
+    bussin 0;
+}

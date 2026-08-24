@@ -31,6 +31,7 @@ void cooked_cleanup(void);
 
 /* Root of the AST */
 ASTNode *root = NULL;
+static bool parse_error_already_reported = false;
 
 /* Tag of the struct/union currently being defined, used to reject direct
    self-embedding (e.g. `gang Foo { gang Foo x; };`). Empty when not inside
@@ -90,6 +91,10 @@ static Interpreter *global_interpreter = NULL;
 %token <dval> DOUBLE_LITERAL
 %token SLORP
 %token DOT
+
+%destructor { SAFE_FREE($$.data); } IDENTIFIER STRING_LITERAL
+%destructor { SAFE_FREE($$.name); } declarator
+
 %type <node>  struct_def struct_access
 %type <param> struct_field_list struct_field   /* reuse Parameter as field carrier */
 %type <ival>  struct_or_union
@@ -442,7 +447,9 @@ param_list
                 snprintf(msg, sizeof(msg),
                         "Parameter '%s' cannot have type void", $3.name.data);
                 yyerror(msg);
-                exit(1);
+                parse_error_already_reported = true;
+                SAFE_FREE($3.name);
+                YYABORT;
             }
             $$ = create_parameter_ex($3.name, $2, $3.pointer_level, NULL, get_current_modifiers());
             SAFE_FREE($3.name);
@@ -455,7 +462,9 @@ param_list
                 snprintf(msg, sizeof(msg),
                         "Parameter '%s' cannot have type void", $5.name.data);
                 yyerror(msg);
-                exit(1);
+                parse_error_already_reported = true;
+                SAFE_FREE($5.name);
+                YYABORT;
             }
             $$ = create_parameter_ex($5.name, $4, $5.pointer_level, $1, get_current_modifiers());
             SAFE_FREE($5.name);
@@ -604,6 +613,13 @@ type:
 declaration:
     optional_modifiers type declarator
         {
+            if ($2 == VAR_VOID && $3.pointer_level == 0)
+            {
+                yyerror("Cannot declare a variable with type void");
+                parse_error_already_reported = true;
+                SAFE_FREE($3.name);
+                YYABORT;
+            }
             $$ = create_declaration_node_ex($3.name, create_default_node($2, $3.pointer_level), $3.pointer_level);
             SAFE_FREE($3.name);
         }
@@ -918,6 +934,19 @@ function_call:
                 create_argument_list($3, NULL)
             );
         }
+    | SLORP LPAREN RPAREN
+        {
+            /* Zero-argument contextual form (issue #229): the semantic
+             * analyzer resolves the input type from the surrounding
+             * expression context (declaration/assignment/return/typed
+             * argument) and rewrites this node's argument list in place
+             * -- see propagate_contextual_call_type() in
+             * semantic_analyzer.c. */
+            $$ = create_function_call_node(
+                (String){ .data = "slorp", .len = sizeof("slorp") - 1 },
+                NULL
+            );
+        }
     | IDENTIFIER LPAREN arg_list RPAREN
         { 
             $$ = create_function_call_node($1, $3);
@@ -1113,7 +1142,9 @@ int main(int argc, char *argv[]) {
 
     /* Phase 1: Parse the source code to build AST */
     if (yyparse() != 0 || struct_def_had_error) {
-        fprintf(stderr, "Parsing failed\n");
+        if (!parse_error_already_reported) {
+            fprintf(stderr, "Parsing failed\n");
+        }
         return 1;
     }
 

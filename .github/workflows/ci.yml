@@ -15,7 +15,7 @@ on:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout code
@@ -39,13 +39,13 @@ jobs:
             -o Acquire::Retries=3 \
             -o Acquire::http::Timeout=15 \
             -o Acquire::https::Timeout=15 \
-          install clang-format -y
+          install clang-format-15 -y
 
       - name: Check formatting
         run: make format-check
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout code
@@ -84,7 +84,7 @@ jobs:
             libstdrot.so
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build
 
     steps:
@@ -166,7 +166,7 @@ jobs:
         working-directory: .
 
   wasm:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build
 
     steps:

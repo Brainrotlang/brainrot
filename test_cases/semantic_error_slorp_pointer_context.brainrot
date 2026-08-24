@@ -1,0 +1,11 @@
+🚽 Test case: assigning a zero-argument slorp() directly to a
+🚽 pointer-typed variable is an unsupported contextual type (issue #229
+🚽 only defines scalar inference) and must produce exactly one clear
+🚽 diagnostic, not a second, misleading "pointer level" mismatch error
+🚽 alongside it.
+skibidi main {
+    rizz x = 0;
+    rizz *p = &x;
+    p = slorp();
+    bussin 0;
+}

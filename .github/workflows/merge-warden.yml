@@ -11,11 +11,12 @@ jobs:
   review:
     name: Merge Warden
 
-    if: >
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.conclusion == 'success'
+    #if: >
+    #  github.event.workflow_run.event == 'pull_request' &&
+    #  github.event.workflow_run.conclusion == 'success'
+    if: false
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     permissions:
@@ -51,8 +52,9 @@ jobs:
           echo "number=${pr_number}" >> "$GITHUB_OUTPUT"
 
       - name: Review PR
-        uses: leo-aa88/merge-warden@v1.0.2
+        uses: leo-aa88/merge-warden@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           xai-api-key: ${{ secrets.XAI_API_KEY }}
           pr-number: ${{ steps.pr.outputs.number }}
+          expected-head-sha: ${{ github.event.workflow_run.head_sha }}

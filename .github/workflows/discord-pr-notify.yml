@@ -12,7 +12,7 @@ permissions: {}
 
 jobs:
   notify-discord:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Post new PR to Discord
         env:

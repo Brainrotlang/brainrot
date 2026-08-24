@@ -1,0 +1,8 @@
+🚽 Test case: a zero-argument slorp() passed as a native call argument
+🚽 resolves its type from that native's declared parameter type (issue
+🚽 #229) -- here bet(cap, ...)'s fixed STDROT_BOOL first parameter.
+skibidi main {
+    bet(slorp());
+    yapping("ok");
+    bussin 0;
+}

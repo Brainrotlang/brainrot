@@ -1659,13 +1659,21 @@ void execute_func_call(const String func_name, ArgumentList *args)
      * `rizz x = slorp(...);`); it is kept working for one release, with a
      * warning, so existing programs don't break outright. New code should
      * consume the return value directly -- see execute_native_call() /
-     * handle_function_call(). */
+     * handle_function_call().
+     *
+     * A `yap[N]` char-array argument is exempt: that's the canonical
+     * bounded-buffer form (#229/#230, e.g. `yap name[32]; slorp(name);`),
+     * never a deprecated scalar type-witness. The native already wrote
+     * into the buffer's own backing storage in place (stdrot_slorp()'s
+     * STDROT_STRING case, stdrot/slorp.c), so there is nothing left to
+     * write back either -- flagging it here would both misdescribe
+     * intended usage as deprecated and be redundant. */
     if (result.type != STDROT_NONE && args && args->expr &&
         args->expr->type == NODE_IDENTIFIER)
     {
         const String name = args->expr->data.name;
         Variable *var = get_variable(name);
-        if (var)
+        if (var && !(var->is_array && var->var_type == VAR_CHAR))
         {
             fprintf(stderr,
                     "Warning: line %d: `%s(%s, ...)` writing its result back "

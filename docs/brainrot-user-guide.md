@@ -488,26 +488,46 @@ skibidi main {
 **Prototype**
 
 ```c
-var_type slorp(var_type var_name);
+var_type slorp();
+rant slorp(yap buffer[N]);
 ```
 
 **Key Points**
 
-- Reads user input (similar to C's `scanf` but safer) and returns it --
-  like every native call, `slorp` is an ordinary expression: assign it,
-  compare it, pass it as an argument, and so on.
-- `var_name`'s current value/type is only used as a hint for what to parse.
-- **Deprecated**: calling `slorp(var_name);` as a bare statement still
-  writes the result back into `var_name` for one release, with a
-  deprecation warning on stderr. Prefer assigning the result directly.
+- Reads user input (similar to C's `scanf` but safer) and returns it.
+- **Scalar form**: `slorp()` takes no arguments. This is a desugaring, not
+  a general expression -- it only resolves when it is the *entire*
+  expression at one of four specific sites: a declaration's initializer
+  (including each leaf of a braced array initializer, e.g. `rizz a[2] = {
+  slorp(), 1 };`, or a braced struct initializer, e.g. `gang Point p = {
+  slorp(), 1 };`, where each leaf resolves against *that field's own
+  type*, not one shared element type), an assignment's right-hand side, a
+  function's `bussin` return value, or an argument to a native/user-defined
+  function whose parameter has one fixed type. At that site, the already-known type
+  (declared type / target type / return type / parameter type) becomes
+  `slorp()`'s type. It does **not** resolve as a condition, a binary
+  operand (`slorp() + 1`, `slorp() == 1`), or a variadic argument (e.g. to
+  `yapping`) -- those fail with the same diagnostic as no context at all.
+  Supported scalar types: `rizz`, `smol`, `chad`, `gigachad`, `cap`, and a
+  single-character `yap`. A bare `slorp();`, or one used somewhere none of
+  the four sites applies, is a semantic error.
+- **Buffer form**: `slorp(buffer)`, where `buffer` is a `yap buffer[N]`
+  character array, reads a line into it and returns it as a `rant` --
+  unlike the scalar form, this one *is* an ordinary expression: assign it,
+  compare it, pass it as an argument. A scalar `rant` isn't available
+  through the contextual form -- use a buffer.
+- **Deprecated**: passing an already-declared variable purely as a type
+  witness (`rizz i = slorp(n);`), and calling `slorp(var_name);` as a bare
+  statement (which still writes the result back into `var_name`, with a
+  deprecation warning on stderr), both still work for one release. Prefer
+  the contextual `slorp()` form for new code.
 
 ### Example
 
 ```c
 skibidi main {
-    rizz num;
     yapping("Enter a number:");
-    num = slorp(num);
+    rizz num = slorp();
     yapping("You typed: %d", num);
     bussin 0;
 }
