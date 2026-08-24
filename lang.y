@@ -52,6 +52,16 @@ static String current_struct_def_name = {0};
 /* Global interpreter for cleanup */
 static Interpreter *global_interpreter = NULL;
 
+/* True while reducing a `lit` that appeared as a statement (inside a
+   function or block). Top-level typedef_def clears this before
+   typedef_tail so registration still runs. */
+static bool typedef_is_statement = false;
+
+static bool typedef_may_commit(void)
+{
+    return !typedef_is_statement;
+}
+
 static TypeDescriptor resolve_alias_use(String alias_name)
 {
     TypeAlias *alias = get_type_alias(alias_name);
@@ -195,11 +205,35 @@ static bool ensure_type_alias_name_available(String name)
 
 static void reject_array_typedef(String name)
 {
+    if (!typedef_may_commit())
+        return;
     char msg[MAX_BUFFER_LEN];
     snprintf(msg, sizeof(msg), "Array typedef alias '%s' is not supported",
              name.data ? name.data : "?");
     yyerror_current_line(msg);
     typedef_had_error = true;
+}
+
+static void reject_storage_class_typedef(void)
+{
+    if (!typedef_may_commit())
+        return;
+    yyerror_current_line(
+        "Storage-class modifiers are not allowed in typedef aliases");
+    typedef_had_error = true;
+}
+
+static void reject_struct_alias_array(void)
+{
+    yyerror_current_line(
+        "Arrays of struct/union typedef aliases are not supported");
+    typedef_had_error = true;
+}
+
+static void maybe_reject_struct_alias_array(VarType type, int pointer_level)
+{
+    if (type == VAR_STRUCT && pointer_level == 0)
+        reject_struct_alias_array();
 }
 
 static String make_anonymous_typedef_name(String alias_name)
@@ -399,6 +433,7 @@ static void register_anonymous_aggregate_typedef(String alias_name,
 %type <node> function_def
 %type <node> function_def_list
 %type <node> typedef_def
+%type <node> typedef_tail
 %type <param> param_list params
 %type <array_dims> dimensions
 %type <array_dims> dimensions_or_unsized
@@ -462,141 +497,163 @@ alias_type:
     ;
 
 typedef_def:
-    TYPEDEF typedef_optional_modifiers type typedef_declarator SEMICOLON
+    TYPEDEF
+        { typedef_is_statement = false; }
+      typedef_tail
+        { $$ = NULL; }
+    ;
+
+typedef_tail:
+    typedef_optional_modifiers type typedef_declarator SEMICOLON
         {
             /* get_current_modifiers() copies and clears the parser-global
                modifier state before this typedef action returns. */
-            TypeDescriptor descriptor = make_type_descriptor(
-                $3, $4.pointer_level, get_current_modifiers());
-            register_type_alias($4.name, descriptor);
+            TypeModifiers modifiers = get_current_modifiers();
+            if (typedef_may_commit())
+            {
+                TypeDescriptor descriptor = make_type_descriptor(
+                    $2, $3.pointer_level, modifiers);
+                register_type_alias($3.name, descriptor);
+            }
+            SAFE_FREE($3.name);
+            $$ = NULL;
+        }
+    | STATIC type typedef_declarator SEMICOLON
+        {
+            (void)$2;
+            get_current_modifiers();
+            reject_storage_class_typedef();
+            SAFE_FREE($3.name);
+            $$ = NULL;
+        }
+    | STATIC alias_type typedef_declarator SEMICOLON
+        {
+            (void)$2;
+            reject_storage_class_typedef();
+            SAFE_FREE($3.name);
+            $$ = NULL;
+        }
+    | typedef_optional_modifiers type typedef_declarator dimensions SEMICOLON
+        {
+            (void)$2;
+            (void)$4;
+            get_current_modifiers();
+            reject_array_typedef($3.name);
+            SAFE_FREE($3.name);
+            $$ = NULL;
+        }
+    | typedef_optional_modifiers struct_or_union name_token typedef_declarator SEMICOLON
+        {
+            TypeModifiers modifiers = get_current_modifiers();
+            if (typedef_may_commit())
+            {
+                if (!get_struct_def($3))
+                {
+                    char msg[MAX_BUFFER_LEN];
+                    snprintf(msg, sizeof(msg),
+                             "Unknown struct/union type '%s'", $3.data);
+                    yyerror_current_line(msg);
+                    typedef_had_error = true;
+                }
+                else
+                {
+                    TypeDescriptor descriptor = make_type_descriptor(
+                        VAR_STRUCT, $4.pointer_level, modifiers);
+                    descriptor.struct_name = $3;
+                    register_type_alias($4.name, descriptor);
+                }
+            }
+            SAFE_FREE($3);
             SAFE_FREE($4.name);
             $$ = NULL;
         }
-    | TYPEDEF STATIC type typedef_declarator SEMICOLON
+    | typedef_optional_modifiers struct_or_union name_token typedef_declarator dimensions SEMICOLON
         {
-            yyerror_current_line(
-                "Storage-class modifiers are not allowed in typedef aliases");
-            typedef_had_error = true;
-            SAFE_FREE($4.name);
-            $$ = NULL;
-        }
-    | TYPEDEF STATIC alias_type typedef_declarator SEMICOLON
-        {
-            yyerror_current_line(
-                "Storage-class modifiers are not allowed in typedef aliases");
-            typedef_had_error = true;
-            SAFE_FREE($4.name);
-            $$ = NULL;
-        }
-    | TYPEDEF typedef_optional_modifiers type typedef_declarator dimensions SEMICOLON
-        {
-            (void)$3;
+            (void)$2;
             (void)$5;
             get_current_modifiers();
             reject_array_typedef($4.name);
+            SAFE_FREE($3);
             SAFE_FREE($4.name);
             $$ = NULL;
         }
-    | TYPEDEF typedef_optional_modifiers struct_or_union name_token typedef_declarator SEMICOLON
-        {
-            TypeModifiers modifiers = get_current_modifiers();
-            if (!get_struct_def($4))
-            {
-                char msg[MAX_BUFFER_LEN];
-                snprintf(msg, sizeof(msg), "Unknown struct/union type '%s'",
-                         $4.data);
-                yyerror_current_line(msg);
-                typedef_had_error = true;
-            }
-            else
-            {
-                TypeDescriptor descriptor = make_type_descriptor(
-                    VAR_STRUCT, $5.pointer_level, modifiers);
-                descriptor.struct_name = $4;
-                register_type_alias($5.name, descriptor);
-            }
-            SAFE_FREE($4);
-            SAFE_FREE($5.name);
-            $$ = NULL;
-        }
-    | TYPEDEF typedef_optional_modifiers struct_or_union name_token typedef_declarator dimensions SEMICOLON
-        {
-            (void)$3;
-            (void)$6;
-            get_current_modifiers();
-            reject_array_typedef($5.name);
-            SAFE_FREE($4);
-            SAFE_FREE($5.name);
-            $$ = NULL;
-        }
-    | TYPEDEF typedef_optional_modifiers struct_or_union name_token
+    | typedef_optional_modifiers struct_or_union name_token
         {
             SAFE_FREE(current_struct_def_name.data);
-            current_struct_def_name = safe_strdup(&$4);
+            current_struct_def_name = safe_strdup(&$3);
         }
       LBRACE struct_field_list RBRACE typedef_declarator SEMICOLON
         {
             TypeModifiers modifiers = get_current_modifiers();
-            register_aggregate_typedef($4, $9.name, $3 != 0, $7,
-                                       $9.pointer_level, modifiers);
-            SAFE_FREE($4);
-            SAFE_FREE($9.name);
+            if (typedef_may_commit())
+                register_aggregate_typedef($3, $8.name, $2 != 0, $6,
+                                           $8.pointer_level, modifiers);
+            SAFE_FREE($3);
+            SAFE_FREE($8.name);
             SAFE_FREE(current_struct_def_name.data);
             current_struct_def_name = (String){0};
             $$ = NULL;
         }
-    | TYPEDEF typedef_optional_modifiers struct_or_union LBRACE struct_field_list RBRACE typedef_declarator SEMICOLON
+    | typedef_optional_modifiers struct_or_union LBRACE struct_field_list RBRACE typedef_declarator SEMICOLON
         {
             TypeModifiers modifiers = get_current_modifiers();
-            register_anonymous_aggregate_typedef($7.name, $3 != 0, $5,
-                                                 $7.pointer_level, modifiers);
-            SAFE_FREE($7.name);
+            if (typedef_may_commit())
+                register_anonymous_aggregate_typedef($6.name, $2 != 0, $4,
+                                                     $6.pointer_level,
+                                                     modifiers);
+            SAFE_FREE($6.name);
             $$ = NULL;
         }
-    | TYPEDEF typedef_optional_modifiers ENUM name_token typedef_declarator SEMICOLON
+    | typedef_optional_modifiers ENUM name_token typedef_declarator SEMICOLON
         {
             TypeModifiers modifiers = get_current_modifiers();
-            if (!get_enum_def($4))
+            if (typedef_may_commit())
             {
-                char msg[MAX_BUFFER_LEN];
-                snprintf(msg, sizeof(msg), "Unknown enum type '%s'",
-                         $4.data);
-                yyerror_current_line(msg);
-                typedef_had_error = true;
+                if (!get_enum_def($3))
+                {
+                    char msg[MAX_BUFFER_LEN];
+                    snprintf(msg, sizeof(msg), "Unknown enum type '%s'",
+                             $3.data);
+                    yyerror_current_line(msg);
+                    typedef_had_error = true;
+                }
+                else
+                {
+                    TypeDescriptor descriptor = make_type_descriptor(
+                        VAR_ENUM, $4.pointer_level, modifiers);
+                    descriptor.enum_name = $3;
+                    register_type_alias($4.name, descriptor);
+                }
             }
-            else
-            {
-                TypeDescriptor descriptor = make_type_descriptor(
-                    VAR_ENUM, $5.pointer_level, modifiers);
-                descriptor.enum_name = $4;
-                register_type_alias($5.name, descriptor);
-            }
-            SAFE_FREE($4);
-            SAFE_FREE($5.name);
-            $$ = NULL;
-        }
-    | TYPEDEF typedef_optional_modifiers ENUM name_token typedef_declarator dimensions SEMICOLON
-        {
-            (void)$6;
-            get_current_modifiers();
-            reject_array_typedef($5.name);
-            SAFE_FREE($4);
-            SAFE_FREE($5.name);
-            $$ = NULL;
-        }
-    | TYPEDEF typedef_optional_modifiers alias_type typedef_declarator SEMICOLON
-        {
-            TypeDescriptor descriptor = $3;
-            descriptor.pointer_level += $4.pointer_level;
-            register_type_alias($4.name, descriptor);
+            SAFE_FREE($3);
             SAFE_FREE($4.name);
             $$ = NULL;
         }
-    | TYPEDEF typedef_optional_modifiers alias_type typedef_declarator dimensions SEMICOLON
+    | typedef_optional_modifiers ENUM name_token typedef_declarator dimensions SEMICOLON
         {
             (void)$5;
+            get_current_modifiers();
             reject_array_typedef($4.name);
+            SAFE_FREE($3);
             SAFE_FREE($4.name);
+            $$ = NULL;
+        }
+    | typedef_optional_modifiers alias_type typedef_declarator SEMICOLON
+        {
+            if (typedef_may_commit())
+            {
+                TypeDescriptor descriptor = $2;
+                descriptor.pointer_level += $3.pointer_level;
+                register_type_alias($3.name, descriptor);
+            }
+            SAFE_FREE($3.name);
+            $$ = NULL;
+        }
+    | typedef_optional_modifiers alias_type typedef_declarator dimensions SEMICOLON
+        {
+            (void)$4;
+            reject_array_typedef($3.name);
+            SAFE_FREE($3.name);
             $$ = NULL;
         }
     ;
@@ -1173,13 +1230,16 @@ statements:
 statement:
       declaration SEMICOLON
         { $$ = $1; }
-    | TYPEDEF typedef_optional_modifiers type typedef_declarator SEMICOLON
+    | TYPEDEF
         {
-            (void)get_current_modifiers();
+            typedef_is_statement = true;
             yyerror_current_line(
                 "lit declarations are only allowed at top level");
             typedef_had_error = true;
-            SAFE_FREE($4.name);
+        }
+      typedef_tail
+        {
+            typedef_is_statement = false;
             $$ = NULL;
         }
     | for_statement
@@ -1351,11 +1411,7 @@ declaration:
     | optional_modifiers alias_type declarator dimensions
         {
             int pointer_level = $2.pointer_level + $3.pointer_level;
-            if ($2.type == VAR_STRUCT && pointer_level == 0)
-            {
-                yyerror("Arrays of struct/union typedef aliases are not supported");
-                typedef_had_error = true;
-            }
+            maybe_reject_struct_alias_array($2.type, pointer_level);
             $$ = create_multi_array_declaration_node($3.name, $4.dimensions,
                                                      $4.num_dimensions,
                                                      $2.type);
@@ -1370,11 +1426,7 @@ declaration:
     | optional_modifiers alias_type declarator dimensions EQUALS array_init
         {
             int pointer_level = $2.pointer_level + $3.pointer_level;
-            if ($2.type == VAR_STRUCT && pointer_level == 0)
-            {
-                yyerror("Arrays of struct/union typedef aliases are not supported");
-                typedef_had_error = true;
-            }
+            maybe_reject_struct_alias_array($2.type, pointer_level);
             $$ = create_multi_array_declaration_node($3.name, $4.dimensions,
                                                      $4.num_dimensions,
                                                      $2.type);
@@ -1404,11 +1456,7 @@ declaration:
                 dims.dimensions[0] = (int)first;
             }
             int pointer_level = $2.pointer_level + $3.pointer_level;
-            if ($2.type == VAR_STRUCT && pointer_level == 0)
-            {
-                yyerror("Arrays of struct/union typedef aliases are not supported");
-                typedef_had_error = true;
-            }
+            maybe_reject_struct_alias_array($2.type, pointer_level);
             int tmp_dims[MAX_DIMENSIONS];
             for (int i = 0; i < dims.num_dimensions; i++) tmp_dims[i] = dims.dimensions[i];
             $$ = create_multi_array_declaration_node($3.name, tmp_dims,
@@ -1992,6 +2040,7 @@ void cleanup() {
     static bool cleaned = false;
     if (cleaned) return;  // Prevent double cleanup
     cleaned = true;
+    typedef_is_statement = false;
     
     // Free the global interpreter if it exists
     if (global_interpreter) {

@@ -1,0 +1,11 @@
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+lit gang Point PointVal;
+
+skibidi main {
+    PointVal arr[3];
+    bussin 0;
+}
