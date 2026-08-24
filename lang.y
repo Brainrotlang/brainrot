@@ -232,6 +232,28 @@ static StructField *build_struct_fields_from_params(Parameter *params)
     return fields;
 }
 
+static EnumConstant *create_invalid_enum_constant(void)
+{
+    String placeholder = STRING_LITERAL("__invalid_enum_constant");
+    EnumConstant *c = SAFE_MALLOC(EnumConstant);
+    c->name = safe_strdup(&placeholder);
+    c->value = 0;
+    c->has_explicit_value = false;
+    c->next = NULL;
+    return c;
+}
+
+static EnumConstant *reject_typedef_enum_constant(String name)
+{
+    char msg[MAX_BUFFER_LEN];
+    snprintf(msg, sizeof(msg), "Enum constant '%s' is already defined",
+             name.data ? name.data : "?");
+    yyerror_current_line(msg);
+    struct_def_had_error = true;
+    SAFE_FREE(name.data);
+    return create_invalid_enum_constant();
+}
+
 static void register_aggregate_typedef(String tag_name, String alias_name,
                                         bool is_union, Parameter *params,
                                         int alias_pointer_level,
@@ -777,6 +799,12 @@ enum_constant:
             $$ = c;
             SAFE_FREE($1.data);
         }
+    | TYPE_NAME
+        { $$ = reject_typedef_enum_constant($1); }
+    | TYPE_NAME EQUALS INT_LITERAL
+        { $$ = reject_typedef_enum_constant($1); }
+    | TYPE_NAME EQUALS MINUS INT_LITERAL
+        { $$ = reject_typedef_enum_constant($1); }
     ;
 
 function_def

@@ -278,6 +278,6 @@
     "lit_tag_conflict_fail": "Error: Typedef alias 'Count' is already defined at line 4\nParsing failed",
     "lit_reverse_struct_tag_conflict_fail": "Error: Typedef alias 'Count' is already defined at line 2\nParsing failed",
     "lit_reverse_enum_tag_conflict_fail": "Error: Typedef alias 'Color' is already defined at line 2\nParsing failed",
-    "lit_enum_constant_alias_conflict_fail": "Error: syntax error, unexpected TYPE_NAME, expecting IDENTIFIER at line 2\nParsing failed",
+    "lit_enum_constant_alias_conflict_fail": "Error: Enum constant 'RED' is already defined at line 2\nParsing failed",
     "lit_static_modifier_fail": "Error: Storage-class modifiers are not allowed in typedef aliases at line 1\nParsing failed"
 }
