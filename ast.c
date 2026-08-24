@@ -973,6 +973,7 @@ void reset_modifiers(void)
     current_modifiers.is_volatile = false;
     current_modifiers.is_signed = false;
     current_modifiers.is_unsigned = false;
+    current_modifiers.is_sizeof = false;
     current_modifiers.is_const = false;
     current_modifiers.is_long = false;
     current_modifiers.is_long_long = false;
@@ -6368,6 +6369,8 @@ TypeDescriptor type_descriptor_from_alias(const TypeAlias *alias)
     if (!alias)
         return make_type_descriptor(NONE, 0, (TypeModifiers){0});
 
+    /* The tag names below are borrowed from the alias registry. Consumers may
+       copy them, but must not free or mutate these String values. */
     TypeDescriptor descriptor = make_type_descriptor(
         alias->type, alias->pointer_level, alias->modifiers);
     descriptor.struct_name = alias->struct_name;
@@ -6402,14 +6405,25 @@ bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
         return false;
     }
 
+    if (base.is_static)
+    {
+        char msg[MAX_BUFFER_LEN];
+        snprintf(msg, sizeof(msg),
+                 "Storage-class modifier cannot be stored in typedef alias "
+                 "'%s'",
+                 name.data ? name.data : "?");
+        yyerror_current_line(msg);
+        return false;
+    }
+
     merged.is_volatile = merged.is_volatile || extra.is_volatile;
     merged.is_signed = merged.is_signed || extra.is_signed;
     merged.is_unsigned = merged.is_unsigned || extra.is_unsigned;
-    merged.is_sizeof = merged.is_sizeof || extra.is_sizeof;
+    merged.is_sizeof = extra.is_sizeof;
     merged.is_const = merged.is_const || extra.is_const;
     merged.is_long = merged.is_long || extra.is_long;
     merged.is_long_long = merged.is_long_long || extra.is_long_long;
-    merged.is_static = merged.is_static || extra.is_static;
+    merged.is_static = extra.is_static;
 
     if (out)
         *out = merged;
@@ -6425,16 +6439,19 @@ bool register_type_alias(String name, TypeDescriptor descriptor)
         return false;
     }
 
-    bool same_struct_tag = descriptor.type == VAR_STRUCT &&
-                           descriptor.struct_name.data &&
-                           strcmp(name.data, descriptor.struct_name.data) == 0;
-    bool same_enum_tag = descriptor.type == VAR_ENUM &&
-                         descriptor.enum_name.data &&
-                         strcmp(name.data, descriptor.enum_name.data) == 0;
+    if (descriptor.modifiers.is_static)
+    {
+        yyerror_current_line(
+            "Storage-class modifiers are not allowed in typedef aliases");
+        typedef_had_error = true;
+        return false;
+    }
 
-    if (get_type_alias(name) || (get_struct_def(name) && !same_struct_tag) ||
-        (get_enum_def(name) && !same_enum_tag) || get_function(name) ||
-        get_variable(name) || find_global_enum_constant(name))
+    TypeModifiers alias_modifiers = descriptor.modifiers;
+    alias_modifiers.is_sizeof = false;
+
+    if (get_type_alias(name) || get_function(name) || get_variable(name) ||
+        find_global_enum_constant(name))
     {
         char msg[MAX_BUFFER_LEN];
         snprintf(msg, sizeof(msg), "Typedef alias '%s' is already defined",
@@ -6448,7 +6465,7 @@ bool register_type_alias(String name, TypeDescriptor descriptor)
     alias->name = safe_strdup(&name);
     alias->type = descriptor.type;
     alias->pointer_level = descriptor.pointer_level;
-    alias->modifiers = descriptor.modifiers;
+    alias->modifiers = alias_modifiers;
     alias->struct_name = descriptor.struct_name.data
                              ? safe_strdup(&descriptor.struct_name)
                              : (String){0};
@@ -6487,13 +6504,17 @@ void free_type_alias_registry(void)
     while (alias)
     {
         TypeAlias *next = alias->next_def;
-        SAFE_FREE(alias->name);
-        SAFE_FREE(alias->struct_name);
-        SAFE_FREE(alias->enum_name);
+        SAFE_FREE(alias->name.data);
+        alias->name = (String){0};
+        SAFE_FREE(alias->struct_name.data);
+        alias->struct_name = (String){0};
+        SAFE_FREE(alias->enum_name.data);
+        alias->enum_name = (String){0};
         SAFE_FREE(alias);
         alias = next;
     }
     type_alias_registry_list = NULL;
+    typedef_had_error = false;
 }
 
 EnumConstant *find_global_enum_constant(const String name)

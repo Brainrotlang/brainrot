@@ -753,6 +753,7 @@ ASTNode *create_enum_def_node(String name);
 /* Typedef aliases (`lit`). */
 TypeDescriptor make_type_descriptor(VarType type, int pointer_level,
                                     TypeModifiers modifiers);
+/* Returned aggregate tag strings are borrowed from the alias registry. */
 TypeDescriptor type_descriptor_from_alias(const TypeAlias *alias);
 bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
                           TypeModifiers *out, const String name);

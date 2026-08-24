@@ -39,8 +39,6 @@ static bool parse_error_already_reported = false;
    a struct_def. Struct/union bodies never nest syntactically, so a single
    slot is sufficient. */
 static String current_struct_def_name = {0};
-static bool current_struct_def_tag_available = true;
-static bool current_enum_def_tag_available = true;
 
 /* struct_def_had_error (declared extern in ast.h, defined in ast.c) is set
    when a struct/union field declaration is invalid (self-embedding by
@@ -155,23 +153,8 @@ static ASTNode *create_alias_function_def(String name,
 
 static bool ensure_type_alias_name_available(String name)
 {
-    if (get_type_alias(name) || get_struct_def(name) || get_enum_def(name) ||
-        get_function(name) || get_variable(name) ||
+    if (get_type_alias(name) || get_function(name) || get_variable(name) ||
         find_global_enum_constant(name))
-    {
-        char msg[MAX_BUFFER_LEN];
-        snprintf(msg, sizeof(msg), "Typedef alias '%s' is already defined",
-                 name.data ? name.data : "?");
-        yyerror_current_line(msg);
-        typedef_had_error = true;
-        return false;
-    }
-    return true;
-}
-
-static bool ensure_tag_name_available_for_typedef(String name)
-{
-    if (get_type_alias(name))
     {
         char msg[MAX_BUFFER_LEN];
         snprintf(msg, sizeof(msg), "Typedef alias '%s' is already defined",
@@ -262,9 +245,6 @@ static void register_aggregate_typedef(String tag_name, String alias_name,
     if (!ensure_type_alias_name_available(alias_name))
         return;
 
-    if (!ensure_tag_name_available_for_typedef(tag_name))
-        return;
-
     if (get_struct_def(tag_name))
     {
         char msg[MAX_BUFFER_LEN];
@@ -301,7 +281,7 @@ static void register_anonymous_aggregate_typedef(String alias_name,
     String hidden_name = make_anonymous_typedef_name(alias_name);
     register_aggregate_typedef(hidden_name, alias_name, is_union, params,
                                alias_pointer_level, modifiers);
-    SAFE_FREE(hidden_name);
+    SAFE_FREE(hidden_name.data);
 }
 %}
 
@@ -561,33 +541,23 @@ struct_def
                reject direct self-embedding while the body is parsed. */
             SAFE_FREE(current_struct_def_name.data);
             current_struct_def_name = safe_strdup(&$2);
-            current_struct_def_tag_available =
-                ensure_tag_name_available_for_typedef($2);
         }
       LBRACE struct_field_list RBRACE SEMICOLON
         {
-            if (current_struct_def_tag_available)
-            {
-                StructField *fields = build_struct_fields_from_params($5);
-                bool is_union = $1 != 0;
-                size_t total = is_union ? compute_union_layout(fields)
-                                        : compute_struct_layout(fields);
-                StructDef *def = SAFE_MALLOC(StructDef);
-                def->name       = safe_strdup(&$2);
-                def->fields     = fields;
-                def->total_size = total;
-                def->is_union   = is_union;
-                register_struct_def(def);
-                $$ = create_struct_def_node($2, fields);
-            }
-            else
-            {
-                $$ = NULL;
-            }
+            StructField *fields = build_struct_fields_from_params($5);
+            bool is_union = $1 != 0;
+            size_t total = is_union ? compute_union_layout(fields)
+                                    : compute_struct_layout(fields);
+            StructDef *def = SAFE_MALLOC(StructDef);
+            def->name       = safe_strdup(&$2);
+            def->fields     = fields;
+            def->total_size = total;
+            def->is_union   = is_union;
+            register_struct_def(def);
+            $$ = create_struct_def_node($2, fields);
             SAFE_FREE($2);
             SAFE_FREE(current_struct_def_name.data);
             current_struct_def_name = (String){0};
-            current_struct_def_tag_available = true;
         }
     ;
 
@@ -720,24 +690,13 @@ struct_field
 /* Enum tag defined at top level. Auto-increment and duplicate-name
    checking happen in ast.c, not inline here, same as struct layout. */
 enum_def:
-    ENUM name_token
-        {
-            current_enum_def_tag_available =
-                ensure_tag_name_available_for_typedef($2);
-        }
-      LBRACE enum_constant_list RBRACE SEMICOLON
+    ENUM name_token LBRACE enum_constant_list RBRACE SEMICOLON
         {
             EnumDef *def = SAFE_MALLOC(EnumDef);
             def->name = safe_strdup(&$2);
-            def->constants = $5;
+            def->constants = $4;
             def->next_def = NULL;
-            if (!current_enum_def_tag_available)
-            {
-                /* The parse will fail after yyparse(); the unconditional
-                   registration below keeps this partially built definition
-                   owned by the normal enum-registry teardown path. */
-            }
-            else if (get_enum_def($2))
+            if (get_enum_def($2))
             {
                 char msg[MAX_BUFFER_LEN];
                 snprintf(msg, sizeof(msg), "Enum '%s' is already defined",
@@ -752,7 +711,6 @@ enum_def:
             register_enum_def(def);
             $$ = create_enum_def_node($2);
             SAFE_FREE($2);
-            current_enum_def_tag_available = true;
         }
     ;
 

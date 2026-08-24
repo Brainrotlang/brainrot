@@ -775,10 +775,10 @@ Current limitations:
 - Storage-class modifiers such as `salty` are not accepted on `lit`
   declarations; apply them where the alias is used instead.
 - Alias names are reserved type names and cannot be reused as variables,
-  functions, enum constants, unrelated struct/union tags, unrelated enum tags,
-  or other aliases. A `gang`/`chungus`/`gyatt` typedef may use the same name as
-  its own underlying tag, matching the common C `typedef struct Point Point;`
-  pattern.
+  functions, enum constants, or other aliases. Aggregate tags
+  (`gang`/`chungus`/`gyatt`) live in a separate namespace, so a typedef name can
+  share a spelling with a tag in either declaration order, matching C
+  typedef/tag behavior.
 
 ### 7.13. Modules (`#cooked`)
 
