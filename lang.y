@@ -273,11 +273,10 @@ struct_field
                (sizeof(uintptr_t)) doesn't depend on the pointee being
                complete yet.
 
-               Note: we deliberately don't YYABORT here. Aborting mid-way
-               through the still-open outer struct_def rule would strand
-               that rule's own pending IDENTIFIER token on the parser value
-               stack un-freed (this grammar has no %destructor entries), so
-               instead we record the error and let parsing finish normally;
+               Note: we deliberately don't YYABORT here. Bison does not run
+               destructors for the current rule's RHS on YYABORT, and this
+               action owns values that still need the normal cleanup below.
+               Instead we record the error and let parsing finish normally;
                main() checks struct_def_had_error after yyparse() and exits
                the same way it does for a hard parse failure. */
             bool is_self = current_struct_def_name.data &&
@@ -613,13 +612,6 @@ type:
 declaration:
     optional_modifiers type declarator
         {
-            if ($2 == VAR_VOID && $3.pointer_level == 0)
-            {
-                yyerror("Cannot declare a variable with type void");
-                parse_error_already_reported = true;
-                SAFE_FREE($3.name);
-                YYABORT;
-            }
             $$ = create_declaration_node_ex($3.name, create_default_node($2, $3.pointer_level), $3.pointer_level);
             SAFE_FREE($3.name);
         }

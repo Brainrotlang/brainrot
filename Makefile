@@ -119,10 +119,11 @@ debug: CFLAGS += $(DEBUG_FLAGS)
 debug: clean all
 	@echo "Debug build compiled with -g. Time to sigma grind with GDB."
 
-# Release build: no sanitizers, rpath so dlopen("libstdrot.so") finds the
-# copy next to the binary ($ORIGIN on ELF, @loader_path on Mach-O). Darwin
-# omits -ldl (dlopen lives in libSystem). Same pattern as `debug`: clean
-# then all, so a prior sanitizer build can't be reused.
+# Release build: no sanitizers. Add rpath for the leaf-name
+# dlopen("libstdrot.so") fallback after stdrot_load() first tries
+# cwd-relative ./libstdrot.so ($ORIGIN on ELF, @loader_path on Mach-O).
+# Darwin omits -ldl (dlopen lives in libSystem). Same pattern as `debug`:
+# clean then all, so a prior sanitizer build can't be reused.
 .PHONY: release
 ifeq ($(UNAME_S),Darwin)
 release: CFLAGS := $(RELEASE_CFLAGS) $(FLEX_CPPFLAGS)

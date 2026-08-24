@@ -4821,9 +4821,11 @@ ASTNode *create_default_node(VarType var_type, int pointer_level)
            every other pointer-typed default). `skibidi x;` (no
            initializer, no pointer) is genuinely invalid -- a named
            void variable was never valid; this just names the rejection
-           instead of falling through the generic default case below. */
-        yyerror("Cannot declare a variable with type void");
-        exit(1);
+           instead of falling through the generic default case below.
+           Return a placeholder initializer so the semantic declaration
+           check can report the named variable error through the normal
+           cleanup path rather than exiting from inside the parser action. */
+        return create_int_node(0);
     default:
         yyerror("Unsupported type for default node");
         exit(1);

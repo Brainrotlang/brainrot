@@ -1,7 +1,8 @@
 # Publish native + wasm Brainrot artifacts for a v* tag.
 #
-# Triggered by pushing a tag, or manually with a semver bump (which computes
-# and pushes the tag for you). Releases are not auto-cut on merges to main.
+# Triggered by pushing a tag, or manually with a semver bump. Manual release
+# runs build the dispatch commit and create the tag only after archives and
+# checksums exist. Releases are not auto-cut on merges to main.
 #
 # Native binaries are built on NATIVE runners (linux/amd64, linux/arm64,
 # darwin/amd64, darwin/arm64) because the interpreter is C + Flex/Bison and
@@ -28,6 +29,10 @@ on:
           - minor
           - major
         default: patch
+      dry_run:
+        description: "Build and upload artifacts without tagging or publishing"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -44,6 +49,8 @@ jobs:
     outputs:
       tag: ${{ steps.version.outputs.tag }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      checkout_ref: ${{ steps.version.outputs.checkout_ref }}
+      dry_run: ${{ steps.version.outputs.dry_run }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -71,9 +78,9 @@ jobs:
             install gcc flex bison libfl-dev libasan8 libubsan1 \
               python3 python3-pip python3-venv -y
 
-      # Gate the release on the same suite CI runs on main (pytest via
-      # `make test`). Valgrind stays in ci.yml — it is Linux-only and
-      # already ran on the commit being tagged.
+      # Gate the release packaging on pytest via `make test`. The full
+      # Linux valgrind suite remains in ci.yml; this job does not prove that
+      # every dispatch or hand-tagged SHA has already passed it.
       - name: Test
         run: |
           python3 -m venv .venv
@@ -85,20 +92,21 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_BUMP: ${{ github.event.inputs.bump }}
+          INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
           REF_NAME: ${{ github.ref_name }}
+          CHECKOUT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          dry_run="${INPUT_DRY_RUN:-false}"
 
           if [ "$EVENT_NAME" != "workflow_dispatch" ]; then
             next="$REF_NAME"
+            checkout_ref="$REF_NAME"
             echo "Tag push: $next"
           else
             BUMP="${INPUT_BUMP:-patch}"
-            # actions/checkout does not configure a git identity, and an
-            # annotated tag (git tag -a below) requires one to exist.
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
             git fetch --tags --force
+            checkout_ref="$CHECKOUT_SHA"
 
             latest=""
             while IFS= read -r t; do
@@ -134,10 +142,9 @@ jobs:
               echo "Bump: $BUMP -> $next"
             fi
 
-            # A tag pushed with GITHUB_TOKEN does not start another workflow
-            # run, so this cannot recurse into the push trigger above.
-            git tag -a "$next" -m "$next"
-            git push origin "$next"
+            if [ "$dry_run" = "true" ]; then
+              echo "Dry run: artifacts will use $next but no tag/release will be created."
+            fi
           fi
 
           # v1.2.3-rc.1 and friends publish as GitHub pre-releases.
@@ -147,6 +154,8 @@ jobs:
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           fi
           echo "tag=$next" >> "$GITHUB_OUTPUT"
+          echo "checkout_ref=$checkout_ref" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$dry_run" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build ${{ matrix.os }}/${{ matrix.arch }}
@@ -173,7 +182,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: ${{ needs.version.outputs.tag }}
+          ref: ${{ needs.version.outputs.checkout_ref }}
 
       - name: Install build dependencies (Linux)
         if: matrix.os == 'linux'
@@ -239,7 +248,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: ${{ needs.version.outputs.tag }}
+          ref: ${{ needs.version.outputs.checkout_ref }}
 
       - name: Force Ubuntu archive mirror
         run: |
@@ -286,11 +295,17 @@ jobs:
           retention-days: 1
 
   publish:
-    name: Publish release
+    name: Package and publish release
     needs: [version, build, wasm]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.checkout_ref }}
+          fetch-depth: 0
+
       - name: Download artifacts
         uses: actions/download-artifact@v8
         with:
@@ -325,7 +340,33 @@ jobs:
           (cd dist && sha256sum ./* | sed 's|\./||' | tee SHA256SUMS.txt)
           ls -l dist
 
+      - name: Upload dry-run package
+        if: needs.version.outputs.dry_run == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-dry-run-${{ needs.version.outputs.tag }}
+          path: dist
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Create release tag
+        if: github.event_name == 'workflow_dispatch' && needs.version.outputs.dry_run != 'true'
+        env:
+          VERSION: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch --tags --force
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "Tag $VERSION already exists" >&2
+            exit 1
+          fi
+          git tag -a "$VERSION" -m "$VERSION"
+          git push origin "$VERSION"
+
       - name: Publish GitHub Release
+        if: needs.version.outputs.dry_run != 'true'
         # SHA-pinned (v2): this step runs with contents: write.
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
