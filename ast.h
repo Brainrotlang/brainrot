@@ -38,7 +38,9 @@ typedef struct
     size_t total_size;
 } ArrayDimensions;
 
-/* Define TypeModifiers first */
+/* Define TypeModifiers first. Stored type modifiers may be carried through
+   typedef aliases; parser context flags are reset with the same parser state
+   but are not alias storage. */
 typedef struct
 {
     bool is_volatile;
@@ -119,6 +121,16 @@ typedef enum
     NONE,
 } VarType;
 
+typedef struct
+{
+    VarType type;
+    int pointer_level;
+    TypeModifiers modifiers;
+    /* Non-owning type view. Stored declarations copy tag names they keep. */
+    String struct_name;
+    String enum_name;
+} TypeDescriptor;
+
 /* A single field inside a struct definition */
 typedef struct StructField
 {
@@ -154,6 +166,18 @@ typedef struct EnumDef
     EnumConstant *constants;
     struct EnumDef *next_def;
 } EnumDef;
+
+typedef struct TypeAlias
+{
+    String name;
+    VarType type;
+    int pointer_level;
+    TypeModifiers modifiers;
+    /* Owned by the alias registry. */
+    String struct_name;
+    String enum_name;
+    struct TypeAlias *next_def;
+} TypeAlias;
 
 /* A struct/union definition (the "template"). Struct and union tags share
    this same registry, matching C's tag-namespace rules. */
@@ -414,6 +438,10 @@ struct ASTNode
        copy-init) -- evaluated at runtime by the declaration visitor. NULL
        for the no-initializer and braced-initializer declaration forms. */
     ASTNode *struct_init_expr;
+    /* Struct/union tag for declaration nodes whose var_type == VAR_STRUCT
+       and do not carry a NODE_STRUCT_DEF child, such as pointer arrays
+       declared through a typedef alias. */
+    String struct_name;
     /* Enum tag for a NODE_DECLARATION node with var_type == VAR_ENUM; not
        in the union below since it carries no blob/fields to go with it. */
     String enum_name;
@@ -711,6 +739,7 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
    same way it does for a hard parse failure; see lang.y's struct_field
    for why we don't YYABORT for these instead. */
 extern bool struct_def_had_error;
+extern bool typedef_had_error;
 
 /* Enum types (see the comment on EnumDef above for the registry split). */
 void register_enum_def(EnumDef *def);
@@ -725,6 +754,19 @@ bool finalize_enum_constants(EnumDef *def);
    unscoped enum constant. Returns NULL if none matches. */
 EnumConstant *find_global_enum_constant(const String name);
 ASTNode *create_enum_def_node(String name);
+
+/* Typedef aliases (`lit`). */
+TypeDescriptor make_type_descriptor(VarType type, int pointer_level,
+                                    TypeModifiers modifiers);
+/* Returned aggregate tag strings are borrowed from the alias registry. */
+TypeDescriptor type_descriptor_from_alias(const TypeAlias *alias);
+bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
+                          TypeModifiers *out, const String name);
+/* Copies `name` and any aggregate tag strings from `descriptor`; callers keep
+   ownership of their parser-token strings. */
+bool register_type_alias(String name, TypeDescriptor descriptor);
+TypeAlias *get_type_alias(const String name);
+void free_type_alias_registry(void);
 
 extern TypeModifiers current_modifiers;
 

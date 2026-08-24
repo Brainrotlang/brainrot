@@ -21,7 +21,13 @@ static HashMap *struct_registry = NULL;
 static StructDef *struct_registry_list = NULL;
 static HashMap *enum_registry = NULL;
 static EnumDef *enum_registry_list = NULL;
+static HashMap *type_alias_registry = NULL;
+static TypeAlias *type_alias_registry_list = NULL;
 bool struct_def_had_error = false;
+/* Set by lit alias helpers below; lang.y's post-yyparse gate aborts before
+   semantic analysis/execution when true, and cleanup resets it through
+   free_type_alias_registry(). */
+bool typedef_had_error = false;
 ReturnValue current_return_value;
 Arena arena;
 
@@ -33,6 +39,7 @@ Scope *current_scope;
 
 /* Include the symbol table functions */
 extern void yyerror(const char *s);
+extern void yyerror_current_line(const char *s);
 extern void cleanup(void);
 extern TypeModifiers get_variable_modifiers(const String name);
 extern const char *vartype_to_string(VarType type);
@@ -969,6 +976,7 @@ void reset_modifiers(void)
     current_modifiers.is_volatile = false;
     current_modifiers.is_signed = false;
     current_modifiers.is_unsigned = false;
+    current_modifiers.is_sizeof = false;
     current_modifiers.is_const = false;
     current_modifiers.is_long = false;
     current_modifiers.is_long_long = false;
@@ -1642,6 +1650,52 @@ VarType get_expression_type(ASTNode *node)
     }
 }
 
+static StructDef *get_struct_def_for_expression(ASTNode *expr)
+{
+    if (!expr)
+        return NULL;
+
+    switch (expr->type)
+    {
+    case NODE_IDENTIFIER:
+    {
+        Variable *var = get_variable(expr->data.name);
+        if (var && var->var_type == VAR_STRUCT && var->struct_name.data)
+            return get_struct_def(var->struct_name);
+        return NULL;
+    }
+    case NODE_ARRAY_ACCESS:
+    {
+        Variable *var = get_variable(expr->data.array.name);
+        if (var && var->is_array && var->var_type == VAR_STRUCT &&
+            var->struct_name.data)
+            return get_struct_def(var->struct_name);
+        return NULL;
+    }
+    case NODE_STRUCT_ACCESS:
+    {
+        StructDef *def = NULL;
+        void *base = NULL;
+        StructField *fld = NULL;
+        if (resolve_struct_access(expr, &def, &base, &fld, false) &&
+            fld->type == VAR_STRUCT && fld->struct_name.data)
+            return get_struct_def(fld->struct_name);
+        return NULL;
+    }
+    case NODE_UNARY_OPERATION:
+        if (expr->data.unary.op == OP_DEREFERENCE)
+        {
+            ASTNode *operand = expr->data.unary.operand;
+            if (get_expression_pointer_level(operand) <= 0)
+                return NULL;
+            return get_struct_def_for_expression(operand);
+        }
+        return NULL;
+    default:
+        return NULL;
+    }
+}
+
 /* A genuinely recursive, execution-free expression type query -- the
  * runtime-side counterpart of semantic_analyzer.c's own infer_expression_
  * type(), reading runtime Variable/Function/enum-constant state
@@ -2217,6 +2271,10 @@ void *evaluate_lvalue_address(ASTNode *node)
             return NULL;
         }
 
+        /* Pointer-typed variables, including `gang T *p`, store the pointer
+           value in pvalue. Assignment to the pointer itself writes that slot;
+           dereference assignment handles the pointee through the unary case
+           below. */
         if (var->pointer_level > 0)
             return &var->value.pvalue;
 
@@ -2238,6 +2296,17 @@ void *evaluate_lvalue_address(ASTNode *node)
             return &var->value.strvalue;
         case VAR_ENUM:
             return &var->value.ivalue;
+        case VAR_STRUCT:
+            /* Non-pointer struct/union values live in the layout blob at
+               value.array_data (allocated by interpreter_visit_declaration).
+               Pointer-to-struct variables are handled above via
+               pointer_level > 0 and pvalue. */
+            if (!var->value.array_data)
+            {
+                yyerror("Uninitialized struct lvalue");
+                return NULL;
+            }
+            return var->value.array_data;
         default:
             yyerror("Unsupported lvalue type");
             return NULL;
@@ -3255,35 +3324,10 @@ size_t handle_sizeof(ASTNode *node)
             if (plevel > 0)
                 return get_type_size_for_descriptor(type, plevel,
                                                     expr->modifiers);
-            /* A struct/union-typed field access (e.g. `l.start`) — resolve
-               it to the field's definition and return its layout size. */
-            if (expr->type == NODE_STRUCT_ACCESS)
-            {
-                StructDef *def = NULL;
-                void *base = NULL;
-                StructField *fld = NULL;
-                if (resolve_struct_access(expr, &def, &base, &fld, false))
-                {
-                    StructDef *sdef = get_struct_def(fld->struct_name);
-                    if (sdef != NULL)
-                        return sdef->total_size;
-                }
-            }
-            /* A dereferenced struct/union pointer (e.g. `*q`) — resolve the
-               operand's variable and return the pointed-to layout size. */
-            if (expr->type == NODE_UNARY_OPERATION &&
-                expr->data.unary.op == OP_DEREFERENCE &&
-                expr->data.unary.operand->type == NODE_IDENTIFIER)
-            {
-                Variable *var =
-                    get_variable(expr->data.unary.operand->data.name);
-                if (var != NULL && var->var_type == VAR_STRUCT)
-                {
-                    StructDef *sdef = get_struct_def(var->struct_name);
-                    if (sdef != NULL)
-                        return sdef->total_size;
-                }
-            }
+
+            StructDef *sdef = get_struct_def_for_expression(expr);
+            if (sdef != NULL)
+                return sdef->total_size;
             yyerror("Invalid type in sizeof");
             return 0;
         }
@@ -6348,6 +6392,181 @@ void free_enum_registry(void)
     enum_registry_list = NULL;
 }
 
+TypeDescriptor make_type_descriptor(VarType type, int pointer_level,
+                                    TypeModifiers modifiers)
+{
+    TypeDescriptor descriptor = {0};
+    descriptor.type = type;
+    descriptor.pointer_level = pointer_level;
+    descriptor.modifiers = modifiers;
+    return descriptor;
+}
+
+TypeDescriptor type_descriptor_from_alias(const TypeAlias *alias)
+{
+    if (!alias)
+        return make_type_descriptor(NONE, 0, (TypeModifiers){0});
+
+    /* struct_name/enum_name are borrowed from the registry. Callers may
+       copy them onto AST/symbol objects they own, but must not free or
+       mutate these strings, and must not keep the descriptor after
+       free_type_alias_registry(). */
+    TypeDescriptor descriptor = make_type_descriptor(
+        alias->type, alias->pointer_level, alias->modifiers);
+    descriptor.struct_name = alias->struct_name;
+    descriptor.enum_name = alias->enum_name;
+    return descriptor;
+}
+
+bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
+                          TypeModifiers *out, const String name)
+{
+    TypeModifiers merged = base;
+
+    if ((extra.is_signed || extra.is_unsigned) &&
+        (base.is_signed || base.is_unsigned))
+    {
+        char msg[MAX_BUFFER_LEN];
+        snprintf(msg, sizeof(msg),
+                 "Conflicting signedness modifiers for typedef alias '%s'",
+                 name.data ? name.data : "?");
+        yyerror_current_line(msg);
+        typedef_had_error = true;
+        return false;
+    }
+
+    if ((extra.is_long || extra.is_long_long) &&
+        (base.is_long || base.is_long_long))
+    {
+        char msg[MAX_BUFFER_LEN];
+        snprintf(msg, sizeof(msg),
+                 "Conflicting width modifiers for typedef alias '%s'",
+                 name.data ? name.data : "?");
+        yyerror_current_line(msg);
+        typedef_had_error = true;
+        return false;
+    }
+
+    if (base.is_static)
+    {
+        char msg[MAX_BUFFER_LEN];
+        snprintf(msg, sizeof(msg),
+                 "Storage-class modifier cannot be stored in typedef alias "
+                 "'%s'",
+                 name.data ? name.data : "?");
+        yyerror_current_line(msg);
+        typedef_had_error = true;
+        return false;
+    }
+
+    merged.is_volatile = base.is_volatile || extra.is_volatile;
+    merged.is_signed = base.is_signed || extra.is_signed;
+    merged.is_unsigned = base.is_unsigned || extra.is_unsigned;
+    merged.is_const = base.is_const || extra.is_const;
+    merged.is_long = base.is_long || extra.is_long;
+    merged.is_long_long = base.is_long_long || extra.is_long_long;
+    merged.is_sizeof = extra.is_sizeof;
+    merged.is_static = extra.is_static;
+
+    if (out)
+        *out = merged;
+    return true;
+}
+
+bool register_type_alias(String name, TypeDescriptor descriptor)
+{
+    if (!name.data)
+    {
+        yyerror_current_line("Invalid typedef alias name");
+        typedef_had_error = true;
+        return false;
+    }
+
+    if (descriptor.modifiers.is_static)
+    {
+        yyerror_current_line(
+            "Storage-class modifiers are not allowed in typedef aliases");
+        typedef_had_error = true;
+        return false;
+    }
+
+    TypeModifiers alias_modifiers = descriptor.modifiers;
+    alias_modifiers.is_sizeof = false;
+
+    /* lit aliases live in the top-level ordinary identifier namespace:
+       aliases, functions, variables, and enum constants cannot reuse the name.
+       Struct/union/enum tags deliberately remain separate C-like tag
+       namespaces and are checked by their own registries. */
+    if (get_type_alias(name) || get_function(name) || get_variable(name) ||
+        find_global_enum_constant(name))
+    {
+        char msg[MAX_BUFFER_LEN];
+        snprintf(msg, sizeof(msg), "Typedef alias '%s' is already defined",
+                 name.data);
+        yyerror_current_line(msg);
+        typedef_had_error = true;
+        return false;
+    }
+
+    TypeAlias *alias = SAFE_MALLOC(TypeAlias);
+    alias->name = safe_strdup(&name);
+    alias->type = descriptor.type;
+    alias->pointer_level = descriptor.pointer_level;
+    alias->modifiers = alias_modifiers;
+    alias->struct_name = descriptor.struct_name.data
+                             ? safe_strdup(&descriptor.struct_name)
+                             : (String){0};
+    alias->enum_name = descriptor.enum_name.data
+                           ? safe_strdup(&descriptor.enum_name)
+                           : (String){0};
+    alias->next_def = NULL;
+
+    if (!type_alias_registry)
+        type_alias_registry = hm_new();
+    /* hm_put copies the key bytes; hm_free_shallow frees that copy. The
+       TypeAlias node and its owned strings are released via the linked
+       list below, not by the hashmap. */
+    hm_put(type_alias_registry, alias->name.data, alias->name.len, &alias,
+           sizeof(TypeAlias *));
+    alias->next_def = type_alias_registry_list;
+    type_alias_registry_list = alias;
+    return true;
+}
+
+TypeAlias *get_type_alias(const String name)
+{
+    if (!type_alias_registry || !name.data)
+        return NULL;
+    TypeAlias **alias =
+        (TypeAlias **)hm_get(type_alias_registry, name.data, name.len);
+    return alias ? *alias : NULL;
+}
+
+void free_type_alias_registry(void)
+{
+    if (type_alias_registry)
+    {
+        hm_free_shallow(type_alias_registry);
+        type_alias_registry = NULL;
+    }
+
+    TypeAlias *alias = type_alias_registry_list;
+    while (alias)
+    {
+        TypeAlias *next = alias->next_def;
+        SAFE_FREE(alias->name.data);
+        alias->name = (String){0};
+        SAFE_FREE(alias->struct_name.data);
+        alias->struct_name = (String){0};
+        SAFE_FREE(alias->enum_name.data);
+        alias->enum_name = (String){0};
+        SAFE_FREE(alias);
+        alias = next;
+    }
+    type_alias_registry_list = NULL;
+    typedef_had_error = false;
+}
+
 EnumConstant *find_global_enum_constant(const String name)
 {
     if (!name.data)
@@ -6394,7 +6613,8 @@ bool finalize_enum_constants(EnumDef *def)
             }
             prev = prev->next;
         }
-        if (ok && find_global_enum_constant(c->name))
+        if (ok &&
+            (find_global_enum_constant(c->name) || get_type_alias(c->name)))
         {
             char msg[MAX_BUFFER_LEN];
             snprintf(msg, sizeof(msg), "Enum constant '%s' is already defined",

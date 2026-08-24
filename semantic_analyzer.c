@@ -2361,6 +2361,27 @@ void free_symbol_table(SymbolEntry *symbols)
     }
 }
 
+/* lit aliases occupy the ordinary identifier namespace. Reverse collisions
+   (a later variable, function, or parameter reusing an alias name) are
+   diagnosed here because the lexer classifies the name as TYPE_NAME after
+   the alias is registered, and the parser still accepts that token as a
+   declarator so we can report a semantic error instead of a parse fail. */
+static bool report_alias_name_conflict(SemanticAnalyzer *analyzer,
+                                       const String name, int line_number)
+{
+    if (!get_type_alias(name))
+        return false;
+
+    char error_msg[MAX_BUFFER_LEN];
+    snprintf(error_msg, sizeof(error_msg),
+             "Typedef alias '%s' is already defined",
+             name.data ? name.data : "?");
+    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                       STRING_LITERAL(error_msg),
+                       line_number > 0 ? line_number : 1);
+    return true;
+}
+
 /* Phase 1: Collect all declarations */
 void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
 {
@@ -2388,12 +2409,16 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
                 node->data.op.right &&
                         node->data.op.right->type == NODE_STRUCT_DEF
                     ? node->data.op.right->data.struct_def.name
-                    : (String){0};
+                    : node->struct_name;
 
-            add_symbol(analyzer, var_name, var_type, node->pointer_level,
-                       is_const, false, NONE, 0,
-                       node->line_number > 0 ? node->line_number : 1,
-                       struct_name, node->is_array);
+            if (!report_alias_name_conflict(analyzer, var_name,
+                                            node->line_number))
+            {
+                add_symbol(analyzer, var_name, var_type, node->pointer_level,
+                           is_const, false, NONE, 0,
+                           node->line_number > 0 ? node->line_number : 1,
+                           struct_name, node->is_array);
+            }
         }
         if (node->data.op.right)
         {
@@ -2406,7 +2431,12 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
         {
             SymbolEntry *existing =
                 find_symbol(analyzer, node->data.function_def.name);
-            if (existing && existing->is_function)
+            /* Reverse ordinary-identifier collision: lit aliases are parsed
+               before this collection pass, so a later function definition
+               cannot reuse an alias name. */
+            bool alias_conflict = report_alias_name_conflict(
+                analyzer, node->data.function_def.name, node->line_number);
+            if (!alias_conflict && existing && existing->is_function)
             {
                 char error_msg[MAX_BUFFER_LEN];
                 snprintf(error_msg, sizeof(error_msg),
@@ -2417,7 +2447,7 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
                                    node->line_number > 0 ? node->line_number
                                                          : 1);
             }
-            else
+            else if (!alias_conflict)
             {
                 add_symbol(analyzer, node->data.function_def.name, NONE, 0,
                            false, true, node->data.function_def.return_type,
@@ -2436,7 +2466,9 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
             Parameter *param = node->data.function_def.parameters;
             while (param)
             {
-                if (param->name.data)
+                if (param->name.data &&
+                    !report_alias_name_conflict(analyzer, param->name,
+                                                node->line_number))
                 {
                     add_symbol(analyzer, param->name, param->type,
                                param->pointer_level, false, false, NONE, 0,

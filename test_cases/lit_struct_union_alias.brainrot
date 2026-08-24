@@ -1,0 +1,39 @@
+🚽 Test case: typedef aliases for structs/unions, including fields,
+🚽 brace initialization, parameters, and returns.
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+lit gang Point PointAlias;
+
+gang Box {
+    PointAlias corner;
+    rizz weight;
+};
+
+chungus Data {
+    rizz i;
+    chad f;
+};
+
+lit chungus Data DataAlias;
+
+PointAlias make_point(rizz x, rizz y) {
+    PointAlias p = {x, y};
+    bussin p;
+}
+
+rizz mutate_x(PointAlias p) {
+    p.x = 999;
+    bussin p.x;
+}
+
+skibidi main {
+    PointAlias p = make_point(4, 5);
+    gang Box b = {{1, 2}, 9};
+    DataAlias d = {42};
+
+    yapping("%d %d %d %d %d", mutate_x(p), p.x, b.corner.y, b.weight, d.i);
+    bussin 0;
+}

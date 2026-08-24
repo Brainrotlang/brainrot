@@ -1,0 +1,42 @@
+🚽 Test case: typedef names and aggregate tags use separate namespaces,
+🚽 matching C typedef/tag behavior in both declaration orders.
+lit rizz Count;
+
+gang Count {
+    rizz value;
+};
+
+gang Size {
+    rizz value;
+};
+
+lit rizz Size;
+
+gyatt Color {
+    RED,
+    BLUE
+};
+
+lit rizz Color;
+lit rizz Shade;
+
+gyatt Shade {
+    DARK,
+    LIGHT
+};
+
+skibidi main {
+    Count count_alias = 7;
+    gang Count count_tag = {42};
+    Size size_alias = 5;
+    gang Size size_tag = {6};
+    Color color_alias = 9;
+    gyatt Color color_tag = BLUE;
+    Shade shade_alias = 11;
+    gyatt Shade shade_tag = LIGHT;
+
+    yapping("%d %d %d %d %d %d %d %d", count_alias, count_tag.value,
+            size_alias, size_tag.value, color_alias, color_tag, shade_alias,
+            shade_tag);
+    bussin 0;
+}

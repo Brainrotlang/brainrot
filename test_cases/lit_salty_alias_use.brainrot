@@ -1,0 +1,16 @@
+🚽 Test case: a storage-class modifier on an alias use belongs to the
+🚽 declaration, not the typedef alias itself.
+lit rizz Count;
+
+rizz next_count() {
+    salty Count count = 0;
+    count = count + 1;
+    bussin count;
+}
+
+skibidi main {
+    rizz first = next_count();
+    rizz second = next_count();
+    yapping("%d %d", first, second);
+    bussin 0;
+}

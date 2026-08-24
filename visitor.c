@@ -100,10 +100,16 @@ void ast_accept(ASTNode *node, Visitor *visitor)
     }
 
     case NODE_SIZEOF:
-        if (node->data.sizeof_stmt.expr)
-            ast_accept(node->data.sizeof_stmt.expr, visitor);
+        /* sizeof inspects operand type/shape without evaluating it.
+           interpreter_visit_sizeof calls handle_sizeof() and must not
+           auto-walk the operand (that would execute dereferences/calls).
+           Semantic analysis leaves visit_sizeof NULL and walks NODE_SIZEOF
+           itself in semantic_analyze_with_scope_tracking(). Other ast_accept
+           consumers still recurse so they can inspect the operand. */
         if (visitor->visit_sizeof)
             visitor->visit_sizeof(visitor, node);
+        else if (node->data.sizeof_stmt.expr)
+            ast_accept(node->data.sizeof_stmt.expr, visitor);
         break;
 
     case NODE_DECLARATION:

@@ -22,7 +22,8 @@ A Meme-Fueled Journey into Compiler Design, Internet Slang, and Skibidi Toilets
    - 7.9. Structs (`gang`)
    - 7.10. Unions (`chungus`)
    - 7.11. Enums (`gyatt`)
-   - 7.12. Modules (`#cooked`)
+   - 7.12. Type Aliases (`lit`)
+   - 7.13. Modules (`#cooked`)
 8. **Extended User Documentation**
    - 8.1. `yapping`
    - 8.2. `yappin`
@@ -705,7 +706,84 @@ a `rizz`.
   Declaring a *variable* of an already-defined enum type works inside a
   function body.
 
-### 7.12. Modules (`#cooked`)
+### 7.12. Type Aliases (`lit`)
+
+Use **`lit`** to define a top-level alias for an existing type, like a C
+`typedef`. Aliases have no runtime behavior: they expand to the aliased type
+during parsing and then follow the same semantic rules as the original type.
+
+```c
+lit rizz Count;
+lit rizz *IntPtr;
+lit gang Point PointAlias;
+lit gyatt Color Paint;
+```
+
+C-style anonymous aggregate typedefs are also supported:
+
+```c
+lit gang {
+    rizz x;
+    rizz y;
+} Point;
+
+lit chungus {
+    rizz i;
+    chad f;
+} Data;
+```
+
+You can also provide an aggregate tag, matching C's
+`typedef struct point { ... } Point;` form:
+
+```c
+lit gang point {
+    rizz x;
+    rizz y;
+} Point;
+
+lit gang Point {
+    rizz x;
+    rizz y;
+} Point;
+```
+
+After an alias is defined, use it anywhere a type can be declared:
+
+```c
+Count n = 3;
+IntPtr p = &n;
+PointAlias pt = {1, 2};
+Paint favorite = GREEN;
+```
+
+Pointer aliases compose with additional `*` declarators. For example,
+`IntPtr *pp;` declares a pointer to an `IntPtr`, equivalent to `rizz **pp;`.
+
+Aliases can be used for variables, scalar arrays, function parameters,
+function return types, and struct/union fields. Aliases to named structs and
+unions keep the underlying tag identity, so `PointAlias` still has the exact
+type `gang Point`; anonymous aggregate aliases create a new aggregate type
+whose public name is the alias; named inline aggregate aliases additionally
+make the tag available through normal `gang tag`/`chungus tag` syntax.
+
+Current limitations:
+
+- `lit` declarations are top-level only.
+- The alias target must already be defined; there are no forward typedefs or
+  incomplete aggregate aliases such as `lit gang Ghost Alias;`.
+- Array typedefs and function-pointer typedefs are not supported.
+- Storage-class modifiers such as `salty` are not accepted on `lit`
+  declarations; apply them where the alias is used instead. Repeating a
+  width or signedness specifier the alias already has (`giga` on a `giga`
+  alias, `nut` on a `nut` alias) is rejected as a conflict.
+- Alias names are reserved type names and cannot be reused as variables,
+  parameters, functions, enum constants, or other aliases. Aggregate tags
+  (`gang`/`chungus`/`gyatt`) live in a separate namespace, so a typedef name can
+  share a spelling with a tag in either declaration order, matching C
+  typedef/tag behavior.
+
+### 7.13. Modules (`#cooked`)
 
 `#cooked` is Brainrot's `#include`: it splices another `.brainrot` file's
 function and struct definitions into the current file at the point of the

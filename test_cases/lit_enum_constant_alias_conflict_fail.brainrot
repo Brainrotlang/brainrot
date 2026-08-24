@@ -1,0 +1,8 @@
+🚽 RED is a TYPE_NAME after the alias; enum_constant accepts that token and
+🚽 rejects it as an ordinary-identifier collision (not a raw parse error).
+lit rizz RED;
+gyatt Color { RED };
+
+skibidi main {
+    bussin 0;
+}
