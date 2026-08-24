@@ -110,7 +110,7 @@ skibidi main {
 
 ## Phase 1 — The keystone: native calls as expressions
 
-**Status: in review (#217) · Priority: P0 · Blocks: literally everything else**
+**Status: merged (#217) · Priority: P0 · Blocks: literally everything else**
 
 This is the single highest-leverage change in the entire roadmap. Until a native
 call is an ordinary expression, none of the rest is worth starting.
@@ -152,7 +152,7 @@ lands. Suggested path: support both forms for one release, warn on the old one.
 
 ## Phase 2 — A typed native ABI
 
-**Status: in review (#223) · Priority: P0 · Depends on: Phase 1**
+**Status: merged (#223) · Priority: P0 · Depends on: Phase 1**
 
 Right now the semantic analyzer cannot check a single builtin argument. Making
 native exports self-describing fixes that and unlocks generated bindings.
