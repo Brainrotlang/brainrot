@@ -126,6 +126,10 @@ const WASM_EXPECTED_OVERRIDES = {
   // pads to 4 (not native's 8), so the struct is 8 bytes total, and
   // the member's own maxxing(d.value) is 4 (not native's 8) too.
   struct_field_long_modifier: "8\n4",
+  // struct_array_field_ptr's `rizz *ptrs[2];` is 2 pointers: 4 bytes
+  // each on wasm32 ILP32 (8 total) vs 8 bytes each on native LP64 (16
+  // total) -- same root cause as native_void_pointer_struct_field above.
+  struct_array_field_ptr: "ptr0 correct\nptr1 correct\n8",
 };
 
 // Fixtures that call a tests/stdrot/*.c native (poke_int, peek_int,
