@@ -282,7 +282,7 @@ size_t get_type_size_for_descriptor(VarType type, int pointer_level,
 
 static void write_value_to_address(void *address, VarType type,
                                    int pointer_level, ASTNode *expr,
-                                   TypeModifiers mods);
+                                   TypeModifiers mods, bool packed_storage);
 static void initialize_variable_from_expr(Variable *var, ASTNode *expr);
 
 // Symbol table functions
@@ -2504,9 +2504,54 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
     return (uintptr_t)0;
 }
 
+/* See this function's declaration (ast.h) for the full invariant. */
+int char_scalar_slot_value(int raw)
+{
+    return (unsigned char)raw;
+}
+
+/* `packed_storage` distinguishes two genuinely different memory shapes
+   `address` can point into, which only diverge for VAR_CHAR:
+   - false (a plain NODE_IDENTIFIER target): address is a scalar
+     Variable's own union slot (evaluate_lvalue_address's NODE_IDENTIFIER
+     case), which for VAR_CHAR is `&var->value.ivalue` -- a real 4-byte
+     `int` slot, not a 1-byte one (see that union's definition), because
+     there is no dedicated 1-byte member for it to live in instead.
+   - true (NODE_ARRAY_ACCESS, NODE_STRUCT_ACCESS, or a dereferenced
+     pointer target): address points into a tightly packed array/struct
+     blob (or, for a dereference, wherever the pointer says -- possibly
+     a scalar Variable's own slot, possibly one of those same blobs),
+     where a `yap` element/field genuinely occupies 1 byte with real
+     neighbors on both sides. Every other VarType already has matching
+     width between the two shapes (BOOL, SHORT, FLOAT, DOUBLE, INT all
+     use a same-sized union member and a same-sized array/struct slot),
+     which is why only VAR_CHAR needs this distinction at all.
+
+   A dereferenced pointer's `address` can land in EITHER shape and
+   there is no way to tell which from the pointer alone -- `yap *p`
+   could be `&someCharVariable` or `&someArray[i]` or `&someStruct.
+   field`. That ambiguity is why the VAR_CHAR case below does not just
+   pick a width from `packed_storage` and stop: the scalar (non-packed)
+   branch also narrows the value to a single byte's worth of range
+   before zero-extending it back out to fill the full 4-byte slot,
+   keeping that slot's upper 3 bytes permanently zero. That is what
+   makes a *later*, narrower 1-byte write through a `yap *` alias into
+   this same slot (the `packed_storage` branch, taken because the write
+   arrived via a dereference, not because anyone determined this
+   particular address is actually a scalar's slot) safe: it only ever
+   touches the low byte, and the upper three were already zero and stay
+   that way. Without this, a scalar `yap c; yap *p = &c;` sequence
+   ending in `*p = 'x'` would leave whatever was previously in bytes
+   1-3 of `c`'s slot behind, corrupting any subsequent raw (unnarrowed)
+   read of `c` as a full int (confirmed: `c = 1000;` followed by
+   `*p = 'x';` used to leave `c + 0` reading 888, not 120). Writing
+   `*(int *)address` in the packed case overwrites 3 bytes of whatever
+   follows -- padding if you're lucky, a real neighboring field/element
+   if you're not (confirmed: `gang { rizz a; yap b; yap c; };
+   f.b = 'x';` silently zeroed `c`). */
 static void write_value_to_address(void *address, VarType type,
                                    int pointer_level, ASTNode *expr,
-                                   TypeModifiers mods)
+                                   TypeModifiers mods, bool packed_storage)
 {
     if (!address)
     {
@@ -2538,7 +2583,11 @@ static void write_value_to_address(void *address, VarType type,
         *(bool *)address = evaluate_expression_bool(expr);
         break;
     case VAR_CHAR:
-        *(int *)address = evaluate_expression_int(expr);
+        if (packed_storage)
+            *(char *)address = (char)evaluate_expression_int(expr);
+        else
+            *(int *)address =
+                char_scalar_slot_value(evaluate_expression_int(expr));
         break;
     case VAR_STRING:
         *(String *)address = evaluate_expression_string(expr);
@@ -2583,7 +2632,8 @@ static void initialize_variable_from_expr(Variable *var, ASTNode *expr)
         var->value.bvalue = evaluate_expression_bool(expr);
         break;
     case VAR_CHAR:
-        var->value.ivalue = evaluate_expression_int(expr);
+        var->value.ivalue =
+            char_scalar_slot_value(evaluate_expression_int(expr));
         break;
     case VAR_STRING:
         var->value.strvalue = evaluate_expression_string(expr);
@@ -3051,7 +3101,9 @@ float evaluate_expression_float(ASTNode *node)
         case VAR_BOOL:
             return (float)*(bool *)addr;
         case VAR_CHAR:
-            return (float)*(char *)addr;
+            /* unsigned char: see evaluate_expression_int()'s
+               OP_DEREFERENCE case for why. */
+            return (float)*(unsigned char *)addr;
         case VAR_FLOAT:
             return *(float *)addr;
         case VAR_DOUBLE:
@@ -3195,7 +3247,9 @@ double evaluate_expression_double(ASTNode *node)
         case VAR_BOOL:
             return (double)*(bool *)addr;
         case VAR_CHAR:
-            return (double)*(char *)addr;
+            /* unsigned char: see evaluate_expression_int()'s
+               OP_DEREFERENCE case for why. */
+            return (double)*(unsigned char *)addr;
         case VAR_FLOAT:
             return (double)*(float *)addr;
         case VAR_DOUBLE:
@@ -3569,7 +3623,9 @@ short evaluate_expression_short(ASTNode *node)
         case VAR_BOOL:
             return (short)*(bool *)addr;
         case VAR_CHAR:
-            return (short)*(char *)addr;
+            /* unsigned char: see evaluate_expression_int()'s
+               OP_DEREFERENCE case for why. */
+            return (short)*(unsigned char *)addr;
         case VAR_FLOAT:
             return (short)*(float *)addr;
         case VAR_DOUBLE:
@@ -3669,10 +3725,32 @@ int evaluate_expression_int(ASTNode *node)
             // See the NODE_UNARY_OPERATION/OP_DEREFERENCE case in
             // evaluate_expression_pointer() above for why a possible NULL
             // dereference here is expected/deferred, not a bug to silently
-            // wave off.
-            // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
-            return *(int *)(uintptr_t)evaluate_expression_pointer(
+            // wave off. Both returns below dereference `pointee`, so both
+            // need their own suppression -- NOLINTNEXTLINE only covers the
+            // one line immediately after it.
+            void *pointee = (void *)(uintptr_t)evaluate_expression_pointer(
                 node->data.unary.operand);
+            /* get_expression_type() on a dereference returns the
+               operand's own type (see that function's own
+               NODE_UNARY_OPERATION case) -- for a `yap *p`, that's the
+               pointee's real VarType, VAR_CHAR, regardless of what `p`
+               happens to point at (a scalar variable's union slot, or a
+               genuinely packed array/struct byte). Same width bug as
+               the NODE_ARRAY_ACCESS case below if left as a blind
+               `*(int *)`: a `yap *` into a packed buffer would over-read
+               3 bytes past a real 1-byte slot. `unsigned char`, not
+               `char`: char_scalar_slot_value() (ast.h) zero-extends a
+               scalar `yap` variable's own slot on every write, so a
+               scalar read is always 0-255; a signed `*(char *)` read
+               here would disagree with that for every packed byte
+               >= 128 (confirmed: after `c = 1000`, a scalar read gives
+               232, a signed packed read gave -24) even though both are
+               reading what should be the same logical value. */
+            if (get_expression_type(node) == VAR_CHAR)
+                // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
+                return (int)*(unsigned char *)pointee;
+            // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
+            return *(int *)pointee;
         }
         if (node->data.unary.op == OP_ADDRESS_OF)
         {
@@ -3692,7 +3770,28 @@ int evaluate_expression_int(ASTNode *node)
             yyerror("Cannot use pointer in integer context");
             return 0;
         }
-        return *(int *)evaluate_multi_array_access(node);
+        /* This function is the shared "integer family" evaluator for
+           every element type that doesn't get its own dedicated
+           evaluate_expression_{bool,short,float,double}() -- VAR_CHAR
+           and VAR_ENUM both funnel through here (get_expression_type()
+           already maps a char literal to VAR_INT). Unlike those other
+           four types, whose array-element width always matches this
+           function's own `int` return width, a `yap` array element is
+           1 byte: reading it back as `*(int *)` over-reads 3 bytes past
+           a single-element array and misreads every other element's
+           address as if elements were 4 bytes apart instead of 1
+           (mirrors the write-side bug fixed in write_value_to_address()
+           for the identical reason -- VAR_CHAR is the one type whose
+           packed-array width doesn't match this function's own).
+           `unsigned char`, not `char`: see the matching comment on the
+           OP_DEREFERENCE case above -- a signed read here would
+           disagree with a scalar `yap` variable's own always-0-255
+           representation (char_scalar_slot_value(), ast.h) for every
+           byte >= 128. */
+        void *addr = evaluate_multi_array_access(node);
+        if (get_expression_type(node) == VAR_CHAR)
+            return (int)*(unsigned char *)addr;
+        return *(int *)addr;
     }
     case NODE_FUNC_CALL:
     {
@@ -3743,7 +3842,12 @@ int evaluate_expression_int(ASTNode *node)
         case VAR_BOOL:
             return (int)*(bool *)addr;
         case VAR_CHAR:
-            return (int)*(char *)addr;
+            /* unsigned char, not char: must agree with a scalar `yap`
+               variable's own always-0-255 representation
+               (char_scalar_slot_value(), ast.h) -- see the matching
+               comment on evaluate_expression_int()'s OP_DEREFERENCE
+               case for the full reasoning. */
+            return (int)*(unsigned char *)addr;
         case VAR_FLOAT:
             return (int)*(float *)addr;
         case VAR_DOUBLE:
@@ -4480,9 +4584,17 @@ void execute_assignment(ASTNode *node)
        get_expression_type()/get_expression_pointer_level(), which both
        route through resolve_struct_access(). */
 
+    /* Every evaluate_lvalue_address() case except NODE_IDENTIFIER writes
+       into packed storage (an array/struct blob, or wherever a
+       dereferenced pointer points -- itself possibly one of those same
+       blobs) rather than a scalar Variable's own union slot; see
+       write_value_to_address()'s own comment for why that distinction
+       matters. */
+    bool packed_storage = target->type != NODE_IDENTIFIER;
+
     void *address = evaluate_lvalue_address(target);
     write_value_to_address(address, target_type, target_pointer_level,
-                           value_node, mods);
+                           value_node, mods, packed_storage);
 }
 
 void execute_statement(ASTNode *node)
@@ -6172,8 +6284,27 @@ bool enter_function_scope(Function *func, ArgumentList *args)
         switch (curr_param->type)
         {
         case VAR_INT:
-        case VAR_CHAR:
             set_int_variable(curr_param->name, arg_values[i].ivalue, mods);
+            break;
+        case VAR_CHAR:
+            /* Not set_int_variable(): that calls set_variable(...,
+               VAR_INT, ...), which overwrites this parameter's
+               var_type to VAR_INT (clobbering the VAR_CHAR set moments
+               ago, above) and stores the raw, unmasked argument value.
+               A `yap` parameter passed an out-of-byte-range argument
+               (nothing here rejects that) would then keep both a wrong
+               var_type and non-zero upper bytes in its ivalue slot --
+               exactly the stale-high-bytes hazard write_value_to_
+               address()'s own comment describes, now reachable through
+               a plain function call instead of a pointer alias
+               (confirmed: `skibidi foo(yap c) { yap *p = &c; *p = 'x';
+               yapping("%d", c + 0); } ... foo(1000);` printed 888, not
+               120). set_char_variable() calls set_variable(..., VAR_
+               CHAR, ...), whose own VAR_CHAR case already does the
+               same `(unsigned char)` zero-extension write_value_to_
+               address() does, and correctly leaves var_type as
+               VAR_CHAR. */
+            set_char_variable(curr_param->name, arg_values[i].ivalue, mods);
             break;
         case VAR_FLOAT:
             set_float_variable(curr_param->name, arg_values[i].fvalue, mods);

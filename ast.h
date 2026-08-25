@@ -648,6 +648,22 @@ int evaluate_expression_int(ASTNode *node);
 short evaluate_expression_short(ASTNode *node);
 bool evaluate_expression_bool(ASTNode *node);
 int evaluate_expression(ASTNode *node);
+/* Zero-extends `raw` to what a scalar VAR_CHAR Variable's own 4-byte
+   union slot (value.ivalue -- there is no dedicated 1-byte member)
+   must always hold: upper 3 bytes zero, regardless of `raw`'s actual
+   range. This is what makes a later 1-byte write through a `yap *`
+   alias into that same slot (write_value_to_address()'s `packed_
+   storage` branch, taken whenever the write arrives via a dereference
+   -- there is no way to tell from the pointer alone whether it aliases
+   a scalar's slot or a genuinely packed array/struct byte) safe: it
+   only ever touches the low byte, and the upper three were already
+   zero and stay that way. Every write site that stores a fresh value
+   directly into a scalar char Variable's own slot must route through
+   this -- set_variable()'s own VAR_CHAR case does the equivalent
+   `*(unsigned char *)value` narrowing independently (it takes a
+   pointer, not a value, so can't share this exact helper) and does not
+   need converting. */
+int char_scalar_slot_value(int raw);
 bool is_const_variable(const String name);
 void check_const_assignment(const String name);
 void execute_statement(ASTNode *node);

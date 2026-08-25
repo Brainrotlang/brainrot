@@ -585,8 +585,13 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
             }
             case VAR_CHAR:
             {
+                /* char_scalar_slot_value() (ast.h/ast.c): every write
+                   into a scalar VAR_CHAR Variable's own slot must zero-
+                   extend, not plain-widen, so a later narrower 1-byte
+                   write through a `yap *` alias into this same slot
+                   can't leave stale bytes behind. */
                 int int_value = evaluate_expression_int(node->data.op.right);
-                scope_var->value.ivalue = int_value;
+                scope_var->value.ivalue = char_scalar_slot_value(int_value);
                 break;
             }
             case VAR_SHORT:
