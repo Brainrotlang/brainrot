@@ -1,0 +1,33 @@
+🚽 Test case: #206 (3e) -- a pointer-element array field (`rizz *ptrs[2];`),
+🚽 the PR's own claimed scope. Confirms storage and layout (2 pointers =
+🚽 16 bytes) and that each slot independently holds the address it was
+🚽 given (compared against the source variable's own `&`, not against
+🚽 each other -- comparing two struct-array-field-element expressions to
+🚽 EACH OTHER in one binary operation hits issue #192, a pre-existing,
+🚽 unrelated bug this fixture deliberately does not exercise: confirmed
+🚽 by reproducing #192 with a plain non-array scalar field and zero
+🚽 array_access grammar involved at all).
+🚽
+🚽 Full pointer *dereference* through a struct field (`*bx.ptrs[0]`) is
+🚽 also out of scope here -- blocked by the pre-existing #196/#197
+🚽 "chaining through a pointer field" limitation, reproduced identically
+🚽 for a plain (non-array) pointer struct field.
+gang Box {
+    rizz *ptrs[2];
+};
+
+skibidi main {
+    rizz a = 1;
+    rizz b = 2;
+    gang Box bx;
+    bx.ptrs[0] = &a;
+    bx.ptrs[1] = &b;
+
+    edgy (bx.ptrs[0] == &a) {
+        yapping("ptr0 correct");
+    }
+    edgy (bx.ptrs[1] == &b) {
+        yapping("ptr1 correct");
+    }
+    yapping("%lu", maxxing(bx));
+}

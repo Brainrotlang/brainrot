@@ -555,7 +555,16 @@ ASTNode *create_struct_field_array_access_node(ASTNode *base,
         node->var_type = fld->type;
         node->pointer_level = fld->pointer_level;
         node->modifiers = fld->modifiers;
-        node->is_array = fld->is_array;
+        /* NOT fld->is_array: this node denotes the INDEXED ELEMENT
+           (`foo.arr[i]`), a scalar/pointer value, not the array field
+           itself -- fld->is_array (true) describes the field being
+           indexed into, not the result of indexing it. Under-indexing
+           (fewer indices than the field's own rank, which in C would
+           yield a sub-array) is rejected outright by evaluate_struct_
+           field_array_access()'s own rank check, so a successfully-
+           evaluated node here is always a genuine scalar/pointer
+           element; false is correct unconditionally. */
+        node->is_array = false;
     }
 
     return node;
@@ -811,6 +820,31 @@ static void *evaluate_struct_field_array_access(ASTNode *node)
         snprintf(error_msg, sizeof(error_msg),
                  "Struct/union field '%.100s' is not an array",
                  fld->name.data ? fld->name.data : "?");
+        yyerror(error_msg);
+        exit(EXIT_FAILURE);
+    }
+    /* calculate_array_offset()'s own "TEMPORARY FIX" dimension-mismatch
+       handling silently truncates to whichever index count is smaller
+       and keeps going -- a leftover workaround for a Variable-lookup
+       bug on the name-based path, not a real rank-checking policy. That
+       leniency is tolerable for a standalone array's own private
+       buffer; it is not tolerable here: an array field lives inline in
+       the struct's single blob, so a rank mismatch silently computing
+       an offset for the wrong number of dimensions reads/writes into a
+       neighboring field's bytes instead of just misreading its own
+       array (e.g. `g.cells[1]` on a `rizz cells[2][3];` field would
+       silently resolve to `cells[1][0]`'s address and be treated as a
+       lone int, not rejected). Reject the mismatch outright here,
+       before calculate_array_offset() ever gets a chance to be lenient
+       about it. */
+    if (num_indices != fld->array_dimensions.num_dimensions)
+    {
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "Struct/union field '%.100s' expects %d array index/indices, "
+                 "got %d",
+                 fld->name.data ? fld->name.data : "?",
+                 fld->array_dimensions.num_dimensions, num_indices);
         yyerror(error_msg);
         exit(EXIT_FAILURE);
     }
@@ -1538,6 +1572,62 @@ void *handle_identifier(ASTNode *node, const String contextErrorMessage,
     return NULL;
 }
 
+/* What a NODE_ARRAY_ACCESS node indexes into, regardless of whether
+   it's the classic IDENTIFIER form (Array.name, a Variable) or the
+   struct-field form (Array.base, `foo.arr[i]`, a StructField). Single
+   source of truth for "is this a valid array access, and what does it
+   mean" -- every consumer below (get_expression_type,
+   get_expression_pointer_level, is_expression,
+   infer_runtime_expression_type_noeval) must agree on this, or one can
+   call an expression well-typed while another calls it undefined for
+   the identical node (confirmed: for `f.n[0]` on a scalar `rizz n`,
+   is_expression(node, VAR_INT) used to report true while
+   get_expression_type(node) reported NONE/"Undefined array field" --
+   two public type queries disagreeing about the same expression).
+   Returns false -- leaving *out untouched -- for a node that isn't a
+   NODE_ARRAY_ACCESS, a name/field that doesn't resolve, or one that
+   resolves but isn't actually an array (indexing a scalar): all three
+   are "not a valid array access" and every caller here must treat them
+   identically. */
+typedef struct
+{
+    VarType type;
+    int pointer_level;
+    TypeModifiers modifiers;
+    const ArrayDimensions *dimensions;
+} ArrayAccessElement;
+
+static bool resolve_array_access_element(ASTNode *node, ArrayAccessElement *out)
+{
+    if (!node || node->type != NODE_ARRAY_ACCESS)
+        return false;
+
+    if (node->data.array.base)
+    {
+        StructDef *def = NULL;
+        void *base = NULL;
+        StructField *fld = NULL;
+        if (!resolve_struct_access(node->data.array.base, &def, &base, &fld,
+                                   false) ||
+            !fld->is_array)
+            return false;
+        out->type = fld->type;
+        out->pointer_level = fld->pointer_level;
+        out->modifiers = fld->modifiers;
+        out->dimensions = &fld->array_dimensions;
+        return true;
+    }
+
+    Variable *var = get_variable(node->data.array.name);
+    if (!var || !var->is_array)
+        return false;
+    out->type = var->var_type;
+    out->pointer_level = var->pointer_level;
+    out->modifiers = var->modifiers;
+    out->dimensions = &var->array_dimensions;
+    return true;
+}
+
 int get_expression_pointer_level(ASTNode *node)
 {
     if (!node)
@@ -1554,18 +1644,10 @@ int get_expression_pointer_level(ASTNode *node)
     }
     case NODE_ARRAY_ACCESS:
     {
-        if (node->data.array.base)
-        {
-            StructDef *def = NULL;
-            void *base = NULL;
-            StructField *fld = NULL;
-            if (resolve_struct_access(node->data.array.base, &def, &base, &fld,
-                                      false))
-                return fld->pointer_level;
-            return node->pointer_level;
-        }
-        Variable *var = get_variable(node->data.array.name);
-        return var ? var->pointer_level : node->pointer_level;
+        ArrayAccessElement elem;
+        if (resolve_array_access_element(node, &elem))
+            return elem.pointer_level;
+        return node->pointer_level;
     }
     case NODE_UNARY_OPERATION:
         if (node->data.unary.op == OP_ADDRESS_OF)
@@ -1676,36 +1758,18 @@ VarType get_expression_type(ASTNode *node)
         return VAR_INT;
     case NODE_ARRAY_ACCESS:
     {
-        if (node->data.array.base)
-        {
-            StructDef *def = NULL;
-            void *base = NULL;
-            StructField *fld = NULL;
-            if (resolve_struct_access(node->data.array.base, &def, &base, &fld,
-                                      false) &&
-                fld->is_array)
-                return fld->type;
-            yyerror("Undefined array field in expression");
-            return NONE;
-        }
-
-        // First, get the array's base type from symbol table
-        // Store the array name locally to prevent modification
-        const String array_name = node->data.array.name;
-        if (!array_name.data)
-        {
-            yyerror("Invalid array access: missing array name");
-            return NONE;
-        }
-
-        Variable *var = get_variable(array_name);
-        if (var != NULL && var->is_array)
-        {
-            // Return the array's element type without evaluating
-            // (evaluation might modify the node structure)
-            return var->var_type;
-        }
-        yyerror("Undefined array in expression");
+        ArrayAccessElement elem;
+        if (resolve_array_access_element(node, &elem))
+            return elem.type;
+        /* Deliberately not "Undefined array" -- resolve_array_access_
+           element() returns false both when the name/field genuinely
+           doesn't resolve AND when it resolves to something that just
+           isn't an array (e.g. indexing a scalar struct field);
+           claiming "undefined" for the latter is a real thing that
+           exists, just not indexable, and evaluate_struct_field_array_
+           access()/evaluate_multi_array_access() (ast.c) report the
+           precise reason at the point they actually have it. */
+        yyerror("Invalid array access in expression");
         return NONE;
     }
     case NODE_IDENTIFIER:
@@ -1830,6 +1894,20 @@ static StructDef *get_struct_def_for_expression(ASTNode *expr)
     }
     case NODE_ARRAY_ACCESS:
     {
+        /* NOT resolve_array_access_element(): that helper's
+           ArrayAccessElement has no struct_name field (struct-typed
+           array elements aren't supported at all for the struct-field/
+           Array.base form -- build_struct_fields_from_params(), lang.y,
+           rejects that combination for struct fields outright), but a
+           plain array VARIABLE of struct-pointer-typed elements is a
+           real, working, tested feature (e.g. `lit gang Point *P; P
+           values[2]; ... *values[1] ...`, lit_struct_pointer_alias_
+           array.brainrot) that needs var->struct_name specifically.
+           Array.base (struct-field form) has no such feature yet, so it
+           falls through to NULL below, same as before this field
+           existed. */
+        if (expr->data.array.base)
+            return NULL;
         Variable *var = get_variable(expr->data.array.name);
         if (var && var->is_array && var->var_type == VAR_STRUCT &&
             var->struct_name.data)
@@ -1918,23 +1996,8 @@ static VarType infer_runtime_expression_type_noeval(ASTNode *expr)
         return VAR_INT;
     case NODE_ARRAY_ACCESS:
     {
-        if (expr->data.array.base)
-        {
-            StructDef *def = NULL;
-            void *base = NULL;
-            StructField *fld = NULL;
-            if (resolve_struct_access(expr->data.array.base, &def, &base, &fld,
-                                      false))
-                return fld->type;
-            return NONE;
-        }
-        const String array_name = expr->data.array.name;
-        if (!array_name.data)
-            return NONE;
-        Variable *var = get_variable(array_name);
-        if (var != NULL)
-            return var->var_type;
-        return NONE;
+        ArrayAccessElement elem;
+        return resolve_array_access_element(expr, &elem) ? elem.type : NONE;
     }
     case NODE_IDENTIFIER:
     {
@@ -4573,23 +4636,10 @@ bool is_expression(ASTNode *node, VarType type)
     {
     case NODE_ARRAY_ACCESS:
     {
-        if (node->data.array.base)
-        {
-            StructDef *def = NULL;
-            void *base = NULL;
-            StructField *fld = NULL;
-            if (resolve_struct_access(node->data.array.base, &def, &base, &fld,
-                                      false))
-                return fld->type == type;
-            yyerror("Undefined variable in type check");
-            return false;
-        }
-        Variable *var = get_variable(node->data.array.name);
-        if (var != NULL)
-        {
-            return var->var_type == type;
-        }
-        yyerror("Undefined variable in type check");
+        ArrayAccessElement elem;
+        if (resolve_array_access_element(node, &elem))
+            return elem.type == type;
+        yyerror("Invalid array access in type check");
         return false;
     }
     case NODE_IDENTIFIER:
