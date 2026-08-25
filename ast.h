@@ -710,18 +710,16 @@ void register_struct_def(StructDef *def);
 StructDef *get_struct_def(const String name);
 void free_struct_registry(void);
 StructField *find_struct_field(StructDef *def, const String name);
-size_t compute_struct_layout(
-    StructField *fields,
-    size_t *out_alignment); /* fills offsets (C-ABI aligned, trailing
-                                padding included in the return value);
-                                *out_alignment gets the struct's own max
-                                field alignment if non-NULL */
-size_t compute_union_layout(
-    StructField *fields,
-    size_t *out_alignment); /* offset 0 for all fields, returns max size
-                                rounded up to max member alignment;
-                                *out_alignment gets that alignment if
-                                non-NULL */
+/* Both require def->fields (and, for compute_union_layout, def->is_union)
+   already populated. Each fills every field's offset and writes
+   def->total_size/def->alignment together as the single writer of both --
+   there is no optional out-param to forget, so a registered StructDef
+   can't end up with a total_size but a stale/zero alignment. */
+void compute_struct_layout(StructDef *def); /* C-ABI aligned, trailing
+                                                padding included */
+void compute_union_layout(
+    StructDef *def); /* offset 0 for all fields; total_size is the max
+                         member size rounded up to max member alignment */
 ASTNode *create_struct_def_node(String name, StructField *fields);
 ASTNode *create_struct_access_node(ASTNode *object, String member);
 void *evaluate_struct_member_address(ASTNode *node);

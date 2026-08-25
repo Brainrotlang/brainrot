@@ -6372,16 +6372,22 @@ static size_t align_up(size_t offset, size_t alignment)
     return (offset + alignment - 1) & ~(alignment - 1);
 }
 
-/* Walk the field list, assign C-ABI-aligned offsets (padding before each
-   field as needed), and round the total size up to the struct's own max
-   field alignment (trailing padding) -- matching how a real C compiler
-   lays out the same field list, so a `gang` handed across the FFI
-   boundary reads/writes the same bytes a C caller would. */
-size_t compute_struct_layout(StructField *fields, size_t *out_alignment)
+/* Walk def->fields, assign C-ABI-aligned offsets (padding before each
+   field as needed), and write def->total_size/def->alignment -- the
+   struct's total size rounded up to its own max field alignment
+   (trailing padding) and that alignment itself. Matches how a real C
+   compiler lays out the same field list, so a `gang` handed across the
+   FFI boundary reads/writes the same bytes a C caller would.
+
+   def->total_size and def->alignment are set together, here, as the
+   single writer of both -- callers only ever populate def->fields/
+   is_union and then call this (or compute_union_layout), so there is no
+   window where one is stale relative to the other. */
+void compute_struct_layout(StructDef *def)
 {
     size_t off = 0;
     size_t max_align = 1;
-    StructField *f = fields;
+    StructField *f = def->fields;
     while (f)
     {
         size_t falign = get_struct_field_alignment(f);
@@ -6392,20 +6398,19 @@ size_t compute_struct_layout(StructField *fields, size_t *out_alignment)
         off += get_struct_field_size(f);
         f = f->next;
     }
-    off = align_up(off, max_align);
-    if (out_alignment)
-        *out_alignment = max_align;
-    return off; /* total bytes, including trailing padding */
+    def->total_size = align_up(off, max_align); /* includes trailing pad */
+    def->alignment = max_align;
 }
 
-/* Union fields all share offset 0; total size is the largest member,
-   rounded up to the largest member's alignment (unions pad too --
-   `union { char c; int i; }` is 4 bytes in C, not 1). */
-size_t compute_union_layout(StructField *fields, size_t *out_alignment)
+/* Union fields all share offset 0; def->total_size becomes the largest
+   member, rounded up to the largest member's alignment (unions pad too
+   -- `union { char c; int i; }` is 4 bytes in C, not 1). Same
+   single-writer contract as compute_struct_layout() above. */
+void compute_union_layout(StructDef *def)
 {
     size_t max_size = 0;
     size_t max_align = 1;
-    StructField *f = fields;
+    StructField *f = def->fields;
     while (f)
     {
         f->offset = 0;
@@ -6417,10 +6422,8 @@ size_t compute_union_layout(StructField *fields, size_t *out_alignment)
             max_align = falign;
         f = f->next;
     }
-    max_size = align_up(max_size, max_align);
-    if (out_alignment)
-        *out_alignment = max_align;
-    return max_size;
+    def->total_size = align_up(max_size, max_align);
+    def->alignment = max_align;
 }
 
 void register_enum_def(EnumDef *def)
