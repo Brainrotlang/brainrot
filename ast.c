@@ -517,6 +517,50 @@ ASTNode *create_multi_array_access_node(String name, ASTNode *indices[],
     return node;
 }
 
+/* The struct-field counterpart of create_multi_array_access_node(): `base`
+   is an already-built struct_access expression (e.g. `foo.arr`), not a
+   Variable name -- Array.base (ast.h) is what tells every other consumer
+   (evaluate_multi_array_access(), get_expression_type()/get_expression_
+   pointer_level(), and their semantic_analyzer.c mirrors) to resolve
+   through resolve_struct_access() instead of get_variable(). Resolves
+   eagerly where possible, same reasoning and same "expected to fail
+   silently" contract as create_struct_access_node()'s own comment
+   (forward references / not-yet-declared variables at parse time). */
+ASTNode *create_struct_field_array_access_node(ASTNode *base,
+                                               ASTNode *indices[],
+                                               int num_indices)
+{
+    ASTNode *node = ARENA_ALLOC_ASTNODE();
+    if (!node)
+    {
+        yyerror("Memory allocation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    node->type = NODE_ARRAY_ACCESS;
+    node->data.array.base = base;
+    node->data.array.num_dimensions = num_indices;
+    for (int i = 0; i < num_indices; i++)
+    {
+        node->data.array.indices[i] = indices[i];
+    }
+
+    StructDef *def = NULL;
+    void *field_base = NULL;
+    StructField *fld = NULL;
+    if (base->type == NODE_STRUCT_ACCESS &&
+        resolve_struct_access(base, &def, &field_base, &fld,
+                              /* report_errors */ false))
+    {
+        node->var_type = fld->type;
+        node->pointer_level = fld->pointer_level;
+        node->modifiers = fld->modifiers;
+        node->is_array = fld->is_array;
+    }
+
+    return node;
+}
+
 // Function to rename the old create_array_access_node to maintain compatibility
 ASTNode *create_array_access_node_single(String name, ASTNode *index)
 {
@@ -526,8 +570,15 @@ ASTNode *create_array_access_node_single(String name, ASTNode *index)
     return create_multi_array_access_node(name, indices, 1);
 }
 
-// Calculate the memory offset for multi-dimensional array access
-size_t calculate_array_offset(Variable *var, int indices[], int num_indices)
+/* Calculate the memory offset for multi-dimensional array access.
+   Takes the two pieces an "is this actually an array, and what shape"
+   check needs directly, rather than a `Variable *`, so a StructField's
+   own is_array/array_dimensions (an array-typed struct field, e.g.
+   `chad params[4];`) can reuse this without a fake Variable standing in
+   for it -- the logic below never depended on anything else a Variable
+   carries. */
+size_t calculate_array_offset(bool is_array, const ArrayDimensions *dims,
+                              int indices[], int num_indices)
 {
     // TEMPORARY FIX: Skip strict dimension checking due to variable lookup bug
     // The issue is that get_variable() sometimes returns the wrong variable
@@ -536,20 +587,19 @@ size_t calculate_array_offset(Variable *var, int indices[], int num_indices)
 
     // If the variable is not actually an array or dimensions don't match,
     // try to handle it gracefully instead of crashing
-    if (!var->is_array)
+    if (!is_array)
     {
         // Variable is not an array - return offset 0 for single element access
         return 0;
     }
 
-    if (num_indices != var->array_dimensions.num_dimensions)
+    if (num_indices != dims->num_dimensions)
     {
         // Dimension mismatch - for now, just use the first few indices that are
         // available This is not ideal but prevents crashes
-        int actual_indices =
-            (num_indices < var->array_dimensions.num_dimensions)
-                ? num_indices
-                : var->array_dimensions.num_dimensions;
+        int actual_indices = (num_indices < dims->num_dimensions)
+                                 ? num_indices
+                                 : dims->num_dimensions;
 
         if (actual_indices <= 0)
         {
@@ -568,13 +618,13 @@ size_t calculate_array_offset(Variable *var, int indices[], int num_indices)
     for (int i = 0; i < num_indices; i++)
     {
         // Check if the index is within bounds
-        if (indices[i] < 0 || indices[i] >= var->array_dimensions.dimensions[i])
+        if (indices[i] < 0 || indices[i] >= dims->dimensions[i])
         {
             char error_msg[MAX_BUFFER_LEN];
-            sprintf(
-                error_msg,
+            snprintf(
+                error_msg, sizeof(error_msg),
                 "Array index out of bounds: dimension %d (index=%d, size=%d)",
-                i + 1, indices[i], var->array_dimensions.dimensions[i]);
+                i + 1, indices[i], dims->dimensions[i]);
             yyerror(error_msg);
             exit(EXIT_FAILURE);
         }
@@ -584,7 +634,7 @@ size_t calculate_array_offset(Variable *var, int indices[], int num_indices)
         size_t multiplier = 1;
         for (int j = i + 1; j < num_indices; j++)
         {
-            multiplier *= var->array_dimensions.dimensions[j];
+            multiplier *= dims->dimensions[j];
         }
 
         offset += indices[i] * multiplier;
@@ -728,6 +778,89 @@ void *evaluate_struct_member_address(ASTNode *node)
 }
 
 // Evaluate a multi-dimensional array access node
+/* The struct-field counterpart of evaluate_multi_array_access() below,
+   for a `foo.arr[i]` node (Array.base set -- see ast.h's own comment on
+   that field). Kept as its own function rather than interleaved into
+   the name-based one: that function's existing name-based path has
+   several rounds of hard-won, narrowly-targeted bugfixes documented
+   inline (its own comments), and splitting keeps this new path from
+   perturbing any of that. Mirrors its structure and error-handling
+   style closely, field offset standing in for array_data. */
+static void *evaluate_struct_field_array_access(ASTNode *node)
+{
+    ASTNode *base = node->data.array.base;
+    int num_indices = node->data.array.num_dimensions;
+    if (num_indices <= 0)
+    {
+        yyerror("Invalid number of array indices");
+        exit(EXIT_FAILURE);
+    }
+
+    StructDef *def = NULL;
+    void *field_base = NULL;
+    StructField *fld = NULL;
+    if (!resolve_struct_access(base, &def, &field_base, &fld,
+                               /* report_errors */ true))
+    {
+        yyerror("Cannot resolve struct field for array access");
+        exit(EXIT_FAILURE);
+    }
+    if (!fld->is_array)
+    {
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "Struct/union field '%.100s' is not an array",
+                 fld->name.data ? fld->name.data : "?");
+        yyerror(error_msg);
+        exit(EXIT_FAILURE);
+    }
+
+    int indices[MAX_DIMENSIONS];
+    for (int i = 0; i < num_indices; i++)
+    {
+        ASTNode *index_node = node->data.array.indices[i];
+        if (!index_node)
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Missing index %d for array field '%.100s'", i,
+                     fld->name.data ? fld->name.data : "?");
+            yyerror(error_msg);
+            exit(EXIT_FAILURE);
+        }
+        indices[i] = evaluate_expression_int(index_node);
+    }
+
+    size_t offset = calculate_array_offset(
+        fld->is_array, &fld->array_dimensions, indices, num_indices);
+    void *element_base = (char *)field_base + fld->offset;
+
+    /* Pointer-ness dominates element stride here too, for the identical
+       reason the name-based path below checks it first (that path's own
+       "Round-23 review, finding #1" comment). */
+    if (fld->pointer_level > 0)
+        return (uintptr_t *)element_base + offset;
+
+    switch (fld->type)
+    {
+    case VAR_INT:
+        return (int *)element_base + offset;
+    case VAR_SHORT:
+        return (short *)element_base + offset;
+    case VAR_FLOAT:
+        return (float *)element_base + offset;
+    case VAR_DOUBLE:
+        return (double *)element_base + offset;
+    case VAR_BOOL:
+        return (bool *)element_base + offset;
+    case VAR_CHAR:
+        return (char *)element_base + offset;
+    default:
+        yyerror("Unknown struct array field element type");
+        exit(EXIT_FAILURE);
+    }
+}
+
 void *evaluate_multi_array_access(ASTNode *node)
 {
     // Validate the node structure
@@ -741,6 +874,8 @@ void *evaluate_multi_array_access(ASTNode *node)
         yyerror("Invalid node type for array access");
         exit(EXIT_FAILURE);
     }
+    if (node->data.array.base)
+        return evaluate_struct_field_array_access(node);
 
     // CRITICAL: Store the array name in a local copy IMMEDIATELY
     // The array name might be corrupted if we access node->data.array.name
@@ -828,7 +963,8 @@ void *evaluate_multi_array_access(ASTNode *node)
     }
 
     // Calculate the offset
-    size_t offset = calculate_array_offset(var, indices, num_indices);
+    size_t offset = calculate_array_offset(
+        var->is_array, &var->array_dimensions, indices, num_indices);
 
     /* Round-23 review, finding #1 -- pointer_level DOMINATES element
        stride the same way it dominates return-value boxing
@@ -1418,6 +1554,16 @@ int get_expression_pointer_level(ASTNode *node)
     }
     case NODE_ARRAY_ACCESS:
     {
+        if (node->data.array.base)
+        {
+            StructDef *def = NULL;
+            void *base = NULL;
+            StructField *fld = NULL;
+            if (resolve_struct_access(node->data.array.base, &def, &base, &fld,
+                                      false))
+                return fld->pointer_level;
+            return node->pointer_level;
+        }
         Variable *var = get_variable(node->data.array.name);
         return var ? var->pointer_level : node->pointer_level;
     }
@@ -1530,6 +1676,19 @@ VarType get_expression_type(ASTNode *node)
         return VAR_INT;
     case NODE_ARRAY_ACCESS:
     {
+        if (node->data.array.base)
+        {
+            StructDef *def = NULL;
+            void *base = NULL;
+            StructField *fld = NULL;
+            if (resolve_struct_access(node->data.array.base, &def, &base, &fld,
+                                      false) &&
+                fld->is_array)
+                return fld->type;
+            yyerror("Undefined array field in expression");
+            return NONE;
+        }
+
         // First, get the array's base type from symbol table
         // Store the array name locally to prevent modification
         const String array_name = node->data.array.name;
@@ -1759,6 +1918,16 @@ static VarType infer_runtime_expression_type_noeval(ASTNode *expr)
         return VAR_INT;
     case NODE_ARRAY_ACCESS:
     {
+        if (expr->data.array.base)
+        {
+            StructDef *def = NULL;
+            void *base = NULL;
+            StructField *fld = NULL;
+            if (resolve_struct_access(expr->data.array.base, &def, &base, &fld,
+                                      false))
+                return fld->type;
+            return NONE;
+        }
         const String array_name = expr->data.array.name;
         if (!array_name.data)
             return NONE;
@@ -4404,6 +4573,17 @@ bool is_expression(ASTNode *node, VarType type)
     {
     case NODE_ARRAY_ACCESS:
     {
+        if (node->data.array.base)
+        {
+            StructDef *def = NULL;
+            void *base = NULL;
+            StructField *fld = NULL;
+            if (resolve_struct_access(node->data.array.base, &def, &base, &fld,
+                                      false))
+                return fld->type == type;
+            yyerror("Undefined variable in type check");
+            return false;
+        }
         Variable *var = get_variable(node->data.array.name);
         if (var != NULL)
         {
@@ -5990,6 +6170,12 @@ Parameter *create_parameter_ex(String name, VarType type, int pointer_level,
     param->pointer_level = pointer_level;
     param->next = next;
     param->modifiers = mods;
+    /* Arena memory is malloc'd, not calloc'd -- explicit zeroing, not a
+       no-op. Callers that build an array-typed struct field (lang.y's
+       `struct_field: type declarator dimensions SEMICOLON`) overwrite
+       both fields immediately after this call returns. */
+    param->is_array = false;
+    param->array_dimensions = (ArrayDimensions){0};
 
     return param;
 }
@@ -6452,24 +6638,42 @@ StructField *find_struct_field(StructDef *def, const String name)
    other field falls back to get_type_size_for_descriptor, honoring
    f->modifiers (is_long/is_long_long/is_unsigned) -- e.g. a VAR_INT
    field reached through a `lit giga rizz ...` alias must size as an
-   8-byte long, not silently collapse to a 4-byte int. */
+   8-byte long, not silently collapse to a 4-byte int.
+
+   An array field (f->is_array, e.g. `chad params[4];`) occupies its
+   element size times the product of every dimension -- computed below
+   as `element_size`, using the exact same per-type logic a scalar field
+   of the same declared type would, since array-ness only ever
+   multiplies occupancy, never changes what a single element looks
+   like. */
 static size_t get_struct_field_size(StructField *f)
 {
+    size_t element_size;
     if (f->pointer_level > 0)
-        return sizeof(uintptr_t);
-
-    if (f->type == VAR_STRUCT)
+    {
+        element_size = sizeof(uintptr_t);
+    }
+    else if (f->type == VAR_STRUCT)
     {
         StructDef *nested = get_struct_def(f->struct_name);
         /* Should always be resolved by the parser before layout is
            computed; fall back defensively rather than corrupt offsets. */
-        return nested ? nested->total_size : 0;
+        element_size = nested ? nested->total_size : 0;
+    }
+    else
+    {
+        element_size = get_type_size_for_descriptor(f->type, 0, f->modifiers);
+        if (element_size == 0)
+            element_size = sizeof(int);
     }
 
-    size_t fsz = get_type_size_for_descriptor(f->type, 0, f->modifiers);
-    if (fsz == 0)
-        fsz = sizeof(int);
-    return fsz;
+    if (!f->is_array)
+        return element_size;
+
+    size_t count = 1;
+    for (int i = 0; i < f->array_dimensions.num_dimensions; i++)
+        count *= (size_t)f->array_dimensions.dimensions[i];
+    return element_size * count;
 }
 
 /* Alignment in bytes that a single field imposes on its enclosing
@@ -6479,7 +6683,12 @@ static size_t get_struct_field_size(StructField *f)
    get_struct_field_size()'s type switch, including f->modifiers for
    VAR_INT -- an 8-byte long/long-long field (reachable via a `lit
    giga`/`lit thicc` alias) must align as 8, not fall back to plain
-   int's 4, or a following field would be under-padded. */
+   int's 4, or a following field would be under-padded.
+
+   Deliberately ignores f->is_array: a C array never needs more
+   alignment than its own element (`chad params[4];` is 4-aligned, same
+   as a lone `chad`, not 16-aligned), so the switch below already
+   answers array fields correctly without a special case. */
 static size_t get_struct_field_alignment(StructField *f)
 {
     if (f->pointer_level > 0)

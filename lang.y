@@ -270,6 +270,8 @@ static StructField *build_struct_fields_from_params(Parameter *params)
         f->enum_name = safe_strdup(&p->enum_name);
         f->pointer_level = p->pointer_level;
         f->modifiers = p->modifiers;
+        f->is_array = p->is_array;
+        f->array_dimensions = p->array_dimensions;
         f->offset = 0;
         f->next = NULL;
         if (!tail)
@@ -737,6 +739,28 @@ struct_field
             }
             $$ = create_parameter_ex($2.name, $1, $2.pointer_level, NULL,
                                      (TypeModifiers){0});
+            SAFE_FREE($2.name);
+        }
+    | type declarator dimensions SEMICOLON
+        {
+            /* Fixed-size array field, e.g. `chad params[4];`. Same void
+               rejection as the scalar sibling above (this production
+               only ever sees a primitive `type`, never struct_or_union,
+               so a struct/union-typed array element -- out of scope for
+               now -- can't reach here at all). */
+            if ($1 == VAR_VOID && $2.pointer_level == 0)
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg),
+                        "Struct/union field '%s' cannot have type void",
+                        $2.name.data);
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
+            $$ = create_parameter_ex($2.name, $1, $2.pointer_level, NULL,
+                                     (TypeModifiers){0});
+            $$->is_array = true;
+            $$->array_dimensions = $3;
             SAFE_FREE($2.name);
         }
     | alias_type declarator SEMICOLON
@@ -1946,6 +1970,18 @@ array_access:
             ASTNode *node = create_multi_array_access_node($1, $2.indices, $2.num_dimensions);
             SAFE_FREE($1);
             $$ = node;
+        }
+    | struct_access multi_dimension_access
+        {
+            /* Indexing into an array-typed struct field, e.g.
+               `foo.arr[i]` (also `foo.bar.arr[i]` -- struct_access
+               already recurses through chains on its own). Distinct
+               from the IDENTIFIER form above: there is no Variable to
+               look up by name, so the resulting node carries the
+               struct_access expression itself as its base instead (see
+               create_struct_field_array_access_node()'s own comment). */
+            $$ = create_struct_field_array_access_node($1, $2.indices,
+                                                        $2.num_dimensions);
         }
     ;
 
