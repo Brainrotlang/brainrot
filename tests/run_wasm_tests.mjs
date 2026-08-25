@@ -36,7 +36,9 @@
 // expected value instead of native's — see the comment next to it for why.
 // They are still run and still asserted on, just against a different,
 // equally exact string, so a regression in either one still fails this
-// harness.
+// harness. Override strings don't need a trailing newline to match a
+// multi-line native expected string (e.g. "8\n4" vs. native's "16\n8\n")
+// -- both sides of the comparison are .trim()'d below before comparing.
 //
 // Usage: node tests/run_wasm_tests.mjs [test|production]
 //   (run from the repo root, after `make wasm-test` and/or `make wasm`)

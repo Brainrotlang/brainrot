@@ -5,7 +5,6 @@
 #include "visitor.h"
 #include "interpreter.h"
 #include "lib/mem.h"
-#include <assert.h>
 #include <stdbool.h>
 #include <math.h>
 #include <limits.h>
@@ -6247,10 +6246,18 @@ void register_struct_def(StructDef *def)
        fail loud now rather than let a struct/union that later embeds
        this one by value silently pack with zero padding
        (get_struct_field_alignment() trusts a *registered* def's
-       alignment outright; see that function's comment in this file). */
-    assert(def->alignment != 0 &&
-           "StructDef registered before compute_struct_layout()/"
-           "compute_union_layout() ran -- alignment is unset");
+       alignment outright; see that function's comment in this file).
+       Deliberately not assert(): this must still catch the bug in a
+       build that defines NDEBUG, not just a debug build, so it's a
+       plain unconditional check -- same "fail loud, always" contract
+       as every other internal-invariant check in this file (e.g. the
+       "Memory allocation failed" exit(EXIT_FAILURE) sites above). */
+    if (def->alignment == 0)
+    {
+        yyerror("Internal error: StructDef registered before "
+                "compute_struct_layout()/compute_union_layout() ran");
+        exit(EXIT_FAILURE);
+    }
     if (!struct_registry)
         struct_registry = hm_new();
     size_t len = def->name.len;

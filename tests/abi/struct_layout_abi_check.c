@@ -13,21 +13,24 @@
  * produces those numbers. It never calls into ast.c, never reads a
  * StructField.offset, and never touches the interpreter -- C agreeing
  * with C is not evidence about this codebase's layout code. That check
- * lives on the Brainrot side, in test_cases/struct_layout_padding.
- * brainrot and test_cases/struct_field_long_modifier.brainrot's
- * maxxing() calls (cross-checked against the exact numbers asserted
- * here) and, more specifically, that fixture's read-back-without-
- * corruption check for interior field placement -- sizeof alone cannot
- * distinguish a correctly-aligned layout from one that happens to pack
- * fields and then pad only the total to the same final size.
+ * lives on the Brainrot side: every struct declared below has a
+ * matching gang/chungus in a test_cases fixture (named in each struct's
+ * own comment) whose maxxing() calls are expected to
+ * print exactly the numbers asserted here on native. If a fixture's
+ * expected_results.json entry is ever hand-edited to a number that
+ * disagrees with this file's _Static_assert for the same shape, that is
+ * the bug this file exists to catch -- but only for shapes actually
+ * declared below. A fixture with no matching struct here (there was one
+ * such gap, since closed: struct_field_long_modifier.brainrot's
+ * `giga`-via-`lit` field, now struct Distance) is not covered by this
+ * file at all, regardless of what a comment elsewhere claims.
  *
- * Each struct here is the literal C shape of a fixture in
- * test_cases/struct_layout_padding.brainrot and
- * test_cases/native_void_pointer_struct_field.brainrot; the sizes
- * asserted here are exactly what those fixtures' maxxing() (sizeof)
- * calls are expected to print on native (see tests/run_wasm_tests.mjs's
- * WASM_EXPECTED_OVERRIDES for the wasm32 numbers this file does not
- * cover, and issue #177 for why they differ).
+ * Coverage is native-only: this binary is built with this build's own
+ * $(CC), never emcc, so it establishes LP64 ground truth. The ILP32
+ * branches below are the wasm32-equivalent C values for the record, not
+ * something this binary runs or verifies -- see tests/run_wasm_tests.
+ * mjs's WASM_EXPECTED_OVERRIDES for the wasm32 numbers, and issue #177
+ * for why native and wasm32 disagree on `giga`/pointer sizes.
  */
 
 #include <stddef.h>
@@ -80,6 +83,30 @@ _Static_assert(sizeof(struct Box) == 8, "struct Box size (ILP32/wasm32)");
 _Static_assert(offsetof(struct Box, x) == sizeof(void *),
                "struct Box.x offset");
 
+/* gang Distance { yap unit; Meters value; }; -- Meters is `lit giga rizz`
+ * (long). This is the ABI-sensitive shape struct_field_long_modifier.
+ * brainrot exists for: sizeof(long)/_Alignof(long) is 8 on LP64 but only
+ * 4 on ILP32 (wasm32), same split as pointer size above -- reusing the
+ * same UINTPTR_MAX check is valid here because LP64 and ILP32 happen to
+ * size long and a pointer identically on every target this repo builds
+ * for. thicc (`long long`) is 8 on both models and is not covered here.
+ */
+struct Distance
+{
+    char unit;
+    long value;
+};
+#if UINTPTR_MAX == 0xffffffffffffffffULL
+_Static_assert(sizeof(struct Distance) == 16, "struct Distance size (LP64)");
+_Static_assert(offsetof(struct Distance, value) == 8,
+               "struct Distance.value offset (LP64)");
+#elif UINTPTR_MAX == 0xffffffffUL
+_Static_assert(sizeof(struct Distance) == 8,
+               "struct Distance size (ILP32/wasm32)");
+_Static_assert(offsetof(struct Distance, value) == 4,
+               "struct Distance.value offset (ILP32/wasm32)");
+#endif
+
 int main(void)
 {
     printf("struct Mixed:  sizeof=%zu offsetof(n)=%zu offsetof(d)=%zu\n",
@@ -88,5 +115,7 @@ int main(void)
     printf("union WideUnion: sizeof=%zu\n", sizeof(union WideUnion));
     printf("struct Box:    sizeof=%zu offsetof(x)=%zu\n", sizeof(struct Box),
            offsetof(struct Box, x));
+    printf("struct Distance: sizeof=%zu offsetof(value)=%zu\n",
+           sizeof(struct Distance), offsetof(struct Distance, value));
     return 0;
 }
