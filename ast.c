@@ -6298,7 +6298,10 @@ StructField *find_struct_field(StructDef *def, const String name)
 /* Size in bytes that a single field occupies within its enclosing
    struct/union blob. Nested struct/union fields (type == VAR_STRUCT,
    pointer_level == 0) take the nested definition's total_size; every
-   other field falls back to get_type_size_for_descriptor. */
+   other field falls back to get_type_size_for_descriptor, honoring
+   f->modifiers (is_long/is_long_long/is_unsigned) -- e.g. a VAR_INT
+   field reached through a `lit giga rizz ...` alias must size as an
+   8-byte long, not silently collapse to a 4-byte int. */
 static size_t get_struct_field_size(StructField *f)
 {
     if (f->pointer_level > 0)
@@ -6312,8 +6315,7 @@ static size_t get_struct_field_size(StructField *f)
         return nested ? nested->total_size : 0;
     }
 
-    TypeModifiers m = {0};
-    size_t fsz = get_type_size_for_descriptor(f->type, 0, m);
+    size_t fsz = get_type_size_for_descriptor(f->type, 0, f->modifiers);
     if (fsz == 0)
         fsz = sizeof(int);
     return fsz;
@@ -6323,7 +6325,10 @@ static size_t get_struct_field_size(StructField *f)
    struct/union, matching the C ABI (`_Alignof` of the corresponding C
    type). Nested struct/union fields take the nested definition's own
    alignment; pointer fields align as a pointer. Mirrors
-   get_struct_field_size()'s type switch. */
+   get_struct_field_size()'s type switch, including f->modifiers for
+   VAR_INT -- an 8-byte long/long-long field (reachable via a `lit
+   giga`/`lit thicc` alias) must align as 8, not fall back to plain
+   int's 4, or a following field would be under-padded. */
 static size_t get_struct_field_alignment(StructField *f)
 {
     if (f->pointer_level > 0)
@@ -6350,6 +6355,10 @@ static size_t get_struct_field_alignment(StructField *f)
     case VAR_CHAR:
         return _Alignof(char);
     case VAR_INT:
+        if (f->modifiers.is_long_long)
+            return _Alignof(long long);
+        if (f->modifiers.is_long)
+            return _Alignof(long);
         return _Alignof(int);
     case VAR_STRING:
         return _Alignof(String);

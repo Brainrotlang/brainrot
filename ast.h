@@ -144,6 +144,13 @@ typedef struct StructField
                             through it isn't supported yet */
     String enum_name;   /* nested enum tag; set whenever type == VAR_ENUM */
     int pointer_level;
+    /* is_long/is_long_long/is_unsigned, reachable today via a `lit`
+       alias used as a field's type (e.g. `lit giga rizz Meters; gang G
+       { Meters m; };`) -- get_struct_field_size()/
+       get_struct_field_alignment() (ast.c) both key off this for
+       VAR_INT so a `giga`/`thicc`-aliased field gets 8-byte size/align
+       instead of silently being sized as a plain 4-byte int. */
+    TypeModifiers modifiers;
     size_t offset; /* byte offset within the struct blob */
     struct StructField *next;
 } StructField;
@@ -706,6 +713,17 @@ void free_function_table(void);
 void free_static_variable_map(void);
 
 /* Struct types */
+/* Caller must have already called compute_struct_layout(def)/
+   compute_union_layout(def) -- both of this file's construction sites
+   (lang.y) do, before this call, and neither reads def->fields again
+   afterward. This is what makes a nested VAR_STRUCT field's alignment
+   lookup (get_struct_def(f->struct_name)->alignment, ast.c) safe: a def
+   is only ever reachable via get_struct_def() (i.e. registered) once
+   its own total_size/alignment are already final, so a struct embedding
+   an already-defined nested struct/union by value never sees a
+   0/uninitialized alignment -- consistent with the existing "unknown
+   struct/union type" parse error for referencing an undefined tag at
+   all (lang.y's struct_field rule). */
 void register_struct_def(StructDef *def);
 StructDef *get_struct_def(const String name);
 void free_struct_registry(void);

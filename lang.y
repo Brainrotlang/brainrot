@@ -269,6 +269,7 @@ static StructField *build_struct_fields_from_params(Parameter *params)
         f->struct_name = safe_strdup(&p->struct_name);
         f->enum_name = safe_strdup(&p->enum_name);
         f->pointer_level = p->pointer_level;
+        f->modifiers = p->modifiers;
         f->offset = 0;
         f->next = NULL;
         if (!tail)

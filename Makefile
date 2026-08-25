@@ -210,6 +210,21 @@ $(OLD_ABI_SIM_LIB): $(OLD_ABI_SIM_DIR)/fake_pre_v2_registry.c
 old-abi-sim: $(OLD_ABI_SIM_LIB)
 	@echo "tests/old_abi_sim/fake_pre_v2_registry.so (simulated pre-ABI-versioning .so) compiled."
 
+# Compile-time C-ABI proof for struct/union layout (see that file's own
+# comment): _Static_assert/offsetof checks, compiled by this build's own
+# $(CC), that the sizes test_cases/struct_layout_padding.brainrot and
+# native_void_pointer_struct_field.brainrot expect from maxxing() are
+# what a real C compiler actually produces for the equivalent struct --
+# not just Brainrot's own layout code agreeing with itself.
+ABI_CHECK_BIN := tests/abi/struct_layout_abi_check
+
+$(ABI_CHECK_BIN): tests/abi/struct_layout_abi_check.c
+	$(CC) $(CFLAGS) -o $@ $<
+
+.PHONY: abi-check
+abi-check: $(ABI_CHECK_BIN)
+	./$(ABI_CHECK_BIN)
+
 # Main executable build
 $(TARGET): $(ALL_SRCS) $(STDROT_LIB)
 	$(CC) $(CFLAGS) -o $@ $(ALL_SRCS) $(LDFLAGS)
@@ -255,7 +270,7 @@ $(FLEX_OUTPUT): lang.l
 
 # Run tests
 .PHONY: test
-test: $(TARGET) $(TEST_STDROT_LIB) badnatives old-abi-sim
+test: $(TARGET) $(TEST_STDROT_LIB) badnatives old-abi-sim abi-check
 	STDROT_LIB_PATH=$(CURDIR)/$(TEST_STDROT_LIB) $(PYTHON) -m pytest -v
 	@echo "Tests ran bussin', no cap."
 
@@ -267,6 +282,7 @@ clean:
 	rm -f tests/brainrot-test.wasm tests/brainrot-test.mjs
 	rm -f $(BADNATIVES_LIBS)
 	rm -f $(OLD_ABI_SIM_LIB)
+	rm -f $(ABI_CHECK_BIN)
 	rm -f *.o
 	@echo "Blud cleaned up the mess like a true sigma coder."
 

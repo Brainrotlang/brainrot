@@ -3,7 +3,10 @@
 🚽 padding, not a packed layout. Every size below is what a real C
 🚽 compiler produces for the equivalent struct/union; before this fix they
 🚽 were all under-sized because fields were packed back-to-back with no
-🚽 alignment rounding.
+🚽 alignment rounding. These exact numbers are independently proven (not
+🚽 just asserted here) by _Static_assert/offsetof checks against real C
+🚽 struct declarations in tests/abi/struct_layout_abi_check.c -- run
+🚽 `make abi-check` to see them compiled and printed directly.
 gang Mixed {
     cap flag;    🚽 bool,   1 byte,  align 1 -> offset 0
     rizz n;      🚽 int,    4 bytes, align 4 -> offset 4 (3 bytes padding)

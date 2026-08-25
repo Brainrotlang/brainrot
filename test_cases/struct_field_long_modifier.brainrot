@@ -1,0 +1,16 @@
+🚽 Test case: regression for #206 (3a) code review -- StructField dropped
+🚽 modifiers entirely (no field to hold them), so a field reached through
+🚽 a `lit giga`/`lit thicc` alias silently sized/aligned as a plain 4-byte
+🚽 int instead of an 8-byte long/long long. get_struct_field_size() and
+🚽 get_struct_field_alignment() (ast.c) now both read f->modifiers.
+lit giga rizz Meters;
+
+gang Distance {
+    yap unit;    🚽 char,        1 byte, align 1 -> offset 0
+    Meters value; 🚽 long (giga), 8 bytes, align 8 -> offset 8 (7 bytes padding)
+};              🚽 total: 16, not 5 (1 + 4, if Meters were misread as int)
+
+skibidi main {
+    gang Distance d;
+    yapping("%lu", maxxing(d));
+}
