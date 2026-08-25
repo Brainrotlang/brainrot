@@ -44,6 +44,8 @@
     "float_array": "3.140000\n3.141500\n3.141592\n",
     "double_array": "3.140000\n3.141500\n3.141592\n",
     "char_array": "rizz",
+    "char_array_write_order": "rizz",
+    "struct_char_field_write_order": "1 x y",
     "add_two_numbers": "3",
     "mul_two_numbers": "11.400000",
     "max_gigachad": "5.000000",

@@ -282,7 +282,7 @@ size_t get_type_size_for_descriptor(VarType type, int pointer_level,
 
 static void write_value_to_address(void *address, VarType type,
                                    int pointer_level, ASTNode *expr,
-                                   TypeModifiers mods);
+                                   TypeModifiers mods, bool packed_storage);
 static void initialize_variable_from_expr(Variable *var, ASTNode *expr);
 
 // Symbol table functions
@@ -2504,9 +2504,28 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
     return (uintptr_t)0;
 }
 
+/* `packed_storage` distinguishes two genuinely different memory shapes
+   `address` can point into, which only diverge for VAR_CHAR:
+   - false (a plain NODE_IDENTIFIER target): address is a scalar
+     Variable's own union slot (evaluate_lvalue_address's NODE_IDENTIFIER
+     case), which for VAR_CHAR is `&var->value.ivalue` -- a real 4-byte
+     `int` slot, not a 1-byte one (see that union's definition). Writing
+     the full int there is correct and always has been.
+   - true (NODE_ARRAY_ACCESS, NODE_STRUCT_ACCESS, or a dereferenced
+     pointer target): address points into a tightly packed array/struct
+     blob (or, for a dereference, wherever the pointer says -- possibly
+     one of those same blobs), where a `yap` element/field genuinely
+     occupies 1 byte with real neighbors on both sides. Every other
+     VarType already has matching width between the two shapes (BOOL,
+     SHORT, FLOAT, DOUBLE, INT all use a same-sized union member and a
+     same-sized array/struct slot), which is why only VAR_CHAR needs
+     this distinction at all. Writing `*(int *)address` in the packed
+     case overwrites 3 bytes of whatever follows -- padding if you're
+     lucky, a real neighboring field/element if you're not (confirmed:
+     `gang { rizz a; yap b; yap c; }; f.b = 'x';` silently zeroed `c`). */
 static void write_value_to_address(void *address, VarType type,
                                    int pointer_level, ASTNode *expr,
-                                   TypeModifiers mods)
+                                   TypeModifiers mods, bool packed_storage)
 {
     if (!address)
     {
@@ -2538,7 +2557,10 @@ static void write_value_to_address(void *address, VarType type,
         *(bool *)address = evaluate_expression_bool(expr);
         break;
     case VAR_CHAR:
-        *(int *)address = evaluate_expression_int(expr);
+        if (packed_storage)
+            *(char *)address = (char)evaluate_expression_int(expr);
+        else
+            *(int *)address = evaluate_expression_int(expr);
         break;
     case VAR_STRING:
         *(String *)address = evaluate_expression_string(expr);
@@ -3692,7 +3714,23 @@ int evaluate_expression_int(ASTNode *node)
             yyerror("Cannot use pointer in integer context");
             return 0;
         }
-        return *(int *)evaluate_multi_array_access(node);
+        /* This function is the shared "integer family" evaluator for
+           every element type that doesn't get its own dedicated
+           evaluate_expression_{bool,short,float,double}() -- VAR_CHAR
+           and VAR_ENUM both funnel through here (get_expression_type()
+           already maps a char literal to VAR_INT). Unlike those other
+           four types, whose array-element width always matches this
+           function's own `int` return width, a `yap` array element is
+           1 byte: reading it back as `*(int *)` over-reads 3 bytes past
+           a single-element array and misreads every other element's
+           address as if elements were 4 bytes apart instead of 1
+           (mirrors the write-side bug fixed in write_value_to_address()
+           for the identical reason -- VAR_CHAR is the one type whose
+           packed-array width doesn't match this function's own). */
+        void *addr = evaluate_multi_array_access(node);
+        if (get_expression_type(node) == VAR_CHAR)
+            return (int)*(char *)addr;
+        return *(int *)addr;
     }
     case NODE_FUNC_CALL:
     {
@@ -4480,9 +4518,17 @@ void execute_assignment(ASTNode *node)
        get_expression_type()/get_expression_pointer_level(), which both
        route through resolve_struct_access(). */
 
+    /* Every evaluate_lvalue_address() case except NODE_IDENTIFIER writes
+       into packed storage (an array/struct blob, or wherever a
+       dereferenced pointer points -- itself possibly one of those same
+       blobs) rather than a scalar Variable's own union slot; see
+       write_value_to_address()'s own comment for why that distinction
+       matters. */
+    bool packed_storage = target->type != NODE_IDENTIFIER;
+
     void *address = evaluate_lvalue_address(target);
     write_value_to_address(address, target_type, target_pointer_level,
-                           value_node, mods);
+                           value_node, mods, packed_storage);
 }
 
 void execute_statement(ASTNode *node)
