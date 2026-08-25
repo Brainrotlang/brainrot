@@ -6319,26 +6319,92 @@ static size_t get_struct_field_size(StructField *f)
     return fsz;
 }
 
-/* Walk the field list, assign natural-alignment offsets, return total size.
-   We use simple sequential layout (no padding) to keep it straightforward;
-   add alignment rounding here if needed later. */
-size_t compute_struct_layout(StructField *fields)
+/* Alignment in bytes that a single field imposes on its enclosing
+   struct/union, matching the C ABI (`_Alignof` of the corresponding C
+   type). Nested struct/union fields take the nested definition's own
+   alignment; pointer fields align as a pointer. Mirrors
+   get_struct_field_size()'s type switch. */
+static size_t get_struct_field_alignment(StructField *f)
+{
+    if (f->pointer_level > 0)
+        return _Alignof(uintptr_t);
+
+    if (f->type == VAR_STRUCT)
+    {
+        StructDef *nested = get_struct_def(f->struct_name);
+        /* Should always be resolved by the parser before layout is
+           computed; fall back defensively rather than corrupt offsets. */
+        return nested ? nested->alignment : 1;
+    }
+
+    switch (f->type)
+    {
+    case VAR_FLOAT:
+        return _Alignof(float);
+    case VAR_DOUBLE:
+        return _Alignof(double);
+    case VAR_BOOL:
+        return _Alignof(bool);
+    case VAR_SHORT:
+        return _Alignof(short);
+    case VAR_CHAR:
+        return _Alignof(char);
+    case VAR_INT:
+        return _Alignof(int);
+    case VAR_STRING:
+        return _Alignof(String);
+    case VAR_ENUM:
+        return _Alignof(int);
+    case VAR_PTR:
+        return _Alignof(uintptr_t);
+    case VAR_VOID:
+    case NONE:
+    default:
+        return 1;
+    }
+}
+
+/* Round `offset` up to the next multiple of `alignment` (a power of two). */
+static size_t align_up(size_t offset, size_t alignment)
+{
+    if (alignment <= 1)
+        return offset;
+    return (offset + alignment - 1) & ~(alignment - 1);
+}
+
+/* Walk the field list, assign C-ABI-aligned offsets (padding before each
+   field as needed), and round the total size up to the struct's own max
+   field alignment (trailing padding) -- matching how a real C compiler
+   lays out the same field list, so a `gang` handed across the FFI
+   boundary reads/writes the same bytes a C caller would. */
+size_t compute_struct_layout(StructField *fields, size_t *out_alignment)
 {
     size_t off = 0;
+    size_t max_align = 1;
     StructField *f = fields;
     while (f)
     {
+        size_t falign = get_struct_field_alignment(f);
+        if (falign > max_align)
+            max_align = falign;
+        off = align_up(off, falign);
         f->offset = off;
         off += get_struct_field_size(f);
         f = f->next;
     }
-    return off; /* total bytes */
+    off = align_up(off, max_align);
+    if (out_alignment)
+        *out_alignment = max_align;
+    return off; /* total bytes, including trailing padding */
 }
 
-/* Union fields all share offset 0; total size is the largest member. */
-size_t compute_union_layout(StructField *fields)
+/* Union fields all share offset 0; total size is the largest member,
+   rounded up to the largest member's alignment (unions pad too --
+   `union { char c; int i; }` is 4 bytes in C, not 1). */
+size_t compute_union_layout(StructField *fields, size_t *out_alignment)
 {
     size_t max_size = 0;
+    size_t max_align = 1;
     StructField *f = fields;
     while (f)
     {
@@ -6346,8 +6412,14 @@ size_t compute_union_layout(StructField *fields)
         size_t fsz = get_struct_field_size(f);
         if (fsz > max_size)
             max_size = fsz;
+        size_t falign = get_struct_field_alignment(f);
+        if (falign > max_align)
+            max_align = falign;
         f = f->next;
     }
+    max_size = align_up(max_size, max_align);
+    if (out_alignment)
+        *out_alignment = max_align;
     return max_size;
 }
 

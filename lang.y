@@ -326,13 +326,15 @@ static void register_aggregate_typedef(String tag_name, String alias_name,
     }
 
     StructField *fields = build_struct_fields_from_params(params);
-    size_t total =
-        is_union ? compute_union_layout(fields) : compute_struct_layout(fields);
+    size_t alignment = 1;
+    size_t total = is_union ? compute_union_layout(fields, &alignment)
+                            : compute_struct_layout(fields, &alignment);
 
     StructDef *def = SAFE_MALLOC(StructDef);
     def->name = safe_strdup(&tag_name);
     def->fields = fields;
     def->total_size = total;
+    def->alignment = alignment;
     def->is_union = is_union;
     register_struct_def(def);
 
@@ -675,12 +677,14 @@ struct_def
         {
             StructField *fields = build_struct_fields_from_params($5);
             bool is_union = $1 != 0;
-            size_t total = is_union ? compute_union_layout(fields)
-                                    : compute_struct_layout(fields);
+            size_t alignment = 1;
+            size_t total = is_union ? compute_union_layout(fields, &alignment)
+                                    : compute_struct_layout(fields, &alignment);
             StructDef *def = SAFE_MALLOC(StructDef);
             def->name       = safe_strdup(&$2);
             def->fields     = fields;
             def->total_size = total;
+            def->alignment  = alignment;
             def->is_union   = is_union;
             register_struct_def(def);
             $$ = create_struct_def_node($2, fields);

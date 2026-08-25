@@ -1,0 +1,30 @@
+🚽 Test case: regression for #206 (3a) -- compute_struct_layout()/
+🚽 compute_union_layout() must produce C-ABI-honest alignment and trailing
+🚽 padding, not a packed layout. Every size below is what a real C
+🚽 compiler produces for the equivalent struct/union; before this fix they
+🚽 were all under-sized because fields were packed back-to-back with no
+🚽 alignment rounding.
+gang Mixed {
+    cap flag;    🚽 bool,   1 byte,  align 1 -> offset 0
+    rizz n;      🚽 int,    4 bytes, align 4 -> offset 4 (3 bytes padding)
+    gigachad d;  🚽 double, 8 bytes, align 8 -> offset 8 (4 bytes padding)
+};               🚽 total: 16 (offset 8 + 8, already 8-aligned)
+
+gang Triple {
+    rizz a;
+    rizz b;
+    rizz c;
+};               🚽 total: 12, align 4 -- no padding needed here
+
+chungus WideUnion {
+    gang Triple t; 🚽 size 12, align 4
+    gigachad d;    🚽 size 8,  align 8
+};                 🚽 max member size 12 rounded up to max align 8 -> 16
+
+skibidi main {
+    gang Mixed m;
+    yapping("%lu", maxxing(m));
+
+    chungus WideUnion u;
+    yapping("%lu", maxxing(u));
+}

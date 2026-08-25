@@ -185,7 +185,8 @@ typedef struct StructDef
 {
     String name;
     StructField *fields;
-    size_t total_size; /* total byte size of one instance */
+    size_t total_size; /* total byte size of one instance, C-ABI padded */
+    size_t alignment;  /* max alignment of any field (C-ABI aligned) */
     bool is_union;     /* true: fields overlap at offset 0 (chungus/union) */
     struct StructDef *next_def;
 } StructDef;
@@ -709,10 +710,18 @@ void register_struct_def(StructDef *def);
 StructDef *get_struct_def(const String name);
 void free_struct_registry(void);
 StructField *find_struct_field(StructDef *def, const String name);
-size_t
-compute_struct_layout(StructField *fields); /* fills offsets, returns total */
+size_t compute_struct_layout(
+    StructField *fields,
+    size_t *out_alignment); /* fills offsets (C-ABI aligned, trailing
+                                padding included in the return value);
+                                *out_alignment gets the struct's own max
+                                field alignment if non-NULL */
 size_t compute_union_layout(
-    StructField *fields); /* offset 0 for all fields, returns max size */
+    StructField *fields,
+    size_t *out_alignment); /* offset 0 for all fields, returns max size
+                                rounded up to max member alignment;
+                                *out_alignment gets that alignment if
+                                non-NULL */
 ASTNode *create_struct_def_node(String name, StructField *fields);
 ASTNode *create_struct_access_node(ASTNode *object, String member);
 void *evaluate_struct_member_address(ASTNode *node);
