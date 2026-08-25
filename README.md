@@ -256,7 +256,7 @@ Join our community on:
 | thicc      | long long    | ✅           |
 | rant       | string type  | ✅           |
 | lit        | typedef      | ✅           |
-| `__asm__`  | unc          | ❌           |
+| unc        | `__asm__`    | ❌           |
 
 ### Preprocessor directives
 
