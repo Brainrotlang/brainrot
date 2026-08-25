@@ -3715,8 +3715,9 @@ int evaluate_expression_int(ASTNode *node)
             // See the NODE_UNARY_OPERATION/OP_DEREFERENCE case in
             // evaluate_expression_pointer() above for why a possible NULL
             // dereference here is expected/deferred, not a bug to silently
-            // wave off.
-            // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
+            // wave off. Both returns below dereference `pointee`, so both
+            // need their own suppression -- NOLINTNEXTLINE only covers the
+            // one line immediately after it.
             void *pointee = (void *)(uintptr_t)evaluate_expression_pointer(
                 node->data.unary.operand);
             /* get_expression_type() on a dereference returns the
@@ -3729,7 +3730,9 @@ int evaluate_expression_int(ASTNode *node)
                `*(int *)`: a `yap *` into a packed buffer would over-read
                3 bytes past a real 1-byte slot. */
             if (get_expression_type(node) == VAR_CHAR)
+                // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
                 return (int)*(char *)pointee;
+            // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
             return *(int *)pointee;
         }
         if (node->data.unary.op == OP_ADDRESS_OF)
