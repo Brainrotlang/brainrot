@@ -112,6 +112,26 @@ _Static_assert(offsetof(struct Distance, value) == 4,
                "struct Distance.value offset (ILP32/wasm32)");
 #endif
 
+/* gang CharInt { yap a; rizz b; }; -- exists to catch a regression Mixed
+ * cannot: Mixed's trailing `double` field is 8-aligned regardless of
+ * whether `int` alignment is computed correctly, so a broken
+ * get_struct_field_alignment(VAR_INT) (e.g. returning 1 instead of 4)
+ * would still leave Mixed's fields non-overlapping and its total size
+ * at 16 -- invisible to both checks struct_layout_padding.brainrot runs
+ * on Mixed. CharInt has nothing bigger-aligned after `b` to force the
+ * same total regardless, so a wrong int alignment changes its total
+ * size outright (5 instead of 8).
+ */
+struct CharInt
+{
+    char a;
+    int b;
+};
+_Static_assert(sizeof(struct CharInt) == 8,
+               "struct CharInt size -- would be 5 if int alignment were "
+               "ever wrongly computed as 1");
+_Static_assert(offsetof(struct CharInt, b) == 4, "struct CharInt.b offset");
+
 int main(void)
 {
     printf("struct Mixed:  sizeof=%zu offsetof(n)=%zu offsetof(d)=%zu\n",
@@ -122,5 +142,7 @@ int main(void)
            offsetof(struct Box, x));
     printf("struct Distance: sizeof=%zu offsetof(value)=%zu\n",
            sizeof(struct Distance), offsetof(struct Distance, value));
+    printf("struct CharInt: sizeof=%zu offsetof(b)=%zu\n",
+           sizeof(struct CharInt), offsetof(struct CharInt, b));
     return 0;
 }

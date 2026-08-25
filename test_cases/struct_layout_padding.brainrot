@@ -13,14 +13,18 @@
 🚽 maxxing() alone only proves total size: a struct that packed `n` right
 🚽 after `flag` with no interior padding, then padded the *total* up to
 🚽 16 at the very end, would also report 16 here despite `n` being at the
-🚽 wrong offset. To also exercise interior placement, main() below writes
-🚽 a distinct value into every field and reads them all back: if any pair
-🚽 of fields' true offsets overlapped (the actual failure mode a wrong
-🚽 align_up() call, or a missing one, would produce), one write would
-🚽 corrupt a value already written by another and the read-back would
-🚽 disagree with what was stored -- this fails on a mis-offset even
-🚽 though it still can't recover the literal numeric offset the way a
-🚽 real offsetof() would.
+🚽 wrong offset. main() below writes a distinct value into every field of
+🚽 Mixed and reads them all back: if any pair of fields' true offsets
+🚽 OVERLAPPED, one write would corrupt a value already written by another
+🚽 and the read-back would disagree with what was stored. That catches
+🚽 an overlap, not every wrong offset: a regression that mis-aligned `n`
+🚽 to 1 instead of 4 (`n` at [1,5), `flag` at [0,1), `d` still correctly
+🚽 8-aligned since its own alignment doesn't depend on `n`'s) produces
+🚽 non-overlapping ranges AND the same total 16 -- Mixed's own trailing
+🚽 double masks a wrong int alignment from both checks this file runs on
+🚽 it. CharInt below exists specifically to catch that: with no
+🚽 larger-alignment field after it to force the same total regardless,
+🚽 a wrong int alignment changes CharInt's total size outright.
 gang Mixed {
     cap flag;    🚽 bool,   1 byte,  align 1 -> offset 0
     rizz n;      🚽 int,    4 bytes, align 4 -> offset 4 (3 bytes padding)
@@ -38,6 +42,14 @@ chungus WideUnion {
     gigachad d;    🚽 size 8,  align 8
 };                 🚽 max member size 12 rounded up to max align 8 -> 16
 
+gang CharInt {
+    yap a;  🚽 char, 1 byte, align 1 -> offset 0
+    rizz b; 🚽 int,  4 bytes, align 4 -> offset 4 (3 bytes padding)
+};          🚽 total: 8. If get_struct_field_alignment(VAR_INT) ever
+            🚽 regressed to align 1, b would land at offset 1 and the
+            🚽 struct would total 5, not 8 -- unlike Mixed, nothing
+            🚽 bigger-aligned follows to force the same total anyway.
+
 skibidi main {
     gang Mixed m;
     yapping("%lu", maxxing(m));
@@ -51,4 +63,7 @@ skibidi main {
 
     chungus WideUnion u;
     yapping("%lu", maxxing(u));
+
+    gang CharInt ci;
+    yapping("%lu", maxxing(ci));
 }

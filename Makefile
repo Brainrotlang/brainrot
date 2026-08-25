@@ -210,12 +210,16 @@ $(OLD_ABI_SIM_LIB): $(OLD_ABI_SIM_DIR)/fake_pre_v2_registry.c
 old-abi-sim: $(OLD_ABI_SIM_LIB)
 	@echo "tests/old_abi_sim/fake_pre_v2_registry.so (simulated pre-ABI-versioning .so) compiled."
 
-# Compile-time C-ABI proof for struct/union layout (see that file's own
-# comment): _Static_assert/offsetof checks, compiled by this build's own
-# $(CC), that the sizes test_cases/struct_layout_padding.brainrot and
-# native_void_pointer_struct_field.brainrot expect from maxxing() are
-# what a real C compiler actually produces for the equivalent struct --
-# not just Brainrot's own layout code agreeing with itself.
+# Host C sizeof/offsetof oracle for struct/union layout (see that
+# file's own comment for the full contract): _Static_assert/offsetof
+# checks, compiled by this build's own $(CC), establishing what a real
+# C compiler produces for the struct/union shapes several
+# test_cases/*.brainrot layout fixtures mirror. This binary never calls
+# into ast.c and does not itself verify that Brainrot's maxxing()
+# output matches these numbers -- that cross-check is the fixtures'
+# own expected output, which a human keeps in sync with this file by
+# hand; a fixture shape with no matching struct declared here is not
+# covered by this oracle at all.
 ABI_CHECK_BIN := tests/abi/struct_layout_abi_check
 
 $(ABI_CHECK_BIN): tests/abi/struct_layout_abi_check.c
