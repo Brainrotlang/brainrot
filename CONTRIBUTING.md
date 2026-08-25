@@ -21,6 +21,7 @@ By participating in this project, you are expected to uphold our [Code of Conduc
 - Valgrind
 - clang-format
 - cppcheck (>= 2.13)
+- clang-tidy-15
 - Make
 
 ### Building the Project
@@ -77,6 +78,22 @@ make cppcheck
 Justified suppressions live in `cppcheck-suppressions.txt`; add a new one only
 with a comment explaining why the finding is a false positive, not to silence
 a real issue.
+
+The CI `static-analysis` job also runs clang-tidy via `make tidy` (needs
+clang-tidy-15). Checks are configured in `.clang-tidy` — a small, curated
+allowlist, deliberately not `checks=*`. Before opening a PR:
+
+```bash
+make tidy
+```
+
+A finding that's a real false positive for this codebase (not just
+inconvenient) gets a `// NOLINT(check-name)` or `// NOLINTNEXTLINE(check-name)`
+comment explaining why, right next to the flagged line — same bar as a
+cppcheck suppression, just inline instead of in a separate file. If an entire
+check turns out to be structurally noisy for this codebase rather than
+occasionally wrong, drop it from `.clang-tidy`'s `Checks:` list instead of
+NOLINT-ing every hit.
 
 ## Project Structure
 

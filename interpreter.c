@@ -7,36 +7,9 @@
 #include <stdio.h>
 
 extern void yyerror(const char *s);
-extern String safe_strdup(const String *str);
-extern void execute_func_call(const String func_name, ArgumentList *args);
-
-/* External functions we need from the original implementation */
-extern Variable *variable_new(String name);
-extern void add_variable_to_scope(const String name, Variable *var);
-extern Variable *get_variable(const String name);
-extern Function *get_function(const String name);
-extern bool is_builtin_function(const String name);
-extern void execute_builtin_function(const String name, ArgumentList *args);
-extern void execute_assignment(ASTNode *node);
-extern void execute_for_statement(ASTNode *node);
-extern void execute_while_statement(ASTNode *node);
-extern void execute_do_while_statement(ASTNode *node);
 extern void execute_switch_statement(ASTNode *node);
-extern void handle_return_statement(ASTNode *expr);
-extern Function *create_function(String name, VarType return_type,
-                                 Parameter *params, ASTNode *body);
-extern void bruh(void);
-
-/* For now, use the original evaluation system with visitor wrappers */
-extern int evaluate_expression_int(ASTNode *node);
-extern float evaluate_expression_float(ASTNode *node);
-extern double evaluate_expression_double(ASTNode *node);
-extern short evaluate_expression_short(ASTNode *node);
-extern bool evaluate_expression_bool(ASTNode *node);
 extern String evaluate_expression_string(ASTNode *node);
 extern void *evaluate_multi_array_access(ASTNode *node);
-extern void *handle_function_call(ASTNode *node);
-extern size_t handle_sizeof(ASTNode *node);
 
 /* Global pointer to current interpreter for function calls */
 Interpreter *current_interpreter = NULL;
@@ -107,15 +80,12 @@ void interpret(ASTNode *root, Interpreter *interp)
     if (!root || !interp)
         return;
 
-    extern Scope *current_scope;
-
     /* Set global interpreter pointer for function calls */
     current_interpreter = interp;
 
     /* Ensure there's a global scope for the visitor pattern */
     if (!current_scope)
     {
-        extern void enter_scope();
         enter_scope();
     }
 
@@ -687,9 +657,6 @@ void interpreter_visit_for_statement(Visitor *self, ASTNode *node)
     if (!node)
         return;
 
-    extern void enter_scope();
-    extern void exit_scope();
-
     PUSH_JUMP_BUFFER();
     if (setjmp(CURRENT_JUMP_BUFFER()) == 0)
     {
@@ -737,9 +704,6 @@ void interpreter_visit_while_statement(Visitor *self, ASTNode *node)
     if (!node)
         return;
 
-    extern void enter_scope();
-    extern void exit_scope();
-
     PUSH_JUMP_BUFFER();
     enter_scope();
     while (evaluate_expression_int(node->data.while_stmt.cond) &&
@@ -762,10 +726,6 @@ void interpreter_visit_do_while_statement(Visitor *self, ASTNode *node)
 {
     if (!node)
         return;
-
-    /* Add external function declarations */
-    extern void enter_scope();
-    extern void exit_scope();
 
     /* Use setjmp/longjmp for break handling like the old code */
     PUSH_JUMP_BUFFER();

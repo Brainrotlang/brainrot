@@ -8,8 +8,6 @@
 
 extern int yylineno;
 extern void yyerror(const char *s);
-extern String safe_strdup(const String *str);
-extern Scope *current_scope;
 
 /* Forward declaration: infer_expression_type()'s own NODE_FUNC_CALL/
    return_like_arg case needs this (mutual recursion -- see
@@ -1088,27 +1086,28 @@ bool validate_binary_operation(ASTNode *left, ASTNode *right, OperatorType op,
         {
             return true;
         }
-        else
-        {
-            /* Only report errors for clearly incompatible types */
-            if ((left_type == VAR_STRING || left_type == VAR_BOOL) ||
-                (right_type == VAR_STRING || right_type == VAR_BOOL))
-            {
-                char error_msg[MAX_BUFFER_LEN];
-                snprintf(error_msg, sizeof(error_msg),
-                         "Relational comparison requires numeric types, got %s "
-                         "and %s",
-                         vartype_to_string(left_type),
-                         vartype_to_string(right_type));
-                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
-                                   STRING_LITERAL(error_msg), 1);
-                return false;
-            }
-            return true;
-        }
 
-    case OP_AND:
-    case OP_OR:
+        /* Only report errors for clearly incompatible types */
+        if ((left_type == VAR_STRING || left_type == VAR_BOOL) ||
+            (right_type == VAR_STRING || right_type == VAR_BOOL))
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Relational comparison requires numeric types, got %s "
+                     "and %s",
+                     vartype_to_string(left_type),
+                     vartype_to_string(right_type));
+            add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                               STRING_LITERAL(error_msg), 1);
+            return false;
+        }
+        return true;
+
+    // Same effect as `default` below, kept as an explicit case to document
+    // that logical ops accepting any type is deliberate, not an unhandled
+    // operator falling through.
+    case OP_AND: // NOLINT(bugprone-branch-clone)
+    case OP_OR:  // NOLINT(bugprone-branch-clone)
         /* Logical operations work with any type (truthiness) */
         return true;
 
@@ -2530,14 +2529,6 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
         break;
 
     case NODE_WHILE_STATEMENT:
-        analyzer->scope_depth++;
-        if (node->data.while_stmt.body)
-        {
-            collect_declarations(analyzer, node->data.while_stmt.body);
-        }
-        analyzer->scope_depth--;
-        break;
-
     case NODE_DO_WHILE_STATEMENT:
         analyzer->scope_depth++;
         if (node->data.while_stmt.body)

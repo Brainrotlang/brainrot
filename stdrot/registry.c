@@ -22,9 +22,14 @@ extern const struct mach_header _mh_dylib_header;
 /* Linker provides these symbols marking the start/end of the section. The
  * section holds StdrotEntry pointers (see STDROT_EXPORT_SIG in
  * stdrot_api.h), so these are themselves pointer-typed slots -- taking
- * their address gives the start/end of an array of StdrotEntry *. */
+ * their address gives the start/end of an array of StdrotEntry *.
+ * __start_SECTION/__stop_SECTION are the mandated linker-provided names for
+ * this idiom (ld(1)) -- not renameable, so the reserved-identifier warning
+ * doesn't apply here. */
+// NOLINTBEGIN(bugprone-reserved-identifier)
 extern StdrotEntry *__start_stdrot_exports;
 extern StdrotEntry *__stop_stdrot_exports;
+// NOLINTEND(bugprone-reserved-identifier)
 #endif
 
 /* Entry point called by stdrot.c after dlopen() -- named/numbered for
