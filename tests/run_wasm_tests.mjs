@@ -121,8 +121,9 @@ const WASM_EXPECTED_OVERRIDES = {
   // struct_field_long_modifier's `Meters` field is a `lit giga rizz`
   // (long) alias: 4 bytes/4-aligned on wasm32 ILP32 vs 8/8 on native
   // LP64, same root cause as `giga` above. `yap unit` (1 byte) then
-  // pads to 4 (not native's 8), so the struct is 8 bytes total here.
-  struct_field_long_modifier: "8",
+  // pads to 4 (not native's 8), so the struct is 8 bytes total, and
+  // the member's own maxxing(d.value) is 4 (not native's 8) too.
+  struct_field_long_modifier: "8\n4",
 };
 
 // Fixtures that call a tests/stdrot/*.c native (poke_int, peek_int,

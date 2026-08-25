@@ -148,8 +148,13 @@ typedef struct StructField
        alias used as a field's type (e.g. `lit giga rizz Meters; gang G
        { Meters m; };`) -- get_struct_field_size()/
        get_struct_field_alignment() (ast.c) both key off this for
-       VAR_INT so a `giga`/`thicc`-aliased field gets 8-byte size/align
-       instead of silently being sized as a plain 4-byte int. */
+       VAR_INT so a `giga`/`thicc`-aliased field's *slot* is 8 bytes at
+       an 8-aligned offset instead of silently being sized as a plain
+       4-byte int. This is occupancy only: the value actually stored in
+       that slot is still loaded/stored through a 4-byte int (see
+       evaluate_expression_int()/write_value_to_address()) -- the same
+       pre-existing gap plain `giga`/`thicc` variables have outside of
+       any struct, not something this field closes. */
     TypeModifiers modifiers;
     size_t offset; /* byte offset within the struct blob */
     struct StructField *next;

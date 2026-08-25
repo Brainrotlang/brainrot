@@ -5,6 +5,7 @@
 #include "visitor.h"
 #include "interpreter.h"
 #include "lib/mem.h"
+#include <assert.h>
 #include <stdbool.h>
 #include <math.h>
 #include <limits.h>
@@ -428,6 +429,7 @@ ASTNode *create_struct_access_node(ASTNode *object, String member)
     {
         node->var_type = fld->type;
         node->pointer_level = fld->pointer_level;
+        node->modifiers = fld->modifiers;
         if (fld->type == VAR_STRUCT && fld->struct_name.data)
             node->data.struct_access.struct_name =
                 ARENA_STRDUP(fld->struct_name);
@@ -6238,6 +6240,17 @@ bool enter_function_scope(Function *func, ArgumentList *args)
 
 void register_struct_def(StructDef *def)
 {
+    /* alignment is set only by compute_struct_layout()/
+       compute_union_layout() (called by both StructDef construction
+       sites in lang.y), never by this function. A still-zero alignment
+       here means some future construction path skipped that call --
+       fail loud now rather than let a struct/union that later embeds
+       this one by value silently pack with zero padding
+       (get_struct_field_alignment() trusts a *registered* def's
+       alignment outright; see that function's comment in this file). */
+    assert(def->alignment != 0 &&
+           "StructDef registered before compute_struct_layout()/"
+           "compute_union_layout() ran -- alignment is unset");
     if (!struct_registry)
         struct_registry = hm_new();
     size_t len = def->name.len;
@@ -6384,9 +6397,21 @@ static size_t align_up(size_t offset, size_t alignment)
 /* Walk def->fields, assign C-ABI-aligned offsets (padding before each
    field as needed), and write def->total_size/def->alignment -- the
    struct's total size rounded up to its own max field alignment
-   (trailing padding) and that alignment itself. Matches how a real C
-   compiler lays out the same field list, so a `gang` handed across the
-   FFI boundary reads/writes the same bytes a C caller would.
+   (trailing padding) and that alignment itself. Matches the standard C
+   struct-layout algorithm (align, place, pad), so a `gang`'s *occupancy*
+   -- its total size and every field's offset -- matches what a real C
+   compiler would produce for the same field list.
+
+   That is a claim about shape, not about full FFI byte-compatibility:
+   no current code path hands a `gang` *by value* across the FFI (see
+   ast_expr_to_stdrot_value()'s lack of a VAR_STRUCT case, stdrot.c), and
+   a wide scalar field (e.g. a `lit giga`-aliased `long` field) occupies
+   the C-correct number of bytes but is still loaded/stored through this
+   interpreter's plain 32-bit int path (evaluate_expression_int(),
+   write_value_to_address()) -- the same pre-existing limitation plain
+   `giga`/`thicc` variables have outside of any struct. Fixing that is
+   out of scope here; this function's job is only that the *slot* is the
+   right size and at the right offset.
 
    def->total_size and def->alignment are set together, here, as the
    single writer of both -- callers only ever populate def->fields/

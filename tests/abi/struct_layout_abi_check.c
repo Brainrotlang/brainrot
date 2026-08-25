@@ -1,23 +1,33 @@
-/* tests/abi/struct_layout_abi_check.c -- compile-time C-ABI proof for #206
- * (3a). compute_struct_layout()/compute_union_layout() (ast.c) claim to
- * reproduce the host C compiler's struct/union layout (alignment, field
- * offsets, trailing padding). That claim is only actually proven by the
- * host C compiler itself: _Static_assert against sizeof/offsetof of a
- * real C struct declaration, compiled by the same $(CC) that would
- * compile any FFI code Brainrot hands a `gang` to, on whatever target
- * this build is for (native LP64, wasm32 ILP32, ...).
+/* tests/abi/struct_layout_abi_check.c -- ground truth for #206 (3a).
+ *
+ * What this file IS: _Static_assert/offsetof checks against real C
+ * struct/union declarations, compiled by this build's own $(CC) (never
+ * emcc -- this binary is host-only, native LP64 in CI; it does NOT run
+ * on or represent the wasm32 target, despite some fields below having
+ * an ILP32 branch for documentation). It establishes, independently of
+ * anything in ast.c, what a real C compiler's sizeof/offsetof actually
+ * are for the field lists that mirror this repo's struct-layout
+ * fixtures.
+ *
+ * What this file is NOT: a check that Brainrot's compute_struct_layout()
+ * produces those numbers. It never calls into ast.c, never reads a
+ * StructField.offset, and never touches the interpreter -- C agreeing
+ * with C is not evidence about this codebase's layout code. That check
+ * lives on the Brainrot side, in test_cases/struct_layout_padding.
+ * brainrot and test_cases/struct_field_long_modifier.brainrot's
+ * maxxing() calls (cross-checked against the exact numbers asserted
+ * here) and, more specifically, that fixture's read-back-without-
+ * corruption check for interior field placement -- sizeof alone cannot
+ * distinguish a correctly-aligned layout from one that happens to pack
+ * fields and then pad only the total to the same final size.
  *
  * Each struct here is the literal C shape of a fixture in
  * test_cases/struct_layout_padding.brainrot and
  * test_cases/native_void_pointer_struct_field.brainrot; the sizes
  * asserted here are exactly what those fixtures' maxxing() (sizeof)
- * calls are expected to print. If a platform's ABI ever disagrees with
- * the hardcoded expectations in tests/expected_results.json (as already
- * happens for wasm32 -- see tests/run_wasm_tests.mjs's
- * WASM_EXPECTED_OVERRIDES and issue #177), this file is what tells you
- * which side is right: it fails to *compile* rather than merely
- * reporting a mismatched runtime number, so it can't silently pass by
- * both sides agreeing with each other.
+ * calls are expected to print on native (see tests/run_wasm_tests.mjs's
+ * WASM_EXPECTED_OVERRIDES for the wasm32 numbers this file does not
+ * cover, and issue #177 for why they differ).
  */
 
 #include <stddef.h>

@@ -3,10 +3,24 @@
 🚽 padding, not a packed layout. Every size below is what a real C
 🚽 compiler produces for the equivalent struct/union; before this fix they
 🚽 were all under-sized because fields were packed back-to-back with no
-🚽 alignment rounding. These exact numbers are independently proven (not
-🚽 just asserted here) by _Static_assert/offsetof checks against real C
-🚽 struct declarations in tests/abi/struct_layout_abi_check.c -- run
-🚽 `make abi-check` to see them compiled and printed directly.
+🚽 alignment rounding. tests/abi/struct_layout_abi_check.c independently
+🚽 establishes, via _Static_assert/offsetof against real C struct
+🚽 declarations, that these are the sizes/offsets a real C compiler
+🚽 produces for the same field lists -- it does NOT touch Brainrot's own
+🚽 layout code, so it is ground truth for what the numbers below should
+🚽 be, not proof that Brainrot's computed layout matches them.
+🚽
+🚽 maxxing() alone only proves total size: a struct that packed `n` right
+🚽 after `flag` with no interior padding, then padded the *total* up to
+🚽 16 at the very end, would also report 16 here despite `n` being at the
+🚽 wrong offset. To also exercise interior placement, main() below writes
+🚽 a distinct value into every field and reads them all back: if any pair
+🚽 of fields' true offsets overlapped (the actual failure mode a wrong
+🚽 align_up() call, or a missing one, would produce), one write would
+🚽 corrupt a value already written by another and the read-back would
+🚽 disagree with what was stored -- this fails on a mis-offset even
+🚽 though it still can't recover the literal numeric offset the way a
+🚽 real offsetof() would.
 gang Mixed {
     cap flag;    🚽 bool,   1 byte,  align 1 -> offset 0
     rizz n;      🚽 int,    4 bytes, align 4 -> offset 4 (3 bytes padding)
@@ -27,6 +41,13 @@ chungus WideUnion {
 skibidi main {
     gang Mixed m;
     yapping("%lu", maxxing(m));
+
+    m.flag = W;
+    m.n = 1234567;
+    m.d = 2.5;
+    yapping("%b", m.flag);   🚽 would print corrupted garbage if n/d
+    yapping("%d", m.n);      🚽 overlapped flag/each other instead of
+    yapping("%f", m.d);      🚽 landing at their C-correct offsets
 
     chungus WideUnion u;
     yapping("%lu", maxxing(u));

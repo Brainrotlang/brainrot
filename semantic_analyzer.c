@@ -3079,6 +3079,7 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
 
         node->var_type = fld->type;
         node->pointer_level = fld->pointer_level;
+        node->modifiers = fld->modifiers;
         if (fld->type == VAR_STRUCT && fld->struct_name.data)
             node->data.struct_access.struct_name = fld->struct_name;
         break;
