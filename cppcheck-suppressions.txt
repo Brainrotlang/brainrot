@@ -11,5 +11,5 @@ memleak:lib/mem.c
 # The check ID for this differs by cppcheck version (subtractPointers on
 # 2.17.x, comparePointers on 2.13.x, the version CI installs) -- suppress
 # both so the suppression survives either.
-subtractPointers:stdrot/registry.c:63
-comparePointers:stdrot/registry.c:63
+subtractPointers:stdrot/registry.c:68
+comparePointers:stdrot/registry.c:68
