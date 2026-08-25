@@ -695,6 +695,32 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                 yyerror("Variable is not a struct or union");
             return false;
         }
+        /* Same restriction as the pointer-typed FIELD case just below
+           ("Chained member access through a pointer-typed struct/union
+           field is not supported") -- #196/#197 territory, not yet
+           implemented -- but this is the base IDENTIFIER itself being
+           pointer-typed (`gang Foo *pp; pp.field`), not a field reached
+           partway through a chain. Without this check, `var->value.
+           array_data` below is read/written through the union member a
+           POINTER variable actually uses (value.pvalue), not the one a
+           by-value struct variable does: for a pointer variable that
+           union slot either holds an address wrongly reinterpreted as a
+           blob pointer, or -- when NULL/not-yet-assigned -- looks like
+           "no blob yet" and silently calloc's a brand-new, disconnected
+           blob that leaks (confirmed via ASan: `gang Foo *pp = &f; pp.n
+           = 99;`, zero array-access involved, leaks and never touches
+           the real `f`). Rejecting here, before ever touching that
+           union member, is a pure hardening fix scoped to this PR's own
+           newly-reachable-via-arrays path -- it does not implement
+           #196 (following the pointer), it stops this function from
+           corrupting/leaking when asked to. */
+        if (var->pointer_level > 0)
+        {
+            if (report_errors)
+                yyerror("Member access through a pointer-typed struct/union "
+                        "variable is not supported");
+            return false;
+        }
         parent_def = get_struct_def(var->struct_name);
         if (!parent_def)
         {

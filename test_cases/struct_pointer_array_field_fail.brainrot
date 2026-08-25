@@ -1,0 +1,31 @@
+🚽 Test case: regression -- resolve_struct_access()'s NODE_IDENTIFIER case
+🚽 had no `pointer_level > 0` check at all, unlike its sibling check for
+🚽 a pointer-typed FIELD reached partway through a chain ("Chained
+🚽 member access through a pointer-typed struct/union field is not
+🚽 supported", a few lines below in the same function). For a pointer-
+🚽 to-struct VARIABLE used as the base itself (`gang Foo *pp; pp.field`),
+🚽 nothing stopped `var->value.array_data` from being read/written
+🚽 through the union member a POINTER variable actually uses
+🚽 (value.pvalue) -- silently calloc'ing a brand-new, disconnected blob
+🚽 that leaks and is never the real pointee. Confirmed via ASan (git
+🚽 stash A/B): before this fix, `pp.arr[0] = 99;` below leaked 12 bytes
+🚽 (the array field's own total_size) with no error until a later,
+🚽 unrelated pointer-expression failure -- and the same leak reproduced
+🚽 identically with a PLAIN scalar field and zero array-access grammar
+🚽 involved (`pp.n = 99;` on `gang Foo { rizz n; };` leaked 4 bytes the
+🚽 same way), proving this is a resolve_struct_access()-wide gap, not
+🚽 specific to array fields.
+🚽
+🚽 This is #196/#197 territory (pointer-to-struct variables/fields don't
+🚽 correctly follow the pointer yet) -- this fixture only proves the
+🚽 rejection is now clean (no leak, a real error) instead of silently
+🚽 leaking and misbehaving; it does not implement following the pointer.
+gang Foo {
+    rizz arr[3];
+};
+
+skibidi main {
+    gang Foo f;
+    gang Foo *pp = &f;
+    pp.arr[0] = 99;
+}
