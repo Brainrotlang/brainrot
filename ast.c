@@ -3101,7 +3101,9 @@ float evaluate_expression_float(ASTNode *node)
         case VAR_BOOL:
             return (float)*(bool *)addr;
         case VAR_CHAR:
-            return (float)*(char *)addr;
+            /* unsigned char: see evaluate_expression_int()'s
+               OP_DEREFERENCE case for why. */
+            return (float)*(unsigned char *)addr;
         case VAR_FLOAT:
             return *(float *)addr;
         case VAR_DOUBLE:
@@ -3245,7 +3247,9 @@ double evaluate_expression_double(ASTNode *node)
         case VAR_BOOL:
             return (double)*(bool *)addr;
         case VAR_CHAR:
-            return (double)*(char *)addr;
+            /* unsigned char: see evaluate_expression_int()'s
+               OP_DEREFERENCE case for why. */
+            return (double)*(unsigned char *)addr;
         case VAR_FLOAT:
             return (double)*(float *)addr;
         case VAR_DOUBLE:
@@ -3619,7 +3623,9 @@ short evaluate_expression_short(ASTNode *node)
         case VAR_BOOL:
             return (short)*(bool *)addr;
         case VAR_CHAR:
-            return (short)*(char *)addr;
+            /* unsigned char: see evaluate_expression_int()'s
+               OP_DEREFERENCE case for why. */
+            return (short)*(unsigned char *)addr;
         case VAR_FLOAT:
             return (short)*(float *)addr;
         case VAR_DOUBLE:
@@ -3730,12 +3736,19 @@ int evaluate_expression_int(ASTNode *node)
                pointee's real VarType, VAR_CHAR, regardless of what `p`
                happens to point at (a scalar variable's union slot, or a
                genuinely packed array/struct byte). Same width bug as
-               the NODE_ARRAY_ACCESS case above if left as a blind
+               the NODE_ARRAY_ACCESS case below if left as a blind
                `*(int *)`: a `yap *` into a packed buffer would over-read
-               3 bytes past a real 1-byte slot. */
+               3 bytes past a real 1-byte slot. `unsigned char`, not
+               `char`: char_scalar_slot_value() (ast.h) zero-extends a
+               scalar `yap` variable's own slot on every write, so a
+               scalar read is always 0-255; a signed `*(char *)` read
+               here would disagree with that for every packed byte
+               >= 128 (confirmed: after `c = 1000`, a scalar read gives
+               232, a signed packed read gave -24) even though both are
+               reading what should be the same logical value. */
             if (get_expression_type(node) == VAR_CHAR)
                 // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
-                return (int)*(char *)pointee;
+                return (int)*(unsigned char *)pointee;
             // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
             return *(int *)pointee;
         }
@@ -3769,10 +3782,15 @@ int evaluate_expression_int(ASTNode *node)
            address as if elements were 4 bytes apart instead of 1
            (mirrors the write-side bug fixed in write_value_to_address()
            for the identical reason -- VAR_CHAR is the one type whose
-           packed-array width doesn't match this function's own). */
+           packed-array width doesn't match this function's own).
+           `unsigned char`, not `char`: see the matching comment on the
+           OP_DEREFERENCE case above -- a signed read here would
+           disagree with a scalar `yap` variable's own always-0-255
+           representation (char_scalar_slot_value(), ast.h) for every
+           byte >= 128. */
         void *addr = evaluate_multi_array_access(node);
         if (get_expression_type(node) == VAR_CHAR)
-            return (int)*(char *)addr;
+            return (int)*(unsigned char *)addr;
         return *(int *)addr;
     }
     case NODE_FUNC_CALL:
@@ -3824,7 +3842,12 @@ int evaluate_expression_int(ASTNode *node)
         case VAR_BOOL:
             return (int)*(bool *)addr;
         case VAR_CHAR:
-            return (int)*(char *)addr;
+            /* unsigned char, not char: must agree with a scalar `yap`
+               variable's own always-0-255 representation
+               (char_scalar_slot_value(), ast.h) -- see the matching
+               comment on evaluate_expression_int()'s OP_DEREFERENCE
+               case for the full reasoning. */
+            return (int)*(unsigned char *)addr;
         case VAR_FLOAT:
             return (int)*(float *)addr;
         case VAR_DOUBLE:

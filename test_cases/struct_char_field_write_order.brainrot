@@ -5,8 +5,18 @@
 🚽 adjacent 1-byte fields (offsets 4 and 5 in a `{ rizz a; yap b; yap c;
 🚽 }` layout); writing `c` before `b` used to have `b`'s wrongly-widened
 🚽 write silently zero the 3 bytes after it -- which is `c`'s own byte.
-🚽 Confirmed via git-stash A/B: before the fix this printed "1 x "
-🚽 (`c` clobbered to a NUL byte); after, "1 x y".
+🚽
+🚽 Reads use `+ 0` (forcing NODE_STRUCT_ACCESS through evaluate_
+🚽 expression_int's integer-family path), not `%c`: `%c` only keeps the
+🚽 low 8 bits, so it can't tell a correct 1-byte read from a stale 4-byte
+🚽 one whose low byte happens to still be right. Values are >= 128, not
+🚽 ASCII, so this also catches a second regression a `%c`/ASCII-only
+🚽 fixture can't: NODE_STRUCT_ACCESS's VAR_CHAR read must be `(int)*
+🚽 (unsigned char *)addr`, not `(int)*(char *)addr` -- plain `char` is
+🚽 signed on this platform, so a signed read of a byte >= 128 disagrees
+🚽 with char_scalar_slot_value()'s always-0-255 scalar representation
+🚽 (confirmed: before this fix, a signed struct-field read of 200 gave
+🚽 -56, not 200).
 gang Foo {
     rizz a;
     yap b;
@@ -16,7 +26,7 @@ gang Foo {
 skibidi main {
     gang Foo f;
     f.a = 1;
-    f.c = 'y';
-    f.b = 'x';
-    yapping("%d %c %c", f.a, f.b, f.c);
+    f.c = 200;
+    f.b = 150;
+    yapping("%d %d %d", f.a, f.b + 0, f.c + 0);
 }
