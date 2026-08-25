@@ -48,6 +48,7 @@
     "struct_char_field_write_order": "1 x y",
     "char_pointer_deref_read": "114",
     "char_pointer_scalar_alias": "120",
+    "char_pointer_param_alias": "120",
     "add_two_numbers": "3",
     "mul_two_numbers": "11.400000",
     "max_gigachad": "5.000000",

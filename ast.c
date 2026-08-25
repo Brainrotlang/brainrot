@@ -2504,6 +2504,12 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
     return (uintptr_t)0;
 }
 
+/* See this function's declaration (ast.h) for the full invariant. */
+int char_scalar_slot_value(int raw)
+{
+    return (unsigned char)raw;
+}
+
 /* `packed_storage` distinguishes two genuinely different memory shapes
    `address` can point into, which only diverge for VAR_CHAR:
    - false (a plain NODE_IDENTIFIER target): address is a scalar
@@ -2580,9 +2586,8 @@ static void write_value_to_address(void *address, VarType type,
         if (packed_storage)
             *(char *)address = (char)evaluate_expression_int(expr);
         else
-            /* Zero-extend, not a plain widen: see this function's own
-               comment for why the upper 3 bytes must stay zero here. */
-            *(int *)address = (unsigned char)evaluate_expression_int(expr);
+            *(int *)address =
+                char_scalar_slot_value(evaluate_expression_int(expr));
         break;
     case VAR_STRING:
         *(String *)address = evaluate_expression_string(expr);
@@ -2627,9 +2632,8 @@ static void initialize_variable_from_expr(Variable *var, ASTNode *expr)
         var->value.bvalue = evaluate_expression_bool(expr);
         break;
     case VAR_CHAR:
-        /* Zero-extend: see write_value_to_address()'s comment for why
-           this slot's upper 3 bytes must stay zero. */
-        var->value.ivalue = (unsigned char)evaluate_expression_int(expr);
+        var->value.ivalue =
+            char_scalar_slot_value(evaluate_expression_int(expr));
         break;
     case VAR_STRING:
         var->value.strvalue = evaluate_expression_string(expr);
@@ -6257,8 +6261,27 @@ bool enter_function_scope(Function *func, ArgumentList *args)
         switch (curr_param->type)
         {
         case VAR_INT:
-        case VAR_CHAR:
             set_int_variable(curr_param->name, arg_values[i].ivalue, mods);
+            break;
+        case VAR_CHAR:
+            /* Not set_int_variable(): that calls set_variable(...,
+               VAR_INT, ...), which overwrites this parameter's
+               var_type to VAR_INT (clobbering the VAR_CHAR set moments
+               ago, above) and stores the raw, unmasked argument value.
+               A `yap` parameter passed an out-of-byte-range argument
+               (nothing here rejects that) would then keep both a wrong
+               var_type and non-zero upper bytes in its ivalue slot --
+               exactly the stale-high-bytes hazard write_value_to_
+               address()'s own comment describes, now reachable through
+               a plain function call instead of a pointer alias
+               (confirmed: `skibidi foo(yap c) { yap *p = &c; *p = 'x';
+               yapping("%d", c + 0); } ... foo(1000);` printed 888, not
+               120). set_char_variable() calls set_variable(..., VAR_
+               CHAR, ...), whose own VAR_CHAR case already does the
+               same `(unsigned char)` zero-extension write_value_to_
+               address() does, and correctly leaves var_type as
+               VAR_CHAR. */
+            set_char_variable(curr_param->name, arg_values[i].ivalue, mods);
             break;
         case VAR_FLOAT:
             set_float_variable(curr_param->name, arg_values[i].fvalue, mods);
