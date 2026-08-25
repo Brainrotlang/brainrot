@@ -614,7 +614,7 @@ ExpressionList *append_expression_list_node(ExpressionList *list,
                                             ExpressionList *node);
 void free_expression_list(ExpressionList *list);
 void populate_multi_array_variable(String name, ExpressionList *list,
-                                   int dimensions[], int num_dimensions);
+                                   const int dimensions[], int num_dimensions);
 /* Attaches a braced initializer to an array/struct declaration node so the
    runtime declaration visitor can populate storage once it exists (see
    ASTNode.pending_initializer). Takes ownership of `list` via an internal
@@ -652,9 +652,10 @@ size_t get_type_size(String name);
 size_t get_type_size_for_descriptor(VarType type, int pointer_level,
                                     TypeModifiers mods);
 void *handle_function_call(ASTNode *node);
-ASTNode *create_multi_array_declaration_node(String name, int dimensions[],
+ASTNode *create_multi_array_declaration_node(String name,
+                                             const int dimensions[],
                                              int num_dimensions, VarType type);
-bool set_multi_array_variable(const String name, int dimensions[],
+bool set_multi_array_variable(const String name, const int dimensions[],
                               int num_dimensions, TypeModifiers mods,
                               VarType type);
 ASTNode *create_array_access_node_single(String name, ASTNode *index);

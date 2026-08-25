@@ -5,6 +5,7 @@ FLEX := flex
 PYTHON := python3
 EMCC := emcc
 CPPCHECK ?= cppcheck
+CLANG_TIDY ?= clang-tidy-15
 
 # Compiler and linker flags
 CFLAGS := -Wall -Wextra -Wpedantic -Werror -O2 -Wuninitialized -fsanitize=address,undefined -fno-omit-frame-pointer -g
@@ -369,6 +370,20 @@ cppcheck:
 	$(CPPCHECK) $(CPPCHECK_FLAGS) $(CPPCHECK_SRCS)
 	@echo "cppcheck found nothing sus. Certified W."
 
+# clang-tidy uses a fixed compiler-flags tail (below) instead of a generated
+# compile_commands.json: $(TARGET) compiles+links $(ALL_SRCS) in a single gcc
+# invocation rather than one -c per file, so an intercept tool (e.g. bear)
+# wouldn't cleanly map to "one compile command per translation unit" here --
+# and every file in $(CPPCHECK_SRCS) already builds under the same flags and
+# include paths anyway (the same reason cppcheck above works as a flat file
+# list), so a real compilation database buys nothing. Checks are configured
+# in .clang-tidy (small allowlist, not checks=*; see issue #172).
+.PHONY: tidy
+tidy:
+	@command -v $(CLANG_TIDY) >/dev/null 2>&1 || { echo "Error: clang-tidy not found. Blud, install clang-tidy-15!"; exit 1; }
+	$(CLANG_TIDY) $(CPPCHECK_SRCS) -- $(CFLAGS) -I. -I$(SRC_DIR) -I$(STDROT_DIR)
+	@echo "clang-tidy found nothing sus. Certified W."
+
 # Show help
 .PHONY: help
 help:
@@ -385,6 +400,7 @@ help:
 	@echo "  format     : Format source files using clang-format. No cringe, all kino."
 	@echo "  format-check : Check formatting without modifying files (CI lint job)."
 	@echo "  cppcheck   : Static analysis with cppcheck (CI static-analysis job)."
+	@echo "  tidy       : Static analysis with clang-tidy (CI static-analysis job)."
 	@echo "  valgrind   : Checks for sussy memory leaks with Valgrind."
 	@echo "  help       : Show this help for n00bs."
 	@echo ""

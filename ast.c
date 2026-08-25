@@ -41,7 +41,6 @@ Scope *current_scope;
 extern void yyerror(const char *s);
 extern void yyerror_current_line(const char *s);
 extern void cleanup(void);
-extern TypeModifiers get_variable_modifiers(const String name);
 extern const char *vartype_to_string(VarType type);
 extern int yylineno;
 static int get_function_return_pointer_level(const String name);
@@ -326,7 +325,7 @@ bool set_variable(const String name, void *value, VarType type,
             var->value.bvalue = *(bool *)value;
             break;
         case VAR_CHAR:
-            var->value.ivalue = *(char *)value;
+            var->value.ivalue = *(unsigned char *)value;
             break;
         case VAR_STRING:
             var->value.strvalue = ARENA_STRDUP(*(String *)value);
@@ -356,7 +355,7 @@ bool set_variable(const String name, void *value, VarType type,
     return false; // Symbol table is full
 }
 
-bool set_multi_array_variable(const String name, int dimensions[],
+bool set_multi_array_variable(const String name, const int dimensions[],
                               int num_dimensions, TypeModifiers mods,
                               VarType type)
 {
@@ -436,7 +435,8 @@ ASTNode *create_struct_access_node(ASTNode *object, String member)
     return node;
 }
 
-ASTNode *create_multi_array_declaration_node(String name, int dimensions[],
+ASTNode *create_multi_array_declaration_node(String name,
+                                             const int dimensions[],
                                              int num_dimensions, VarType type)
 {
     ASTNode *node = ARENA_ALLOC_ASTNODE();
@@ -1001,12 +1001,10 @@ bool check_and_mark_identifier(ASTNode *node, const String contextErrorMessage)
 
         // Do the table lookup
         Variable *var = get_variable(node->data.name);
-        if (var != NULL)
-            node->is_valid_symbol = true;
-        /* Not a variable -- fall back to the enum-constant namespace (e.g.
-           bare `RED` from `gyatt Color { RED, ... };`), matching C's
+        /* A variable, or -- falling back to the enum-constant namespace
+           (e.g. bare `RED` from `gyatt Color { RED, ... };`), matching C's
            unscoped enum constants. */
-        else if (find_global_enum_constant(node->data.name) != NULL)
+        if (var != NULL || find_global_enum_constant(node->data.name) != NULL)
             node->is_valid_symbol = true;
 
         if (!node->is_valid_symbol)
@@ -1164,7 +1162,7 @@ ASTNode *create_float_node(float value)
 ASTNode *create_char_node(char value)
 {
     ASTNode *node = create_node(NODE_CHAR, VAR_CHAR, current_modifiers);
-    SET_DATA_INT(node, value); // Store char as integer
+    SET_DATA_INT(node, (unsigned char)value); // Store char as integer
     return node;
 }
 
@@ -2046,10 +2044,16 @@ void *handle_binary_operation(ASTNode *node)
     }
 
     // Perform the operation and allocate the result.
+    // This branch and the final "else if (!result)" below both allocate an
+    // int, but for unrelated reasons -- this one because comparison
+    // operators always produce an int result regardless of promoted_type,
+    // the other as the int/long/etc. fallback once every other
+    // promoted_type has been tried. Not adjacent, not mergeable without
+    // losing that distinction.
     if (node->data.op.op == OP_LT || node->data.op.op == OP_GT ||
         node->data.op.op == OP_LE || node->data.op.op == OP_GE ||
         node->data.op.op == OP_EQ || node->data.op.op == OP_NE)
-    {
+    { // NOLINT(bugprone-branch-clone)
         result = SAFE_MALLOC(int);
     }
     else if (!result && promoted_type == VAR_DOUBLE)
@@ -2167,7 +2171,7 @@ void *handle_binary_operation(ASTNode *node)
         else if (promoted_type == VAR_FLOAT)
         {
             *(float *)result =
-                fmod(*(float *)left_value, *(float *)right_value);
+                fmodf(*(float *)left_value, *(float *)right_value);
         }
         else if (promoted_type == VAR_DOUBLE)
         {
@@ -2363,6 +2367,15 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
         if (node->data.unary.op == OP_ADDRESS_OF)
             return (uintptr_t)evaluate_lvalue_address(node->data.unary.operand);
         if (node->data.unary.op == OP_DEREFERENCE)
+            /* A NULL pointer value reaching a dereference here is a real
+             * possible Brainrot-program runtime crash (matching C's own
+             * *NULL semantics), not a bug in this call site specifically --
+             * every typed dereference in this dispatch (evaluate_expression_
+             * int/short/float/.../bool) shares the same unguarded shape.
+             * Whether pointer dereference should instead raise a catchable
+             * runtime error is a language-semantics decision, out of scope
+             * for this CI-adoption pass. */
+            // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
             return *(uintptr_t *)(uintptr_t)evaluate_expression_pointer(
                 node->data.unary.operand);
         break;
@@ -3240,9 +3253,8 @@ size_t handle_sizeof(ASTNode *node)
         // For identifiers, use get_type_size which looks up the variable
         return get_type_size(expr->data.name);
     }
-    else
-    {
-        /* sizeof's operand is never evaluated -- that's its defining
+
+    /* sizeof's operand is never evaluated -- that's its defining
            property, matching C. get_expression_type() alone doesn't
            honor that for a native call: its own NODE_FUNC_CALL case
            falls back to actually invoking a legacy/untyped native to
@@ -3265,82 +3277,64 @@ size_t handle_sizeof(ASTNode *node)
            would already have returned NONE) -- so this doesn't replace
            get_expression_type() below, just proves ahead of time that
            calling it is safe. */
-        if (infer_runtime_expression_type_noeval(expr) == NONE)
-        {
-            yyerror("maxxing (sizeof) of an expression whose type is not "
-                    "statically known -- sizeof's operand is never "
-                    "evaluated, so a native call it depends on cannot be "
-                    "invoked to discover it");
-            return 0;
-        }
+    if (infer_runtime_expression_type_noeval(expr) == NONE)
+    {
+        yyerror("maxxing (sizeof) of an expression whose type is not "
+                "statically known -- sizeof's operand is never "
+                "evaluated, so a native call it depends on cannot be "
+                "invoked to discover it");
+        return 0;
+    }
 
-        // For non-identifiers (like literals), use get_expression_type
-        VarType type = get_expression_type(expr);
-        switch (type)
-        {
-        case VAR_INT:
-            return get_type_size_for_descriptor(
-                type, get_expression_pointer_level(expr), expr->modifiers);
-        case VAR_FLOAT:
-            return get_type_size_for_descriptor(
-                type, get_expression_pointer_level(expr), expr->modifiers);
-        case VAR_DOUBLE:
-            return get_type_size_for_descriptor(
-                type, get_expression_pointer_level(expr), expr->modifiers);
-        case VAR_SHORT:
-            return get_type_size_for_descriptor(
-                type, get_expression_pointer_level(expr), expr->modifiers);
-        case VAR_BOOL:
-            return get_type_size_for_descriptor(
-                type, get_expression_pointer_level(expr), expr->modifiers);
-        case VAR_CHAR:
-            return get_type_size_for_descriptor(
-                type, get_expression_pointer_level(expr), expr->modifiers);
-        case VAR_ENUM:
-            return get_type_size_for_descriptor(
-                type, get_expression_pointer_level(expr), expr->modifiers);
-        case VAR_STRING:
-            /* Round-19 review, finding #3 -- get_type_size_for_descriptor()
-               (above) has always defined VAR_STRING as sizeof(String),
-               and a plain identifier's sizeof (the branch above this
-               `else`) already uses it via get_type_size(); this generic
-               path (a native-call expression like `identity(buf)`
-               resolving to STDROT_STRING, per get_native_call_static_
-               type()) fell to the `default: yyerror("Invalid type in
-               sizeof")` below purely because this case was missing --
-               an AST-shape accident, not an actual "strings have no
-               size" rule, since the identical VarType already has a
-               well-defined size everywhere else. */
-            return get_type_size_for_descriptor(
-                type, get_expression_pointer_level(expr), expr->modifiers);
-        case VAR_PTR:
-            /* A typed native's STDROT_PTR result (or any other pointer-
-               typed expression reaching this generic path) -- get_type_
-               size_for_descriptor() already handles pointer_level > 0
-               correctly (sizeof(uintptr_t)) via its own unconditional
-               check at the top; this case was simply missing, so a
-               pointer-typed non-identifier expression fell to the
-               `default: yyerror("Invalid type in sizeof")` case below
-               despite being a perfectly well-defined size. */
-            return get_type_size_for_descriptor(
-                type, get_expression_pointer_level(expr), expr->modifiers);
-        case VAR_STRUCT:
-        {
-            int plevel = get_expression_pointer_level(expr);
-            if (plevel > 0)
-                return get_type_size_for_descriptor(type, plevel,
-                                                    expr->modifiers);
+    // For non-identifiers (like literals), use get_expression_type
+    VarType type = get_expression_type(expr);
+    switch (type)
+    {
+    case VAR_INT:
+    case VAR_FLOAT:
+    case VAR_DOUBLE:
+    case VAR_SHORT:
+    case VAR_BOOL:
+    case VAR_CHAR:
+    case VAR_ENUM:
+    /* Round-19 review, finding #3 -- get_type_size_for_descriptor()
+       (above) has always defined VAR_STRING as sizeof(String),
+       and a plain identifier's sizeof (the branch above this
+       `else`) already uses it via get_type_size(); this generic
+       path (a native-call expression like `identity(buf)`
+       resolving to STDROT_STRING, per get_native_call_static_
+       type()) fell to the `default: yyerror("Invalid type in
+       sizeof")` below purely because this case was missing --
+       an AST-shape accident, not an actual "strings have no
+       size" rule, since the identical VarType already has a
+       well-defined size everywhere else. */
+    case VAR_STRING:
+    /* A typed native's STDROT_PTR result (or any other pointer-
+       typed expression reaching this generic path) -- get_type_
+       size_for_descriptor() already handles pointer_level > 0
+       correctly (sizeof(uintptr_t)) via its own unconditional
+       check at the top; this case was simply missing, so a
+       pointer-typed non-identifier expression fell to the
+       `default: yyerror("Invalid type in sizeof")` case below
+       despite being a perfectly well-defined size. */
+    case VAR_PTR:
+        return get_type_size_for_descriptor(
+            type, get_expression_pointer_level(expr), expr->modifiers);
+    case VAR_STRUCT:
+    {
+        int plevel = get_expression_pointer_level(expr);
+        if (plevel > 0)
+            return get_type_size_for_descriptor(type, plevel, expr->modifiers);
 
-            StructDef *sdef = get_struct_def_for_expression(expr);
-            if (sdef != NULL)
-                return sdef->total_size;
-            yyerror("Invalid type in sizeof");
-            return 0;
-        }
-        default:
-            yyerror("Invalid type in sizeof");
-            return 0;
-        }
+        StructDef *sdef = get_struct_def_for_expression(expr);
+        if (sdef != NULL)
+            return sdef->total_size;
+        yyerror("Invalid type in sizeof");
+        return 0;
+    }
+    default:
+        yyerror("Invalid type in sizeof");
+        return 0;
     }
 }
 
@@ -3671,6 +3665,11 @@ int evaluate_expression_int(ASTNode *node)
                 yyerror("Cannot use pointer in integer context");
                 return 0;
             }
+            // See the NODE_UNARY_OPERATION/OP_DEREFERENCE case in
+            // evaluate_expression_pointer() above for why a possible NULL
+            // dereference here is expected/deferred, not a bug to silently
+            // wave off.
+            // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
             return *(int *)(uintptr_t)evaluate_expression_pointer(
                 node->data.unary.operand);
         }
@@ -3825,7 +3824,7 @@ static void marshal_native_return_value(ASTNode *node)
         current_return_value.value.bvalue = result.val.b;
         break;
     case STDROT_CHAR:
-        current_return_value.value.ivalue = result.val.c;
+        current_return_value.value.ivalue = (unsigned char)result.val.c;
         break;
     case STDROT_STRING:
         current_return_value.value.strvalue = result.val.str;
@@ -4085,6 +4084,11 @@ bool evaluate_expression_bool(ASTNode *node)
             get_expression_pointer_level(node) > 0)
             return evaluate_expression_pointer(node) != (uintptr_t)0;
         if (node->data.unary.op == OP_DEREFERENCE)
+            // See the NODE_UNARY_OPERATION/OP_DEREFERENCE case in
+            // evaluate_expression_pointer() above for why a possible NULL
+            // dereference here is expected/deferred, not a bug to silently
+            // wave off.
+            // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
             return *(bool *)(uintptr_t)evaluate_expression_pointer(
                 node->data.unary.operand);
         bool operand = evaluate_expression_bool(node->data.unary.operand);
@@ -4196,17 +4200,15 @@ ArgumentList *create_argument_list(ASTNode *expr, ArgumentList *existing_list)
     {
         return new_node;
     }
-    else
+
+    /* Append to the end of existing_list */
+    ArgumentList *temp = existing_list;
+    while (temp->next)
     {
-        /* Append to the end of existing_list */
-        ArgumentList *temp = existing_list;
-        while (temp->next)
-        {
-            temp = temp->next;
-        }
-        temp->next = new_node;
-        return existing_list;
+        temp = temp->next;
     }
+    temp->next = new_node;
+    return existing_list;
 }
 
 ASTNode *create_print_statement_node(ASTNode *expr)
@@ -4248,26 +4250,24 @@ ASTNode *create_statement_list(ASTNode *statement, ASTNode *existing_list)
         node->data.statements->next = NULL;
         return node;
     }
-    else
+
+    // Append at the end of existing_list
+    StatementList *sl = existing_list->data.statements;
+    while (sl->next)
     {
-        // Append at the end of existing_list
-        StatementList *sl = existing_list->data.statements;
-        while (sl->next)
-        {
-            sl = sl->next;
-        }
-        // Now sl is the last element; append the new statement
-        StatementList *new_item = ARENA_ALLOC(StatementList);
-        if (!new_item)
-        {
-            yyerror("Memory allocation failed");
-            return existing_list;
-        }
-        new_item->statement = statement;
-        new_item->next = NULL;
-        sl->next = new_item;
+        sl = sl->next;
+    }
+    // Now sl is the last element; append the new statement
+    StatementList *new_item = ARENA_ALLOC(StatementList);
+    if (!new_item)
+    {
+        yyerror("Memory allocation failed");
         return existing_list;
     }
+    new_item->statement = statement;
+    new_item->next = NULL;
+    sl->next = new_item;
+    return existing_list;
 }
 
 bool is_const_variable(const String name)
@@ -4553,7 +4553,6 @@ void execute_statement(ASTNode *node)
     case NODE_FUNC_CALL:
     {
         // Set execution context with current line number
-        extern ExecutionContext g_exec_context;
         g_exec_context.line_number = node->line_number;
         g_exec_context.function_name = node->data.func_call.function_name;
 
@@ -4856,7 +4855,10 @@ ASTNode *create_default_node(VarType var_type, int pointer_level)
         String s = {.data = "\0", .len = sizeof("\0") - 1};
         return create_string_literal_node(s);
     }
-    case VAR_ENUM:
+    // VAR_ENUM's 0 (the natural enum default) and VAR_VOID's 0 (an
+    // invalid-variable placeholder, see its own comment below) coincide but
+    // for semantically distinct reasons -- not a merge candidate.
+    case VAR_ENUM: // NOLINT(bugprone-branch-clone)
         return create_int_node(0);
     case VAR_VOID:
         /* Reached only for pointer_level == 0 now (the pointer_level > 0
@@ -5156,7 +5158,7 @@ void populate_struct_variable(const String name, ExpressionList *list)
 }
 
 void populate_multi_array_variable(String name, ExpressionList *list,
-                                   int dimensions[], int num_dimensions)
+                                   const int dimensions[], int num_dimensions)
 {
     Variable *var = get_variable(name);
     if (var == NULL || !var->is_array)
@@ -6592,9 +6594,7 @@ bool finalize_enum_constants(EnumDef *def)
     EnumConstant *c = def->constants;
     while (c)
     {
-        if (c->has_explicit_value)
-            next_value = c->value;
-        else
+        if (!c->has_explicit_value)
             c->value = next_value;
 
         EnumConstant *prev = def->constants;

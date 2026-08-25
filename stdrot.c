@@ -43,23 +43,8 @@ ExecutionContext g_exec_context = {0, {NULL, 0}, {NULL, 0}};
 
 /* ── External interpreter functions ──────────────────────────────────────── */
 extern void yyerror(const char *s);
-extern int evaluate_expression_int(ASTNode *node);
-extern float evaluate_expression_float(ASTNode *node);
-extern double evaluate_expression_double(ASTNode *node);
-extern short evaluate_expression_short(ASTNode *node);
-extern bool evaluate_expression_bool(ASTNode *node);
 extern String evaluate_expression_string(ASTNode *node);
-extern bool is_expression(ASTNode *node, VarType type);
-extern Variable *get_variable(const String name);
-extern TypeModifiers get_variable_modifiers(const String name);
 extern void *evaluate_multi_array_access(ASTNode *node);
-extern bool set_int_variable(const String name, int value, TypeModifiers mods);
-extern bool set_float_variable(const String name, float value,
-                               TypeModifiers mods);
-extern bool set_double_variable(const String name, double value,
-                                TypeModifiers mods);
-extern bool set_short_variable(const String name, short value,
-                               TypeModifiers mods);
 extern bool set_bool_variable(const String name, bool value,
                               TypeModifiers mods);
 extern bool set_char_variable(const String name, int value, TypeModifiers mods);
@@ -82,20 +67,6 @@ typedef struct
 
 static SymbolCache symbol_cache[STDROT_CACHE_SIZE];
 static int cache_count = 0;
-#endif
-
-/* ── Forward declarations of stub functions ──────────────────────────────── */
-void yapping(const String format, ...);
-void yappin(const String format, ...);
-void baka(const String format, ...);
-#ifndef STDROT_STATIC
-void ragequit(int exit_code);
-void chill(unsigned int seconds);
-char slorp_char(char chr);
-int slorp_int(int val);
-short slorp_short(short val);
-float slorp_float(float var);
-double slorp_double(double var);
 #endif
 
 #ifdef STDROT_STATIC
@@ -1127,7 +1098,11 @@ static void apply_variadic_promotion(StdrotValue *value)
     switch (value->type)
     {
     case STDROT_CHAR:
-        value->val.i = value->val.c;
+        /* Deliberately a plain signed conversion, not a bug -- this
+         * function exists specifically to emulate C's own default
+         * argument promotions (see the function comment above), which
+         * sign-extend a signed char to int exactly like this. */
+        value->val.i = value->val.c; // NOLINT(bugprone-signed-char-misuse)
         value->type = STDROT_INT;
         break;
     case STDROT_BOOL:

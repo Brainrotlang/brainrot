@@ -329,28 +329,28 @@ typedef struct
 #define STDROT_EXPORT_SIG(name_str, func_ptr, ret, params_ptr, pcount,         \
                           min_count, variadic)                                 \
     static const StdrotEntry STDROT_CONCAT(__stdrot_entry_, __LINE__) = {      \
-        .name = name_str,                                                      \
-        .return_type = ret,                                                    \
-        .params = params_ptr,                                                  \
-        .param_count = pcount,                                                 \
-        .min_args = min_count,                                                 \
-        .is_variadic = variadic,                                               \
+        .name = (name_str),                                                    \
+        .return_type = (ret),                                                  \
+        .params = (params_ptr),                                                \
+        .param_count = (pcount),                                               \
+        .min_args = (min_count),                                               \
+        .is_variadic = (variadic),                                             \
         .return_like_arg = -1,                                                 \
-        .fn = func_ptr};                                                       \
+        .fn = (func_ptr)};                                                     \
     __attribute__((STDROT_EXPORT_ATTR)) static const StdrotEntry *const        \
     STDROT_CONCAT(__stdrot_export_, __LINE__) =                                \
         &STDROT_CONCAT(__stdrot_entry_, __LINE__)
 #define STDROT_EXPORT_SIG_IDENTITY(name_str, func_ptr, params_ptr, pcount,     \
                                    min_count)                                  \
     static const StdrotEntry STDROT_CONCAT(__stdrot_entry_, __LINE__) = {      \
-        .name = name_str,                                                      \
+        .name = (name_str),                                                    \
         .return_type = ((StdrotParam){STDROT_ANY, NULL, 0}),                   \
-        .params = params_ptr,                                                  \
-        .param_count = pcount,                                                 \
-        .min_args = min_count,                                                 \
+        .params = (params_ptr),                                                \
+        .param_count = (pcount),                                               \
+        .min_args = (min_count),                                               \
         .is_variadic = false,                                                  \
         .return_like_arg = 0,                                                  \
-        .fn = func_ptr};                                                       \
+        .fn = (func_ptr)};                                                     \
     __attribute__((STDROT_EXPORT_ATTR)) static const StdrotEntry *const        \
     STDROT_CONCAT(__stdrot_export_, __LINE__) =                                \
         &STDROT_CONCAT(__stdrot_entry_, __LINE__)
@@ -369,15 +369,15 @@ typedef struct
 #define STDROT_EXPORT_SIG_VARIADIC(name_str, func_ptr, ret, params_ptr,        \
                                    pcount, min_count)                          \
     static const StdrotEntry STDROT_CONCAT(__stdrot_entry_, __LINE__) = {      \
-        .name = name_str,                                                      \
-        .return_type = ret,                                                    \
-        .params = params_ptr,                                                  \
-        .param_count = pcount,                                                 \
-        .min_args = min_count,                                                 \
+        .name = (name_str),                                                    \
+        .return_type = (ret),                                                  \
+        .params = (params_ptr),                                                \
+        .param_count = (pcount),                                               \
+        .min_args = (min_count),                                               \
         .is_variadic = true,                                                   \
         .promote_variadic_tail = true,                                         \
         .return_like_arg = -1,                                                 \
-        .fn = func_ptr};                                                       \
+        .fn = (func_ptr)};                                                     \
     __attribute__((STDROT_EXPORT_ATTR)) static const StdrotEntry *const        \
     STDROT_CONCAT(__stdrot_export_, __LINE__) =                                \
         &STDROT_CONCAT(__stdrot_entry_, __LINE__)

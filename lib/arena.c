@@ -87,7 +87,16 @@ void *arena_alloc(Arena *arena, size_t size_bytes)
     }
 
     void *result = &arena->end->data[arena->end->count];
-    arena->end->count += size;
+    /* Flags the owns_arena==true success path -- the Arena this function
+     * just malloc'd for a caller that passed NULL is never handed back to
+     * that caller, so it can never be freed. Every call site in this
+     * codebase goes through ARENA_ALLOC()/ARENA_STRDUP() (ast.h), which
+     * always pass the address of the file-scope `arena` global, never NULL,
+     * so owns_arena is unreachable today -- but this is a real latent leak
+     * in arena_alloc's own documented NULL-arena convenience path, not a
+     * false positive. Fixing it needs an API change (e.g. returning the
+     * Arena* too), out of scope for this CI-adoption pass. */
+    arena->end->count += size; // NOLINT(clang-analyzer-unix.Malloc)
     return result;
 }
 

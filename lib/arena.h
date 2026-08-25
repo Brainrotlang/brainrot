@@ -5,7 +5,7 @@
 #include "string_value.h"
 
 // Default region size 4KB or 1 page of memory
-#define DEFAULT_REGION_SIZE (4 * 1024)
+#define DEFAULT_REGION_SIZE (4UL * 1024)
 
 typedef struct Region
 {
