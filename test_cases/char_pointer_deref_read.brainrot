@@ -1,0 +1,25 @@
+🚽 Test case: regression -- evaluate_expression_int()'s NODE_UNARY_OPERATION/
+🚽 OP_DEREFERENCE case did `*(int *)pointee` unconditionally, correct only
+🚽 when the pointee is a scalar variable's own 4-byte union slot, not
+🚽 when it's a packed 1-byte array/struct slot (the same class of bug
+🚽 fixed for NODE_ARRAY_ACCESS in the same PR).
+🚽
+🚽 `*p` alone in a native-call argument (e.g. `yapping("%d", *p)`) does
+🚽 NOT exercise this function -- native-argument marshalling has its own,
+🚽 separate (already-correct) path. Forcing arithmetic context with
+🚽 `*p + 0` is what actually routes through evaluate_expression_int()'s
+🚽 OP_DEREFERENCE case. Without the fix, reading `*p` at `a[0]` pulled in
+🚽 `a[1]`/`a[2]`/`a[3]`'s real bytes as the upper 3 bytes of a bogus int
+🚽 (confirmed: 2054842738, not 114) -- deterministic garbage, not
+🚽 allocator-slack luck, since the neighboring bytes are real non-zero
+🚽 data here rather than padding.
+skibidi main {
+    yap a[4];
+    a[0] = 'r';
+    a[1] = 'i';
+    a[2] = 'z';
+    a[3] = 'z';
+
+    yap *p = &a[0];
+    yapping("%d", *p + 0);
+}

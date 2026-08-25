@@ -585,8 +585,16 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
             }
             case VAR_CHAR:
             {
+                /* Zero-extend into the full slot, not a plain widen: a
+                   scalar Variable's VAR_CHAR storage is a real 4-byte
+                   `int` union member with no dedicated 1-byte member of
+                   its own (see write_value_to_address()'s comment,
+                   ast.c, for the full reasoning) -- the upper 3 bytes
+                   must stay zero so a later narrower 1-byte write
+                   through a `yap *` alias into this same slot can't
+                   leave stale bytes behind. */
                 int int_value = evaluate_expression_int(node->data.op.right);
-                scope_var->value.ivalue = int_value;
+                scope_var->value.ivalue = (unsigned char)int_value;
                 break;
             }
             case VAR_SHORT:
