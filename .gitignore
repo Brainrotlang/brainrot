@@ -9,3 +9,4 @@ brainrot.wasm
 brainrot.mjs
 tests/brainrot-test.wasm
 tests/brainrot-test.mjs
+tests/abi/struct_layout_abi_check

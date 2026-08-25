@@ -36,7 +36,9 @@
 // expected value instead of native's — see the comment next to it for why.
 // They are still run and still asserted on, just against a different,
 // equally exact string, so a regression in either one still fails this
-// harness.
+// harness. Override strings don't need a trailing newline to match a
+// multi-line native expected string (e.g. "8\n4" vs. native's "16\n8\n")
+// -- both sides of the comparison are .trim()'d below before comparing.
 //
 // Usage: node tests/run_wasm_tests.mjs [test|production]
 //   (run from the repo root, after `make wasm-test` and/or `make wasm`)
@@ -118,6 +120,12 @@ const WASM_EXPECTED_OVERRIDES = {
   native_sizeof_ptr_result: "4",
   native_identity_abi_type_char_array: "8",
   native_void_pointer_struct_field: "8",
+  // struct_field_long_modifier's `Meters` field is a `lit giga rizz`
+  // (long) alias: 4 bytes/4-aligned on wasm32 ILP32 vs 8/8 on native
+  // LP64, same root cause as `giga` above. `yap unit` (1 byte) then
+  // pads to 4 (not native's 8), so the struct is 8 bytes total, and
+  // the member's own maxxing(d.value) is 4 (not native's 8) too.
+  struct_field_long_modifier: "8\n4",
 };
 
 // Fixtures that call a tests/stdrot/*.c native (poke_int, peek_int,

@@ -144,6 +144,23 @@ typedef struct StructField
                             through it isn't supported yet */
     String enum_name;   /* nested enum tag; set whenever type == VAR_ENUM */
     int pointer_level;
+    /* is_long/is_long_long/is_unsigned, reachable ONLY via a `lit` alias
+       used as a field's type (e.g. `lit giga rizz Meters; gang G
+       { Meters m; };`) -- the `struct_field` grammar rule (lang.y) has
+       no modifier-prefixed production, so `giga rizz field;` written
+       directly inside a struct body does not parse at all; only the
+       `alias_type declarator SEMICOLON` alternative forwards real
+       modifiers, every other struct_field alternative passes
+       (TypeModifiers){0}. get_struct_field_size()/
+       get_struct_field_alignment() (ast.c) both key off this for
+       VAR_INT so a `giga`/`thicc`-aliased field's *slot* is 8 bytes at
+       an 8-aligned offset instead of silently being sized as a plain
+       4-byte int. This is occupancy only: the value actually stored in
+       that slot is still loaded/stored through a 4-byte int (see
+       evaluate_expression_int()/write_value_to_address()) -- the same
+       pre-existing gap plain `giga`/`thicc` variables have outside of
+       any struct, not something this field closes. */
+    TypeModifiers modifiers;
     size_t offset; /* byte offset within the struct blob */
     struct StructField *next;
 } StructField;
@@ -185,7 +202,8 @@ typedef struct StructDef
 {
     String name;
     StructField *fields;
-    size_t total_size; /* total byte size of one instance */
+    size_t total_size; /* total byte size of one instance, C-ABI padded */
+    size_t alignment;  /* max alignment of any field (C-ABI aligned) */
     bool is_union;     /* true: fields overlap at offset 0 (chungus/union) */
     struct StructDef *next_def;
 } StructDef;
@@ -705,14 +723,31 @@ void free_function_table(void);
 void free_static_variable_map(void);
 
 /* Struct types */
+/* Caller must have already called compute_struct_layout(def)/
+   compute_union_layout(def) -- both of this file's construction sites
+   (lang.y) do, before this call, and neither reads def->fields again
+   afterward. This is what makes a nested VAR_STRUCT field's alignment
+   lookup (get_struct_def(f->struct_name)->alignment, ast.c) safe: a def
+   is only ever reachable via get_struct_def() (i.e. registered) once
+   its own total_size/alignment are already final, so a struct embedding
+   an already-defined nested struct/union by value never sees a
+   0/uninitialized alignment -- consistent with the existing "unknown
+   struct/union type" parse error for referencing an undefined tag at
+   all (lang.y's struct_field rule). */
 void register_struct_def(StructDef *def);
 StructDef *get_struct_def(const String name);
 void free_struct_registry(void);
 StructField *find_struct_field(StructDef *def, const String name);
-size_t
-compute_struct_layout(StructField *fields); /* fills offsets, returns total */
-size_t compute_union_layout(
-    StructField *fields); /* offset 0 for all fields, returns max size */
+/* Both require def->fields (and, for compute_union_layout, def->is_union)
+   already populated. Each fills every field's offset and writes
+   def->total_size/def->alignment together as the single writer of both --
+   there is no optional out-param to forget, so a registered StructDef
+   can't end up with a total_size but a stale/zero alignment. */
+void compute_struct_layout(StructDef *def); /* C-ABI aligned, trailing
+                                                padding included */
+void compute_union_layout(
+    StructDef *def); /* offset 0 for all fields; total_size is the max
+                         member size rounded up to max member alignment */
 ASTNode *create_struct_def_node(String name, StructField *fields);
 ASTNode *create_struct_access_node(ASTNode *object, String member);
 void *evaluate_struct_member_address(ASTNode *node);

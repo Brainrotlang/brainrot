@@ -269,6 +269,7 @@ static StructField *build_struct_fields_from_params(Parameter *params)
         f->struct_name = safe_strdup(&p->struct_name);
         f->enum_name = safe_strdup(&p->enum_name);
         f->pointer_level = p->pointer_level;
+        f->modifiers = p->modifiers;
         f->offset = 0;
         f->next = NULL;
         if (!tail)
@@ -326,14 +327,15 @@ static void register_aggregate_typedef(String tag_name, String alias_name,
     }
 
     StructField *fields = build_struct_fields_from_params(params);
-    size_t total =
-        is_union ? compute_union_layout(fields) : compute_struct_layout(fields);
 
     StructDef *def = SAFE_MALLOC(StructDef);
     def->name = safe_strdup(&tag_name);
     def->fields = fields;
-    def->total_size = total;
     def->is_union = is_union;
+    if (is_union)
+        compute_union_layout(def);
+    else
+        compute_struct_layout(def);
     register_struct_def(def);
 
     TypeDescriptor descriptor =
@@ -675,13 +677,14 @@ struct_def
         {
             StructField *fields = build_struct_fields_from_params($5);
             bool is_union = $1 != 0;
-            size_t total = is_union ? compute_union_layout(fields)
-                                    : compute_struct_layout(fields);
             StructDef *def = SAFE_MALLOC(StructDef);
             def->name       = safe_strdup(&$2);
             def->fields     = fields;
-            def->total_size = total;
             def->is_union   = is_union;
+            if (is_union)
+                compute_union_layout(def);
+            else
+                compute_struct_layout(def);
             register_struct_def(def);
             $$ = create_struct_def_node($2, fields);
             SAFE_FREE($2);

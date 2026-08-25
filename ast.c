@@ -428,6 +428,7 @@ ASTNode *create_struct_access_node(ASTNode *object, String member)
     {
         node->var_type = fld->type;
         node->pointer_level = fld->pointer_level;
+        node->modifiers = fld->modifiers;
         if (fld->type == VAR_STRUCT && fld->struct_name.data)
             node->data.struct_access.struct_name =
                 ARENA_STRDUP(fld->struct_name);
@@ -6238,6 +6239,25 @@ bool enter_function_scope(Function *func, ArgumentList *args)
 
 void register_struct_def(StructDef *def)
 {
+    /* alignment is set only by compute_struct_layout()/
+       compute_union_layout() (called by both StructDef construction
+       sites in lang.y), never by this function. A still-zero alignment
+       here means some future construction path skipped that call --
+       fail loud now rather than let a struct/union that later embeds
+       this one by value silently pack with zero padding
+       (get_struct_field_alignment() trusts a *registered* def's
+       alignment outright; see that function's comment in this file).
+       Deliberately not assert(): this must still catch the bug in a
+       build that defines NDEBUG, not just a debug build, so it's a
+       plain unconditional check -- same "fail loud, always" contract
+       as every other internal-invariant check in this file (e.g. the
+       "Memory allocation failed" exit(EXIT_FAILURE) sites above). */
+    if (def->alignment == 0)
+    {
+        yyerror("Internal error: StructDef registered before "
+                "compute_struct_layout()/compute_union_layout() ran");
+        exit(EXIT_FAILURE);
+    }
     if (!struct_registry)
         struct_registry = hm_new();
     size_t len = def->name.len;
@@ -6298,7 +6318,10 @@ StructField *find_struct_field(StructDef *def, const String name)
 /* Size in bytes that a single field occupies within its enclosing
    struct/union blob. Nested struct/union fields (type == VAR_STRUCT,
    pointer_level == 0) take the nested definition's total_size; every
-   other field falls back to get_type_size_for_descriptor. */
+   other field falls back to get_type_size_for_descriptor, honoring
+   f->modifiers (is_long/is_long_long/is_unsigned) -- e.g. a VAR_INT
+   field reached through a `lit giga rizz ...` alias must size as an
+   8-byte long, not silently collapse to a 4-byte int. */
 static size_t get_struct_field_size(StructField *f)
 {
     if (f->pointer_level > 0)
@@ -6312,43 +6335,136 @@ static size_t get_struct_field_size(StructField *f)
         return nested ? nested->total_size : 0;
     }
 
-    TypeModifiers m = {0};
-    size_t fsz = get_type_size_for_descriptor(f->type, 0, m);
+    size_t fsz = get_type_size_for_descriptor(f->type, 0, f->modifiers);
     if (fsz == 0)
         fsz = sizeof(int);
     return fsz;
 }
 
-/* Walk the field list, assign natural-alignment offsets, return total size.
-   We use simple sequential layout (no padding) to keep it straightforward;
-   add alignment rounding here if needed later. */
-size_t compute_struct_layout(StructField *fields)
+/* Alignment in bytes that a single field imposes on its enclosing
+   struct/union, matching the C ABI (`_Alignof` of the corresponding C
+   type). Nested struct/union fields take the nested definition's own
+   alignment; pointer fields align as a pointer. Mirrors
+   get_struct_field_size()'s type switch, including f->modifiers for
+   VAR_INT -- an 8-byte long/long-long field (reachable via a `lit
+   giga`/`lit thicc` alias) must align as 8, not fall back to plain
+   int's 4, or a following field would be under-padded. */
+static size_t get_struct_field_alignment(StructField *f)
+{
+    if (f->pointer_level > 0)
+        return _Alignof(uintptr_t);
+
+    if (f->type == VAR_STRUCT)
+    {
+        StructDef *nested = get_struct_def(f->struct_name);
+        /* Should always be resolved by the parser before layout is
+           computed; fall back defensively rather than corrupt offsets. */
+        return nested ? nested->alignment : 1;
+    }
+
+    switch (f->type)
+    {
+    case VAR_FLOAT:
+        return _Alignof(float);
+    case VAR_DOUBLE:
+        return _Alignof(double);
+    case VAR_BOOL:
+        return _Alignof(bool);
+    case VAR_SHORT:
+        return _Alignof(short);
+    case VAR_CHAR:
+        return _Alignof(char);
+    case VAR_INT:
+        if (f->modifiers.is_long_long)
+            return _Alignof(long long);
+        if (f->modifiers.is_long)
+            return _Alignof(long);
+        return _Alignof(int);
+    case VAR_STRING:
+        return _Alignof(String);
+    case VAR_ENUM:
+        return _Alignof(int);
+    case VAR_PTR:
+        return _Alignof(uintptr_t);
+    case VAR_VOID:
+    case NONE:
+    default:
+        return 1;
+    }
+}
+
+/* Round `offset` up to the next multiple of `alignment` (a power of two). */
+static size_t align_up(size_t offset, size_t alignment)
+{
+    if (alignment <= 1)
+        return offset;
+    return (offset + alignment - 1) & ~(alignment - 1);
+}
+
+/* Walk def->fields, assign C-ABI-aligned offsets (padding before each
+   field as needed), and write def->total_size/def->alignment -- the
+   struct's total size rounded up to its own max field alignment
+   (trailing padding) and that alignment itself. Matches the standard C
+   struct-layout algorithm (align, place, pad), so a `gang`'s *occupancy*
+   -- its total size and every field's offset -- matches what a real C
+   compiler would produce for the same field list.
+
+   That is a claim about shape, not about full FFI byte-compatibility:
+   no current code path hands a `gang` *by value* across the FFI (see
+   ast_expr_to_stdrot_value()'s lack of a VAR_STRUCT case, stdrot.c), and
+   a wide scalar field (e.g. a `lit giga`-aliased `long` field) occupies
+   the C-correct number of bytes but is still loaded/stored through this
+   interpreter's plain 32-bit int path (evaluate_expression_int(),
+   write_value_to_address()) -- the same pre-existing limitation plain
+   `giga`/`thicc` variables have outside of any struct. Fixing that is
+   out of scope here; this function's job is only that the *slot* is the
+   right size and at the right offset.
+
+   def->total_size and def->alignment are set together, here, as the
+   single writer of both -- callers only ever populate def->fields/
+   is_union and then call this (or compute_union_layout), so there is no
+   window where one is stale relative to the other. */
+void compute_struct_layout(StructDef *def)
 {
     size_t off = 0;
-    StructField *f = fields;
+    size_t max_align = 1;
+    StructField *f = def->fields;
     while (f)
     {
+        size_t falign = get_struct_field_alignment(f);
+        if (falign > max_align)
+            max_align = falign;
+        off = align_up(off, falign);
         f->offset = off;
         off += get_struct_field_size(f);
         f = f->next;
     }
-    return off; /* total bytes */
+    def->total_size = align_up(off, max_align); /* includes trailing pad */
+    def->alignment = max_align;
 }
 
-/* Union fields all share offset 0; total size is the largest member. */
-size_t compute_union_layout(StructField *fields)
+/* Union fields all share offset 0; def->total_size becomes the largest
+   member, rounded up to the largest member's alignment (unions pad too
+   -- `union { char c; int i; }` is 4 bytes in C, not 1). Same
+   single-writer contract as compute_struct_layout() above. */
+void compute_union_layout(StructDef *def)
 {
     size_t max_size = 0;
-    StructField *f = fields;
+    size_t max_align = 1;
+    StructField *f = def->fields;
     while (f)
     {
         f->offset = 0;
         size_t fsz = get_struct_field_size(f);
         if (fsz > max_size)
             max_size = fsz;
+        size_t falign = get_struct_field_alignment(f);
+        if (falign > max_align)
+            max_align = falign;
         f = f->next;
     }
-    return max_size;
+    def->total_size = align_up(max_size, max_align);
+    def->alignment = max_align;
 }
 
 void register_enum_def(EnumDef *def)
