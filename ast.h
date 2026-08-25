@@ -144,9 +144,14 @@ typedef struct StructField
                             through it isn't supported yet */
     String enum_name;   /* nested enum tag; set whenever type == VAR_ENUM */
     int pointer_level;
-    /* is_long/is_long_long/is_unsigned, reachable today via a `lit`
-       alias used as a field's type (e.g. `lit giga rizz Meters; gang G
-       { Meters m; };`) -- get_struct_field_size()/
+    /* is_long/is_long_long/is_unsigned, reachable ONLY via a `lit` alias
+       used as a field's type (e.g. `lit giga rizz Meters; gang G
+       { Meters m; };`) -- the `struct_field` grammar rule (lang.y) has
+       no modifier-prefixed production, so `giga rizz field;` written
+       directly inside a struct body does not parse at all; only the
+       `alias_type declarator SEMICOLON` alternative forwards real
+       modifiers, every other struct_field alternative passes
+       (TypeModifiers){0}. get_struct_field_size()/
        get_struct_field_alignment() (ast.c) both key off this for
        VAR_INT so a `giga`/`thicc`-aliased field's *slot* is 8 bytes at
        an 8-aligned offset instead of silently being sized as a plain

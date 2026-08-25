@@ -89,7 +89,12 @@ _Static_assert(offsetof(struct Box, x) == sizeof(void *),
  * 4 on ILP32 (wasm32), same split as pointer size above -- reusing the
  * same UINTPTR_MAX check is valid here because LP64 and ILP32 happen to
  * size long and a pointer identically on every target this repo builds
- * for. thicc (`long long`) is 8 on both models and is not covered here.
+ * for (native + wasm32; there is no LLP64/Windows target in this repo's
+ * CI). UINTPTR_MAX == pointer width is not a general definition of
+ * sizeof(long) -- LLP64 (64-bit Windows) has 8-byte pointers but a
+ * 4-byte long, which this #if would misclassify as the LP64 branch.
+ * Don't reuse this #if for a target this repo doesn't actually build.
+ * thicc (`long long`) is 8 on both models and is not covered here.
  */
 struct Distance
 {
