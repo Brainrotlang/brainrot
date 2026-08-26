@@ -1,0 +1,31 @@
+🚽 Test case: #193 -- a function can return a struct-returning CALL result
+🚽 directly (`bussin make(...)`). The callee's blob is already heap-owned
+🚽 and outside the returning function's scope, so ownership flows straight
+🚽 through (callee -> relay -> relay's caller) with no extra copy. Covers a
+🚽 one-level relay and a two-level relay (relay of a relay).
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+gang Point make(rizz a, rizz b) {
+    gang Point p;
+    p.x = a;
+    p.y = b;
+    bussin p;
+}
+
+gang Point relay(rizz a, rizz b) {
+    bussin make(a, b);
+}
+
+gang Point relay2(rizz a, rizz b) {
+    bussin relay(a, b);
+}
+
+skibidi main {
+    gang Point r = relay(1, 2);
+    yapping("%d %d", r.x, r.y);
+    gang Point r2 = relay2(8, 9);
+    yapping("%d %d", r2.x, r2.y);
+}

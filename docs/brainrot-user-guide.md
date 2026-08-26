@@ -318,11 +318,11 @@ Q: 10 20 0.0
 ### Current Limitations
 
 - A struct/union can be passed as a function parameter or returned from a
-  function by value as a plain variable or a by-value member-access
-  sub-expression (`take(b.corner)`) of the exact matching type; a
-  struct-returning call result (`take(make_point())`) and a
-  pointer-to-struct return type are not yet supported. Arguments and return
-  values are deep-copied, never aliased.
+  function by value as a plain variable, a by-value member-access
+  sub-expression (`take(b.corner)`), or a struct-returning call result
+  (`take(make_point())`, `bussin make_point();`) of the exact matching
+  type; a pointer-to-struct return type is not yet supported. Arguments and
+  return values are deep-copied, never aliased.
 
 ---
 

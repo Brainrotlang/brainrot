@@ -6241,27 +6241,91 @@ void handle_return_statement(ASTNode *expr)
                VAR_VOID now (round 20), not NONE -- NONE here is
                reached only for `bussin` outside any function (`main`
                itself has no declared return type, see declared_type's
-               own NONE default above). Both mean the same thing for
-               this switch's purposes: ignore the expression's value
-               entirely -- it is never evaluated at all (matching the
-               original behavior this case has always had; `bussin
-               someExpr;` inside a void function has never executed
-               someExpr for its side effects, and introducing that now
-               would be a new, unrelated behavior change, not a
-               reentrancy fix). No nested-call reentrancy risk here for
-               exactly that reason: nothing runs evaluate_expression_*
-               on expr in this case, so current_return_value can't be
-               clobbered by anything expr might otherwise have called.
-               (Reaching this case at all, rather than the declared_
-               pointer_level > 0 branch above, means declared_pointer_
-               level == 0 -- genuinely void, not `skibidi *`.) */
+               own NONE default above). Both ignore the expression's
+               VALUE entirely -- there is nowhere to put it.
+
+               A bare user-defined CALL is the one shape that must still
+               be EXECUTED for its side effects, though: since PR #254
+               review finding 1, ast_accept()'s NODE_RETURN pre-visit no
+               longer runs a bare-call return expression (that pre-visit
+               was what executed `bussin someCall();` inside a void
+               function before), so this arm now runs it -- exactly once,
+               discarding the result. Any other expression shape (`bussin
+               a + b;`, `bussin p;`) is still pre-visited and, as before,
+               its value is simply dropped here. NONE (a bare `bussin
+               someCall();` at top level in main) is handled identically.
+               Both native and user-defined calls must dispatch through the
+               same two-way branch every other bare-call site uses (see the
+               NODE_FUNC_CALL statement case above, and interpreter_execute_
+               call_statement) -- execute_function_call() alone searches
+               only the user-defined table, so `bussin yapping("hi");` in a
+               void function would otherwise be reported as an undefined
+               function (PR #254 review, finding 1). */
         case NONE:
+            if (expr && expr->type == NODE_FUNC_CALL)
+            {
+                if (is_builtin_function(expr->data.func_call.function_name))
+                {
+                    execute_builtin_function(expr->data.func_call.function_name,
+                                             expr->data.func_call.arguments);
+                }
+                else
+                {
+                    execute_function_call(expr->data.func_call.function_name,
+                                          expr->data.func_call.arguments);
+                    free_pending_return_value();
+                }
+            }
             current_return_value.type = declared_type;
             current_return_value.pointer_level = 0;
             current_return_value.has_value = true;
             break;
         case VAR_STRUCT:
         {
+            /* A struct-returning CALL result (`bussin make_point();`, #193)
+               is handled first, before any current_return_value field is
+               set: executing the call overwrites this shared slot with ITS
+               own struct result -- the right blob (heap-owned, and outside
+               this function's about-to-be-freed scope) and tag. That value
+               already IS this function's return value, so after a tag check
+               against the declared return type there is nothing to copy:
+               ownership flows callee -> here -> our own caller (which copies
+               out of current_return_value and frees it, exactly as for a
+               direct `bussin p;`). Doing this before the field assignments
+               below avoids the reentrancy bug where the nested call leaves
+               current_return_value.type stuck on its own return. */
+            if (expr && expr->type == NODE_FUNC_CALL)
+            {
+                execute_function_call(expr->data.func_call.function_name,
+                                      expr->data.func_call.arguments);
+                if (!current_return_value.has_value ||
+                    current_return_value.type != VAR_STRUCT)
+                {
+                    yyerror("Return expression call does not return a "
+                            "by-value struct/union");
+                    free_pending_return_value();
+                    current_return_value.has_value = false;
+                    break;
+                }
+                if (current_func && current_func->return_struct_name.data &&
+                    (!current_return_value.struct_name.data ||
+                     strcmp(current_return_value.struct_name.data,
+                            current_func->return_struct_name.data) != 0))
+                {
+                    yyerror("Return expression type does not match declared "
+                            "return type");
+                    free_pending_return_value();
+                    current_return_value.has_value = false;
+                    break;
+                }
+                /* current_return_value already holds the correct blob/tag;
+                   normalize the type metadata to this function's declared
+                   return (identical to the callee's here) and keep it. */
+                current_return_value.type = declared_type;
+                current_return_value.pointer_level = 0;
+                current_return_value.has_value = true;
+                break;
+            }
             current_return_value.type = declared_type;
             current_return_value.pointer_level = 0;
             current_return_value.has_value = true;
@@ -6274,16 +6338,15 @@ void handle_return_statement(ASTNode *expr)
                current_return_value.value.pvalue and freeing it -- see
                interpreter_visit_declaration's struct_init_expr handling.
 
-               Two source shapes are accepted (#193), symmetric with the
-               struct-argument side (enter_function_scope): a plain struct
-               variable (`bussin p;`) and a by-value struct/union
+               Two more source shapes are accepted (#193), symmetric with
+               the struct-argument side (enter_function_scope): a plain
+               struct variable (`bussin p;`) and a by-value struct/union
                member-access sub-expression (`bussin outer.inner;`, also
                following pointer bases/fields via resolve_struct_access,
                #196/#197), both resolved by the same shared helper so this
                path enforces the identical pointer_level == 0 invariant and
                emits a single diagnostic on failure (PR #253 review,
-               findings 1 & 2). A struct-returning CALL result (`bussin
-               make_point();`) is a separate follow-up. */
+               findings 1 & 2). */
             void *src_blob = NULL;
             String src_tag = {0};
             if (!resolve_by_value_struct_source(expr, &src_blob, &src_tag,
@@ -6522,15 +6585,51 @@ void reverse_parameter_list(Parameter **head)
     *head = prev;
 }
 
+/* Free the heap temporaries enter_function_scope() owns for struct
+   arguments that are function-CALL results (`take(make_point())`, #193):
+   a call's returned blob lives in the shared current_return_value slot,
+   which the next argument's own call would overwrite/free before the
+   two-phase bind runs, so each such argument is copied into its own
+   temporary here and freed once (after the deep-copy into the parameter,
+   or on any early-exit error path). A borrowed blob (a plain struct
+   variable or member access) has owns[k] == false and is never freed
+   here. */
+static void free_owned_struct_arg_blobs(const Value *arg_values,
+                                        const bool *owns, int count)
+{
+    for (int k = 0; k < count; k++)
+        if (owns[k])
+            free((void *)arg_values[k].pvalue);
+}
+
 bool enter_function_scope(Function *func, ArgumentList *args)
 {
     ArgumentList *curr_arg = args;
     Value arg_values[MAX_ARGUMENTS];
+    bool arg_owns_blob[MAX_ARGUMENTS] = {false};
     int arg_count = 0;
 
-    // Reverse the parameter list
+    /* Snapshot the parameters in call order into a local array. The parser
+       stores them reversed, so reverse the shared list in place, copy the
+       node pointers out, then restore it IMMEDIATELY -- before any argument
+       is evaluated. Evaluating an argument can invoke another function
+       (`f(g())`), and if that callee is THIS SAME Function*, its own
+       enter_function_scope() would reverse func->parameters again while the
+       outer invocation was mid-iteration -- binding `f(f(s1, s2), s3)`'s
+       parameters out of source order (PR #254 review, finding 2; the same
+       long-standing reentrancy that made `sub(sub(10, 3), 1)` compute -8).
+       Iterating the local `ordered[]` snapshot instead makes each
+       invocation independent of what nested calls do to the shared list. */
     reverse_parameter_list(&func->parameters);
-    Parameter *curr_param = func->parameters;
+    Parameter *ordered[MAX_ARGUMENTS];
+    int param_count = 0;
+    for (Parameter *p = func->parameters; p && param_count < MAX_ARGUMENTS;
+         p = p->next)
+        ordered[param_count++] = p;
+    reverse_parameter_list(&func->parameters);
+
+    Parameter *curr_param = param_count > 0 ? ordered[0] : NULL;
+    int param_index = 0;
 
     // Evaluate argument values before creating the scope
     while (curr_arg && curr_param)
@@ -6541,7 +6640,8 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             arg_values[arg_count].pvalue =
                 evaluate_expression_pointer(curr_arg->expr);
             curr_arg = curr_arg->next;
-            curr_param = curr_param->next;
+            curr_param =
+                ++param_index < param_count ? ordered[param_index] : NULL;
             arg_count++;
             continue;
         }
@@ -6571,7 +6671,7 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             break;
         case VAR_STRING:
             yyerror("String parameters are not supported");
-            reverse_parameter_list(&func->parameters);
+            free_owned_struct_arg_blobs(arg_values, arg_owns_blob, arg_count);
             return false;
         case VAR_STRUCT:
         {
@@ -6584,28 +6684,73 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                lives in the caller's scope, and nothing frees that between
                here and the copy.
 
-               resolve_by_value_struct_source() accepts a plain struct
+               Three source shapes are accepted (#193). A plain struct
                variable (`take(p)`) or a by-value struct/union member-access
                sub-expression (`take(outer.inner)`, following pointer
-               bases/fields via #196/#197), and reports a single diagnostic
-               on failure -- so this call site adds none of its own. A
-               struct-returning CALL result (`take(make_point())`) is a
-               separate follow-up -- its blob lives in current_return_value
-               and needs its own owned temporary across the two-phase bind,
-               out of scope here. */
+               bases/fields via #196/#197) resolves to a BORROWED blob in
+               the caller's scope via resolve_by_value_struct_source(),
+               which reports a single diagnostic on failure. A struct-
+               returning CALL result (`take(make_point())`) resolves to an
+               OWNED heap temporary: its blob lives in the shared current_
+               return_value slot, which a later argument's own call would
+               overwrite/free before the bind loop copies it, so it is
+               copied into its own temporary now and freed after binding
+               (see free_owned_struct_arg_blobs). */
             void *src_blob = NULL;
             String src_tag = {0};
+            if (curr_arg->expr->type == NODE_FUNC_CALL)
+            {
+                execute_function_call(
+                    curr_arg->expr->data.func_call.function_name,
+                    curr_arg->expr->data.func_call.arguments);
+                if (!current_return_value.has_value ||
+                    current_return_value.type != VAR_STRUCT)
+                {
+                    yyerror("Struct argument call does not return a "
+                            "by-value struct/union");
+                    free_pending_return_value();
+                    free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
+                                                arg_count);
+                    return false;
+                }
+                if (!current_return_value.struct_name.data ||
+                    !curr_param->struct_name.data ||
+                    strcmp(current_return_value.struct_name.data,
+                           curr_param->struct_name.data) != 0)
+                {
+                    yyerror("Struct argument type does not match parameter "
+                            "type");
+                    free_pending_return_value();
+                    free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
+                                                arg_count);
+                    return false;
+                }
+                StructDef *cdef = get_struct_def(curr_param->struct_name);
+                void *temp = cdef ? calloc(1, cdef->total_size) : NULL;
+                void *ret_blob = (void *)current_return_value.value.pvalue;
+                if (temp && ret_blob)
+                    memcpy(temp, ret_blob, cdef->total_size);
+                /* The returned blob is now copied into our own temporary;
+                   release current_return_value's copy so the next
+                   argument's call can safely reuse the slot. */
+                free_pending_return_value();
+                arg_values[arg_count].pvalue = (uintptr_t)temp;
+                arg_owns_blob[arg_count] = true;
+                break;
+            }
             if (!resolve_by_value_struct_source(curr_arg->expr, &src_blob,
                                                 &src_tag, true))
             {
-                reverse_parameter_list(&func->parameters);
+                free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
+                                            arg_count);
                 return false;
             }
             if (!src_tag.data || !curr_param->struct_name.data ||
                 strcmp(src_tag.data, curr_param->struct_name.data) != 0)
             {
                 yyerror("Struct argument type does not match parameter type");
-                reverse_parameter_list(&func->parameters);
+                free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
+                                            arg_count);
                 return false;
             }
             arg_values[arg_count].pvalue = (uintptr_t)src_blob;
@@ -6622,14 +6767,14 @@ bool enter_function_scope(Function *func, ArgumentList *args)
         }
 
         curr_arg = curr_arg->next;
-        curr_param = curr_param->next;
+        curr_param = ++param_index < param_count ? ordered[param_index] : NULL;
         arg_count++;
     }
 
     if (curr_arg || curr_param)
     {
         yyerror("Mismatched number of arguments and parameters");
-        reverse_parameter_list(&func->parameters);
+        free_owned_struct_arg_blobs(arg_values, arg_owns_blob, arg_count);
         return false;
     }
 
@@ -6638,11 +6783,12 @@ bool enter_function_scope(Function *func, ArgumentList *args)
     current_scope = scope;
     current_scope->is_function_scope = true;
     current_scope->function_name = func->name;
-    curr_param = func->parameters; // Reset parameter list after reversing
 
-    // Assign evaluated values to function parameters
+    // Assign evaluated values to function parameters (iterating the same
+    // call-order snapshot the evaluation loop used).
     for (int i = 0; i < arg_count; i++)
     {
+        curr_param = ordered[i];
         Variable *var = variable_new(curr_param->name);
         var->var_type = curr_param->type;
         var->pointer_level = curr_param->pointer_level;
@@ -6670,7 +6816,6 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                     bound->struct_name = safe_strdup(&curr_param->struct_name);
                 bound->value.pvalue = arg_values[i].pvalue;
             }
-            curr_param = curr_param->next;
             continue;
         }
 
@@ -6713,8 +6858,8 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             break;
         case VAR_STRING:
             yyerror("String parameters are not supported");
+            free_owned_struct_arg_blobs(arg_values, arg_owns_blob, arg_count);
             exit_scope();
-            reverse_parameter_list(&func->parameters);
             return false;
         case VAR_STRUCT:
         {
@@ -6755,9 +6900,13 @@ bool enter_function_scope(Function *func, ArgumentList *args)
         case NONE:
             break;
         }
-        curr_param = curr_param->next;
     }
-    reverse_parameter_list(&func->parameters);
+    /* Bind loop done -- every owned call-result temporary has been
+       deep-copied into its parameter's own blob, so release them all now
+       (a borrowed source has owns==false and is left untouched).
+       func->parameters was already restored to its stored order right
+       after the snapshot above, so nothing to un-reverse here. */
+    free_owned_struct_arg_blobs(arg_values, arg_owns_blob, arg_count);
     return true;
 }
 
