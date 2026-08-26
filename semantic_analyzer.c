@@ -562,10 +562,13 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
  * about it. Recursing independently here, purely off static type
  * metadata, doesn't depend on visit order at all.
  *
- * Returns NULL if `expr` doesn't statically resolve to a struct-typed
- * value this way (unknown symbol, non-struct type, or a pointer-typed
- * intermediate field -- chaining `.` through a pointer isn't supported,
- * matching semantic_analyze_with_scope_tracking()'s own rejection of it).
+ * A single-level pointer-typed intermediate field (`gang Node *next` in
+ * `a.next.val`, #197) resolves through to the pointee's definition, the
+ * same way resolve_struct_access() follows it at runtime. Returns NULL if
+ * `expr` doesn't statically resolve to a struct-typed value this way
+ * (unknown symbol, non-struct type, or a multi-level pointer field
+ * `pointer_level > 1`, which needs an explicit `(*x)->` and is rejected by
+ * both this helper and semantic_analyze_with_scope_tracking()).
  */
 static StructDef *infer_struct_def_static(ASTNode *expr,
                                           SemanticAnalyzer *analyzer)
@@ -578,10 +581,10 @@ static StructDef *infer_struct_def_static(ASTNode *expr,
         /* No pointer_level check here, matching resolve_struct_access()'s
            own top-level NODE_IDENTIFIER case (ast.c) and semantic_
            analyze_with_scope_tracking()'s NODE_STRUCT_ACCESS case (this
-           file) -- neither rejects a pointer-typed *object* itself, only
-           a pointer-typed *intermediate field* partway through a chain
-           (checked below, for the NODE_STRUCT_ACCESS branch, matching
-           both of those). */
+           file): a single-level pointer-typed base or intermediate field
+           is followed, not rejected (#196/#197); only a multi-level
+           pointer field (`pointer_level > 1`) is rejected, in the
+           NODE_STRUCT_ACCESS branch below, matching both of those. */
         SymbolEntry *sym = find_symbol(analyzer, expr->data.name);
         if (!sym || sym->type != VAR_STRUCT || !sym->struct_name.data)
             return NULL;

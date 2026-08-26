@@ -1,0 +1,19 @@
+🚽 Test case: #197 -- chaining through a pointer-typed field into an ARRAY
+🚽 field element (`a.next.arr[i]`) composes pointer-following with struct-
+🚽 field array access (the Slice 2 feature).
+gang Node {
+    rizz arr[3];
+    gang Node *next;
+};
+
+skibidi main {
+    gang Node a;
+    gang Node b;
+    b.arr[0] = 10;
+    b.arr[1] = 20;
+    b.arr[2] = 30;
+    a.next = &b;
+    yapping("%d %d %d", a.next.arr[0], a.next.arr[1], a.next.arr[2]);
+    a.next.arr[1] = 99;
+    yapping("%d", b.arr[1]);
+}

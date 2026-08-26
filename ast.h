@@ -139,9 +139,10 @@ typedef struct StructField
     String struct_name; /* nested struct/union tag; set whenever
                             type == VAR_STRUCT, including pointer-typed
                             fields (pointer_level > 0) — e.g. a
-                            self-referential `gang Node *next;` field still
-                            needs its tag recorded even though chaining `.`
-                            through it isn't supported yet */
+                            self-referential `gang Node *next;` field records
+                            its tag so chaining `.` through it (`a.next.val`,
+                            #197) can resolve the pointee's definition when
+                            resolve_struct_access() follows the pointer */
     String enum_name;   /* nested enum tag; set whenever type == VAR_ENUM */
     int pointer_level;
     /* is_long/is_long_long/is_unsigned, reachable ONLY via a `lit` alias
@@ -225,12 +226,13 @@ typedef struct Parameter
 {
     String name;
     VarType type;
-    String struct_name; /* nested struct/union tag; set whenever
+    String struct_name; /* struct/union tag; set whenever
                             type == VAR_STRUCT, including pointer-typed
-                            fields (pointer_level > 0) — e.g. a
-                            self-referential `gang Node *next;` field still
-                            needs its tag recorded even though chaining `.`
-                            through it isn't supported yet */
+                            parameters (pointer_level > 0) — a `gang Point
+                            *pp` parameter records its tag so member access
+                            through it (`pp.field`, #196) can resolve the
+                            pointee's definition, copied onto the bound
+                            Variable in enter_function_scope() (ast.c) */
     String enum_name;   /* enum tag; set whenever type == VAR_ENUM */
     int pointer_level;
     TypeModifiers modifiers;
@@ -807,9 +809,13 @@ void validate_struct_initializer_shape(StructDef *def, ExpressionList *list);
    via recursion — to the StructDef/base-address/field describing the
    *object* being accessed (i.e. `*field_out` is the field named by this
    node's own member_name; `(char *)*base_out + (*field_out)->offset` is
-   its address). Returns false on any resolution failure (undefined
-   variable, wrong type, unknown member, or chaining through a
-   pointer-typed struct/union field, which isn't supported). When
+   its address). A single-level pointer-typed base variable (`gang Foo
+   *pp; pp.field`, #196) or intermediate field (`a.next.val` where `next`
+   is `gang Node *`, #197) is followed — the pointer value is read and
+   resolution continues from the pointee. Returns false on any resolution
+   failure (undefined variable, wrong type, unknown member, a null pointer
+   reached while following one of those, or a multi-level pointer
+   `pointer_level > 1` which would need an explicit `(*x)->`). When
    `report_errors` is true, failures are also reported via yyerror();
    pass false for speculative/best-effort callers (e.g. type inference)
    that shouldn't surface parse- or runtime-time diagnostics of their own. */
