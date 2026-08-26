@@ -237,7 +237,28 @@ guaranteed use-after-free, not an oversight to work around silently.
 
 ## Phase 3 — C-compatible aggregates
 
-**Status: not started · Priority: P0 · Depends on: Phase 2**
+**Status: complete (#206) · Priority: P0 · Depends on: Phase 2**
+
+All five sub-items landed; the sections below are kept as the design record.
+
+- **3a** layout (alignment + trailing padding, `_Static_assert`/`offsetof`
+  ABI check) — #242.
+- **3b** unified `TypeDescriptor` in use across all five type carriers
+  (StructField, Parameter, Variable, Function return, ReturnValue) — #258,
+  #259, #260, #261.
+- **3c** `gang` as a first-class type: struct-typed fields/params/returns,
+  struct arguments and returns including member-access/call-result
+  sub-expressions and pointer-to-struct returns (#193) — #253, #254, #255.
+- **3d** address-based recursive member access, incl. as an assignment
+  target and through pointer fields (#196/#197) — #248, #252. (Member
+  access `.` precedence bug, surfaced by this work, fixed in #257.)
+- **3e** remaining C field types: unsigned/fixed-width scalars, pointer
+  fields, nested struct fields, fixed arrays in structs (incl. `lit`-alias
+  element types with correct stride), struct aliases — #247, #256.
+
+Struct assignment is value-copy (C semantics), decided and tested. Arrays
+of by-value structs as standalone declarations, and arrays as by-value
+function params/returns, remain out of scope here (the latter is #194).
 
 This is the big one. raylib is struct city: `Vector2`, `Vector3`, `Color`,
 `Rectangle`, `Texture2D`, `Image`, `Camera2D`, `Camera3D`, `Matrix`, and further
@@ -1228,10 +1249,13 @@ per keyword, and default to "library function" when in doubt.
 
 1. **Write-back removal (Phase 1).** Does `slorp(x);` keep working? Deprecation
    window, or clean break?
-2. **`TypeDesc` migration (Phase 3b).** One large refactor, or incremental with
-   both representations alive? The latter is safer and uglier.
-3. **Struct assignment.** Value copy (C semantics) or reference? Affects
-   everything downstream.
+2. **`TypeDesc` migration (Phase 3b).** ~~One large refactor, or incremental with
+   both representations alive?~~ **Resolved:** incremental, one carrier per PR
+   (StructField, Parameter, Variable, Function return, ReturnValue — #258–#261),
+   each a mechanical, compiler-verified, behavior-neutral rename.
+3. **Struct assignment.** ~~Value copy (C semantics) or reference?~~ **Resolved:**
+   value copy, matching C — deep-copied on assignment, argument passing, and
+   return; tested.
 4. **Threading model (Phase 6).** Green threads, GIL, or thread-local state?
    Recommendation above is GIL-first, but this is a real fork in the road.
 5. **`grindset` generics (Phase 7).** String-keyed monomorphic, or a real type
