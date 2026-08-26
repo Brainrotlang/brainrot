@@ -473,7 +473,7 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
         if (symbol && symbol->is_function)
             return symbol->return_pointer_level;
         Function *func = get_function(node->data.func_call.function_name);
-        return func ? func->return_pointer_level : 0;
+        return func ? func->return_desc.pointer_level : 0;
     }
     case NODE_OPERATION:
         switch (node->data.op.op)
@@ -719,7 +719,7 @@ static String infer_expression_struct_name(ASTNode *expr,
         if (is_builtin_function(expr->data.func_call.function_name))
             return (String){0};
         Function *fn = get_function(expr->data.func_call.function_name);
-        return fn ? fn->return_struct_name : (String){0};
+        return fn ? fn->return_desc.struct_name : (String){0};
     }
     default:
         return (String){0};
@@ -959,7 +959,7 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
         Function *func = get_function(node->data.func_call.function_name);
         if (func)
         {
-            return func->return_type;
+            return func->return_desc.type;
         }
 
         return NONE;
@@ -3709,8 +3709,8 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
             if (current_func)
             {
                 propagate_contextual_call_type(
-                    node->data.op.left, current_func->return_type,
-                    current_func->return_pointer_level);
+                    node->data.op.left, current_func->return_desc.type,
+                    current_func->return_desc.pointer_level);
             }
 
             semantic_analyze_with_scope_tracking(analyzer, node->data.op.left);
@@ -3745,13 +3745,14 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                call(); comparing its necessarily NONE/0 inferred type/
                pointer-level against the declared return type here would
                raise a second, misleading error for the same node. */
-            if (current_func && current_func->return_type != VAR_STRUCT &&
-                !(current_func->return_type == VAR_VOID &&
-                  current_func->return_pointer_level == 0) &&
+            if (current_func && current_func->return_desc.type != VAR_STRUCT &&
+                !(current_func->return_desc.type == VAR_VOID &&
+                  current_func->return_desc.pointer_level == 0) &&
                 !is_unresolved_contextual_call(node->data.op.left))
             {
-                VarType declared_type = current_func->return_type;
-                int declared_pointer_level = current_func->return_pointer_level;
+                VarType declared_type = current_func->return_desc.type;
+                int declared_pointer_level =
+                    current_func->return_desc.pointer_level;
                 VarType actual_type =
                     infer_expression_type(node->data.op.left, analyzer);
                 int actual_pointer_level = infer_expression_pointer_level(
@@ -3800,8 +3801,8 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                helpers as the pointer-struct declaration/assignment/argument
                checks (#248/#253); the by-value VAR_STRUCT return still
                defers to handle_return_statement's own struct-name check. */
-            if (current_func && current_func->return_type == VAR_STRUCT &&
-                current_func->return_pointer_level > 0 &&
+            if (current_func && current_func->return_desc.type == VAR_STRUCT &&
+                current_func->return_desc.pointer_level > 0 &&
                 !is_unresolved_contextual_call(node->data.op.left))
             {
                 VarType actual_type =
@@ -3810,7 +3811,7 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                     node->data.op.left, analyzer);
                 int line = node->line_number > 0 ? node->line_number : 1;
                 if ((actual_type != NONE && actual_type != VAR_STRUCT) ||
-                    actual_pl != current_func->return_pointer_level)
+                    actual_pl != current_func->return_desc.pointer_level)
                 {
                     char error_msg[MAX_BUFFER_LEN];
                     snprintf(
@@ -3818,10 +3819,10 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                         "Return type mismatch in '%s': expected pointer to "
                         "struct/union '%s' (level %d), got %s pointer level %d",
                         current_func->name.data,
-                        current_func->return_struct_name.data
-                            ? current_func->return_struct_name.data
+                        current_func->return_desc.struct_name.data
+                            ? current_func->return_desc.struct_name.data
                             : "?",
-                        current_func->return_pointer_level,
+                        current_func->return_desc.pointer_level,
                         vartype_to_string(actual_type), actual_pl);
                     add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
                                        STRING_LITERAL(error_msg), line);
@@ -3833,7 +3834,7 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                              "Return type mismatch in '%s'",
                              current_func->name.data);
                     check_pointer_struct_tag_match(
-                        analyzer, current_func->return_struct_name,
+                        analyzer, current_func->return_desc.struct_name,
                         node->data.op.left, prefix, line);
                 }
             }

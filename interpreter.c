@@ -451,7 +451,7 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
                         src_expr->data.func_call.function_name,
                         src_expr->data.func_call.arguments);
                     if (current_return_value.has_value &&
-                        current_return_value.type == VAR_STRUCT)
+                        current_return_value.desc.type == VAR_STRUCT)
                     {
                         void *blob = (void *)current_return_value.value.pvalue;
                         /* Guard against copying a differently-shaped struct
@@ -462,8 +462,8 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
                            this is the last line of defense against an
                            out-of-bounds memcpy. */
                         if (blob && sv->value.array_data &&
-                            current_return_value.struct_name.data &&
-                            strcmp(current_return_value.struct_name.data,
+                            current_return_value.desc.struct_name.data &&
+                            strcmp(current_return_value.desc.struct_name.data,
                                    struct_type.data) == 0)
                         {
                             memcpy(sv->value.array_data, blob, def->total_size);
