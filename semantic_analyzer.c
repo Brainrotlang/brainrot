@@ -376,7 +376,7 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
         if (symbol)
             return symbol->pointer_level;
         Variable *var = get_variable(node->data.name);
-        return var ? var->pointer_level : node->pointer_level;
+        return var ? var->desc.pointer_level : node->pointer_level;
     }
     case NODE_ARRAY_ACCESS:
     {
@@ -433,7 +433,8 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
         if (symbol && symbol->is_array)
             return symbol->pointer_level;
         Variable *var = get_variable(node->data.array.name);
-        return var && var->is_array ? var->pointer_level : node->pointer_level;
+        return var && var->desc.is_array ? var->desc.pointer_level
+                                         : node->pointer_level;
     }
     case NODE_UNARY_OPERATION:
         if (node->data.unary.op == OP_ADDRESS_OF)
@@ -647,7 +648,7 @@ static String infer_expression_struct_name(ASTNode *expr,
         if (symbol)
             return symbol->struct_name;
         Variable *var = get_variable(expr->data.name);
-        return var ? var->struct_name : (String){0};
+        return var ? var->desc.struct_name : (String){0};
     }
     case NODE_UNARY_OPERATION:
         /* Neither &x nor *x changes which struct tag is at the other end
@@ -702,7 +703,7 @@ static String infer_expression_struct_name(ASTNode *expr,
         if (symbol && symbol->is_array)
             return symbol->struct_name;
         Variable *var = get_variable(expr->data.array.name);
-        return var && var->is_array ? var->struct_name : (String){0};
+        return var && var->desc.is_array ? var->desc.struct_name : (String){0};
     }
     case NODE_FUNC_CALL:
     {
@@ -793,7 +794,7 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
         Variable *var = get_variable(node->data.name);
         if (var)
         {
-            return var->var_type;
+            return var->desc.type;
         }
         /* Not a variable -- an enum constant has type int in C. */
         if (find_global_enum_constant(node->data.name))
@@ -849,8 +850,8 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
             return symbol->type;
 
         Variable *var = get_variable(array_name);
-        if (var && var->is_array)
-            return var->var_type;
+        if (var && var->desc.is_array)
+            return var->desc.type;
 
         return NONE;
     }
@@ -2609,7 +2610,7 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node)
                 return;
             }
 
-            if (var->modifiers.is_const)
+            if (var->desc.modifiers.is_const)
             {
                 char error_msg[MAX_BUFFER_LEN];
                 snprintf(error_msg, sizeof(error_msg),
@@ -3541,9 +3542,9 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                 Variable *var = get_variable(obj->data.name);
                 if (!var)
                     break; /* undefined variable is reported elsewhere */
-                obj_type = var->var_type;
-                obj_pointer_level = var->pointer_level;
-                obj_struct_name = var->struct_name;
+                obj_type = var->desc.type;
+                obj_pointer_level = var->desc.pointer_level;
+                obj_struct_name = var->desc.struct_name;
             }
             parent_is_struct_typed = (obj_type == VAR_STRUCT);
             /* Same restriction as resolve_struct_access()'s own runtime

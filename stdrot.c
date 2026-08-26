@@ -768,7 +768,7 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
             }
             return;
         }
-        switch (var->var_type)
+        switch (var->desc.type)
         {
         case VAR_INT:
             out->type = STDROT_INT;
@@ -791,7 +791,7 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
             out->val.b = var->value.bvalue;
             return;
         case VAR_CHAR:
-            if (var->is_array)
+            if (var->desc.is_array)
             {
                 out->type = STDROT_STRING;
                 out->val.str.data = (char *)var->value.array_data;
@@ -1649,7 +1649,7 @@ void execute_func_call(const String func_name, ArgumentList *args)
     {
         const String name = args->expr->data.name;
         Variable *var = get_variable(name);
-        if (var && !(var->is_array && var->var_type == VAR_CHAR))
+        if (var && !(var->desc.is_array && var->desc.type == VAR_CHAR))
         {
             fprintf(stderr,
                     "Warning: line %d: `%s(%s, ...)` writing its result back "
@@ -1659,16 +1659,16 @@ void execute_func_call(const String func_name, ArgumentList *args)
             switch (result.type)
             {
             case STDROT_INT:
-                set_int_variable(name, result.val.i, var->modifiers);
+                set_int_variable(name, result.val.i, var->desc.modifiers);
                 break;
             case STDROT_FLOAT:
-                set_float_variable(name, result.val.f, var->modifiers);
+                set_float_variable(name, result.val.f, var->desc.modifiers);
                 break;
             case STDROT_DOUBLE:
-                set_double_variable(name, result.val.d, var->modifiers);
+                set_double_variable(name, result.val.d, var->desc.modifiers);
                 break;
             case STDROT_SHORT:
-                set_short_variable(name, result.val.s, var->modifiers);
+                set_short_variable(name, result.val.s, var->desc.modifiers);
                 break;
             case STDROT_CHAR:
                 /* set_char_variable(), not set_int_variable(): the latter
@@ -1679,10 +1679,10 @@ void execute_func_call(const String func_name, ArgumentList *args)
                    still holding an ordinary char value (see
                    ast_expr_to_stdrot_value()'s NODE_IDENTIFIER/VAR_CHAR
                    case, which dispatches purely on var->var_type). */
-                set_char_variable(name, result.val.c, var->modifiers);
+                set_char_variable(name, result.val.c, var->desc.modifiers);
                 break;
             case STDROT_STRING:
-                if (var->is_array && var->var_type == VAR_CHAR &&
+                if (var->desc.is_array && var->desc.type == VAR_CHAR &&
                     var->array_length > 0)
                 {
                     char *dst = (char *)var->value.array_data;
@@ -1707,7 +1707,7 @@ void execute_func_call(const String func_name, ArgumentList *args)
                    point, which it has. */
                 break;
             case STDROT_BOOL:
-                set_bool_variable(name, result.val.b, var->modifiers);
+                set_bool_variable(name, result.val.b, var->desc.modifiers);
                 break;
             default:
                 break;

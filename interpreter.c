@@ -225,7 +225,7 @@ void *interpreter_visit_array_access(Visitor *self, ASTNode *node)
     {
         /* Get the variable to determine expected dimensions */
         Variable *var = get_variable(node->data.array.name);
-        if (!var || !var->is_array)
+        if (!var || !var->desc.is_array)
         {
             return NULL;
         }
@@ -384,10 +384,10 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
             return;
 
         Variable *var = variable_new(name);
-        var->pointer_level = node->pointer_level;
-        var->modifiers = node->modifiers;
+        var->desc.pointer_level = node->pointer_level;
+        var->desc.modifiers = node->modifiers;
         if (node->var_type == VAR_STRUCT)
-            var->struct_name = safe_strdup(&node->struct_name);
+            var->desc.struct_name = safe_strdup(&node->struct_name);
         add_variable_to_scope(name, var);
         SAFE_FREE(var);
 
@@ -428,10 +428,10 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
             return;
 
         Variable *var = variable_new(name);
-        var->var_type = VAR_STRUCT;
-        var->pointer_level = node->pointer_level;
-        var->modifiers = node->modifiers;
-        var->struct_name = safe_strdup(&struct_type);
+        var->desc.type = VAR_STRUCT;
+        var->desc.pointer_level = node->pointer_level;
+        var->desc.modifiers = node->modifiers;
+        var->desc.struct_name = safe_strdup(&struct_type);
         add_variable_to_scope(name, var);
         SAFE_FREE(var);
 
@@ -518,9 +518,9 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
         return;
     }
     Variable *var = variable_new(name);
-    var->modifiers = node->modifiers;
-    var->var_type = node->var_type;
-    var->pointer_level = node->pointer_level;
+    var->desc.modifiers = node->modifiers;
+    var->desc.type = node->var_type;
+    var->desc.pointer_level = node->pointer_level;
 
     /* If static and already exists in static map, skip entirely */
     if (node->modifiers.is_static)
@@ -536,15 +536,15 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
     /* Must come after the static-already-exists check above: that early
        return frees only the wrapper Variable, not enum_name's heap string. */
     if (node->var_type == VAR_ENUM)
-        var->enum_name = safe_strdup(&node->enum_name);
+        var->desc.enum_name = safe_strdup(&node->enum_name);
     if (node->var_type == VAR_STRUCT && node->struct_name.data)
-        var->struct_name = safe_strdup(&node->struct_name);
+        var->desc.struct_name = safe_strdup(&node->struct_name);
 
     /* Detect struct declaration: right node is a NODE_STRUCT_DEF */
     if (node->data.op.right && node->data.op.right->type == NODE_STRUCT_DEF)
     {
-        var->var_type = VAR_STRUCT;
-        var->struct_name =
+        var->desc.type = VAR_STRUCT;
+        var->desc.struct_name =
             safe_strdup(&node->data.op.right->data.struct_def.name);
     }
 
@@ -557,7 +557,7 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
         Variable *scope_var = get_variable(name);
         if (scope_var)
         {
-            if (scope_var->pointer_level > 0)
+            if (scope_var->desc.pointer_level > 0)
             {
                 /* For a struct/union-tagged pointer declared via the
                    `struct_or_union name_token declarator ...` grammar
@@ -597,11 +597,12 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
                 }
                 return;
             }
-            if (scope_var->var_type == VAR_STRUCT)
+            if (scope_var->desc.type == VAR_STRUCT)
             {
                 if (!scope_var->value.array_data)
                 {
-                    StructDef *def = get_struct_def(scope_var->struct_name);
+                    StructDef *def =
+                        get_struct_def(scope_var->desc.struct_name);
                     if (def)
                     {
                         scope_var->value.array_data =
@@ -612,7 +613,7 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
                 }
                 return;
             }
-            switch (scope_var->var_type)
+            switch (scope_var->desc.type)
             {
             case VAR_INT:
             {

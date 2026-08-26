@@ -2172,7 +2172,7 @@ TypeModifiers get_variable_modifiers(const String name) {
     TypeModifiers mods = {false, false, false, false, false, false, false, false};  // Default modifiers
     Variable *var = get_variable(name); 
     if (var != NULL) {
-        return var->modifiers;
+        return var->desc.modifiers;
     }
     return mods;  // Return default modifiers if not found
 }
