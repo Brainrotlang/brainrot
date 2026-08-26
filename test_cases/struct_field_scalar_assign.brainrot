@@ -1,0 +1,33 @@
+🚽 Test case: reading a struct/union field into a scalar via an assignment
+🚽 RHS (`v = m.x;`) and in a larger expression (`v = m.x + m.y;`). This
+🚽 crashed before the DOT-precedence fix: `.` (member access) bound looser
+🚽 than `=`, so `v = m.x` parsed as `(v = m).x` -- the assignment's RHS was
+🚽 the struct variable `m`, evaluated in an int context (null-deref). Also
+🚽 covers a nested chain (`o.inner.v`) and plain declaration-init, which
+🚽 already worked, to lock the precedence in.
+gang P {
+    rizz x;
+    rizz y;
+};
+gang In {
+    rizz v;
+};
+gang Out {
+    gang In inner;
+};
+
+skibidi main {
+    gang P m;
+    m.x = 7;
+    m.y = 3;
+    rizz a;
+    a = m.x;
+    rizz b;
+    b = m.x + m.y;
+    rizz c = m.x;
+    gang Out o;
+    o.inner.v = 42;
+    rizz d;
+    d = o.inner.v;
+    yapping("%d %d %d %d", a, b, c, d);
+}

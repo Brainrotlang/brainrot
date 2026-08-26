@@ -178,6 +178,8 @@
     "struct_array_field_rank_mismatch_fail": "Error: Struct/union field 'cells' expects 2 array index/indices, got 1 at line 20",
     "struct_pointer_array_field": "99 5 99\n",
     "struct_pointer_null_deref_fail": "Error: Null pointer dereference in struct member access at line 12\nError: Invalid assignment target at line 12",
+    "struct_field_scalar_assign": "7 10 7 42\n",
+    "struct_pointer_member_compare": "B\nA\n0\n",
     "struct_pointer_scalar_field": "42 2 42\n",
     "struct_double_pointer_access_fail": "Error: Member access via '.' through a multi-level pointer (pointer_level > 1) is not supported at line 17",
     "struct_pointer_param": "99\n",
