@@ -140,9 +140,9 @@ static Parameter *create_alias_parameter(String name, TypeDescriptor descriptor,
     Parameter *param = create_parameter_ex(name, descriptor.type, pointer_level,
                                            next, descriptor.modifiers);
     if (descriptor.type == VAR_STRUCT)
-        param->struct_name = ARENA_STRDUP(descriptor.struct_name);
+        param->desc.struct_name = ARENA_STRDUP(descriptor.struct_name);
     else if (descriptor.type == VAR_ENUM)
-        param->enum_name = ARENA_STRDUP(descriptor.enum_name);
+        param->desc.enum_name = ARENA_STRDUP(descriptor.enum_name);
     return param;
 }
 
@@ -265,13 +265,13 @@ static StructField *build_struct_fields_from_params(Parameter *params)
     {
         StructField *f = SAFE_MALLOC(StructField);
         f->name = safe_strdup(&p->name);
-        f->desc.type = p->type;
-        f->desc.struct_name = safe_strdup(&p->struct_name);
-        f->desc.enum_name = safe_strdup(&p->enum_name);
-        f->desc.pointer_level = p->pointer_level;
-        f->desc.modifiers = p->modifiers;
-        f->desc.is_array = p->is_array;
-        f->desc.array_dimensions = p->array_dimensions;
+        f->desc.type = p->desc.type;
+        f->desc.struct_name = safe_strdup(&p->desc.struct_name);
+        f->desc.enum_name = safe_strdup(&p->desc.enum_name);
+        f->desc.pointer_level = p->desc.pointer_level;
+        f->desc.modifiers = p->desc.modifiers;
+        f->desc.is_array = p->desc.is_array;
+        f->desc.array_dimensions = p->desc.array_dimensions;
         f->offset = 0;
         f->next = NULL;
         if (!tail)
@@ -765,8 +765,8 @@ struct_field
             }
             $$ = create_parameter_ex($2.name, $1, $2.pointer_level, NULL,
                                      (TypeModifiers){0});
-            $$->is_array = true;
-            $$->array_dimensions = $3;
+            $$->desc.is_array = true;
+            $$->desc.array_dimensions = $3;
             SAFE_FREE($2.name);
         }
     | alias_type declarator SEMICOLON
@@ -821,8 +821,8 @@ struct_field
                 struct_def_had_error = true;
             }
             $$ = create_alias_parameter($2.name, $1, $2.pointer_level, NULL);
-            $$->is_array = true;
-            $$->array_dimensions = $3;
+            $$->desc.is_array = true;
+            $$->desc.array_dimensions = $3;
             SAFE_FREE($2.name);
         }
     | struct_or_union name_token declarator SEMICOLON
@@ -865,7 +865,7 @@ struct_field
                here too so this copy is reclaimed in bulk instead of leaking
                (StructField, built from this Parameter below, makes its own
                heap-owned safe_strdup copy that free_struct_registry frees). */
-            $$->struct_name = ARENA_STRDUP($2);
+            $$->desc.struct_name = ARENA_STRDUP($2);
             SAFE_FREE($3.name);
             SAFE_FREE($2);
         }
@@ -884,7 +884,7 @@ struct_field
             }
             $$ = create_parameter_ex($3.name, VAR_ENUM, $3.pointer_level,
                                      NULL, (TypeModifiers){0});
-            $$->enum_name = ARENA_STRDUP($2);
+            $$->desc.enum_name = ARENA_STRDUP($2);
             SAFE_FREE($3.name);
             SAFE_FREE($2);
         }
@@ -1214,14 +1214,14 @@ param_list
     | optional_modifiers struct_or_union name_token declarator
         {
             $$ = create_parameter_ex($4.name, VAR_STRUCT, $4.pointer_level, NULL, get_current_modifiers());
-            $$->struct_name = ARENA_STRDUP($3);
+            $$->desc.struct_name = ARENA_STRDUP($3);
             SAFE_FREE($3);
             SAFE_FREE($4.name);
         }
     | param_list COMMA optional_modifiers struct_or_union name_token declarator
         {
             $$ = create_parameter_ex($6.name, VAR_STRUCT, $6.pointer_level, $1, get_current_modifiers());
-            $$->struct_name = ARENA_STRDUP($5);
+            $$->desc.struct_name = ARENA_STRDUP($5);
             SAFE_FREE($5);
             SAFE_FREE($6.name);
         }
@@ -1236,7 +1236,7 @@ param_list
                 struct_def_had_error = true;
             }
             $$ = create_parameter_ex($4.name, VAR_ENUM, $4.pointer_level, NULL, get_current_modifiers());
-            $$->enum_name = ARENA_STRDUP($3);
+            $$->desc.enum_name = ARENA_STRDUP($3);
             SAFE_FREE($3);
             SAFE_FREE($4.name);
         }
@@ -1251,7 +1251,7 @@ param_list
                 struct_def_had_error = true;
             }
             $$ = create_parameter_ex($6.name, VAR_ENUM, $6.pointer_level, $1, get_current_modifiers());
-            $$->enum_name = ARENA_STRDUP($5);
+            $$->desc.enum_name = ARENA_STRDUP($5);
             SAFE_FREE($5);
             SAFE_FREE($6.name);
         }

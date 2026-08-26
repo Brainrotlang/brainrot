@@ -226,26 +226,24 @@ ASTNode *arena_alloc_astnode(void);
 typedef struct Parameter
 {
     String name;
-    VarType type;
-    String struct_name; /* struct/union tag; set whenever
-                            type == VAR_STRUCT, including pointer-typed
-                            parameters (pointer_level > 0) — a `gang Point
-                            *pp` parameter records its tag so member access
-                            through it (`pp.field`, #196) can resolve the
-                            pointee's definition, copied onto the bound
-                            Variable in enter_function_scope() (ast.c) */
-    String enum_name;   /* enum tag; set whenever type == VAR_ENUM */
-    int pointer_level;
-    TypeModifiers modifiers;
-    /* Set only when this Parameter is standing in for a struct_field
-       (lang.y's `type declarator dimensions SEMICOLON` rule) on its way
-       to becoming a StructField (build_struct_fields_from_params()) --
-       a real function Parameter can't be array-typed (ast.h's own
-       Parameter doc predates this; no `parameter` grammar production
-       accepts `dimensions`). Mirrors StructField's own is_array/
-       array_dimensions pair. */
-    bool is_array;
-    ArrayDimensions array_dimensions;
+    /* The parameter's full type, collapsed from the parallel scalar
+       fields Parameter used to carry into one TypeDescriptor (#206 3b),
+       matching the same move on StructField. Notes preserved:
+
+       - desc.struct_name: struct/union tag, set whenever desc.type ==
+         VAR_STRUCT, INCLUDING pointer-typed parameters (pointer_level > 0)
+         -- a `gang Point *pp` parameter records its tag so `pp.field`
+         (#196) resolves the pointee, copied onto the bound Variable in
+         enter_function_scope(). desc.enum_name likewise for VAR_ENUM.
+         Parameter tag strings are arena-allocated (create_parameter_ex),
+         bulk-freed in free_ast -- no per-field free.
+       - desc.is_array / desc.array_dimensions: set only while this
+         Parameter is standing in for a struct_field (lang.y's `type
+         declarator dimensions SEMICOLON` rule) on its way to becoming a
+         StructField (build_struct_fields_from_params); a real function
+         parameter can't be array-typed (no `parameter` grammar production
+         accepts `dimensions`). */
+    TypeDescriptor desc;
     struct Parameter *next;
 } Parameter;
 
