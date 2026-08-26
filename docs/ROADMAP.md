@@ -65,7 +65,7 @@ everything that makes it *typed* and *composable*.
 | L5 | `StdrotValue` has no pointer, struct, or handle representation — only `int/float/double/short/bool/char/String/void`. | [stdrot/stdrot_api.h:49](../stdrot/stdrot_api.h#L49) |
 | L6 | `compute_struct_layout()` packs fields sequentially with no alignment or padding, so `gang` layouts do not match C. | [ast.c:3948](../ast.c#L3948) |
 | L7 | Struct member access only resolves when the base is a plain identifier; `a.b.c` is rejected outright. | [ast.c:346](../ast.c#L346) |
-| L8 | Functions can take/return a struct by value as a plain struct variable, a by-value member-access sub-expression (`take(b.corner)`, `bussin b.corner;`), or a struct-returning call result (`take(make_point())`, `bussin make_point();`) of the exact matching type — a pointer-to-struct return type is not yet supported. | [ast.c:6606](../ast.c#L6606) (`enter_function_scope`) |
+| L8 | Functions can take/return a struct by value as a plain struct variable, a by-value member-access sub-expression (`take(b.corner)`, `bussin b.corner;`), or a struct-returning call result (`take(make_point())`, `bussin make_point();`) of the exact matching type, and can return a pointer to a struct (`gang Point *f()`). Resolved. | [ast.c:6606](../ast.c#L6606) (`enter_function_scope`) |
 | L9 | `StructField` keeps `VarType + pointer_level + offset` only — no struct type name, no arrays, no modifiers, so nested-struct and fixed-array fields are unrepresentable. | [ast.h:82](../ast.h#L82) |
 | L10 | Exactly one native library is ever loaded, hardcoded as `libstdrot.so`. | [Makefile:52](../Makefile#L52) |
 

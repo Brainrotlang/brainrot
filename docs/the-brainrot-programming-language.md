@@ -493,9 +493,13 @@ Q: 10 20 0.0
   function by value as a plain struct variable (`take(p)`, `bussin p;`), a
   by-value struct member-access sub-expression (`take(b.corner)`, `bussin
   b.corner;`), or a struct-returning call result (`take(make_point())`,
-  `bussin make_point();`) of the exact matching type. A **pointer-to-struct
-  return type** (`gang Point *f()`) is not yet supported. Arguments and
-  return values are deep-copied (C by-value semantics), never aliased.
+  `bussin make_point();`) of the exact matching type. By-value arguments
+  and return values are deep-copied (C by-value semantics), never aliased.
+  A function may instead return a **pointer to a struct** (`gang Point
+  *f()`); that returns a pointer value — typically a pointer parameter or
+  other storage that outlives the call — and reads/writes through it alias
+  the pointee. Returning `&local` dangles once the call returns (the same
+  undefined behavior as a scalar pointer return in C).
 
 ### 7.10. Unions (`chungus`)
 

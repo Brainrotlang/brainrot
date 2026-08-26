@@ -3768,6 +3768,54 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                                                              : 1);
                 }
             }
+
+            /* Pointer-to-struct return (VAR_STRUCT, return_pointer_level >
+               0, #193) is the one VAR_STRUCT return shape the runtime does
+               NOT tag-check -- handle_return_statement's declared_pointer_
+               level > 0 branch just boxes the pointer, so `gang Point *f()
+               { bussin some_rect_ptr; }` would otherwise return a Rect*
+               that a later `f().x` reads through Point's layout. Check the
+               pointee's tag (and category/level) here, reusing the same
+               helpers as the pointer-struct declaration/assignment/argument
+               checks (#248/#253); the by-value VAR_STRUCT return still
+               defers to handle_return_statement's own struct-name check. */
+            if (current_func && current_func->return_type == VAR_STRUCT &&
+                current_func->return_pointer_level > 0 &&
+                !is_unresolved_contextual_call(node->data.op.left))
+            {
+                VarType actual_type =
+                    infer_expression_type(node->data.op.left, analyzer);
+                int actual_pl = infer_expression_pointer_level(
+                    node->data.op.left, analyzer);
+                int line = node->line_number > 0 ? node->line_number : 1;
+                if ((actual_type != NONE && actual_type != VAR_STRUCT) ||
+                    actual_pl != current_func->return_pointer_level)
+                {
+                    char error_msg[MAX_BUFFER_LEN];
+                    snprintf(
+                        error_msg, sizeof(error_msg),
+                        "Return type mismatch in '%s': expected pointer to "
+                        "struct/union '%s' (level %d), got %s pointer level %d",
+                        current_func->name.data,
+                        current_func->return_struct_name.data
+                            ? current_func->return_struct_name.data
+                            : "?",
+                        current_func->return_pointer_level,
+                        vartype_to_string(actual_type), actual_pl);
+                    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                       STRING_LITERAL(error_msg), line);
+                }
+                else
+                {
+                    char prefix[MAX_BUFFER_LEN];
+                    snprintf(prefix, sizeof(prefix),
+                             "Return type mismatch in '%s'",
+                             current_func->name.data);
+                    check_pointer_struct_tag_match(
+                        analyzer, current_func->return_struct_name,
+                        node->data.op.left, prefix, line);
+                }
+            }
         }
         break;
     }

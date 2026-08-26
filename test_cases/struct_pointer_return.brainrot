@@ -1,0 +1,30 @@
+🚽 Test case: #193 -- a function can return a pointer to a struct (`gang
+🚽 Point *f()`), the last of #193's gaps. Returns a pointer PARAMETER (the
+🚽 safe use: the pointee outlives the call, unlike returning `&local`).
+🚽 Reads and writes through the returned pointer alias the caller's struct
+🚽 (composing with #196). The discarded `pick(&p, &q);` statement checks
+🚽 that releasing the return slot does NOT free the borrowed pointee (a
+🚽 pointer-to-struct return's value is not an owned blob).
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+gang Point *pick(gang Point *a, gang Point *b) {
+    bussin a;
+}
+
+skibidi main {
+    gang Point p;
+    p.x = 1;
+    p.y = 2;
+    gang Point q;
+    q.x = 3;
+    q.y = 4;
+    gang Point *r = pick(&p, &q);
+    yapping("%d %d", r.x, r.y);
+    r.x = 99;
+    yapping("%d", p.x);
+    pick(&p, &q);
+    yapping("%d %d", p.x, q.x);
+}

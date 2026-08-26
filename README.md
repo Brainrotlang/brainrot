@@ -304,8 +304,11 @@ Current limitations include:
   sub-expression (`take(b.corner)`, `bussin b.corner;`, `gang Point c =
   b.corner;`), or a struct-returning call result (`take(make_point())`,
   `bussin make_point();`, `gang Point c = make_point();`) of the exact
-  declared type, deep-copied (not aliased). A **pointer-to-struct return
-  type** (`gang Point *f()`) is not yet supported
+  declared type, deep-copied (not aliased). A function may also return a
+  **pointer to a struct** (`gang Point *f()`), returning a pointer value
+  (a parameter or other storage that outlives the call) rather than a
+  copy — returning `&local` dangles once the call returns, the same
+  undefined behavior as a scalar pointer return in C
 - Arrays cannot be passed or returned by value (only via a pointer
   parameter, which aliases the caller's array like in C)
 - `ohio`/`based` (switch/default): `based` fires as soon as the interpreter's scan reaches it, so its position among the `sigma rule` cases matters — placing it before a case that would otherwise match currently pre-empts that match ([#179](https://github.com/Brainrotlang/brainrot/issues/179))
