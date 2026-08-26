@@ -1,0 +1,30 @@
+🚽 Test case: #206 (3e) -- a fixed-size array struct field whose element
+🚽 type comes from a `lit` alias (`lit thicc rizz Big; gang S { Big
+🚽 vals[3]; };`), the alias + array-field intersection. Proves the alias's
+🚽 modifiers reach the layout: `thicc` (long long) is 8 bytes, so `Big
+🚽 vals[3]` reserves 3*8 = 24, not 3*4 = 12 (long long is 8 on both LP64
+🚽 and wasm32 ILP32, so no per-platform override is needed). Also covers
+🚽 read/write of individual elements and by-value deep-copy independence
+🚽 (a mutated parameter/copy must not touch the original).
+lit thicc rizz Big;
+
+gang S {
+    Big vals[3];
+};
+
+skibidi bump(gang S s) {
+    s.vals[0] = 999;
+}
+
+skibidi main {
+    gang S a;
+    a.vals[0] = 10;
+    a.vals[1] = 20;
+    a.vals[2] = 30;
+    yapping("%d %d %d %lu", a.vals[0], a.vals[1], a.vals[2], maxxing(a));
+    bump(a);
+    yapping("%d", a.vals[0]);
+    gang S b = a;
+    b.vals[0] = 111;
+    yapping("%d %d", a.vals[0], b.vals[0]);
+}

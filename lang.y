@@ -778,6 +778,47 @@ struct_field
             $$ = create_alias_parameter($2.name, $1, $2.pointer_level, NULL);
             SAFE_FREE($2.name);
         }
+    | alias_type declarator dimensions SEMICOLON
+        {
+            /* Fixed-size array field whose element type comes from a `lit`
+               alias (`lit thicc rizz Big; gang S { Big vals[3]; };`, #206
+               3e) -- the alias/array-field intersection. Sizing/alignment
+               reads the alias's modifiers through the same f->modifiers
+               path get_struct_field_size()/get_struct_field_alignment()
+               already use for a scalar alias field (struct_field_long_
+               modifier), so `Big vals[3]` reserves 3*8 bytes, not 3*4.
+               Restricted to a SCALAR (pointer_level == 0, non-struct,
+               non-enum) element, matching the primitive array-field
+               production above: a struct/union or enum array ELEMENT is
+               out of scope (arrays of aggregate elements aren't supported
+               yet), and a pointer-element array via alias already has its
+               own tested path (lit_struct_pointer_alias_array). */
+            int pointer_level = $1.pointer_level + $2.pointer_level;
+            if ($1.type == VAR_VOID && pointer_level == 0)
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg),
+                        "Struct/union field '%s' cannot have type void",
+                        $2.name.data);
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
+            else if (pointer_level == 0 &&
+                     ($1.type == VAR_STRUCT || $1.type == VAR_ENUM))
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg),
+                        "Array field '%s' of a struct/union/enum alias "
+                        "element type is not supported",
+                        $2.name.data);
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
+            $$ = create_alias_parameter($2.name, $1, $2.pointer_level, NULL);
+            $$->is_array = true;
+            $$->array_dimensions = $3;
+            SAFE_FREE($2.name);
+        }
     | struct_or_union name_token declarator SEMICOLON
         {
             /* A struct/union embedding itself BY VALUE has no finite size
