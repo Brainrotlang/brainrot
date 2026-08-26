@@ -1,0 +1,12 @@
+🚽 Test case: #206 (3e) -- an out-of-bounds index into a struct array
+🚽 field must be rejected (calculate_array_offset(), ast.c, reused as-is
+🚽 from the array-variable path), not silently read/write past the
+🚽 field's own bytes into a struct neighbor or off the end of the blob.
+gang Foo {
+    rizz arr[3];
+};
+
+skibidi main {
+    gang Foo f;
+    f.arr[5] = 1;
+}

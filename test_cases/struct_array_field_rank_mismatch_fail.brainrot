@@ -1,0 +1,20 @@
+🚽 Test case: #206 (3e) -- indexing a multi-dimensional struct array
+🚽 field with the wrong number of indices must be rejected outright, not
+🚽 silently truncated. calculate_array_offset()'s own dimension-mismatch
+🚽 handling is a lenient "TEMPORARY FIX" (its own comment) that
+🚽 truncates to whichever index count is smaller and keeps going -- fine
+🚽 for a standalone array's own private buffer, not for a field living
+🚽 inline in a struct's shared blob, where a silently-accepted rank
+🚽 mismatch would compute an offset for the wrong number of dimensions
+🚽 and read/write into a neighboring field's bytes instead. evaluate_
+🚽 struct_field_array_access() (ast.c) checks rank itself before ever
+🚽 calling calculate_array_offset(), so this never reaches that lenient
+🚽 path at all.
+gang Grid {
+    rizz cells[2][3];
+};
+
+skibidi main {
+    gang Grid g;
+    g.cells[1] = 5;
+}

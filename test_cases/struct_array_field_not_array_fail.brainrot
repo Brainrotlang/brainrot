@@ -1,0 +1,11 @@
+🚽 Test case: #206 (3e) -- indexing a non-array struct field must fail
+🚽 cleanly at runtime (evaluate_struct_field_array_access(), ast.c), not
+🚽 crash or silently read/write the wrong memory.
+gang Foo {
+    rizz n;
+};
+
+skibidi main {
+    gang Foo f;
+    f.n[0] = 1;
+}

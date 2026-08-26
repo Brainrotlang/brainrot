@@ -161,6 +161,16 @@ typedef struct StructField
        pre-existing gap plain `giga`/`thicc` variables have outside of
        any struct, not something this field closes. */
     TypeModifiers modifiers;
+    /* Fixed-size array field (e.g. `chad params[4];`), reachable only
+       through the `struct_field: type declarator dimensions SEMICOLON`
+       grammar rule -- pointer_level, struct_name, enum_name, and
+       modifiers above still describe the ELEMENT type, exactly like
+       Variable/Parameter's own is_array/array_dimensions pair. Array
+       fields of struct/union-typed elements are not supported yet
+       (build_struct_fields_from_params(), lang.y, rejects that
+       combination at parse time). */
+    bool is_array;
+    ArrayDimensions array_dimensions;
     size_t offset; /* byte offset within the struct blob */
     struct StructField *next;
 } StructField;
@@ -224,6 +234,15 @@ typedef struct Parameter
     String enum_name;   /* enum tag; set whenever type == VAR_ENUM */
     int pointer_level;
     TypeModifiers modifiers;
+    /* Set only when this Parameter is standing in for a struct_field
+       (lang.y's `type declarator dimensions SEMICOLON` rule) on its way
+       to becoming a StructField (build_struct_fields_from_params()) --
+       a real function Parameter can't be array-typed (ast.h's own
+       Parameter doc predates this; no `parameter` grammar production
+       accepts `dimensions`). Mirrors StructField's own is_array/
+       array_dimensions pair. */
+    bool is_array;
+    ArrayDimensions array_dimensions;
     struct Parameter *next;
 } Parameter;
 
@@ -384,7 +403,16 @@ typedef enum
 
 typedef struct
 {
+    /* Exactly one of `name`/`base` identifies what's being indexed.
+       `name`: the classic `IDENTIFIER multi_dimension_access` form --
+       look up a Variable by this name (evaluate_multi_array_access()
+       etc., ast.c). `base`: the `struct_access multi_dimension_access`
+       form (`foo.arr[i]`) -- `base` is that struct_access expression;
+       resolve it via resolve_struct_access() (ast.c) to find the
+       array field instead of a Variable. `base` is NULL for every
+       node built before array-typed struct fields existed. */
     String name;
+    ASTNode *base;
     ASTNode *index;
     ASTNode *indices[MAX_DIMENSIONS];
     int num_dimensions;
@@ -695,6 +723,9 @@ bool set_multi_array_variable(const String name, const int dimensions[],
 ASTNode *create_array_access_node_single(String name, ASTNode *index);
 ASTNode *create_multi_array_access_node(String name, ASTNode *indices[],
                                         int num_indices);
+ASTNode *create_struct_field_array_access_node(ASTNode *base,
+                                               ASTNode *indices[],
+                                               int num_indices);
 
 /* User-defined functions */
 Function *create_function(String name, VarType return_type, Parameter *params,

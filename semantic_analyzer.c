@@ -396,11 +396,43 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
            mismatch until runtime ABI enforcement caught it) -- the
            identical bug NODE_STRUCT_ACCESS had (round 21, finding #2),
            just for arrays instead of struct fields. */
+        if (node->data.array.base)
+        {
+            /* `foo.arr[i]` -- mirrors NODE_STRUCT_ACCESS's own case
+               below exactly (runtime resolve_struct_access() first,
+               static infer_struct_def_static()+find_struct_field()
+               fallback for Phase 1, before any runtime Variable
+               exists), since Array.base is itself a NODE_STRUCT_ACCESS
+               node (`foo.arr`) and needs the identical two-path
+               resolution. Both branches require is_array: a resolved-
+               but-not-actually-an-array field (e.g. indexing a scalar)
+               must be treated as unresolved here, matching ast.c's
+               resolve_array_access_element() -- returning a "valid"
+               pointer_level for `f.n[0]` on a scalar `rizz n` would let
+               this disagree with infer_expression_type()'s own gate on
+               the identical node. */
+            StructDef *def = NULL;
+            void *base = NULL;
+            StructField *fld = NULL;
+            if (resolve_struct_access(node->data.array.base, &def, &base, &fld,
+                                      false) &&
+                fld->is_array)
+                return fld->pointer_level;
+
+            StructDef *static_def = infer_struct_def_static(
+                node->data.array.base->data.struct_access.object, analyzer);
+            if (!static_def)
+                return node->pointer_level;
+            StructField *f = find_struct_field(
+                static_def,
+                node->data.array.base->data.struct_access.member_name);
+            return f && f->is_array ? f->pointer_level : node->pointer_level;
+        }
         SymbolEntry *symbol = find_symbol(analyzer, node->data.array.name);
-        if (symbol)
+        if (symbol && symbol->is_array)
             return symbol->pointer_level;
         Variable *var = get_variable(node->data.array.name);
-        return var ? var->pointer_level : node->pointer_level;
+        return var && var->is_array ? var->pointer_level : node->pointer_level;
     }
     case NODE_UNARY_OPERATION:
         if (node->data.unary.op == OP_ADDRESS_OF)
@@ -634,16 +666,40 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
            as NODE_IDENTIFIER just above) -- infer_expression_abi_type()
            is what narrows a VAR_CHAR one to VAR_INT to match how
            ast_expr_to_stdrot_value() (stdrot.c) actually marshals it. */
+        if (node->data.array.base)
+        {
+            /* Same two-path resolution as infer_expression_pointer_
+               level()'s own NODE_ARRAY_ACCESS case above -- see that
+               case's comment, including why both branches require
+               is_array. */
+            StructDef *def = NULL;
+            void *base = NULL;
+            StructField *fld = NULL;
+            if (resolve_struct_access(node->data.array.base, &def, &base, &fld,
+                                      false) &&
+                fld->is_array)
+                return fld->type;
+
+            StructDef *static_def = infer_struct_def_static(
+                node->data.array.base->data.struct_access.object, analyzer);
+            if (!static_def)
+                return NONE;
+            StructField *f = find_struct_field(
+                static_def,
+                node->data.array.base->data.struct_access.member_name);
+            return f && f->is_array ? f->type : NONE;
+        }
+
         const String array_name = node->data.array.name;
         if (!array_name.data)
             return NONE;
 
         SymbolEntry *symbol = find_symbol(analyzer, array_name);
-        if (symbol)
+        if (symbol && symbol->is_array)
             return symbol->type;
 
         Variable *var = get_variable(array_name);
-        if (var)
+        if (var && var->is_array)
             return var->var_type;
 
         return NONE;
@@ -3092,6 +3148,15 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
            in use, otherwise it's the single-dimension index. Needed so an
            index expression like `arr[bet(2)]` gets the same native-call
            arity/type checking as any other expression. */
+        if (node->data.array.base)
+        {
+            /* `foo.arr[i]` -- visit the struct_access base itself so it
+               gets NODE_STRUCT_ACCESS's own validation (unknown struct
+               type, unknown field, etc.), exactly as if `foo.arr` had
+               been used standalone. */
+            semantic_analyze_with_scope_tracking(analyzer,
+                                                 node->data.array.base);
+        }
         if (node->data.array.num_dimensions > 0)
         {
             for (int i = 0; i < node->data.array.num_dimensions; i++)

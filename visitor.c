@@ -75,6 +75,13 @@ void ast_accept(ASTNode *node, Visitor *visitor)
         break;
 
     case NODE_ARRAY_ACCESS:
+        // `foo.arr[i]` (Array.base set, ast.h) -- visit the struct_access
+        // base itself so it gets NODE_STRUCT_ACCESS's own handling,
+        // exactly as if `foo.arr` had been used standalone. NULL for the
+        // classic IDENTIFIER form, where there is no separate expression
+        // to visit (the name is looked up directly, not walked).
+        if (node->data.array.base)
+            ast_accept(node->data.array.base, visitor);
         // Visit array indices first
         if (node->data.array.num_dimensions > 0)
         {
