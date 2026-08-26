@@ -542,8 +542,42 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
         {
             if (scope_var->pointer_level > 0)
             {
-                scope_var->value.pvalue =
-                    evaluate_expression_pointer(node->data.op.right);
+                /* For a struct/union-tagged pointer declared via the
+                   `struct_or_union name_token declarator ...` grammar
+                   (lang.y) -- `gang Foo *pp;` / `gang Foo *pp = &f;` --
+                   data.op.right always points at a NODE_STRUCT_DEF type
+                   marker (the struct tag) regardless of whether an
+                   initializer was given, including the no-initializer
+                   form; the real initializer, when present, lives
+                   separately in struct_init_expr (see that grammar's
+                   `EQUALS expression` production). evaluate_expression_
+                   pointer() doesn't handle NODE_STRUCT_DEF, so blindly
+                   evaluating data.op.right here either silently left the
+                   pointer NULL for `gang Foo *pp = &f;` (the real
+                   initializer was never read) or, for a bare `gang Foo
+                   *pp;`, spuriously reported "Invalid pointer expression"
+                   even though no initializer was ever written and
+                   pvalue's zero default (variable_new() memsets the whole
+                   Variable) is already correct. A `lit`-aliased struct
+                   pointer (`PointPtr first = &p;`) is declared through a
+                   *different*, generic type-declarator grammar path where
+                   data.op.right already holds the real initializer
+                   directly, same as any non-struct pointer (`rizz *p =
+                   &x;`) -- so only reroute through struct_init_expr when
+                   data.op.right is genuinely that type marker, not for
+                   every VAR_STRUCT pointer declaration. */
+                if (node->var_type == VAR_STRUCT && node->data.op.right &&
+                    node->data.op.right->type == NODE_STRUCT_DEF)
+                {
+                    if (node->struct_init_expr)
+                        scope_var->value.pvalue =
+                            evaluate_expression_pointer(node->struct_init_expr);
+                }
+                else
+                {
+                    scope_var->value.pvalue =
+                        evaluate_expression_pointer(node->data.op.right);
+                }
                 return;
             }
             if (scope_var->var_type == VAR_STRUCT)

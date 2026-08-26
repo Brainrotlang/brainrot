@@ -695,32 +695,6 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                 yyerror("Variable is not a struct or union");
             return false;
         }
-        /* Same restriction as the pointer-typed FIELD case just below
-           ("Chained member access through a pointer-typed struct/union
-           field is not supported") -- #196/#197 territory, not yet
-           implemented -- but this is the base IDENTIFIER itself being
-           pointer-typed (`gang Foo *pp; pp.field`), not a field reached
-           partway through a chain. Without this check, `var->value.
-           array_data` below is read/written through the union member a
-           POINTER variable actually uses (value.pvalue), not the one a
-           by-value struct variable does: for a pointer variable that
-           union slot either holds an address wrongly reinterpreted as a
-           blob pointer, or -- when NULL/not-yet-assigned -- looks like
-           "no blob yet" and silently calloc's a brand-new, disconnected
-           blob that leaks (confirmed via ASan: `gang Foo *pp = &f; pp.n
-           = 99;`, zero array-access involved, leaks and never touches
-           the real `f`). Rejecting here, before ever touching that
-           union member, is a pure hardening fix scoped to this PR's own
-           newly-reachable-via-arrays path -- it does not implement
-           #196 (following the pointer), it stops this function from
-           corrupting/leaking when asked to. */
-        if (var->pointer_level > 0)
-        {
-            if (report_errors)
-                yyerror("Member access through a pointer-typed struct/union "
-                        "variable is not supported");
-            return false;
-        }
         parent_def = get_struct_def(var->struct_name);
         if (!parent_def)
         {
@@ -728,20 +702,61 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                 yyerror("Unknown struct or union type");
             return false;
         }
-        /* Lazily allocate blob if missing — handles cases where parse-time
-           pointer was invalidated by hashmap resize during semantic
-           analysis. */
-        if (!var->value.array_data)
+        /* #196: a pointer-typed struct/union variable (`gang Foo *pp;
+           pp.field`) follows the pointer -- the base is whatever `pp`
+           points at, not a blob owned by `pp` itself. `pp`'s own union
+           slot is `value.pvalue` (an address), never `value.array_data`;
+           reading `array_data` for a pointer variable would either
+           misinterpret that address as a blob pointer or -- when unset --
+           silently calloc a brand-new, disconnected blob (the leak this
+           branch's predecessor, PR #247, hardened against without yet
+           following the pointer).
+
+           Only ONE level of indirection: `.` as an implicit `->` is
+           defensible for `gang Foo *pp` (pointer_level == 1) -- `pp.field`
+           reads exactly like C's `pp->field`. It is not defensible for
+           `gang Foo **pp` (pointer_level == 2): C requires an explicit
+           `(*pp)->field`, because `pvalue` at that level holds the
+           address of a `Foo *`, not a `Foo` blob -- reinterpreting those
+           bytes as a `Foo` (what treating every pointer_level > 0
+           uniformly did before this check, PR #248 review finding 2)
+           silently reads/writes through the wrong type. */
+        if (var->pointer_level > 1)
         {
-            var->value.array_data = calloc(1, parent_def->total_size);
-            if (!var->value.array_data)
+            if (report_errors)
+                yyerror("Member access via '.' through a multi-level "
+                        "pointer (pointer_level > 1) is not supported");
+            return false;
+        }
+        if (var->pointer_level == 1)
+        {
+            uintptr_t target = var->value.pvalue;
+            if (!target)
             {
                 if (report_errors)
-                    yyerror("Out of memory for struct/union blob");
+                    yyerror("Null pointer dereference in struct member "
+                            "access");
                 return false;
             }
+            parent_base = (void *)target;
         }
-        parent_base = var->value.array_data;
+        else
+        {
+            /* Lazily allocate blob if missing — handles cases where
+               parse-time pointer was invalidated by hashmap resize during
+               semantic analysis. */
+            if (!var->value.array_data)
+            {
+                var->value.array_data = calloc(1, parent_def->total_size);
+                if (!var->value.array_data)
+                {
+                    if (report_errors)
+                        yyerror("Out of memory for struct/union blob");
+                    return false;
+                }
+            }
+            parent_base = var->value.array_data;
+        }
     }
     else if (obj && obj->type == NODE_STRUCT_ACCESS)
     {
@@ -6537,6 +6552,18 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             if (bound)
             {
                 bound->pointer_level = curr_param->pointer_level;
+                /* A pointer-to-struct/union parameter (`gang Foo *pp`)
+                   needs its tag copied too, same as the by-value VAR_STRUCT
+                   case below -- resolve_struct_access()'s NODE_IDENTIFIER
+                   branch (ast.c) resolves `pp.field` via `get_struct_def(
+                   var->struct_name)` regardless of pointer_level, and this
+                   loop's own var_type assignment above already treats the
+                   parameter as a struct/union variable. Without this, a
+                   pointer-to-struct parameter's struct_name stayed empty
+                   and `pp.field` inside the callee died on "Unknown struct
+                   or union type" (PR #248 review, finding 3). */
+                if (curr_param->type == VAR_STRUCT)
+                    bound->struct_name = safe_strdup(&curr_param->struct_name);
                 bound->value.pvalue = arg_values[i].pvalue;
             }
             curr_param = curr_param->next;

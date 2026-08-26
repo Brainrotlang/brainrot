@@ -1,0 +1,24 @@
+🚽 Test case: #196 -- a struct/union pointer-typed FUNCTION PARAMETER
+🚽 rejects a non-struct argument, not just a wrong-tag struct argument
+🚽 (PR #248 review, round 3, finding 2). check_pointer_struct_tag_match()
+🚽 alone fail-opens on an argument whose struct tag it cannot determine
+🚽 -- correct for a genuinely unknown expression, but `&n` for a plain
+🚽 `rizz n` is DEFINITELY not a struct at all (empty struct_name, same as
+🚽 "unknown"), and the call-argument check had no separate category
+🚽 check the way declaration/assignment already do via
+🚽 check_type_compatibility_ex().
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+skibidi bump(gang Point *pp) {
+    pp.x = 99;
+}
+
+skibidi main {
+    rizz n;
+    n = 42;
+    bump(&n);
+    yapping("%d", n);
+}

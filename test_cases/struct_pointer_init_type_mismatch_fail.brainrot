@@ -1,0 +1,18 @@
+🚽 Test case: #196 -- a struct/union-tagged pointer's initializer is now
+🚽 type-checked (PR #248 review, finding 1). Before this fix,
+🚽 semantic_visit_declaration() special-cased any declaration whose
+🚽 data.op.right is a NODE_STRUCT_DEF type marker and returned before
+🚽 ever comparing struct_init_expr's inferred type against the declared
+🚽 type -- so `gang Point *pp = &n;` (n a plain rizz) parsed and ran,
+🚽 silently aliasing an int as if it were a Point.
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+skibidi main {
+    rizz n;
+    n = 42;
+    gang Point *pp = &n;
+    yapping("%d", pp.x);
+}
