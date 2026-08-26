@@ -2381,6 +2381,16 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node)
        actual scalar type the analyzer genuinely can't predict) -- see
        check_declaration_initializer_compatibility()'s own comment for why
        that's still checked independently of the base-type check. */
+    /* This hardcoded `1` (not node->line_number) is pre-existing behavior
+       from before this PR touched this function -- several unrelated
+       fixtures (semantic_error_native_ptr_return_scalar_init and siblings)
+       already encode "at line 1" as their expected output for THIS check
+       specifically. Switching it to the real line number is a correct fix
+       in isolation but has a blast radius well beyond struct pointers (7
+       unrelated fixtures broke when tried), so it's left alone here --
+       only the NEW check below (struct-tag match, added by this PR) uses
+       the real line number, since nothing pre-existing depends on its
+       line being wrong. */
     check_declaration_initializer_compatibility(
         analyzer, var_name, node->var_type, node->pointer_level,
         node->data.op.right, 1);
@@ -2398,14 +2408,17 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node)
        typedef alias" -- create_alias_declaration already populates it).
        Without this, `PointPtr pp = &some_rect;` passed the category
        check above (both VAR_STRUCT pointers) and was never tag-checked
-       at all (PR #248 review, round 3, finding 1). */
+       at all (PR #248 review, round 3, finding 1). Uses the real line
+       number (PR #248 review, round 4, finding 2 -- this check is new,
+       nothing pre-existing depends on it reporting the wrong one). */
     if (node->var_type == VAR_STRUCT && node->pointer_level > 0)
     {
+        int line = node->line_number > 0 ? node->line_number : 1;
         char prefix[MAX_BUFFER_LEN];
         snprintf(prefix, sizeof(prefix),
                  "Type mismatch in initialization of '%s'", var_name.data);
         check_pointer_struct_tag_match(analyzer, node->struct_name,
-                                       node->data.op.right, prefix, 1);
+                                       node->data.op.right, prefix, line);
     }
 }
 
@@ -3264,6 +3277,84 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                     node->pointer_level);
             }
             semantic_check_expression_list(analyzer, node->pending_initializer);
+
+            /* Brace-initialized array of struct/union POINTERS (`lit gang
+               Point *PointPtr; PointPtr values[2] = {&r};`) is a FOURTH
+               place a pointer-to-struct value gets stored, distinct from
+               struct_init_expr/data.op.right/plain-assignment -- this
+               grammar has no array-of-structs-BY-VALUE declaration syntax
+               at all (struct declarators have no `dimensions` production),
+               so var_type == VAR_STRUCT with pointer_level > 0 on an array
+               declaration always means "array of struct/union pointers,"
+               unambiguously. semantic_check_expression_list() just above
+               only visits each element (undefined-variable/native-call
+               checks); it never compares an element's inferred type/tag
+               against the array's own declared type the way struct_init_
+               expr/data.op.right do via check_declaration_initializer_
+               compatibility()/check_pointer_struct_tag_match() elsewhere
+               in this function. Without this, `values[0] = &some_rect;`
+               (checked, PR #248 review round 3) is a semantic error but
+               `PointPtr values[2] = {&some_rect};` (this brace-init form)
+               silently stored a Rect* into a slot every later read treats
+               as Point* -- for two structs of different size, an
+               ASan-visible heap-buffer-overflow, not a wrong integer (PR
+               #248 review, round 4, finding 1). */
+            if (node->var_type == VAR_STRUCT && node->pointer_level > 0)
+            {
+                int line = node->line_number > 0 ? node->line_number : 1;
+                const char *var_name =
+                    node->data.op.left && node->data.op.left->data.name.data
+                        ? node->data.op.left->data.name.data
+                        : "?";
+                /* ExpressionList is a circular doubly-linked list (see
+                   create_expression_list()/append_expression_list_node(),
+                   ast.c -- a single element's next/prev both point back to
+                   itself), not NULL-terminated -- matching semantic_check_
+                   expression_list()'s own traversal just above, this has
+                   to stop on returning to the start, not on next == NULL. */
+                ExpressionList *elem = node->pending_initializer;
+                do
+                {
+                    if (!elem->expr ||
+                        is_unresolved_contextual_call(elem->expr))
+                    {
+                        elem = elem->next;
+                        continue;
+                    }
+
+                    VarType elem_type =
+                        infer_expression_type(elem->expr, analyzer);
+                    int elem_pl =
+                        infer_expression_pointer_level(elem->expr, analyzer);
+                    if ((elem_type != NONE && elem_type != VAR_STRUCT) ||
+                        elem_pl != node->pointer_level)
+                    {
+                        char error_msg[MAX_BUFFER_LEN];
+                        snprintf(error_msg, sizeof(error_msg),
+                                 "Type mismatch in initialization of '%s': "
+                                 "expected pointer to struct/union '%s' (level "
+                                 "%d), got %s pointer level %d",
+                                 var_name,
+                                 node->struct_name.data ? node->struct_name.data
+                                                        : "?",
+                                 node->pointer_level,
+                                 vartype_to_string(elem_type), elem_pl);
+                        add_semantic_error(analyzer,
+                                           SEMANTIC_ERROR_TYPE_MISMATCH,
+                                           STRING_LITERAL(error_msg), line);
+                        elem = elem->next;
+                        continue;
+                    }
+
+                    char prefix[MAX_BUFFER_LEN];
+                    snprintf(prefix, sizeof(prefix),
+                             "Type mismatch in initialization of '%s'",
+                             var_name);
+                    check_pointer_struct_tag_match(analyzer, node->struct_name,
+                                                   elem->expr, prefix, line);
+                    elem = elem->next;
+                } while (elem != node->pending_initializer);
+            }
         }
         if (node->struct_init_expr)
         {
