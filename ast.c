@@ -922,6 +922,33 @@ void *evaluate_struct_member_address(ASTNode *node)
 }
 
 // Evaluate a multi-dimensional array access node
+/* Byte address of array element `offset` (measured in elements) from
+   element_base, strided by the SAME modifier-aware element size the layout
+   pass reserves -- get_type_size_for_descriptor(type, pointer_level, mods).
+   Both array-access paths (struct-field and name-based) funnel their final
+   address computation through here so element spacing can never drift from
+   layout: a width-modified element array (`lit thicc rizz Big; Big
+   vals[N];`, giga/thicc) strides by its real slot (8 bytes on LP64), not
+   sizeof(int); a pointer-element array by sizeof(uintptr_t) (this subsumes
+   the old `pointer_level > 0` special case). The VALUE at the returned
+   address is still loaded/stored through its base VarType's C type by the
+   caller -- occupancy of a wide scalar slot (storing a 4-byte int into an
+   8-byte long-long slot) is a separate, pre-existing gap documented on
+   ast.h's Variable -- but the element STRIDE now matches the C array
+   layout the blob was sized for (PR #256 review). */
+static void *array_element_address(void *element_base, size_t offset,
+                                   VarType type, int pointer_level,
+                                   TypeModifiers mods)
+{
+    size_t stride = get_type_size_for_descriptor(type, pointer_level, mods);
+    if (stride == 0)
+    {
+        yyerror("Cannot index an array of zero-sized elements");
+        exit(EXIT_FAILURE);
+    }
+    return (char *)element_base + offset * stride;
+}
+
 /* The struct-field counterpart of evaluate_multi_array_access() below,
    for a `foo.arr[i]` node (Array.base set -- see ast.h's own comment on
    that field). Kept as its own function rather than interleaved into
@@ -1004,30 +1031,16 @@ static void *evaluate_struct_field_array_access(ASTNode *node)
         fld->is_array, &fld->array_dimensions, indices, num_indices);
     void *element_base = (char *)field_base + fld->offset;
 
-    /* Pointer-ness dominates element stride here too, for the identical
-       reason the name-based path below checks it first (that path's own
-       "Round-23 review, finding #1" comment). */
-    if (fld->pointer_level > 0)
-        return (uintptr_t *)element_base + offset;
-
-    switch (fld->type)
-    {
-    case VAR_INT:
-        return (int *)element_base + offset;
-    case VAR_SHORT:
-        return (short *)element_base + offset;
-    case VAR_FLOAT:
-        return (float *)element_base + offset;
-    case VAR_DOUBLE:
-        return (double *)element_base + offset;
-    case VAR_BOOL:
-        return (bool *)element_base + offset;
-    case VAR_CHAR:
-        return (char *)element_base + offset;
-    default:
-        yyerror("Unknown struct array field element type");
-        exit(EXIT_FAILURE);
-    }
+    /* Stride by the field's own modifier-aware element size (giga/thicc
+       element arrays stride by 8, not sizeof(int)), which also subsumes
+       the pointer-element case (sizeof(uintptr_t)) -- see array_element_
+       address(). Before this, the switch here strided every non-pointer
+       element by its base VarType's width and dropped fld->modifiers, so a
+       `lit thicc rizz Big; Big vals[3];` field laid out at 3*8 bytes was
+       indexed as if each element were 4 bytes -- elements 1+ landed inside
+       the reservation's front, not at their C offsets (PR #256 review). */
+    return array_element_address(element_base, offset, fld->type,
+                                 fld->pointer_level, fld->modifiers);
 }
 
 void *evaluate_multi_array_access(ASTNode *node)
@@ -1135,54 +1148,26 @@ void *evaluate_multi_array_access(ASTNode *node)
     size_t offset = calculate_array_offset(
         var->is_array, &var->array_dimensions, indices, num_indices);
 
-    /* Round-23 review, finding #1 -- pointer_level DOMINATES element
-       stride the same way it dominates return-value boxing
-       (handle_function_call(), round 22) and native-argument marshalling
-       (ast_expr_to_stdrot_value(), stdrot.c): get_type_size_for_
-       descriptor() (this file) already allocates each element of a
-       pointer-typed array (`rizz *ptrs[N]`) as sizeof(uintptr_t) via its
-       own unconditional `pointer_level > 0` check, regardless of the
-       array's base VarType -- but this function's switch below dispatched
-       purely on var->var_type, computing each element's address using
-       THAT type's width (sizeof(int), sizeof(char), ...) instead of
-       sizeof(uintptr_t). For element 0 those strides coincidentally
-       agree with the correctly-allocated layout (both start at byte 0),
-       masking the bug completely -- but for element 1 onward, a `rizz
-       *ptrs[2]` array (each slot really 8 bytes on LP64) got indexed as
-       if each slot were 4 bytes (sizeof(int)), so `ptrs[1]` pointed
-       halfway into slot 0's own 8 bytes: an out-of-bounds/aliased
-       address, not the real second pointer -- real memory corruption on
-       both read and write, not merely a wrong value. Checked here,
-       before the base-type switch, for the identical reason every other
-       "pointer-ness dominates representation" fix in this PR checks it
-       first. VAR_VOID (`skibidi *ptrs[N]`) previously had no case at all
-       in the switch below and hit "Unknown variable type" unconditionally
-       -- also fixed by this same check, since it's a pointer-typed array
-       exactly like any other now. */
-    if (var->pointer_level > 0)
-    {
-        return (uintptr_t *)var->value.array_data + offset;
-    }
+    /* Stride by the variable's modifier-aware element size via the shared
+       array_element_address() helper. This subsumes two fixes that used to
+       live here as a special case + a base-type switch:
 
-    // Return a pointer to the element
-    switch (var->var_type)
-    {
-    case VAR_INT:
-        return (int *)var->value.array_data + offset;
-    case VAR_SHORT:
-        return (short *)var->value.array_data + offset;
-    case VAR_FLOAT:
-        return (float *)var->value.array_data + offset;
-    case VAR_DOUBLE:
-        return (double *)var->value.array_data + offset;
-    case VAR_BOOL:
-        return (bool *)var->value.array_data + offset;
-    case VAR_CHAR:
-        return (char *)var->value.array_data + offset;
-    default:
-        yyerror("Unknown variable type");
-        exit(EXIT_FAILURE);
-    }
+       - Round-23 review, finding #1: pointer_level dominates element stride
+         (a `rizz *ptrs[N]` array's slots are sizeof(uintptr_t), not
+         sizeof(int)); indexing them as int-wide made `ptrs[1]` land halfway
+         into slot 0 -- real memory corruption. get_type_size_for_
+         descriptor()'s own pointer_level > 0 check gives 8 here.
+       - PR #256 review: the base-type switch dropped var->modifiers, so a
+         width-modified element array (`lit thicc rizz Big; Big vals[N];`)
+         strided by sizeof(int) instead of its real 8-byte slot -- the same
+         element-vs-layout drift now fixed for struct-field arrays, shared
+         here so the name-based path can't keep the landmine.
+
+       A VAR_VOID non-pointer element (get_type_size_for_descriptor == 0)
+       is rejected by the helper; a `skibidi *ptrs[N]` pointer array strides
+       fine (sizeof(uintptr_t)), exactly as the round-23 fix intended. */
+    return array_element_address(var->value.array_data, offset, var->var_type,
+                                 var->pointer_level, var->modifiers);
 }
 
 bool set_int_variable(const String name, int value, TypeModifiers mods)
@@ -3674,6 +3659,24 @@ size_t handle_sizeof(ASTNode *node)
     {
         // For identifiers, use get_type_size which looks up the variable
         return get_type_size(expr->data.name);
+    }
+
+    /* An indexed array element (`maxxing(s.vals[0])`, `maxxing(arr[0])`):
+       size it by the element's own modifier-aware width, the same
+       get_type_size_for_descriptor() layout and element-stride use, rather
+       than the generic path below -- which reads expr->modifiers off the
+       NODE_ARRAY_ACCESS node, and nothing populates that from the field's/
+       variable's modifiers, so a width-modified element (`lit thicc rizz
+       Big; Big vals[N];`) wrongly reported sizeof(int) instead of its real
+       8-byte slot (PR #256 review). resolve_array_access_element() reads
+       type/pointer_level/modifiers from the field or variable without
+       evaluating the index, so sizeof's never-evaluate rule is preserved. */
+    if (expr->type == NODE_ARRAY_ACCESS)
+    {
+        ArrayAccessElement elem;
+        if (resolve_array_access_element(expr, &elem))
+            return get_type_size_for_descriptor(elem.type, elem.pointer_level,
+                                                elem.modifiers);
     }
 
     /* sizeof's operand is never evaluated -- that's its defining

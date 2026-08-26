@@ -1,11 +1,13 @@
 🚽 Test case: #206 (3e) -- a fixed-size array struct field whose element
 🚽 type comes from a `lit` alias (`lit thicc rizz Big; gang S { Big
-🚽 vals[3]; };`), the alias + array-field intersection. Proves the alias's
-🚽 modifiers reach the layout: `thicc` (long long) is 8 bytes, so `Big
-🚽 vals[3]` reserves 3*8 = 24, not 3*4 = 12 (long long is 8 on both LP64
-🚽 and wasm32 ILP32, so no per-platform override is needed). Also covers
-🚽 read/write of individual elements and by-value deep-copy independence
-🚽 (a mutated parameter/copy must not touch the original).
+🚽 vals[3]; };`). Proves the alias's modifiers reach BOTH layout and
+🚽 element STRIDE: `thicc` (long long) is 8 bytes, so `Big vals[3]`
+🚽 reserves 3*8 = 24 (maxxing(s)), each element's own sizeof is 8
+🚽 (maxxing(s.vals[0]) -- would be 4 if the access path strided by
+🚽 sizeof(int), PR #256 review), and elements are spaced 8 bytes apart,
+🚽 not packed 4 apart into the front of the reservation. Also covers
+🚽 per-element read/write and by-value deep-copy independence. (long long
+🚽 is 8 bytes on both LP64 and wasm32, so no per-platform override.)
 lit thicc rizz Big;
 
 gang S {
@@ -21,7 +23,8 @@ skibidi main {
     a.vals[0] = 10;
     a.vals[1] = 20;
     a.vals[2] = 30;
-    yapping("%d %d %d %lu", a.vals[0], a.vals[1], a.vals[2], maxxing(a));
+    yapping("%d %d %d %lu %lu", a.vals[0], a.vals[1], a.vals[2],
+            maxxing(a), maxxing(a.vals[0]));
     bump(a);
     yapping("%d", a.vals[0]);
     gang S b = a;

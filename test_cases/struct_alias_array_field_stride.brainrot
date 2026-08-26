@@ -1,0 +1,20 @@
+🚽 Test case: #206 (3e) -- element STRIDE of a `lit`-alias array field
+🚽 matches its C layout, not sizeof(int). A `chungus` (union) overlays a
+🚽 `Big vals[2]` (thicc = long long, 8-byte elements) with a `yap b[16]`
+🚽 byte view. Writing vals[0]=1, vals[1]=2 must put vals[1] at byte 8
+🚽 (b[8]), giving "1 0 2 0" -- a 4-byte stride would give "1 2 0 0" (PR
+🚽 #256 review). long long is 8 bytes on both LP64 and wasm32, so this is
+🚽 platform-independent.
+lit thicc rizz Big;
+
+chungus Overlay {
+    Big vals[2];
+    yap b[16];
+};
+
+skibidi main {
+    chungus Overlay o;
+    o.vals[0] = 1;
+    o.vals[1] = 2;
+    yapping("%d %d %d %d", o.b[0], o.b[4], o.b[8], o.b[12]);
+}
