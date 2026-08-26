@@ -1,0 +1,21 @@
+🚽 Test case: #196 -- same struct-tag check as
+🚽 struct_pointer_tag_mismatch_decl_fail.brainrot, but for plain
+🚽 ASSIGNMENT (`pp = &r;`) rather than a declaration's initializer (PR
+🚽 #248 review, round 2, finding 1's assignment-form reproduction).
+gang Point {
+    rizz x;
+    rizz y;
+};
+gang Rect {
+    rizz w;
+    rizz h;
+};
+
+skibidi main {
+    gang Rect r;
+    r.w = 11;
+    r.h = 22;
+    gang Point *pp;
+    pp = &r;
+    yapping("%d %d", pp.x, pp.y);
+}

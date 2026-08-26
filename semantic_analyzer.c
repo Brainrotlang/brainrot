@@ -606,6 +606,94 @@ static StructDef *infer_struct_def_static(ASTNode *expr,
     return NULL;
 }
 
+/* Best-effort resolution of the struct/union TAG a pointer-typed
+   expression's pointee statically has -- not just "is this a struct
+   pointer" (infer_expression_type()/infer_expression_pointer_level()
+   already answer that), but which ONE. VAR_STRUCT is a category, not a
+   type: two different struct tags of the same or different size are
+   both VAR_STRUCT, pointer_level 1, and check_type_compatibility_ex()
+   (which has no struct_name parameter at all) calls them compatible.
+   `gang Point *pp = &some_rect;` therefore passed the category check
+   check_declaration_initializer_compatibility() runs and then followed
+   the pointer using Point's layout on an actually Rect-shaped blob (PR
+   #248 review, round 2, finding 1) -- for two structs of different size
+   that is a real out-of-bounds read/write, not just a wrong value.
+   Returns an empty String when the tag can't be determined statically
+   (e.g. a function call's return struct tag isn't tracked anywhere) --
+   callers must treat that as "unknown, don't block," the same fail-open
+   convention every other NONE-typed case in this analyzer already
+   follows, not as "confirmed no struct." */
+static String infer_expression_struct_name(ASTNode *expr,
+                                           SemanticAnalyzer *analyzer)
+{
+    if (!expr)
+        return (String){0};
+
+    switch (expr->type)
+    {
+    case NODE_IDENTIFIER:
+    {
+        SymbolEntry *symbol = find_symbol(analyzer, expr->data.name);
+        if (symbol)
+            return symbol->struct_name;
+        Variable *var = get_variable(expr->data.name);
+        return var ? var->struct_name : (String){0};
+    }
+    case NODE_UNARY_OPERATION:
+        /* Neither &x nor *x changes which struct tag is at the other end
+           -- `&r` still refers to r's own tag, `*pp` still refers to
+           whatever pp points at. */
+        if (expr->data.unary.op == OP_ADDRESS_OF ||
+            expr->data.unary.op == OP_DEREFERENCE)
+            return infer_expression_struct_name(expr->data.unary.operand,
+                                                analyzer);
+        return (String){0};
+    case NODE_STRUCT_ACCESS:
+    {
+        StructDef *parent_def =
+            infer_struct_def_static(expr->data.struct_access.object, analyzer);
+        if (!parent_def)
+            return (String){0};
+        StructField *fld =
+            find_struct_field(parent_def, expr->data.struct_access.member_name);
+        return fld ? fld->struct_name : (String){0};
+    }
+    default:
+        return (String){0};
+    }
+}
+
+/* Checks that a pointer-typed struct/union destination's declared TAG
+   matches a pointer-typed source expression's own tag, when both are
+   statically knowable -- the piece check_declaration_initializer_
+   compatibility()/check_type_compatibility_ex() cannot express (neither
+   takes a struct_name; VAR_STRUCT is a category, not a type, so `gang
+   Point *pp = &some_rect;` passes both of those and then follows the
+   pointer using Point's layout on an actually Rect-shaped blob -- PR
+   #248 review, round 2). Silent (no error) when either tag can't be
+   determined statically -- same fail-open convention
+   infer_expression_struct_name() itself documents; this is a best-effort
+   catch, not a complete type system. */
+static void check_pointer_struct_tag_match(SemanticAnalyzer *analyzer,
+                                           String declared_tag,
+                                           ASTNode *source_expr,
+                                           const char *message_prefix,
+                                           int line_number)
+{
+    if (!declared_tag.data || !source_expr)
+        return;
+    String source_tag = infer_expression_struct_name(source_expr, analyzer);
+    if (!source_tag.data || strcmp(declared_tag.data, source_tag.data) == 0)
+        return;
+
+    char error_msg[MAX_BUFFER_LEN];
+    snprintf(error_msg, sizeof(error_msg),
+             "%s: expected pointer to struct/union '%s', got pointer to '%s'",
+             message_prefix, declared_tag.data, source_tag.data);
+    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                       STRING_LITERAL(error_msg), line_number);
+}
+
 /* Infer the type of an expression */
 VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
 {
@@ -2016,12 +2104,37 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
                case) walks into it. */
             Parameter *param = func->parameters;
             ArgumentList *arg = node->data.func_call.arguments;
+            int arg_index = 0;
             while (param && arg)
             {
+                arg_index++;
                 if (arg->expr)
                 {
                     propagate_contextual_call_type(arg->expr, param->type,
                                                    param->pointer_level);
+                    /* Struct/union pointer parameters: this analyzer does
+                       not type-check user-defined call arguments against
+                       their parameters at all otherwise (a separate,
+                       much larger, pre-existing gap out of scope here) --
+                       but a `gang Point *pp` parameter silently accepting
+                       `&some_rect` is the call-argument reproduction of
+                       the same struct-tag hole the declaration/assignment
+                       checks above just closed (PR #248 review, round 2,
+                       finding 1), and enter_function_scope() (ast.c) then
+                       follows that address using the PARAMETER's declared
+                       tag's layout on an actually differently-shaped
+                       blob -- a real out-of-bounds read/write for two
+                       structs of different size, not just a wrong value. */
+                    if (param->type == VAR_STRUCT && param->pointer_level > 0)
+                    {
+                        char prefix[MAX_BUFFER_LEN];
+                        snprintf(prefix, sizeof(prefix),
+                                 "'%s' argument %d: type mismatch",
+                                 func_name.data, arg_index);
+                        check_pointer_struct_tag_match(
+                            analyzer, param->struct_name, arg->expr, prefix,
+                            node->line_number > 0 ? node->line_number : 1);
+                    }
                 }
                 param = param->next;
                 arg = arg->next;
@@ -2161,10 +2274,18 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node)
            pre-existing gap caught at runtime (interpreter.c's own
            struct_name comparison), not something this fix takes on. */
         if (node->pointer_level > 0)
+        {
+            int line = node->line_number > 0 ? node->line_number : 1;
             check_declaration_initializer_compatibility(
                 analyzer, var_name, node->var_type, node->pointer_level,
-                node->struct_init_expr,
-                node->line_number > 0 ? node->line_number : 1);
+                node->struct_init_expr, line);
+            char prefix[MAX_BUFFER_LEN];
+            snprintf(prefix, sizeof(prefix),
+                     "Type mismatch in initialization of '%s'", var_name.data);
+            check_pointer_struct_tag_match(
+                analyzer, node->data.op.right->data.struct_def.name,
+                node->struct_init_expr, prefix, line);
+        }
         return;
     }
 
@@ -2329,6 +2450,22 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node)
         add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
                            STRING_LITERAL("Assignment type mismatch"),
                            node->line_number > 0 ? node->line_number : 1);
+    }
+    else if (target_pointer_level > 0 && target_type == VAR_STRUCT &&
+             value_type == VAR_STRUCT &&
+             !is_unresolved_contextual_call(node->data.op.right))
+    {
+        /* check_type_compatibility_ex() above already passed -- both
+           sides are VAR_STRUCT pointers at the same level -- but that
+           check has no struct_name parameter, so `pp = &some_rect;`
+           (pp declared `gang Point *`) sails through it too (PR #248
+           review, round 2, finding 1: the assignment-form reproduction of
+           the same tag hole the declaration form has). */
+        check_pointer_struct_tag_match(
+            analyzer,
+            infer_expression_struct_name(node->data.op.left, analyzer),
+            node->data.op.right, "Assignment type mismatch",
+            node->line_number > 0 ? node->line_number : 1);
     }
 }
 
