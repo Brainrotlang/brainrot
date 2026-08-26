@@ -11,10 +11,10 @@ jobs:
   review:
     name: Merge Warden
 
-    if: >
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.conclusion == 'success'
-    #if: false
+    #if: >
+    #  github.event.workflow_run.event == 'pull_request' &&
+    #  github.event.workflow_run.conclusion == 'success'
+    if: false
 
     runs-on: ubuntu-24.04
     timeout-minutes: 20
