@@ -443,9 +443,11 @@ Notes and limitations on nesting:
 - A struct/union **cannot embed itself by value** (`gang Foo { gang Foo x; };`
   is a compile-time error, same as C — it has no finite size). A
   self-referential **pointer** field (`gang Node { gang Node *next; };`) is
-  allowed to declare, but chained `.` access through a pointer-typed
-  struct/union field (e.g. `a.ptr.b`) is not yet supported — dereference it
-  explicitly first.
+  allowed, and chained `.` access follows it like C's `->` — `a.next.val`
+  reads/writes through the pointer, for any chain depth (`a.next.next.val`).
+  Only a single level of indirection per hop is followed: a multi-level
+  pointer field (`gang Node **next`) still needs an explicit dereference,
+  and following a null pointer field is a runtime error.
 - A nested struct/union field's brace-initializer must itself be a braced
   sub-initializer, matching the shape of the type — `gang Line m = { {5, 6},
   {7, 8} };`, **not** the flattened `gang Line m = {5, 6, 7, 8};`. The
@@ -484,8 +486,9 @@ Q: 10 20 0.0
 
 #### Current Limitations
 
-- Chained access through a pointer-typed struct/union field (`a.ptr.b`) is
-  not yet supported.
+- Chained access follows a single-level pointer field per hop (`a.next.val`);
+  a multi-level pointer field (`gang Node **next`) is not followed and must
+  be dereferenced explicitly.
 - A struct can be passed as a function parameter or returned from a
   function, but only as a plain struct variable of the exact matching type
   — not a sub-expression like a chained call or a member access. Arguments
@@ -579,12 +582,13 @@ skibidi main {
 
 The same rules as [`gang` nesting](#nesting) apply: the nested type must
 already be defined, a union can't embed itself by value, and chained access
-through a pointer-typed field isn't yet supported.
+follows a single-level pointer field per hop (like C's `->`).
 
 #### Current Limitations
 
-- Chained access through a pointer-typed struct/union field (`a.ptr.b`) is
-  not yet supported.
+- Chained access follows a single-level pointer field per hop (`a.next.val`);
+  a multi-level pointer field (`gang Node **next`) is not followed and must
+  be dereferenced explicitly.
 - A union can be passed as a function parameter or returned from a
   function under the same rules as a struct (see [§7.9](#79-structs-gang)) —
   plain variable of the exact matching type, deep-copied.

@@ -562,10 +562,13 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
  * about it. Recursing independently here, purely off static type
  * metadata, doesn't depend on visit order at all.
  *
- * Returns NULL if `expr` doesn't statically resolve to a struct-typed
- * value this way (unknown symbol, non-struct type, or a pointer-typed
- * intermediate field -- chaining `.` through a pointer isn't supported,
- * matching semantic_analyze_with_scope_tracking()'s own rejection of it).
+ * A single-level pointer-typed intermediate field (`gang Node *next` in
+ * `a.next.val`, #197) resolves through to the pointee's definition, the
+ * same way resolve_struct_access() follows it at runtime. Returns NULL if
+ * `expr` doesn't statically resolve to a struct-typed value this way
+ * (unknown symbol, non-struct type, or a multi-level pointer field
+ * `pointer_level > 1`, which needs an explicit `(*x)->` and is rejected by
+ * both this helper and semantic_analyze_with_scope_tracking()).
  */
 static StructDef *infer_struct_def_static(ASTNode *expr,
                                           SemanticAnalyzer *analyzer)
@@ -578,10 +581,10 @@ static StructDef *infer_struct_def_static(ASTNode *expr,
         /* No pointer_level check here, matching resolve_struct_access()'s
            own top-level NODE_IDENTIFIER case (ast.c) and semantic_
            analyze_with_scope_tracking()'s NODE_STRUCT_ACCESS case (this
-           file) -- neither rejects a pointer-typed *object* itself, only
-           a pointer-typed *intermediate field* partway through a chain
-           (checked below, for the NODE_STRUCT_ACCESS branch, matching
-           both of those). */
+           file): a single-level pointer-typed base or intermediate field
+           is followed, not rejected (#196/#197); only a multi-level
+           pointer field (`pointer_level > 1`) is rejected, in the
+           NODE_STRUCT_ACCESS branch below, matching both of those. */
         SymbolEntry *sym = find_symbol(analyzer, expr->data.name);
         if (!sym || sym->type != VAR_STRUCT || !sym->struct_name.data)
             return NULL;
@@ -597,7 +600,13 @@ static StructDef *infer_struct_def_static(ASTNode *expr,
 
         StructField *fld =
             find_struct_field(parent_def, expr->data.struct_access.member_name);
-        if (!fld || fld->type != VAR_STRUCT || fld->pointer_level > 0 ||
+        /* #197: a single-level pointer field (`gang Node *next`) is now a
+           resolvable intermediate -- resolve_struct_access() (ast.c)
+           follows it at runtime -- so only reject `pointer_level > 1`
+           (needs an explicit `(*x)->`), matching that function's own rule.
+           struct_name is populated for pointer-typed struct fields too, so
+           get_struct_def() below still finds the pointee's definition. */
+        if (!fld || fld->type != VAR_STRUCT || fld->pointer_level > 1 ||
             !fld->struct_name.data)
             return NULL;
         return get_struct_def(fld->struct_name);
@@ -3543,20 +3552,21 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
             if (obj->var_type == NONE)
                 break; /* obj's own access already failed and was reported */
             parent_is_struct_typed = (obj->var_type == VAR_STRUCT);
-            if (parent_is_struct_typed && obj->pointer_level > 0)
+            /* Same single-level implicit-`->` rule as the NODE_IDENTIFIER-
+               object branch just above (and resolve_struct_access(),
+               ast.c): #197 lets `.` chain through a pointer-typed
+               struct/union FIELD (`n.next.v` where `next` is `gang Node
+               *`, obj->pointer_level == 1) by following the pointer at
+               runtime, but `gang Node **next` (pointer_level > 1) needs an
+               explicit `(*x)->` and is rejected here so interpretation
+               never starts. */
+            if (parent_is_struct_typed && obj->pointer_level > 1)
             {
-                /* obj is a pointer-typed struct/union field (e.g. the
-                   `n.next` in `n.next.v` where `next` is `gang Node *`).
-                   Chaining `.` through it isn't supported (see
-                   resolve_struct_access's doc comment) — catch it here so
-                   interpretation never starts, rather than letting every
-                   runtime evaluator independently hit and report the same
-                   failure. */
                 add_semantic_error(
                     analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
                     STRING_LITERAL(
-                        "Chained member access through a pointer-typed "
-                        "struct/union field is not supported"),
+                        "Member access via '.' through a multi-level "
+                        "pointer (pointer_level > 1) is not supported"),
                     node->line_number > 0 ? node->line_number : 1);
                 break;
             }

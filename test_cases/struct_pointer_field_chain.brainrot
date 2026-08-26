@@ -1,0 +1,22 @@
+🚽 Test case: #197 -- chaining `.` through a pointer-typed struct/union
+🚽 FIELD (`a.next.val` where `next` is `gang Node *`) now follows the
+🚽 pointer, the field counterpart of #196's pointer-typed VARIABLE base.
+🚽 Exercises read (a.next.val), write-through (a.next.val = 99), and
+🚽 aliasing back to the pointee (b.val reflects the write) -- proving the
+🚽 chain resolves to b's real storage, not a copy.
+gang Node {
+    rizz val;
+    gang Node *next;
+};
+
+skibidi main {
+    gang Node a;
+    gang Node b;
+    a.val = 1;
+    b.val = 2;
+    a.next = &b;
+    yapping("%d", a.next.val);
+    a.next.val = 99;
+    yapping("%d", a.next.val);
+    yapping("%d", b.val);
+}

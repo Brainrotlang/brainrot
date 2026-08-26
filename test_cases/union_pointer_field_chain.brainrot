@@ -1,0 +1,22 @@
+🚽 Test case: #197 -- chaining through a pointer-typed field works for a
+🚽 `chungus` (union) exactly as for a `gang`, since resolve_struct_access()
+🚽 treats both uniformly.
+gang Point {
+    rizz x;
+    rizz y;
+};
+chungus Holder {
+    gang Point *pt;
+    rizz raw;
+};
+
+skibidi main {
+    gang Point p;
+    p.x = 3;
+    p.y = 4;
+    chungus Holder h;
+    h.pt = &p;
+    yapping("%d %d", h.pt.x, h.pt.y);
+    h.pt.x = 30;
+    yapping("%d", p.x);
+}
