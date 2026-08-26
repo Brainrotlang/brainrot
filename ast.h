@@ -275,10 +275,16 @@ typedef struct
     } value;
     VarType type;
     int pointer_level;
-    /* struct/union tag, set when type == VAR_STRUCT; value.pvalue then
-       points at a heap blob (malloc'd fresh in handle_return_statement,
-       NOT scope-owned) that the caller must copy out of and free -- see
-       the comment on handle_return_statement's VAR_STRUCT case. */
+    /* struct/union tag, set when type == VAR_STRUCT *and* pointer_level ==
+       0 (a by-value struct return): value.pvalue then points at a heap
+       blob (malloc'd fresh in handle_return_statement, NOT scope-owned)
+       that the caller must copy out of and free -- see the comment on
+       handle_return_statement's VAR_STRUCT case, and free_pending_return_
+       value()'s pointer_level == 0 gate. For a pointer-to-struct return
+       (type == VAR_STRUCT, pointer_level > 0, #193) value.pvalue is a
+       BORROWED pointer to caller-owned storage, NOT an owned blob, and
+       struct_name is left empty -- do not free it, and do not memcpy from
+       it as if it were a blob. */
     String struct_name;
     String enum_name; /* enum tag, set when type == VAR_ENUM */
     /* Set when type == VAR_STRING: true iff value.strvalue.data is a

@@ -703,6 +703,22 @@ static String infer_expression_struct_name(ASTNode *expr,
         Variable *var = get_variable(expr->data.array.name);
         return var && var->is_array ? var->struct_name : (String){0};
     }
+    case NODE_FUNC_CALL:
+    {
+        /* A user-defined function's declared return struct/union tag lives
+           on its Function object (return_struct_name, set at registration),
+           and IS the tag a pointer-to-struct call result points at
+           (`bussin get_rect(r);`, `gang Point *p = get_rect(&rc);`, `p =
+           get_rect(&rc);`, #193). Without this arm the helper fail-opened
+           on every call, so a wrong-tag relay/init/assignment through a
+           call type-punned silently (PR #255 review). A native call has no
+           user Function and no tracked struct tag, so it stays unknown
+           (fail-open), same as any other unresolvable source. */
+        if (is_builtin_function(expr->data.func_call.function_name))
+            return (String){0};
+        Function *fn = get_function(expr->data.func_call.function_name);
+        return fn ? fn->return_struct_name : (String){0};
+    }
     default:
         return (String){0};
     }

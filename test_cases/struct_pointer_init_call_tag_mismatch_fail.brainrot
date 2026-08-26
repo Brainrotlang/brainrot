@@ -1,0 +1,11 @@
+🚽 Test case: #193 -- copy-initializing a struct-pointer variable from a
+🚽 wrong-tag call result (`gang Point *p = get_rect(&rc);`) is rejected,
+🚽 the declaration-site counterpart of the return-relay tag check.
+gang Point { rizz x; };
+gang Rect  { rizz w; };
+gang Rect  *get_rect(gang Rect *r) { bussin r; }
+skibidi main {
+    gang Rect rc; rc.w = 1;
+    gang Point *p = get_rect(&rc);
+    yapping("%d", p.x);
+}
