@@ -479,61 +479,37 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
                         free_pending_return_value();
                     }
                 }
-                else if (src_expr->type == NODE_IDENTIFIER)
+                else
                 {
-                    Variable *src = get_variable(src_expr->data.name);
-                    if (src && src->var_type == VAR_STRUCT &&
-                        src->value.array_data && sv->value.array_data &&
-                        src->struct_name.data &&
-                        strcmp(src->struct_name.data, struct_type.data) == 0)
+                    /* Copy-initialize from a by-value struct/union source
+                       -- a plain struct variable (`gang Point c = other;`)
+                       or a member-access sub-expression (`gang Point c =
+                       b.corner;`, #193, following pointer bases/fields via
+                       #196/#197). Both go through the same shared helper
+                       enter_function_scope()/handle_return_statement() use,
+                       so all three sites enforce the identical pointer_
+                       level == 0 invariant and single-diagnostic error path
+                       (PR #253 review, findings 1 & 2). Before this, a
+                       member-access initializer was handled by a separate
+                       hand-written arm, and a plain identifier by yet
+                       another (which silently accepted a struct-pointer
+                       variable). */
+                    void *msrc_blob = NULL;
+                    String msrc_tag = {0};
+                    if (resolve_by_value_struct_source(src_expr, &msrc_blob,
+                                                       &msrc_tag, true))
                     {
-                        memcpy(sv->value.array_data, src->value.array_data,
-                               def->total_size);
-                    }
-                    else if (src && src->var_type == VAR_STRUCT)
-                    {
-                        yyerror("Cannot copy-initialize from a struct "
-                                "variable of a different type");
-                    }
-                }
-                else if (src_expr->type == NODE_STRUCT_ACCESS)
-                {
-                    /* Copy-initialize from a by-value struct/union
-                       member-access sub-expression (`gang Point c =
-                       b.corner;`, #193) -- the declaration counterpart of
-                       the struct-argument/return member-access support in
-                       enter_function_scope()/handle_return_statement()
-                       (ast.c). resolve_struct_access() gives the member's
-                       address (following pointer bases/fields, #196/#197),
-                       and the tag check mirrors the NODE_IDENTIFIER branch
-                       above. Without this branch a member-access
-                       initializer silently left `sv` zero-filled. */
-                    StructDef *msd = NULL;
-                    void *mbase = NULL;
-                    StructField *mfld = NULL;
-                    if (resolve_struct_access(src_expr, &msd, &mbase, &mfld,
-                                              true))
-                    {
-                        if (mfld->type == VAR_STRUCT &&
-                            mfld->pointer_level == 0 &&
-                            mfld->struct_name.data && sv->value.array_data &&
-                            strcmp(mfld->struct_name.data, struct_type.data) ==
-                                0)
+                        if (msrc_tag.data && sv->value.array_data &&
+                            strcmp(msrc_tag.data, struct_type.data) == 0)
                         {
-                            memcpy(sv->value.array_data,
-                                   (char *)mbase + mfld->offset,
-                                   def->total_size);
-                        }
-                        else if (mfld->type == VAR_STRUCT &&
-                                 mfld->pointer_level == 0)
-                        {
-                            yyerror("Cannot copy-initialize from a struct "
-                                    "member of a different type");
+                            if (msrc_blob)
+                                memcpy(sv->value.array_data, msrc_blob,
+                                       def->total_size);
                         }
                         else
                         {
-                            yyerror("Struct initializer member access must be "
-                                    "a by-value struct/union field");
+                            yyerror("Cannot copy-initialize from a struct/"
+                                    "union value of a different type");
                         }
                     }
                 }

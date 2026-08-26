@@ -849,6 +849,68 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
     return true;
 }
 
+bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
+                                    String *tag_out, bool report_errors)
+{
+    if (!expr)
+    {
+        if (report_errors)
+            yyerror("Missing struct/union value expression");
+        return false;
+    }
+
+    if (expr->type == NODE_IDENTIFIER)
+    {
+        Variable *src = get_variable(expr->data.name);
+        if (!src || src->var_type != VAR_STRUCT)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union value");
+            return false;
+        }
+        /* A struct POINTER variable (`gang Point *pp`) is NOT a by-value
+           struct value: its union slot holds an address, and copying it
+           where a struct value is expected would be an implicit
+           dereference (`*pp`), which C requires to be written out. Reject
+           it here so the identifier path enforces the same pointer_level
+           == 0 invariant the member-access path below does -- PR #253
+           review, finding 1. */
+        if (src->pointer_level > 0)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union value, got a "
+                        "pointer");
+            return false;
+        }
+        *blob_out = src->value.array_data;
+        *tag_out = src->struct_name;
+        return true;
+    }
+
+    if (expr->type == NODE_STRUCT_ACCESS)
+    {
+        StructDef *sd = NULL;
+        void *base = NULL;
+        StructField *fld = NULL;
+        if (!resolve_struct_access(expr, &sd, &base, &fld, report_errors))
+            return false;
+        if (fld->type != VAR_STRUCT || fld->pointer_level > 0)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union field");
+            return false;
+        }
+        *blob_out = (char *)base + fld->offset;
+        *tag_out = fld->struct_name;
+        return true;
+    }
+
+    if (report_errors)
+        yyerror("Expected a by-value struct/union value (a struct variable "
+                "or a struct member access)");
+    return false;
+}
+
 void *evaluate_struct_member_address(ASTNode *node)
 {
     StructDef *def = NULL;
@@ -6217,40 +6279,23 @@ void handle_return_statement(ASTNode *expr)
                variable (`bussin p;`) and a by-value struct/union
                member-access sub-expression (`bussin outer.inner;`, also
                following pointer bases/fields via resolve_struct_access,
-               #196/#197). A struct-returning CALL result (`bussin
+               #196/#197), both resolved by the same shared helper so this
+               path enforces the identical pointer_level == 0 invariant and
+               emits a single diagnostic on failure (PR #253 review,
+               findings 1 & 2). A struct-returning CALL result (`bussin
                make_point();`) is a separate follow-up. */
             void *src_blob = NULL;
             String src_tag = {0};
-            if (expr->type == NODE_IDENTIFIER)
+            if (!resolve_by_value_struct_source(expr, &src_blob, &src_tag,
+                                                true))
             {
-                Variable *src = get_variable(expr->data.name);
-                if (src && src->var_type == VAR_STRUCT)
-                {
-                    src_blob = src->value.array_data;
-                    src_tag = src->struct_name;
-                }
-            }
-            else if (expr->type == NODE_STRUCT_ACCESS)
-            {
-                StructDef *sd = NULL;
-                void *base = NULL;
-                StructField *fld = NULL;
-                if (resolve_struct_access(expr, &sd, &base, &fld, true) &&
-                    fld->type == VAR_STRUCT && fld->pointer_level == 0)
-                {
-                    src_blob = (char *)base + fld->offset;
-                    src_tag = fld->struct_name;
-                }
-            }
-            if (!src_blob || !src_tag.data)
-            {
-                yyerror("Return expression is not a by-value struct value");
-                /* value.pvalue may hold a stale bit pattern left over
-                   from a previous, differently-typed return sharing
-                   this union -- has_value=false is what tells the
-                   caller (interpreter_visit_declaration's
-                   struct_init_expr handling) there's nothing usable
-                   to read out of it. */
+                /* The helper already reported the specific failure; add no
+                   second diagnostic. value.pvalue may hold a stale bit
+                   pattern left over from a previous, differently-typed
+                   return sharing this union -- has_value=false is what
+                   tells the caller (interpreter_visit_declaration's
+                   struct_init_expr handling) there's nothing usable to
+                   read out of it. */
                 current_return_value.has_value = false;
                 break;
             }
@@ -6530,69 +6575,34 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             return false;
         case VAR_STRUCT:
         {
-            /* By-value struct argument. Stash the source blob pointer now,
-               while still in the caller's scope -- resolving it after
-               create_scope() below would look in the callee's (still-
-               empty) scope instead. The blob is deep-copied into the
-               parameter in the binding loop further down (C by-value
-               semantics), so the source only has to stay alive until then,
-               which it does: it lives in the caller's scope, and nothing
-               frees that between here and the copy.
+            /* By-value struct argument. Resolve the source blob now, while
+               still in the caller's scope -- resolving it after create_
+               scope() below would look in the callee's (still-empty) scope
+               instead. The blob is deep-copied into the parameter in the
+               binding loop further down (C by-value semantics), so the
+               source only has to stay alive until then, which it does: it
+               lives in the caller's scope, and nothing frees that between
+               here and the copy.
 
-               Two source shapes are accepted (#193): a plain struct
-               variable (`take(p)`), and a by-value struct/union
-               member-access sub-expression (`take(outer.inner)`) --
-               resolve_struct_access() also transparently follows a
-               pointer-typed base or intermediate field (#196/#197), so
-               `take(pp.inner)` / `take(a.next.inner)` resolve to the real
-               pointee's field too. A struct-returning CALL result
-               (`take(make_point())`) is a separate follow-up -- its blob
-               lives in current_return_value and needs its own owned
-               temporary across the two-phase bind, out of scope here. */
+               resolve_by_value_struct_source() accepts a plain struct
+               variable (`take(p)`) or a by-value struct/union member-access
+               sub-expression (`take(outer.inner)`, following pointer
+               bases/fields via #196/#197), and reports a single diagnostic
+               on failure -- so this call site adds none of its own. A
+               struct-returning CALL result (`take(make_point())`) is a
+               separate follow-up -- its blob lives in current_return_value
+               and needs its own owned temporary across the two-phase bind,
+               out of scope here. */
             void *src_blob = NULL;
-            const String *src_tag = NULL;
-            if (curr_arg->expr->type == NODE_IDENTIFIER)
+            String src_tag = {0};
+            if (!resolve_by_value_struct_source(curr_arg->expr, &src_blob,
+                                                &src_tag, true))
             {
-                Variable *src = get_variable(curr_arg->expr->data.name);
-                if (!src || src->var_type != VAR_STRUCT)
-                {
-                    yyerror("Struct argument is not a struct variable");
-                    reverse_parameter_list(&func->parameters);
-                    return false;
-                }
-                src_blob = src->value.array_data;
-                src_tag = &src->struct_name;
-            }
-            else if (curr_arg->expr->type == NODE_STRUCT_ACCESS)
-            {
-                StructDef *sd = NULL;
-                void *base = NULL;
-                StructField *fld = NULL;
-                if (!resolve_struct_access(curr_arg->expr, &sd, &base, &fld,
-                                           true))
-                {
-                    reverse_parameter_list(&func->parameters);
-                    return false;
-                }
-                if (fld->type != VAR_STRUCT || fld->pointer_level > 0)
-                {
-                    yyerror("Struct argument member access must be a "
-                            "by-value struct/union field");
-                    reverse_parameter_list(&func->parameters);
-                    return false;
-                }
-                src_blob = (char *)base + fld->offset;
-                src_tag = &fld->struct_name;
-            }
-            else
-            {
-                yyerror("Struct argument must be a struct variable or a "
-                        "by-value struct member access");
                 reverse_parameter_list(&func->parameters);
                 return false;
             }
-            if (!src_tag->data || !curr_param->struct_name.data ||
-                strcmp(src_tag->data, curr_param->struct_name.data) != 0)
+            if (!src_tag.data || !curr_param->struct_name.data ||
+                strcmp(src_tag.data, curr_param->struct_name.data) != 0)
             {
                 yyerror("Struct argument type does not match parameter type");
                 reverse_parameter_list(&func->parameters);
