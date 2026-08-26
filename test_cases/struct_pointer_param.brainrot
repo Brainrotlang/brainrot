@@ -1,0 +1,22 @@
+🚽 Test case: #196 -- a pointer-to-struct/union FUNCTION PARAMETER
+🚽 (`skibidi f(gang Point *pp)`) can do `pp.field` the same as a
+🚽 pointer-typed local variable, and a write through it is visible to
+🚽 the caller (real aliasing, not a copy). Before PR #248 review finding
+🚽 3's fix, enter_function_scope() never copied the parameter's
+🚽 struct_name onto the bound runtime Variable, so this died on "Unknown
+🚽 struct or union type" even though the analyzer already accepted it.
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+skibidi bump(gang Point *pp) {
+    pp.x = 99;
+}
+
+skibidi main {
+    gang Point p;
+    p.x = 5;
+    bump(&p);
+    yapping("%d", p.x);
+}

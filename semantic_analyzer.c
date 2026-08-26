@@ -2054,6 +2054,52 @@ void *semantic_visit_binary_operation(Visitor *self, ASTNode *node)
     return NULL;
 }
 
+/* Shared by both branches of semantic_visit_declaration() below: checks
+   an initializer expression's inferred type/pointer-level against a
+   declaration's declared type/pointer-level, reporting a type-mismatch
+   error if they disagree. Pointer-level is checked first and
+   independently of the base-type check (see the pointer-level branch's
+   own comment at its original call site for why -- a NONE-typed but
+   still pointer-level-known initializer, e.g. a legacy STDROT_ANY-
+   returning native call, must still be checked against a pointer-typed
+   destination). */
+static void check_declaration_initializer_compatibility(
+    SemanticAnalyzer *analyzer, String var_name, VarType declared_type,
+    int declared_pointer_level, ASTNode *init_expr, int line_number)
+{
+    if (!init_expr || is_unresolved_contextual_call(init_expr))
+        return;
+
+    int init_pointer_level =
+        infer_expression_pointer_level(init_expr, analyzer);
+    if (declared_pointer_level > 0 &&
+        declared_pointer_level != init_pointer_level)
+    {
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "Type mismatch in initialization of '%s': expected a "
+                 "pointer (level %d), got pointer level %d",
+                 var_name.data, declared_pointer_level, init_pointer_level);
+        add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                           STRING_LITERAL(error_msg), line_number);
+        return;
+    }
+
+    VarType init_type = infer_expression_type(init_expr, analyzer);
+    if (declared_type != NONE && init_type != NONE &&
+        !check_type_compatibility_ex(declared_type, declared_pointer_level,
+                                     init_type, init_pointer_level))
+    {
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "Type mismatch in initialization of '%s': expected %s, got %s",
+                 var_name.data, vartype_to_string(declared_type),
+                 vartype_to_string(init_type));
+        add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                           STRING_LITERAL(error_msg), line_number);
+    }
+}
+
 /* Validates this declaration node only -- pending_initializer/
    struct_init_expr/data.op.right are walked by the switch's
    NODE_DECLARATION case before this is called, per the traversal
@@ -2101,6 +2147,24 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node)
                 STRING_LITERAL("Union initializer must have exactly one value"),
                 node->line_number > 0 ? node->line_number : 1);
         }
+        /* data.op.right here is only the NODE_STRUCT_DEF type marker, not
+           an initializer expression, so the general check below (which
+           reads data.op.right as the initializer) never runs for this
+           production -- meaning a pointer-typed struct/union
+           declaration's REAL initializer (struct_init_expr, set by
+           lang.y's `struct_or_union name_token declarator EQUALS
+           expression` production) went completely untyped: `gang Point
+           *pp = &some_int;` parsed and ran, silently aliasing an int as
+           a Point (PR #248 review, finding 1). Scoped to pointer-typed
+           declarations only -- a by-value struct initializer's tag match
+           (`gang Point p = make_other_struct();`) is a separate,
+           pre-existing gap caught at runtime (interpreter.c's own
+           struct_name comparison), not something this fix takes on. */
+        if (node->pointer_level > 0)
+            check_declaration_initializer_compatibility(
+                analyzer, var_name, node->var_type, node->pointer_level,
+                node->struct_init_expr,
+                node->line_number > 0 ? node->line_number : 1);
         return;
     }
 
@@ -2110,64 +2174,15 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node)
        error from semantic_visit_function_call() when the switch's own
        recursion above reaches it. Comparing its necessarily NONE/0
        inferred type/pointer-level against the declared type here would
-       raise a second, misleading error for the same node. */
-    if (node->data.op.right &&
-        !is_unresolved_contextual_call(node->data.op.right))
-    {
-        VarType declared_type = node->var_type;
-        int declared_pointer_level = node->pointer_level;
-        VarType init_type =
-            infer_expression_type(node->data.op.right, analyzer);
-        int init_pointer_level =
-            infer_expression_pointer_level(node->data.op.right, analyzer);
-
-        /* Pointer-level compatibility is knowable even when the base
-           type isn't (init_type == NONE -- e.g. a legacy STDROT_ANY-
-           returning native call used as an initializer, whose actual
-           scalar type the analyzer genuinely can't predict). What IS
-           always knowable is whether the call's own descriptor declared
-           a pointer result at all: infer_expression_pointer_level()
-           reports pointer_level > 0 only for an entry whose return_type.
-           type is literally STDROT_PTR (see its own NODE_FUNC_CALL
-           case), and enforce_return_type() (stdrot.c) already guarantees
-           a legacy STDROT_ANY export can never actually return one --
-           there is no legitimate dynamic case where "unknown base type"
-           should also mean "unknown pointer-ness." Checked before, and
-           independently of, the base-type compatibility check below, so
-           `rizz *p = legacy_int();` (declared_pointer_level=1,
-           init_pointer_level=0) is rejected instead of silently
-           skipping all checking because init_type happens to be NONE
-           too. declared_pointer_level == 0 with any init_pointer_level
-           falls through to the ordinary check below unaffected (a
-           pointer-valued initializer for a non-pointer destination is
-           already caught there via check_type_compatibility_ex()'s own
-           pointer_level comparison). */
-        if (declared_pointer_level > 0 &&
-            declared_pointer_level != init_pointer_level)
-        {
-            char error_msg[MAX_BUFFER_LEN];
-            snprintf(error_msg, sizeof(error_msg),
-                     "Type mismatch in initialization of '%s': expected a "
-                     "pointer (level %d), got pointer level %d",
-                     var_name.data, declared_pointer_level, init_pointer_level);
-            add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
-                               STRING_LITERAL(error_msg), 1);
-        }
-        else if (declared_type != NONE && init_type != NONE &&
-                 !check_type_compatibility_ex(declared_type,
-                                              declared_pointer_level, init_type,
-                                              init_pointer_level))
-        {
-            char error_msg[MAX_BUFFER_LEN];
-            snprintf(
-                error_msg, sizeof(error_msg),
-                "Type mismatch in initialization of '%s': expected %s, got %s",
-                var_name.data, vartype_to_string(declared_type),
-                vartype_to_string(init_type));
-            add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
-                               STRING_LITERAL(error_msg), 1);
-        }
-    }
+       raise a second, misleading error for the same node. Pointer-level
+       compatibility is knowable even when the base type isn't (e.g. a
+       legacy STDROT_ANY-returning native call used as an initializer, whose
+       actual scalar type the analyzer genuinely can't predict) -- see
+       check_declaration_initializer_compatibility()'s own comment for why
+       that's still checked independently of the base-type check. */
+    check_declaration_initializer_compatibility(
+        analyzer, var_name, node->var_type, node->pointer_level,
+        node->data.op.right, 1);
 }
 
 /* Validates this assignment node only -- data.op.right and the
@@ -3055,11 +3070,13 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         if (obj && obj->type == NODE_IDENTIFIER)
         {
             VarType obj_type = NONE;
+            int obj_pointer_level = 0;
             String obj_struct_name = {0};
             SymbolEntry *symbol = find_symbol(analyzer, obj->data.name);
             if (symbol)
             {
                 obj_type = symbol->type;
+                obj_pointer_level = symbol->pointer_level;
                 obj_struct_name = symbol->struct_name;
             }
             else
@@ -3068,9 +3085,28 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                 if (!var)
                     break; /* undefined variable is reported elsewhere */
                 obj_type = var->var_type;
+                obj_pointer_level = var->pointer_level;
                 obj_struct_name = var->struct_name;
             }
             parent_is_struct_typed = (obj_type == VAR_STRUCT);
+            /* Same restriction as resolve_struct_access()'s own runtime
+               check (ast.c, PR #248 review finding 2): `.` as an implicit
+               `->` only makes sense for exactly one level of indirection
+               (`gang Foo *pp; pp.field`); `gang Foo **pp; pp.field` needs
+               an explicit double-dereference in C and must be rejected
+               here too, not just at runtime -- this static path is what
+               currently lets `pp.field` on a `Foo **` reach interpretation
+               at all. */
+            if (parent_is_struct_typed && obj_pointer_level > 1)
+            {
+                add_semantic_error(
+                    analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                    STRING_LITERAL(
+                        "Member access via '.' through a multi-level "
+                        "pointer (pointer_level > 1) is not supported"),
+                    node->line_number > 0 ? node->line_number : 1);
+                break;
+            }
             if (parent_is_struct_typed)
                 parent_def = get_struct_def(obj_struct_name);
         }

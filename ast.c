@@ -710,8 +710,25 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
            misinterpret that address as a blob pointer or -- when unset --
            silently calloc a brand-new, disconnected blob (the leak this
            branch's predecessor, PR #247, hardened against without yet
-           following the pointer). */
-        if (var->pointer_level > 0)
+           following the pointer).
+
+           Only ONE level of indirection: `.` as an implicit `->` is
+           defensible for `gang Foo *pp` (pointer_level == 1) -- `pp.field`
+           reads exactly like C's `pp->field`. It is not defensible for
+           `gang Foo **pp` (pointer_level == 2): C requires an explicit
+           `(*pp)->field`, because `pvalue` at that level holds the
+           address of a `Foo *`, not a `Foo` blob -- reinterpreting those
+           bytes as a `Foo` (what treating every pointer_level > 0
+           uniformly did before this check, PR #248 review finding 2)
+           silently reads/writes through the wrong type. */
+        if (var->pointer_level > 1)
+        {
+            if (report_errors)
+                yyerror("Member access via '.' through a multi-level "
+                        "pointer (pointer_level > 1) is not supported");
+            return false;
+        }
+        if (var->pointer_level == 1)
         {
             uintptr_t target = var->value.pvalue;
             if (!target)
@@ -6535,6 +6552,18 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             if (bound)
             {
                 bound->pointer_level = curr_param->pointer_level;
+                /* A pointer-to-struct/union parameter (`gang Foo *pp`)
+                   needs its tag copied too, same as the by-value VAR_STRUCT
+                   case below -- resolve_struct_access()'s NODE_IDENTIFIER
+                   branch (ast.c) resolves `pp.field` via `get_struct_def(
+                   var->struct_name)` regardless of pointer_level, and this
+                   loop's own var_type assignment above already treats the
+                   parameter as a struct/union variable. Without this, a
+                   pointer-to-struct parameter's struct_name stayed empty
+                   and `pp.field` inside the callee died on "Unknown struct
+                   or union type" (PR #248 review, finding 3). */
+                if (curr_param->type == VAR_STRUCT)
+                    bound->struct_name = safe_strdup(&curr_param->struct_name);
                 bound->value.pvalue = arg_values[i].pvalue;
             }
             curr_param = curr_param->next;
