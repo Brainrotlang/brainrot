@@ -658,6 +658,42 @@ static String infer_expression_struct_name(ASTNode *expr,
             find_struct_field(parent_def, expr->data.struct_access.member_name);
         return fld ? fld->struct_name : (String){0};
     }
+    case NODE_ARRAY_ACCESS:
+    {
+        /* Mirrors infer_expression_pointer_level()'s own NODE_ARRAY_ACCESS
+           case (above in this file) exactly -- an array of struct/union
+           POINTERS (`PointPtr values[2]; values[0] = &r;`) needs its
+           element tag resolved the same two-path way (struct-field-backed
+           via Array.base, or a plain array Variable/SymbolEntry), or an
+           array-element assignment target silently skipped this whole
+           tag check (empty struct_name looked exactly like "unknown,"
+           the same conflation finding 2 flagged for the source side --
+           PR #248 review, round 3). */
+        if (expr->data.array.base)
+        {
+            StructDef *def = NULL;
+            void *base = NULL;
+            StructField *fld = NULL;
+            if (resolve_struct_access(expr->data.array.base, &def, &base, &fld,
+                                      false) &&
+                fld->is_array)
+                return fld->struct_name;
+
+            StructDef *static_def = infer_struct_def_static(
+                expr->data.array.base->data.struct_access.object, analyzer);
+            if (!static_def)
+                return (String){0};
+            StructField *f = find_struct_field(
+                static_def,
+                expr->data.array.base->data.struct_access.member_name);
+            return f && f->is_array ? f->struct_name : (String){0};
+        }
+        SymbolEntry *symbol = find_symbol(analyzer, expr->data.array.name);
+        if (symbol && symbol->is_array)
+            return symbol->struct_name;
+        Variable *var = get_variable(expr->data.array.name);
+        return var && var->is_array ? var->struct_name : (String){0};
+    }
     default:
         return (String){0};
     }
@@ -2127,13 +2163,57 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
                        structs of different size, not just a wrong value. */
                     if (param->type == VAR_STRUCT && param->pointer_level > 0)
                     {
-                        char prefix[MAX_BUFFER_LEN];
-                        snprintf(prefix, sizeof(prefix),
-                                 "'%s' argument %d: type mismatch",
-                                 func_name.data, arg_index);
-                        check_pointer_struct_tag_match(
-                            analyzer, param->struct_name, arg->expr, prefix,
-                            node->line_number > 0 ? node->line_number : 1);
+                        int line =
+                            node->line_number > 0 ? node->line_number : 1;
+                        VarType actual_type =
+                            infer_expression_type(arg->expr, analyzer);
+                        int actual_pl =
+                            infer_expression_pointer_level(arg->expr, analyzer);
+                        /* check_pointer_struct_tag_match() alone fail-opens
+                           on an argument whose struct TAG it can't
+                           determine -- correct for a genuinely unknown
+                           expression, but infer_expression_struct_name()
+                           also (necessarily) returns empty for an
+                           expression that is DEFINITELY NOT a struct at
+                           all (e.g. `rizz n; bump(&n);` -- &n is VAR_INT,
+                           pointer_level 1, no struct_name to report), so
+                           the tag helper alone can't tell "unknown" from
+                           "confirmed not a struct" and silently passed the
+                           latter (PR #248 review, round 3, finding 2).
+                           declaration/assignment already have this
+                           category check for free via check_type_
+                           compatibility_ex(); this call-argument path
+                           needs its own, since it was never wired to run
+                           any category check, only the tag one. */
+                        if ((actual_type != NONE &&
+                             actual_type != VAR_STRUCT) ||
+                            actual_pl != param->pointer_level)
+                        {
+                            char error_msg[MAX_BUFFER_LEN];
+                            snprintf(error_msg, sizeof(error_msg),
+                                     "'%s' argument %d: expected pointer to "
+                                     "struct/union '%s' (level %d), got %s "
+                                     "pointer level %d",
+                                     func_name.data, arg_index,
+                                     param->struct_name.data
+                                         ? param->struct_name.data
+                                         : "?",
+                                     param->pointer_level,
+                                     vartype_to_string(actual_type), actual_pl);
+                            add_semantic_error(analyzer,
+                                               SEMANTIC_ERROR_TYPE_MISMATCH,
+                                               STRING_LITERAL(error_msg), line);
+                        }
+                        else
+                        {
+                            char prefix[MAX_BUFFER_LEN];
+                            snprintf(prefix, sizeof(prefix),
+                                     "'%s' argument %d: type mismatch",
+                                     func_name.data, arg_index);
+                            check_pointer_struct_tag_match(
+                                analyzer, param->struct_name, arg->expr, prefix,
+                                line);
+                        }
                     }
                 }
                 param = param->next;
@@ -2304,6 +2384,29 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node)
     check_declaration_initializer_compatibility(
         analyzer, var_name, node->var_type, node->pointer_level,
         node->data.op.right, 1);
+    /* Same struct-tag check as the NODE_STRUCT_DEF branch above, for the
+       OTHER declaration shape that reaches a pointer-typed struct/union
+       variable: a `lit`-aliased pointer type used as a plain declarator
+       (`lit gang Point *PointPtr; PointPtr pp = &r;`). That grammar
+       production never carries a NODE_STRUCT_DEF marker on data.op.right
+       -- data.op.right IS the real initializer here, same as any
+       non-struct pointer -- so it falls through to this general branch,
+       whose only check until now was the category one just above.
+       node->struct_name is where the declared tag lives for this shape
+       (ast.h's own comment: "for declaration nodes ... that do not carry
+       a NODE_STRUCT_DEF child, such as pointer arrays declared through a
+       typedef alias" -- create_alias_declaration already populates it).
+       Without this, `PointPtr pp = &some_rect;` passed the category
+       check above (both VAR_STRUCT pointers) and was never tag-checked
+       at all (PR #248 review, round 3, finding 1). */
+    if (node->var_type == VAR_STRUCT && node->pointer_level > 0)
+    {
+        char prefix[MAX_BUFFER_LEN];
+        snprintf(prefix, sizeof(prefix),
+                 "Type mismatch in initialization of '%s'", var_name.data);
+        check_pointer_struct_tag_match(analyzer, node->struct_name,
+                                       node->data.op.right, prefix, 1);
+    }
 }
 
 /* Validates this assignment node only -- data.op.right and the
