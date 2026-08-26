@@ -319,14 +319,16 @@ typedef struct
         String strvalue;
         uintptr_t pvalue;
     } value;
-    TypeModifiers modifiers;
-    VarType var_type;
-    int pointer_level;
-    bool is_array;
+    /* The variable's full type, collapsed from the parallel scalar fields
+       Variable used to carry (var_type, pointer_level, modifiers,
+       is_array, array_dimensions, struct_name, enum_name) into one
+       TypeDescriptor (#206 3b), matching StructField/Parameter. Note the
+       base VarType is desc.type here (it was named var_type on Variable).
+       desc.struct_name is non-NULL when desc.type == VAR_STRUCT (heap-owned
+       via safe_strdup, freed with the Variable); desc.enum_name likewise
+       for VAR_ENUM. */
+    TypeDescriptor desc;
     int array_length; // lets keep it for now for backword compatibility
-    ArrayDimensions array_dimensions;
-    String struct_name; /* non-NULL when var_type == VAR_STRUCT */
-    String enum_name;   /* non-NULL when var_type == VAR_ENUM */
 } Variable;
 
 typedef union

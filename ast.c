@@ -293,17 +293,17 @@ bool set_variable(const String name, void *value, VarType type,
     if (var != NULL)
     {
 
-        var->modifiers = mods;
-        var->var_type = type;
+        var->desc.modifiers = mods;
+        var->desc.type = type;
         switch (type)
 
         case VAR_INT:
         {
-            if (var->modifiers.is_long)
+            if (var->desc.modifiers.is_long)
             {
                 var->value.ivalue = (long long)(*(int *)value);
             }
-            else if (var->modifiers.is_long_long)
+            else if (var->desc.modifiers.is_long_long)
             {
                 var->value.ivalue = (long)(*(int *)value);
             }
@@ -363,25 +363,25 @@ bool set_multi_array_variable(const String name, const int dimensions[],
     if (var == NULL)
         return false;
 
-    var->is_array = true;
-    var->modifiers = mods;
-    var->var_type = type;
+    var->desc.is_array = true;
+    var->desc.modifiers = mods;
+    var->desc.type = type;
 
     // calculate the total size of the array
-    var->array_dimensions.num_dimensions = num_dimensions;
+    var->desc.array_dimensions.num_dimensions = num_dimensions;
     size_t total = 1;
 
     for (int i = 0; i < num_dimensions; i++)
     {
-        var->array_dimensions.dimensions[i] = dimensions[i];
+        var->desc.array_dimensions.dimensions[i] = dimensions[i];
         total *= dimensions[i];
     }
 
-    var->array_dimensions.total_size = total;
+    var->desc.array_dimensions.total_size = total;
     var->array_length = total;
 
     size_t element_size =
-        get_type_size_for_descriptor(type, var->pointer_level, mods);
+        get_type_size_for_descriptor(type, var->desc.pointer_level, mods);
     if (element_size == 0)
         element_size = sizeof(int);
 
@@ -508,10 +508,10 @@ ASTNode *create_multi_array_access_node(String name, ASTNode *indices[],
     Variable *var = get_variable(name);
     if (var)
     {
-        node->var_type = var->var_type;
-        node->pointer_level = var->pointer_level;
-        node->modifiers = var->modifiers;
-        node->is_array = var->is_array;
+        node->var_type = var->desc.type;
+        node->pointer_level = var->desc.pointer_level;
+        node->modifiers = var->desc.modifiers;
+        node->is_array = var->desc.is_array;
     }
 
     return node;
@@ -690,13 +690,13 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                 yyerror("Undefined struct or union variable");
             return false;
         }
-        if (var->var_type != VAR_STRUCT)
+        if (var->desc.type != VAR_STRUCT)
         {
             if (report_errors)
                 yyerror("Variable is not a struct or union");
             return false;
         }
-        parent_def = get_struct_def(var->struct_name);
+        parent_def = get_struct_def(var->desc.struct_name);
         if (!parent_def)
         {
             if (report_errors)
@@ -722,14 +722,14 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
            bytes as a `Foo` (what treating every pointer_level > 0
            uniformly did before this check, PR #248 review finding 2)
            silently reads/writes through the wrong type. */
-        if (var->pointer_level > 1)
+        if (var->desc.pointer_level > 1)
         {
             if (report_errors)
                 yyerror("Member access via '.' through a multi-level "
                         "pointer (pointer_level > 1) is not supported");
             return false;
         }
-        if (var->pointer_level == 1)
+        if (var->desc.pointer_level == 1)
         {
             uintptr_t target = var->value.pvalue;
             if (!target)
@@ -862,7 +862,7 @@ bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
     if (expr->type == NODE_IDENTIFIER)
     {
         Variable *src = get_variable(expr->data.name);
-        if (!src || src->var_type != VAR_STRUCT)
+        if (!src || src->desc.type != VAR_STRUCT)
         {
             if (report_errors)
                 yyerror("Expected a by-value struct/union value");
@@ -875,7 +875,7 @@ bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
            it here so the identifier path enforces the same pointer_level
            == 0 invariant the member-access path below does -- PR #253
            review, finding 1. */
-        if (src->pointer_level > 0)
+        if (src->desc.pointer_level > 0)
         {
             if (report_errors)
                 yyerror("Expected a by-value struct/union value, got a "
@@ -883,7 +883,7 @@ bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
             return false;
         }
         *blob_out = src->value.array_data;
-        *tag_out = src->struct_name;
+        *tag_out = src->desc.struct_name;
         return true;
     }
 
@@ -1104,7 +1104,7 @@ void *evaluate_multi_array_access(ASTNode *node)
         yyerror(error_msg);
         exit(EXIT_FAILURE);
     }
-    if (!var->is_array)
+    if (!var->desc.is_array)
     {
         char error_msg[MAX_BUFFER_LEN];
         snprintf(error_msg, sizeof(error_msg),
@@ -1146,7 +1146,7 @@ void *evaluate_multi_array_access(ASTNode *node)
 
     // Calculate the offset
     size_t offset = calculate_array_offset(
-        var->is_array, &var->array_dimensions, indices, num_indices);
+        var->desc.is_array, &var->desc.array_dimensions, indices, num_indices);
 
     /* Stride by the variable's modifier-aware element size via the shared
        array_element_address() helper. This subsumes two fixes that used to
@@ -1166,8 +1166,8 @@ void *evaluate_multi_array_access(ASTNode *node)
        A VAR_VOID non-pointer element (get_type_size_for_descriptor == 0)
        is rejected by the helper; a `skibidi *ptrs[N]` pointer array strides
        fine (sizeof(uintptr_t)), exactly as the round-23 fix intended. */
-    return array_element_address(var->value.array_data, offset, var->var_type,
-                                 var->pointer_level, var->modifiers);
+    return array_element_address(var->value.array_data, offset, var->desc.type,
+                                 var->desc.pointer_level, var->desc.modifiers);
 }
 
 bool set_int_variable(const String name, int value, TypeModifiers mods)
@@ -1187,15 +1187,15 @@ bool set_array_variable(String name, int length, TypeModifiers mods,
     Variable *var = get_variable(name);
     if (var != NULL)
     {
-        if (var->is_array)
+        if (var->desc.is_array)
         {
             // free the old array
             SAFE_FREE(var->value.array_data);
         }
-        var->var_type = type;
-        var->is_array = true;
+        var->desc.type = type;
+        var->desc.is_array = true;
         var->array_length = length;
-        var->modifiers = mods;
+        var->desc.modifiers = mods;
         switch (type)
         {
         case VAR_INT:
@@ -1427,10 +1427,10 @@ ASTNode *create_array_access_node(String name, ASTNode *index)
     Variable *var = get_variable(name);
     if (var != NULL)
     {
-        node->var_type = var->var_type;
-        node->pointer_level = var->pointer_level;
+        node->var_type = var->desc.type;
+        node->pointer_level = var->desc.pointer_level;
         node->array_length = var->array_length;
-        node->modifiers = var->modifiers;
+        node->modifiers = var->desc.modifiers;
     }
 
     return node;
@@ -1580,7 +1580,7 @@ void *handle_identifier(ASTNode *node, const String contextErrorMessage,
     if (var != NULL)
     {
         static Value promoted_value;
-        if (var->pointer_level > 0)
+        if (var->desc.pointer_level > 0)
         {
             if (promote != 0)
             {
@@ -1592,7 +1592,7 @@ void *handle_identifier(ASTNode *node, const String contextErrorMessage,
         if (promote == 1)
         {
 
-            switch (var->var_type)
+            switch (var->desc.type)
             {
             case VAR_DOUBLE:
                 return &var->value.dvalue;
@@ -1619,7 +1619,7 @@ void *handle_identifier(ASTNode *node, const String contextErrorMessage,
         }
         else if (promote == 2)
         {
-            switch (var->var_type)
+            switch (var->desc.type)
             {
             case VAR_DOUBLE:
                 promoted_value.fvalue = (float)var->value.dvalue;
@@ -1646,7 +1646,7 @@ void *handle_identifier(ASTNode *node, const String contextErrorMessage,
         }
         else
         {
-            switch (var->var_type)
+            switch (var->desc.type)
             {
             case VAR_DOUBLE:
                 return &var->value.dvalue;
@@ -1739,12 +1739,12 @@ static bool resolve_array_access_element(ASTNode *node, ArrayAccessElement *out)
     }
 
     Variable *var = get_variable(node->data.array.name);
-    if (!var || !var->is_array)
+    if (!var || !var->desc.is_array)
         return false;
-    out->type = var->var_type;
-    out->pointer_level = var->pointer_level;
-    out->modifiers = var->modifiers;
-    out->dimensions = &var->array_dimensions;
+    out->type = var->desc.type;
+    out->pointer_level = var->desc.pointer_level;
+    out->modifiers = var->desc.modifiers;
+    out->dimensions = &var->desc.array_dimensions;
     return true;
 }
 
@@ -1760,7 +1760,7 @@ int get_expression_pointer_level(ASTNode *node)
     case NODE_IDENTIFIER:
     {
         Variable *var = get_variable(node->data.name);
-        return var ? var->pointer_level : node->pointer_level;
+        return var ? var->desc.pointer_level : node->pointer_level;
     }
     case NODE_ARRAY_ACCESS:
     {
@@ -1899,7 +1899,7 @@ VarType get_expression_type(ASTNode *node)
         Variable *var = get_variable(array_name);
         if (var != NULL)
         {
-            return var->var_type;
+            return var->desc.type;
         }
         /* Not a variable -- an enum constant has type int in C. */
         if (find_global_enum_constant(array_name) != NULL)
@@ -2008,8 +2008,8 @@ static StructDef *get_struct_def_for_expression(ASTNode *expr)
     case NODE_IDENTIFIER:
     {
         Variable *var = get_variable(expr->data.name);
-        if (var && var->var_type == VAR_STRUCT && var->struct_name.data)
-            return get_struct_def(var->struct_name);
+        if (var && var->desc.type == VAR_STRUCT && var->desc.struct_name.data)
+            return get_struct_def(var->desc.struct_name);
         return NULL;
     }
     case NODE_ARRAY_ACCESS:
@@ -2029,9 +2029,9 @@ static StructDef *get_struct_def_for_expression(ASTNode *expr)
         if (expr->data.array.base)
             return NULL;
         Variable *var = get_variable(expr->data.array.name);
-        if (var && var->is_array && var->var_type == VAR_STRUCT &&
-            var->struct_name.data)
-            return get_struct_def(var->struct_name);
+        if (var && var->desc.is_array && var->desc.type == VAR_STRUCT &&
+            var->desc.struct_name.data)
+            return get_struct_def(var->desc.struct_name);
         return NULL;
     }
     case NODE_STRUCT_ACCESS:
@@ -2123,7 +2123,7 @@ static VarType infer_runtime_expression_type_noeval(ASTNode *expr)
     {
         Variable *var = get_variable(expr->data.name);
         if (var != NULL)
-            return var->var_type;
+            return var->desc.type;
         if (find_global_enum_constant(expr->data.name) != NULL)
             return VAR_INT;
         return NONE;
@@ -2238,7 +2238,7 @@ static VarType infer_runtime_expression_abi_type_noeval(ASTNode *expr)
         return t;
 
     Variable *var = get_variable(expr->data.name);
-    if (var != NULL && var->is_array)
+    if (var != NULL && var->desc.is_array)
         return VAR_STRING;
     return t;
 }
@@ -2638,10 +2638,10 @@ void *evaluate_lvalue_address(ASTNode *node)
            value in pvalue. Assignment to the pointer itself writes that slot;
            dereference assignment handles the pointee through the unary case
            below. */
-        if (var->pointer_level > 0)
+        if (var->desc.pointer_level > 0)
             return &var->value.pvalue;
 
-        switch (var->var_type)
+        switch (var->desc.type)
         {
         case VAR_INT:
             return &var->value.ivalue;
@@ -2707,7 +2707,7 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
             yyerror("Undefined variable");
             return (uintptr_t)0;
         }
-        if (var->pointer_level <= 0)
+        if (var->desc.pointer_level <= 0)
         {
             yyerror("Expression is not a pointer");
             return (uintptr_t)0;
@@ -2960,13 +2960,13 @@ static void initialize_variable_from_expr(Variable *var, ASTNode *expr)
     if (!var || !expr)
         return;
 
-    if (var->pointer_level > 0)
+    if (var->desc.pointer_level > 0)
     {
         var->value.pvalue = evaluate_expression_pointer(expr);
         return;
     }
 
-    switch (var->var_type)
+    switch (var->desc.type)
     {
     case VAR_INT:
         var->value.ivalue = evaluate_expression_int(expr);
@@ -3623,23 +3623,23 @@ size_t get_type_size(String name)
         /* A struct/union value has no primitive size; look up its
            definition and use the computed layout size instead. Pointers
            to structs fall through to the descriptor path (pointer size). */
-        if (var->var_type == VAR_STRUCT && var->pointer_level == 0)
+        if (var->desc.type == VAR_STRUCT && var->desc.pointer_level == 0)
         {
-            StructDef *def = get_struct_def(var->struct_name);
+            StructDef *def = get_struct_def(var->desc.struct_name);
             if (def != NULL)
-                return var->is_array ? def->total_size * var->array_length
-                                     : def->total_size;
+                return var->desc.is_array ? def->total_size * var->array_length
+                                          : def->total_size;
             yyerror("Unknown struct or union type");
             return 0;
         }
         size_t base = get_type_size_for_descriptor(
-            var->var_type, var->pointer_level, var->modifiers);
+            var->desc.type, var->desc.pointer_level, var->desc.modifiers);
         if (base == 0)
         {
             yyerror("Undefined variable in sizeof");
             return 0;
         }
-        return var->is_array ? base * var->array_length : base;
+        return var->desc.is_array ? base * var->array_length : base;
     }
     /* Not a variable -- a bare enum constant (e.g. `maxxing(RED)`) has type
        int in C. */
@@ -4750,7 +4750,7 @@ bool is_const_variable(const String name)
     Variable *var = get_variable(name);
     if (var != NULL)
     {
-        return var->modifiers.is_const;
+        return var->desc.modifiers.is_const;
     }
     return false;
 }
@@ -4789,7 +4789,7 @@ bool is_expression(ASTNode *node, VarType type)
         Variable *var = get_variable(node->data.name);
         if (var != NULL)
         {
-            return var->var_type == type;
+            return var->desc.type == type;
         }
         /* Not a variable -- an enum constant has type int in C. */
         if (find_global_enum_constant(node->data.name) != NULL)
@@ -4943,9 +4943,9 @@ void execute_assignment(ASTNode *node)
             yyerror("Assignment to undefined variable");
             return;
         }
-        target_type = var->var_type;
-        target_pointer_level = var->pointer_level;
-        mods = var->modifiers;
+        target_type = var->desc.type;
+        target_pointer_level = var->desc.pointer_level;
+        mods = var->desc.modifiers;
     }
     /* NODE_STRUCT_ACCESS targets (including chains, e.g. a.b.c) already have
        target_type/target_pointer_level resolved correctly above via
@@ -4975,9 +4975,9 @@ void execute_statement(ASTNode *node)
     {
         String name = node->data.op.left->data.name;
         Variable *var = variable_new(name);
-        var->var_type = node->var_type;
-        var->pointer_level = node->pointer_level;
-        var->modifiers = node->modifiers;
+        var->desc.type = node->var_type;
+        var->desc.pointer_level = node->pointer_level;
+        var->desc.modifiers = node->modifiers;
 
         /* Check if it's static and already initialized */
         if (node->modifiers.is_static)
@@ -5630,9 +5630,9 @@ static void populate_struct_fields(StructDef *def, void *base,
 void populate_struct_variable(const String name, ExpressionList *list)
 {
     Variable *var = get_variable(name);
-    if (!var || var->var_type != VAR_STRUCT)
+    if (!var || var->desc.type != VAR_STRUCT)
         return;
-    StructDef *def = get_struct_def(var->struct_name);
+    StructDef *def = get_struct_def(var->desc.struct_name);
     if (!def)
         return;
     populate_struct_fields(def, var->value.array_data, list);
@@ -5642,7 +5642,7 @@ void populate_multi_array_variable(String name, ExpressionList *list,
                                    const int dimensions[], int num_dimensions)
 {
     Variable *var = get_variable(name);
-    if (var == NULL || !var->is_array)
+    if (var == NULL || !var->desc.is_array)
     {
         yyerror("Cannot initialize: not an array");
         return;
@@ -5690,7 +5690,7 @@ void populate_multi_array_variable(String name, ExpressionList *list,
            before the base-type switch, dominant over it, for the
            identical reason every other "pointer-ness dominates
            representation" fix in this PR checks it first. */
-        if (var->pointer_level > 0)
+        if (var->desc.pointer_level > 0)
         {
             uintptr_t *array = (uintptr_t *)var->value.array_data;
             array[index] = evaluate_expression_pointer(current->expr);
@@ -5699,7 +5699,7 @@ void populate_multi_array_variable(String name, ExpressionList *list,
             continue;
         }
 
-        switch (var->var_type)
+        switch (var->desc.type)
         {
         case VAR_INT:
         {
@@ -5852,7 +5852,7 @@ Variable *variable_new(String name)
     }
     memset(var, 0, sizeof(Variable));
     var->name = name;
-    var->is_array = false;
+    var->desc.is_array = false;
     return var;
 }
 
@@ -5865,7 +5865,7 @@ void add_variable_to_scope(const String name, Variable *var)
     }
 
     /* Static variables go to the static store, not the scope */
-    if (var->modifiers.is_static)
+    if (var->desc.modifiers.is_static)
     {
         if (!static_variable_map)
             static_variable_map = hm_new();
@@ -6798,8 +6798,8 @@ bool enter_function_scope(Function *func, ArgumentList *args)
     {
         curr_param = ordered[i];
         Variable *var = variable_new(curr_param->name);
-        var->var_type = curr_param->desc.type;
-        var->pointer_level = curr_param->desc.pointer_level;
+        var->desc.type = curr_param->desc.type;
+        var->desc.pointer_level = curr_param->desc.pointer_level;
         TypeModifiers mods = curr_param->desc.modifiers;
         add_variable_to_scope(curr_param->name, var);
         SAFE_FREE(var);
@@ -6809,7 +6809,7 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             Variable *bound = get_variable(curr_param->name);
             if (bound)
             {
-                bound->pointer_level = curr_param->desc.pointer_level;
+                bound->desc.pointer_level = curr_param->desc.pointer_level;
                 /* A pointer-to-struct/union parameter (`gang Foo *pp`)
                    needs its tag copied too, same as the by-value VAR_STRUCT
                    case below -- resolve_struct_access()'s NODE_IDENTIFIER
@@ -6821,7 +6821,7 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                    and `pp.field` inside the callee died on "Unknown struct
                    or union type" (PR #248 review, finding 3). */
                 if (curr_param->desc.type == VAR_STRUCT)
-                    bound->struct_name =
+                    bound->desc.struct_name =
                         safe_strdup(&curr_param->desc.struct_name);
                 bound->value.pvalue = arg_values[i].pvalue;
             }
@@ -6881,7 +6881,8 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             StructDef *def = get_struct_def(curr_param->desc.struct_name);
             if (bound && def)
             {
-                bound->struct_name = safe_strdup(&curr_param->desc.struct_name);
+                bound->desc.struct_name =
+                    safe_strdup(&curr_param->desc.struct_name);
                 bound->value.array_data = calloc(1, def->total_size);
                 void *src_blob = (void *)arg_values[i].pvalue;
                 if (bound->value.array_data && src_blob)
@@ -6898,7 +6899,8 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             if (bound)
             {
                 bound->value.ivalue = arg_values[i].ivalue;
-                bound->enum_name = safe_strdup(&curr_param->desc.enum_name);
+                bound->desc.enum_name =
+                    safe_strdup(&curr_param->desc.enum_name);
             }
             break;
         }
