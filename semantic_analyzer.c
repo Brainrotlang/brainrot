@@ -2253,8 +2253,8 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
                 arg_index++;
                 if (arg->expr)
                 {
-                    propagate_contextual_call_type(arg->expr, param->type,
-                                                   param->pointer_level);
+                    propagate_contextual_call_type(arg->expr, param->desc.type,
+                                                   param->desc.pointer_level);
                     /* Struct/union pointer parameters: this analyzer does
                        not type-check user-defined call arguments against
                        their parameters at all otherwise (a separate,
@@ -2268,7 +2268,8 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
                        tag's layout on an actually differently-shaped
                        blob -- a real out-of-bounds read/write for two
                        structs of different size, not just a wrong value. */
-                    if (param->type == VAR_STRUCT && param->pointer_level > 0)
+                    if (param->desc.type == VAR_STRUCT &&
+                        param->desc.pointer_level > 0)
                     {
                         int line =
                             node->line_number > 0 ? node->line_number : 1;
@@ -2294,7 +2295,7 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
                            any category check, only the tag one. */
                         if ((actual_type != NONE &&
                              actual_type != VAR_STRUCT) ||
-                            actual_pl != param->pointer_level)
+                            actual_pl != param->desc.pointer_level)
                         {
                             char error_msg[MAX_BUFFER_LEN];
                             snprintf(error_msg, sizeof(error_msg),
@@ -2302,10 +2303,10 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
                                      "struct/union '%s' (level %d), got %s "
                                      "pointer level %d",
                                      func_name.data, arg_index,
-                                     param->struct_name.data
-                                         ? param->struct_name.data
+                                     param->desc.struct_name.data
+                                         ? param->desc.struct_name.data
                                          : "?",
-                                     param->pointer_level,
+                                     param->desc.pointer_level,
                                      vartype_to_string(actual_type), actual_pl);
                             add_semantic_error(analyzer,
                                                SEMANTIC_ERROR_TYPE_MISMATCH,
@@ -2318,8 +2319,8 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
                                      "'%s' argument %d: type mismatch",
                                      func_name.data, arg_index);
                             check_pointer_struct_tag_match(
-                                analyzer, param->struct_name, arg->expr, prefix,
-                                line);
+                                analyzer, param->desc.struct_name, arg->expr,
+                                prefix, line);
                         }
                     }
                 }
@@ -2900,10 +2901,10 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
                     !report_alias_name_conflict(analyzer, param->name,
                                                 node->line_number))
                 {
-                    add_symbol(analyzer, param->name, param->type,
-                               param->pointer_level, false, false, NONE, 0,
+                    add_symbol(analyzer, param->name, param->desc.type,
+                               param->desc.pointer_level, false, false, NONE, 0,
                                node->line_number > 0 ? node->line_number : 1,
-                               param->struct_name, false);
+                               param->desc.struct_name, false);
                 }
                 param = param->next;
             }

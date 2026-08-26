@@ -6428,18 +6428,18 @@ Parameter *create_parameter_ex(String name, VarType type, int pointer_level,
     }
 
     param->name = ARENA_STRDUP(name);
-    param->type = type;
-    param->struct_name = (String){0};
-    param->enum_name = (String){0};
-    param->pointer_level = pointer_level;
+    param->desc.type = type;
+    param->desc.struct_name = (String){0};
+    param->desc.enum_name = (String){0};
+    param->desc.pointer_level = pointer_level;
     param->next = next;
-    param->modifiers = mods;
+    param->desc.modifiers = mods;
     /* Arena memory is malloc'd, not calloc'd -- explicit zeroing, not a
        no-op. Callers that build an array-typed struct field (lang.y's
        `struct_field: type declarator dimensions SEMICOLON`) overwrite
        both fields immediately after this call returns. */
-    param->is_array = false;
-    param->array_dimensions = (ArrayDimensions){0};
+    param->desc.is_array = false;
+    param->desc.array_dimensions = (ArrayDimensions){0};
 
     return param;
 }
@@ -6642,8 +6642,8 @@ bool enter_function_scope(Function *func, ArgumentList *args)
     // Evaluate argument values before creating the scope
     while (curr_arg && curr_param)
     {
-        arg_values[arg_count].pointer_level = curr_param->pointer_level;
-        if (curr_param->pointer_level > 0)
+        arg_values[arg_count].pointer_level = curr_param->desc.pointer_level;
+        if (curr_param->desc.pointer_level > 0)
         {
             arg_values[arg_count].pvalue =
                 evaluate_expression_pointer(curr_arg->expr);
@@ -6653,7 +6653,7 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             arg_count++;
             continue;
         }
-        switch (curr_param->type)
+        switch (curr_param->desc.type)
         {
         case VAR_INT:
         case VAR_CHAR:
@@ -6722,9 +6722,9 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                     return false;
                 }
                 if (!current_return_value.struct_name.data ||
-                    !curr_param->struct_name.data ||
+                    !curr_param->desc.struct_name.data ||
                     strcmp(current_return_value.struct_name.data,
-                           curr_param->struct_name.data) != 0)
+                           curr_param->desc.struct_name.data) != 0)
                 {
                     yyerror("Struct argument type does not match parameter "
                             "type");
@@ -6733,7 +6733,7 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                                                 arg_count);
                     return false;
                 }
-                StructDef *cdef = get_struct_def(curr_param->struct_name);
+                StructDef *cdef = get_struct_def(curr_param->desc.struct_name);
                 void *temp = cdef ? calloc(1, cdef->total_size) : NULL;
                 void *ret_blob = (void *)current_return_value.value.pvalue;
                 if (temp && ret_blob)
@@ -6753,8 +6753,8 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                                             arg_count);
                 return false;
             }
-            if (!src_tag.data || !curr_param->struct_name.data ||
-                strcmp(src_tag.data, curr_param->struct_name.data) != 0)
+            if (!src_tag.data || !curr_param->desc.struct_name.data ||
+                strcmp(src_tag.data, curr_param->desc.struct_name.data) != 0)
             {
                 yyerror("Struct argument type does not match parameter type");
                 free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
@@ -6798,18 +6798,18 @@ bool enter_function_scope(Function *func, ArgumentList *args)
     {
         curr_param = ordered[i];
         Variable *var = variable_new(curr_param->name);
-        var->var_type = curr_param->type;
-        var->pointer_level = curr_param->pointer_level;
-        TypeModifiers mods = curr_param->modifiers;
+        var->var_type = curr_param->desc.type;
+        var->pointer_level = curr_param->desc.pointer_level;
+        TypeModifiers mods = curr_param->desc.modifiers;
         add_variable_to_scope(curr_param->name, var);
         SAFE_FREE(var);
 
-        if (curr_param->pointer_level > 0)
+        if (curr_param->desc.pointer_level > 0)
         {
             Variable *bound = get_variable(curr_param->name);
             if (bound)
             {
-                bound->pointer_level = curr_param->pointer_level;
+                bound->pointer_level = curr_param->desc.pointer_level;
                 /* A pointer-to-struct/union parameter (`gang Foo *pp`)
                    needs its tag copied too, same as the by-value VAR_STRUCT
                    case below -- resolve_struct_access()'s NODE_IDENTIFIER
@@ -6820,14 +6820,15 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                    pointer-to-struct parameter's struct_name stayed empty
                    and `pp.field` inside the callee died on "Unknown struct
                    or union type" (PR #248 review, finding 3). */
-                if (curr_param->type == VAR_STRUCT)
-                    bound->struct_name = safe_strdup(&curr_param->struct_name);
+                if (curr_param->desc.type == VAR_STRUCT)
+                    bound->struct_name =
+                        safe_strdup(&curr_param->desc.struct_name);
                 bound->value.pvalue = arg_values[i].pvalue;
             }
             continue;
         }
 
-        switch (curr_param->type)
+        switch (curr_param->desc.type)
         {
         case VAR_INT:
             set_int_variable(curr_param->name, arg_values[i].ivalue, mods);
@@ -6877,10 +6878,10 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                existed. Type already validated in the argument-evaluation
                pass above, so def's size matches the source blob's. */
             Variable *bound = get_variable(curr_param->name);
-            StructDef *def = get_struct_def(curr_param->struct_name);
+            StructDef *def = get_struct_def(curr_param->desc.struct_name);
             if (bound && def)
             {
-                bound->struct_name = safe_strdup(&curr_param->struct_name);
+                bound->struct_name = safe_strdup(&curr_param->desc.struct_name);
                 bound->value.array_data = calloc(1, def->total_size);
                 void *src_blob = (void *)arg_values[i].pvalue;
                 if (bound->value.array_data && src_blob)
@@ -6897,7 +6898,7 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             if (bound)
             {
                 bound->value.ivalue = arg_values[i].ivalue;
-                bound->enum_name = safe_strdup(&curr_param->enum_name);
+                bound->enum_name = safe_strdup(&curr_param->desc.enum_name);
             }
             break;
         }
