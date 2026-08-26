@@ -206,19 +206,21 @@ void ast_accept(ASTNode *node, Visitor *visitor)
         break;
 
     case NODE_RETURN:
-        /* A bare user-defined call as the return expression (`bussin
-           make();`) is NOT pre-walked here: this generic pre-visit would
-           run interpreter_visit_function_call() (which executes the call
-           and frees its result), and then handle_return_statement() -- the
+        /* A bare call as the return expression (`bussin make();`) is NOT
+           pre-walked here: this generic pre-visit would run interpreter_
+           visit_function_call() (which executes a user-defined call and
+           frees its result), and then handle_return_statement() -- the
            real evaluation -- would execute the SAME call a second time,
            duplicating its side effects (PR #254 review, finding 1). Every
            declared return type's arm in handle_return_statement() executes
-           the return expression exactly once (the void/NONE arm does so
-           explicitly for a call, for its side effects), so skipping the
-           pre-visit for a bare call makes it run once, matching how a
-           copy-init call (`gang Point c = make();`, on struct_init_expr)
-           already avoids the double-run. Other return-expression shapes
-           (`bussin a + b;`, `bussin p;`) still get the pre-visit. */
+           the return expression exactly once (the value-bearing arms via
+           evaluate_expression_*; the void/NONE arm runs it explicitly for
+           its side effects, dispatching native vs. user-defined the same
+           way every other bare-call site does), so skipping the pre-visit
+           for a bare call makes it run once, matching how a copy-init call
+           (`gang Point c = make();`, on struct_init_expr) already avoids
+           the double-run. Other return-expression shapes (`bussin a + b;`,
+           `bussin p;`) still get the pre-visit. */
         if (node->data.op.left && node->data.op.left->type != NODE_FUNC_CALL)
             ast_accept(node->data.op.left, visitor);
         if (visitor->visit_return_statement)

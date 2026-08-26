@@ -6253,13 +6253,28 @@ void handle_return_statement(ASTNode *expr)
                discarding the result. Any other expression shape (`bussin
                a + b;`, `bussin p;`) is still pre-visited and, as before,
                its value is simply dropped here. NONE (a bare `bussin
-               someCall();` at top level in main) is handled identically. */
+               someCall();` at top level in main) is handled identically.
+               Both native and user-defined calls must dispatch through the
+               same two-way branch every other bare-call site uses (see the
+               NODE_FUNC_CALL statement case above, and interpreter_execute_
+               call_statement) -- execute_function_call() alone searches
+               only the user-defined table, so `bussin yapping("hi");` in a
+               void function would otherwise be reported as an undefined
+               function (PR #254 review, finding 1). */
         case NONE:
             if (expr && expr->type == NODE_FUNC_CALL)
             {
-                execute_function_call(expr->data.func_call.function_name,
-                                      expr->data.func_call.arguments);
-                free_pending_return_value();
+                if (is_builtin_function(expr->data.func_call.function_name))
+                {
+                    execute_builtin_function(expr->data.func_call.function_name,
+                                             expr->data.func_call.arguments);
+                }
+                else
+                {
+                    execute_function_call(expr->data.func_call.function_name,
+                                          expr->data.func_call.arguments);
+                    free_pending_return_value();
+                }
             }
             current_return_value.type = declared_type;
             current_return_value.pointer_level = 0;

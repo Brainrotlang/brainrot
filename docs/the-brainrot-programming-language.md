@@ -594,8 +594,8 @@ follows a single-level pointer field per hop (like C's `->`).
   be dereferenced explicitly.
 - A union can be passed as a function parameter or returned from a
   function under the same rules as a struct (see [§7.9](#79-structs-gang)) —
-  a plain variable or a by-value member-access sub-expression of the exact
-  matching type, deep-copied.
+  a plain variable, a by-value member-access sub-expression, or a
+  union-returning call result of the exact matching type, deep-copied.
 
 ### 7.11. Enums (`gyatt`)
 
