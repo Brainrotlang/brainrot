@@ -317,11 +317,12 @@ Q: 10 20 0.0
 
 ### Current Limitations
 
-- Nested struct access (`p.inner.x`) is not yet supported.
 - A struct/union can be passed as a function parameter or returned from a
-  function, but only as a plain variable of the exact matching type (not a
-  sub-expression like a chained call or a member access) — arguments and
-  return values are deep-copied, never aliased.
+  function by value as a plain variable or a by-value member-access
+  sub-expression (`take(b.corner)`) of the exact matching type; a
+  struct-returning call result (`take(make_point())`) and a
+  pointer-to-struct return type are not yet supported. Arguments and return
+  values are deep-copied, never aliased.
 
 ---
 

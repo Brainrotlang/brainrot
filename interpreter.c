@@ -496,6 +496,47 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
                                 "variable of a different type");
                     }
                 }
+                else if (src_expr->type == NODE_STRUCT_ACCESS)
+                {
+                    /* Copy-initialize from a by-value struct/union
+                       member-access sub-expression (`gang Point c =
+                       b.corner;`, #193) -- the declaration counterpart of
+                       the struct-argument/return member-access support in
+                       enter_function_scope()/handle_return_statement()
+                       (ast.c). resolve_struct_access() gives the member's
+                       address (following pointer bases/fields, #196/#197),
+                       and the tag check mirrors the NODE_IDENTIFIER branch
+                       above. Without this branch a member-access
+                       initializer silently left `sv` zero-filled. */
+                    StructDef *msd = NULL;
+                    void *mbase = NULL;
+                    StructField *mfld = NULL;
+                    if (resolve_struct_access(src_expr, &msd, &mbase, &mfld,
+                                              true))
+                    {
+                        if (mfld->type == VAR_STRUCT &&
+                            mfld->pointer_level == 0 &&
+                            mfld->struct_name.data && sv->value.array_data &&
+                            strcmp(mfld->struct_name.data, struct_type.data) ==
+                                0)
+                        {
+                            memcpy(sv->value.array_data,
+                                   (char *)mbase + mfld->offset,
+                                   def->total_size);
+                        }
+                        else if (mfld->type == VAR_STRUCT &&
+                                 mfld->pointer_level == 0)
+                        {
+                            yyerror("Cannot copy-initialize from a struct "
+                                    "member of a different type");
+                        }
+                        else
+                        {
+                            yyerror("Struct initializer member access must be "
+                                    "a by-value struct/union field");
+                        }
+                    }
+                }
             }
         }
         return;

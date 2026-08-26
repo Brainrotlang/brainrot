@@ -1,0 +1,17 @@
+🚽 Test case: #193 -- passing a SCALAR member (`show(q.x)`) where a struct
+🚽 argument is expected is rejected: the member-access sub-expression must
+🚽 resolve to a by-value struct/union field, not a scalar one.
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+skibidi show(gang Point p) {
+    yapping("%d", p.x);
+}
+
+skibidi main {
+    gang Point q;
+    q.x = 1;
+    show(q.x);
+}
