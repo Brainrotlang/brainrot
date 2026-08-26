@@ -695,32 +695,6 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                 yyerror("Variable is not a struct or union");
             return false;
         }
-        /* Same restriction as the pointer-typed FIELD case just below
-           ("Chained member access through a pointer-typed struct/union
-           field is not supported") -- #196/#197 territory, not yet
-           implemented -- but this is the base IDENTIFIER itself being
-           pointer-typed (`gang Foo *pp; pp.field`), not a field reached
-           partway through a chain. Without this check, `var->value.
-           array_data` below is read/written through the union member a
-           POINTER variable actually uses (value.pvalue), not the one a
-           by-value struct variable does: for a pointer variable that
-           union slot either holds an address wrongly reinterpreted as a
-           blob pointer, or -- when NULL/not-yet-assigned -- looks like
-           "no blob yet" and silently calloc's a brand-new, disconnected
-           blob that leaks (confirmed via ASan: `gang Foo *pp = &f; pp.n
-           = 99;`, zero array-access involved, leaks and never touches
-           the real `f`). Rejecting here, before ever touching that
-           union member, is a pure hardening fix scoped to this PR's own
-           newly-reachable-via-arrays path -- it does not implement
-           #196 (following the pointer), it stops this function from
-           corrupting/leaking when asked to. */
-        if (var->pointer_level > 0)
-        {
-            if (report_errors)
-                yyerror("Member access through a pointer-typed struct/union "
-                        "variable is not supported");
-            return false;
-        }
         parent_def = get_struct_def(var->struct_name);
         if (!parent_def)
         {
@@ -728,20 +702,44 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                 yyerror("Unknown struct or union type");
             return false;
         }
-        /* Lazily allocate blob if missing — handles cases where parse-time
-           pointer was invalidated by hashmap resize during semantic
-           analysis. */
-        if (!var->value.array_data)
+        /* #196: a pointer-typed struct/union variable (`gang Foo *pp;
+           pp.field`) follows the pointer -- the base is whatever `pp`
+           points at, not a blob owned by `pp` itself. `pp`'s own union
+           slot is `value.pvalue` (an address), never `value.array_data`;
+           reading `array_data` for a pointer variable would either
+           misinterpret that address as a blob pointer or -- when unset --
+           silently calloc a brand-new, disconnected blob (the leak this
+           branch's predecessor, PR #247, hardened against without yet
+           following the pointer). */
+        if (var->pointer_level > 0)
         {
-            var->value.array_data = calloc(1, parent_def->total_size);
-            if (!var->value.array_data)
+            uintptr_t target = var->value.pvalue;
+            if (!target)
             {
                 if (report_errors)
-                    yyerror("Out of memory for struct/union blob");
+                    yyerror("Null pointer dereference in struct member "
+                            "access");
                 return false;
             }
+            parent_base = (void *)target;
         }
-        parent_base = var->value.array_data;
+        else
+        {
+            /* Lazily allocate blob if missing — handles cases where
+               parse-time pointer was invalidated by hashmap resize during
+               semantic analysis. */
+            if (!var->value.array_data)
+            {
+                var->value.array_data = calloc(1, parent_def->total_size);
+                if (!var->value.array_data)
+                {
+                    if (report_errors)
+                        yyerror("Out of memory for struct/union blob");
+                    return false;
+                }
+            }
+            parent_base = var->value.array_data;
+        }
     }
     else if (obj && obj->type == NODE_STRUCT_ACCESS)
     {

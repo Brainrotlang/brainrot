@@ -1,0 +1,20 @@
+🚽 Test case: #196 -- a pointer-typed struct/union VARIABLE (`gang Foo *pp`)
+🚽 used as the base of member access now follows the pointer instead of
+🚽 being rejected (superseding struct_pointer_array_field_fail.brainrot,
+🚽 which documented the old clean-rejection behavior). Writes through `pp`
+🚽 and through the original variable `f` must be visible from both --
+🚽 proving `pp` really aliases `f`'s own blob rather than a disconnected
+🚽 copy (the leak struct_pointer_array_field_fail.brainrot's own comment
+🚽 describes, from before resolve_struct_access() rejected pointer-typed
+🚽 base variables at all).
+gang Foo {
+    rizz arr[3];
+};
+
+skibidi main {
+    gang Foo f;
+    gang Foo *pp = &f;
+    pp.arr[0] = 99;
+    f.arr[1] = 5;
+    yapping("%d %d %d", f.arr[0], pp.arr[1], pp.arr[0]);
+}
