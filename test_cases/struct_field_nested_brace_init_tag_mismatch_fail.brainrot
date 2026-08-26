@@ -1,0 +1,33 @@
+🚽 Test case: #196 -- the struct-field brace-init check recurses into
+🚽 nested by-value struct sublists (`gang Outer o = { { &r } };`), not
+🚽 just top-level fields -- PR #248 review, round 5, finding 1's nested
+🚽 form. check_struct_initializer_pointer_tags() mirrors propagate_
+🚽 contextual_type_into_struct_initializer()'s own recursion into a
+🚽 nested-struct-typed field's sublist exactly, so a pointer-typed field
+🚽 nested arbitrarily deep is still checked.
+gang Point {
+    rizz x;
+    rizz y;
+};
+gang Rect {
+    rizz w;
+    rizz h;
+};
+gang Inner {
+    gang Point *pt;
+};
+gang Outer {
+    gang Inner inner;
+};
+
+skibidi bump(gang Point *pp) {
+    yapping("%d %d", pp.x, pp.y);
+}
+
+skibidi main {
+    gang Rect r;
+    r.w = 11;
+    r.h = 22;
+    gang Outer o = { { &r } };
+    bump(o.inner.pt);
+}

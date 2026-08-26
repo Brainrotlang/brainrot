@@ -2030,6 +2030,85 @@ propagate_contextual_type_into_struct_initializer(ExpressionList *list,
     } while (current != list);
 }
 
+/* Validates each leaf of a by-value struct's braced initializer (`gang
+   Holder h = {&r};`) against its own field's declared type -- the
+   validation counterpart of propagate_contextual_type_into_struct_
+   initializer() just above, which only ever propagates a contextual TYPE
+   HINT into slorp()-shaped leaves and never compares an already-typed
+   leaf (like `&r`) against the field it initializes. Walks StructField in
+   the identical positional lockstep as that function, and recurses into a
+   nested-struct-typed field's own sublist the same way -- so a
+   pointer-typed field nested arbitrarily deep (`gang Outer o = { {&r} };`)
+   is still checked, not just a top-level one. Only pointer-typed
+   struct/union fields are checked (category via infer_expression_type/
+   pointer_level, tag via check_pointer_struct_tag_match()) -- a by-value
+   struct-typed field's own tag mismatch remains the separate,
+   pre-existing, runtime-only gap check_declaration_initializer_
+   compatibility()'s own comment already documents as out of scope. PR
+   #248 review, round 5, finding 1: `gang Holder { gang Point *pt; }; gang
+   Holder h = {&r};` stored a Rect* into a field every later read/call
+   treats as Point*, with no analyzer-time check at all until now. */
+static void check_struct_initializer_pointer_tags(SemanticAnalyzer *analyzer,
+                                                  ExpressionList *list,
+                                                  StructField *field, int line)
+{
+    if (!list || !field)
+        return;
+
+    ExpressionList *current = list;
+    StructField *fld = field;
+    do
+    {
+        if (fld)
+        {
+            if (current->expr && fld->type == VAR_STRUCT &&
+                fld->pointer_level > 0 &&
+                !is_unresolved_contextual_call(current->expr))
+            {
+                VarType elem_type =
+                    infer_expression_type(current->expr, analyzer);
+                int elem_pl =
+                    infer_expression_pointer_level(current->expr, analyzer);
+                if ((elem_type != NONE && elem_type != VAR_STRUCT) ||
+                    elem_pl != fld->pointer_level)
+                {
+                    char error_msg[MAX_BUFFER_LEN];
+                    snprintf(error_msg, sizeof(error_msg),
+                             "Type mismatch initializing field '%s': "
+                             "expected pointer to struct/union '%s' (level "
+                             "%d), got %s pointer level %d",
+                             fld->name.data ? fld->name.data : "?",
+                             fld->struct_name.data ? fld->struct_name.data
+                                                   : "?",
+                             fld->pointer_level, vartype_to_string(elem_type),
+                             elem_pl);
+                    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                       STRING_LITERAL(error_msg), line);
+                }
+                else
+                {
+                    char prefix[MAX_BUFFER_LEN];
+                    snprintf(prefix, sizeof(prefix),
+                             "Type mismatch initializing field '%s'",
+                             fld->name.data ? fld->name.data : "?");
+                    check_pointer_struct_tag_match(analyzer, fld->struct_name,
+                                                   current->expr, prefix, line);
+                }
+            }
+            else if (current->sublist && fld->type == VAR_STRUCT &&
+                     fld->pointer_level == 0)
+            {
+                StructDef *nested_def = get_struct_def(fld->struct_name);
+                check_struct_initializer_pointer_tags(
+                    analyzer, current->sublist,
+                    nested_def ? nested_def->fields : NULL, line);
+            }
+            fld = fld->next;
+        }
+        current = current->next;
+    } while (current != list);
+}
+
 /* Walks a braced initializer's expression list (`{1, 2, bet(2)}`, and
    nested sublists for `{ {1, 2}, 3 }`-style matrix init), running the same
    checks -- native-call arity/type included -- on every leaf expression as
@@ -3262,13 +3341,17 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                node() never does) is what tells the two apart here, and
                carries the struct tag needed to look up each field's real
                type. */
-            if (node->var_type == VAR_STRUCT && node->data.op.right &&
-                node->data.op.right->type == NODE_STRUCT_DEF)
+            bool is_struct_brace_init =
+                node->var_type == VAR_STRUCT && node->data.op.right &&
+                node->data.op.right->type == NODE_STRUCT_DEF;
+            StructDef *struct_init_def = NULL;
+            if (is_struct_brace_init)
             {
-                StructDef *def =
+                struct_init_def =
                     get_struct_def(node->data.op.right->data.struct_def.name);
                 propagate_contextual_type_into_struct_initializer(
-                    node->pending_initializer, def ? def->fields : NULL);
+                    node->pending_initializer,
+                    struct_init_def ? struct_init_def->fields : NULL);
             }
             else
             {
@@ -3277,6 +3360,20 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                     node->pointer_level);
             }
             semantic_check_expression_list(analyzer, node->pending_initializer);
+
+            /* By-value struct brace-init of a pointer-typed FIELD (`gang
+               Holder { gang Point *pt; }; gang Holder h = {&r};`) is a
+               FIFTH place a pointer-to-struct value gets stored, distinct
+               from the array-element brace-init check just below (that one
+               guards pointer_level > 0 on the DECLARATION itself; this one
+               is pointer_level == 0 at the declaration level -- a by-value
+               struct -- with the pointer nested inside one of its FIELDS).
+               PR #248 review, round 5, finding 1. */
+            if (is_struct_brace_init)
+                check_struct_initializer_pointer_tags(
+                    analyzer, node->pending_initializer,
+                    struct_init_def ? struct_init_def->fields : NULL,
+                    node->line_number > 0 ? node->line_number : 1);
 
             /* Brace-initialized array of struct/union POINTERS (`lit gang
                Point *PointPtr; PointPtr values[2] = {&r};`) is a FOURTH

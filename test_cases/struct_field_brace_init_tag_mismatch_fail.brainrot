@@ -1,0 +1,33 @@
+🚽 Test case: #196 -- by-value struct brace-init of a pointer-typed FIELD
+🚽 (`gang Holder { gang Point *pt; }; gang Holder h = {&r};`) is checked
+🚽 against the field's declared type/tag, the same as a plain field
+🚽 assignment (`h.pt = &r;`, already checked) -- PR #248 review, round 5,
+🚽 finding 1. This is a FIFTH place a pointer-to-struct value gets stored,
+🚽 distinct from struct_init_expr/data.op.right/plain-assignment/array-
+🚽 element-brace-init (rounds 1-4): the NODE_STRUCT_DEF arm of a
+🚽 declaration's pending_initializer only ever propagated a contextual
+🚽 type hint into each leaf (for slorp() resolution), never compared an
+🚽 already-typed leaf like `&r` against the field it initializes.
+gang Point {
+    rizz x;
+    rizz y;
+};
+gang Rect {
+    rizz w;
+    rizz h;
+};
+gang Holder {
+    gang Point *pt;
+};
+
+skibidi bump(gang Point *pp) {
+    yapping("%d %d", pp.x, pp.y);
+}
+
+skibidi main {
+    gang Rect r;
+    r.w = 11;
+    r.h = 22;
+    gang Holder h = { &r };
+    bump(h.pt);
+}
