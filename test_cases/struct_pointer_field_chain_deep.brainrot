@@ -1,0 +1,23 @@
+🚽 Test case: #197 -- a two-level pointer-field chain (`a.next.next.val`)
+🚽 proves the fix is genuinely recursive, not special-cased for a single
+🚽 hop. Each `.next` follows a `gang Node *` field; the final `.val`
+🚽 read/write lands in the third node's storage (c.val reflects the
+🚽 write-through).
+gang Node {
+    rizz val;
+    gang Node *next;
+};
+
+skibidi main {
+    gang Node a;
+    gang Node b;
+    gang Node c;
+    a.val = 1;
+    b.val = 2;
+    c.val = 3;
+    a.next = &b;
+    b.next = &c;
+    yapping("%d", a.next.next.val);
+    a.next.next.val = 42;
+    yapping("%d", c.val);
+}

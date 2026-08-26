@@ -660,10 +660,11 @@ size_t calculate_array_offset(bool is_array, const ArrayDimensions *dims,
    grandparent blob), which becomes the base for this level.
 
    Chaining through a pointer-typed struct/union field (e.g. `a.ptr.b`
-   where `ptr` is `gang Foo *`) is intentionally not supported yet — it
-   would require implicit pointer dereference semantics that don't exist
-   elsewhere in the language, so we report a clear error instead of
-   computing a bogus address. */
+   where `ptr` is `gang Foo *`, #197) follows the pointer, applying the
+   same single-level implicit-`->` rule the pointer-typed-VARIABLE base
+   case (#196) uses: `pointer_level == 1` dereferences and continues from
+   the pointee; `pointer_level > 1` is rejected (C requires an explicit
+   `(*x)->`); a null pointer is a clean error, not a crash. */
 bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                            StructField **field_out, bool report_errors)
 {
@@ -767,13 +768,6 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                                    report_errors))
             return false;
 
-        if (outer_field->pointer_level > 0)
-        {
-            if (report_errors)
-                yyerror("Chained member access through a pointer-typed "
-                        "struct/union field is not supported");
-            return false;
-        }
         if (outer_field->type != VAR_STRUCT)
         {
             if (report_errors)
@@ -787,7 +781,45 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                 yyerror("Unknown nested struct or union type");
             return false;
         }
-        parent_base = (char *)outer_base + outer_field->offset;
+
+        /* Address of the outer field's own storage within its enclosing
+           blob. For a plain (non-pointer) nested struct/union field this
+           IS the nested blob (structs live inline); for a pointer-typed
+           field it's the slot holding the pointer VALUE. */
+        void *outer_field_addr = (char *)outer_base + outer_field->offset;
+
+        /* #197: chaining `.` through a pointer-typed struct/union FIELD
+           (`n.next.val` where `next` is `gang Node *`) follows the pointer,
+           the same single-level-of-indirection rule the pointer-typed
+           VARIABLE case above (#196) already uses. The field's slot holds a
+           uintptr_t pointer value, not the nested blob, so read it and
+           continue member resolution from there. `pointer_level > 1`
+           (`gang Node **next`) needs an explicit `(*x)->` in C and is
+           rejected for the identical reason the variable case rejects it
+           -- the slot holds a `Node *`, not a `Node` blob. */
+        if (outer_field->pointer_level > 1)
+        {
+            if (report_errors)
+                yyerror("Member access via '.' through a multi-level "
+                        "pointer (pointer_level > 1) is not supported");
+            return false;
+        }
+        if (outer_field->pointer_level == 1)
+        {
+            uintptr_t target = *(uintptr_t *)outer_field_addr;
+            if (!target)
+            {
+                if (report_errors)
+                    yyerror("Null pointer dereference in struct member "
+                            "access");
+                return false;
+            }
+            parent_base = (void *)target;
+        }
+        else
+        {
+            parent_base = outer_field_addr;
+        }
     }
     else
     {
