@@ -1,0 +1,30 @@
+🚽 Test case: #193 -- returning a struct-returning call result (`bussin
+🚽 make(a,b);`) must execute the call exactly ONCE. A static counter inside
+🚽 make() witnesses the count. Before PR #254's fix, ast_accept()'s
+🚽 NODE_RETURN pre-visit ran the call (and freed its result) and then
+🚽 handle_return_statement() ran it again -- printing "make called 2 times"
+🚽 -- even though the returned value was still correct, so a value-only test
+🚽 could not see the duplicated side effect.
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+gang Point make(rizz a, rizz b) {
+    salty rizz calls = 0;
+    calls = calls + 1;
+    yapping("make called %d times", calls);
+    gang Point p;
+    p.x = a;
+    p.y = b;
+    bussin p;
+}
+
+gang Point relay(rizz a, rizz b) {
+    bussin make(a, b);
+}
+
+skibidi main {
+    gang Point r = relay(3, 4);
+    yapping("%d %d", r.x, r.y);
+}

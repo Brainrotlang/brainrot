@@ -6241,21 +6241,26 @@ void handle_return_statement(ASTNode *expr)
                VAR_VOID now (round 20), not NONE -- NONE here is
                reached only for `bussin` outside any function (`main`
                itself has no declared return type, see declared_type's
-               own NONE default above). Both mean the same thing for
-               this switch's purposes: ignore the expression's value
-               entirely -- it is never evaluated at all (matching the
-               original behavior this case has always had; `bussin
-               someExpr;` inside a void function has never executed
-               someExpr for its side effects, and introducing that now
-               would be a new, unrelated behavior change, not a
-               reentrancy fix). No nested-call reentrancy risk here for
-               exactly that reason: nothing runs evaluate_expression_*
-               on expr in this case, so current_return_value can't be
-               clobbered by anything expr might otherwise have called.
-               (Reaching this case at all, rather than the declared_
-               pointer_level > 0 branch above, means declared_pointer_
-               level == 0 -- genuinely void, not `skibidi *`.) */
+               own NONE default above). Both ignore the expression's
+               VALUE entirely -- there is nowhere to put it.
+
+               A bare user-defined CALL is the one shape that must still
+               be EXECUTED for its side effects, though: since PR #254
+               review finding 1, ast_accept()'s NODE_RETURN pre-visit no
+               longer runs a bare-call return expression (that pre-visit
+               was what executed `bussin someCall();` inside a void
+               function before), so this arm now runs it -- exactly once,
+               discarding the result. Any other expression shape (`bussin
+               a + b;`, `bussin p;`) is still pre-visited and, as before,
+               its value is simply dropped here. NONE (a bare `bussin
+               someCall();` at top level in main) is handled identically. */
         case NONE:
+            if (expr && expr->type == NODE_FUNC_CALL)
+            {
+                execute_function_call(expr->data.func_call.function_name,
+                                      expr->data.func_call.arguments);
+                free_pending_return_value();
+            }
             current_return_value.type = declared_type;
             current_return_value.pointer_level = 0;
             current_return_value.has_value = true;
@@ -6589,9 +6594,27 @@ bool enter_function_scope(Function *func, ArgumentList *args)
     bool arg_owns_blob[MAX_ARGUMENTS] = {false};
     int arg_count = 0;
 
-    // Reverse the parameter list
+    /* Snapshot the parameters in call order into a local array. The parser
+       stores them reversed, so reverse the shared list in place, copy the
+       node pointers out, then restore it IMMEDIATELY -- before any argument
+       is evaluated. Evaluating an argument can invoke another function
+       (`f(g())`), and if that callee is THIS SAME Function*, its own
+       enter_function_scope() would reverse func->parameters again while the
+       outer invocation was mid-iteration -- binding `f(f(s1, s2), s3)`'s
+       parameters out of source order (PR #254 review, finding 2; the same
+       long-standing reentrancy that made `sub(sub(10, 3), 1)` compute -8).
+       Iterating the local `ordered[]` snapshot instead makes each
+       invocation independent of what nested calls do to the shared list. */
     reverse_parameter_list(&func->parameters);
-    Parameter *curr_param = func->parameters;
+    Parameter *ordered[MAX_ARGUMENTS];
+    int param_count = 0;
+    for (Parameter *p = func->parameters; p && param_count < MAX_ARGUMENTS;
+         p = p->next)
+        ordered[param_count++] = p;
+    reverse_parameter_list(&func->parameters);
+
+    Parameter *curr_param = param_count > 0 ? ordered[0] : NULL;
+    int param_index = 0;
 
     // Evaluate argument values before creating the scope
     while (curr_arg && curr_param)
@@ -6602,7 +6625,8 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             arg_values[arg_count].pvalue =
                 evaluate_expression_pointer(curr_arg->expr);
             curr_arg = curr_arg->next;
-            curr_param = curr_param->next;
+            curr_param =
+                ++param_index < param_count ? ordered[param_index] : NULL;
             arg_count++;
             continue;
         }
@@ -6633,7 +6657,6 @@ bool enter_function_scope(Function *func, ArgumentList *args)
         case VAR_STRING:
             yyerror("String parameters are not supported");
             free_owned_struct_arg_blobs(arg_values, arg_owns_blob, arg_count);
-            reverse_parameter_list(&func->parameters);
             return false;
         case VAR_STRUCT:
         {
@@ -6673,7 +6696,6 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                     free_pending_return_value();
                     free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
                                                 arg_count);
-                    reverse_parameter_list(&func->parameters);
                     return false;
                 }
                 if (!current_return_value.struct_name.data ||
@@ -6686,7 +6708,6 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                     free_pending_return_value();
                     free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
                                                 arg_count);
-                    reverse_parameter_list(&func->parameters);
                     return false;
                 }
                 StructDef *cdef = get_struct_def(curr_param->struct_name);
@@ -6707,7 +6728,6 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             {
                 free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
                                             arg_count);
-                reverse_parameter_list(&func->parameters);
                 return false;
             }
             if (!src_tag.data || !curr_param->struct_name.data ||
@@ -6716,7 +6736,6 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                 yyerror("Struct argument type does not match parameter type");
                 free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
                                             arg_count);
-                reverse_parameter_list(&func->parameters);
                 return false;
             }
             arg_values[arg_count].pvalue = (uintptr_t)src_blob;
@@ -6733,7 +6752,7 @@ bool enter_function_scope(Function *func, ArgumentList *args)
         }
 
         curr_arg = curr_arg->next;
-        curr_param = curr_param->next;
+        curr_param = ++param_index < param_count ? ordered[param_index] : NULL;
         arg_count++;
     }
 
@@ -6741,7 +6760,6 @@ bool enter_function_scope(Function *func, ArgumentList *args)
     {
         yyerror("Mismatched number of arguments and parameters");
         free_owned_struct_arg_blobs(arg_values, arg_owns_blob, arg_count);
-        reverse_parameter_list(&func->parameters);
         return false;
     }
 
@@ -6750,11 +6768,12 @@ bool enter_function_scope(Function *func, ArgumentList *args)
     current_scope = scope;
     current_scope->is_function_scope = true;
     current_scope->function_name = func->name;
-    curr_param = func->parameters; // Reset parameter list after reversing
 
-    // Assign evaluated values to function parameters
+    // Assign evaluated values to function parameters (iterating the same
+    // call-order snapshot the evaluation loop used).
     for (int i = 0; i < arg_count; i++)
     {
+        curr_param = ordered[i];
         Variable *var = variable_new(curr_param->name);
         var->var_type = curr_param->type;
         var->pointer_level = curr_param->pointer_level;
@@ -6782,7 +6801,6 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                     bound->struct_name = safe_strdup(&curr_param->struct_name);
                 bound->value.pvalue = arg_values[i].pvalue;
             }
-            curr_param = curr_param->next;
             continue;
         }
 
@@ -6827,7 +6845,6 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             yyerror("String parameters are not supported");
             free_owned_struct_arg_blobs(arg_values, arg_owns_blob, arg_count);
             exit_scope();
-            reverse_parameter_list(&func->parameters);
             return false;
         case VAR_STRUCT:
         {
@@ -6868,13 +6885,13 @@ bool enter_function_scope(Function *func, ArgumentList *args)
         case NONE:
             break;
         }
-        curr_param = curr_param->next;
     }
     /* Bind loop done -- every owned call-result temporary has been
        deep-copied into its parameter's own blob, so release them all now
-       (a borrowed source has owns==false and is left untouched). */
+       (a borrowed source has owns==false and is left untouched).
+       func->parameters was already restored to its stored order right
+       after the snapshot above, so nothing to un-reverse here. */
     free_owned_struct_arg_blobs(arg_values, arg_owns_blob, arg_count);
-    reverse_parameter_list(&func->parameters);
     return true;
 }
 
