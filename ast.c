@@ -426,12 +426,12 @@ ASTNode *create_struct_access_node(ASTNode *object, String member)
     if (resolve_struct_access(node, &def, &base, &fld,
                               /* report_errors */ false))
     {
-        node->var_type = fld->type;
-        node->pointer_level = fld->pointer_level;
-        node->modifiers = fld->modifiers;
-        if (fld->type == VAR_STRUCT && fld->struct_name.data)
+        node->var_type = fld->desc.type;
+        node->pointer_level = fld->desc.pointer_level;
+        node->modifiers = fld->desc.modifiers;
+        if (fld->desc.type == VAR_STRUCT && fld->desc.struct_name.data)
             node->data.struct_access.struct_name =
-                ARENA_STRDUP(fld->struct_name);
+                ARENA_STRDUP(fld->desc.struct_name);
     }
     return node;
 }
@@ -552,9 +552,9 @@ ASTNode *create_struct_field_array_access_node(ASTNode *base,
         resolve_struct_access(base, &def, &field_base, &fld,
                               /* report_errors */ false))
     {
-        node->var_type = fld->type;
-        node->pointer_level = fld->pointer_level;
-        node->modifiers = fld->modifiers;
+        node->var_type = fld->desc.type;
+        node->pointer_level = fld->desc.pointer_level;
+        node->modifiers = fld->desc.modifiers;
         /* NOT fld->is_array: this node denotes the INDEXED ELEMENT
            (`foo.arr[i]`), a scalar/pointer value, not the array field
            itself -- fld->is_array (true) describes the field being
@@ -768,13 +768,13 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                                    report_errors))
             return false;
 
-        if (outer_field->type != VAR_STRUCT)
+        if (outer_field->desc.type != VAR_STRUCT)
         {
             if (report_errors)
                 yyerror("Member access on non-struct/union field");
             return false;
         }
-        parent_def = get_struct_def(outer_field->struct_name);
+        parent_def = get_struct_def(outer_field->desc.struct_name);
         if (!parent_def)
         {
             if (report_errors)
@@ -797,14 +797,14 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
            (`gang Node **next`) needs an explicit `(*x)->` in C and is
            rejected for the identical reason the variable case rejects it
            -- the slot holds a `Node *`, not a `Node` blob. */
-        if (outer_field->pointer_level > 1)
+        if (outer_field->desc.pointer_level > 1)
         {
             if (report_errors)
                 yyerror("Member access via '.' through a multi-level "
                         "pointer (pointer_level > 1) is not supported");
             return false;
         }
-        if (outer_field->pointer_level == 1)
+        if (outer_field->desc.pointer_level == 1)
         {
             uintptr_t target = *(uintptr_t *)outer_field_addr;
             if (!target)
@@ -894,14 +894,14 @@ bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
         StructField *fld = NULL;
         if (!resolve_struct_access(expr, &sd, &base, &fld, report_errors))
             return false;
-        if (fld->type != VAR_STRUCT || fld->pointer_level > 0)
+        if (fld->desc.type != VAR_STRUCT || fld->desc.pointer_level > 0)
         {
             if (report_errors)
                 yyerror("Expected a by-value struct/union field");
             return false;
         }
         *blob_out = (char *)base + fld->offset;
-        *tag_out = fld->struct_name;
+        *tag_out = fld->desc.struct_name;
         return true;
     }
 
@@ -976,7 +976,7 @@ static void *evaluate_struct_field_array_access(ASTNode *node)
         yyerror("Cannot resolve struct field for array access");
         exit(EXIT_FAILURE);
     }
-    if (!fld->is_array)
+    if (!fld->desc.is_array)
     {
         char error_msg[MAX_BUFFER_LEN];
         snprintf(error_msg, sizeof(error_msg),
@@ -999,14 +999,14 @@ static void *evaluate_struct_field_array_access(ASTNode *node)
        lone int, not rejected). Reject the mismatch outright here,
        before calculate_array_offset() ever gets a chance to be lenient
        about it. */
-    if (num_indices != fld->array_dimensions.num_dimensions)
+    if (num_indices != fld->desc.array_dimensions.num_dimensions)
     {
         char error_msg[MAX_BUFFER_LEN];
         snprintf(error_msg, sizeof(error_msg),
                  "Struct/union field '%.100s' expects %d array index/indices, "
                  "got %d",
                  fld->name.data ? fld->name.data : "?",
-                 fld->array_dimensions.num_dimensions, num_indices);
+                 fld->desc.array_dimensions.num_dimensions, num_indices);
         yyerror(error_msg);
         exit(EXIT_FAILURE);
     }
@@ -1028,7 +1028,7 @@ static void *evaluate_struct_field_array_access(ASTNode *node)
     }
 
     size_t offset = calculate_array_offset(
-        fld->is_array, &fld->array_dimensions, indices, num_indices);
+        fld->desc.is_array, &fld->desc.array_dimensions, indices, num_indices);
     void *element_base = (char *)field_base + fld->offset;
 
     /* Stride by the field's own modifier-aware element size (giga/thicc
@@ -1039,8 +1039,8 @@ static void *evaluate_struct_field_array_access(ASTNode *node)
        `lit thicc rizz Big; Big vals[3];` field laid out at 3*8 bytes was
        indexed as if each element were 4 bytes -- elements 1+ landed inside
        the reservation's front, not at their C offsets (PR #256 review). */
-    return array_element_address(element_base, offset, fld->type,
-                                 fld->pointer_level, fld->modifiers);
+    return array_element_address(element_base, offset, fld->desc.type,
+                                 fld->desc.pointer_level, fld->desc.modifiers);
 }
 
 void *evaluate_multi_array_access(ASTNode *node)
@@ -1729,12 +1729,12 @@ static bool resolve_array_access_element(ASTNode *node, ArrayAccessElement *out)
         StructField *fld = NULL;
         if (!resolve_struct_access(node->data.array.base, &def, &base, &fld,
                                    false) ||
-            !fld->is_array)
+            !fld->desc.is_array)
             return false;
-        out->type = fld->type;
-        out->pointer_level = fld->pointer_level;
-        out->modifiers = fld->modifiers;
-        out->dimensions = &fld->array_dimensions;
+        out->type = fld->desc.type;
+        out->pointer_level = fld->desc.pointer_level;
+        out->modifiers = fld->desc.modifiers;
+        out->dimensions = &fld->desc.array_dimensions;
         return true;
     }
 
@@ -1832,7 +1832,7 @@ int get_expression_pointer_level(ASTNode *node)
         StructField *fld = NULL;
         if (!resolve_struct_access(node, &def, &base, &fld, false))
             return 0;
-        return fld->pointer_level;
+        return fld->desc.pointer_level;
     }
     default:
         return node->pointer_level;
@@ -1990,7 +1990,7 @@ VarType get_expression_type(ASTNode *node)
         StructField *fld = NULL;
         if (!resolve_struct_access(node, &def, &base, &fld, false))
             return NONE;
-        return fld->type;
+        return fld->desc.type;
     }
     default:
         yyerror("Unknown node type in get_expression_type");
@@ -2040,8 +2040,8 @@ static StructDef *get_struct_def_for_expression(ASTNode *expr)
         void *base = NULL;
         StructField *fld = NULL;
         if (resolve_struct_access(expr, &def, &base, &fld, false) &&
-            fld->type == VAR_STRUCT && fld->struct_name.data)
-            return get_struct_def(fld->struct_name);
+            fld->desc.type == VAR_STRUCT && fld->desc.struct_name.data)
+            return get_struct_def(fld->desc.struct_name);
         return NULL;
     }
     case NODE_UNARY_OPERATION:
@@ -2180,7 +2180,7 @@ static VarType infer_runtime_expression_type_noeval(ASTNode *expr)
         StructField *fld = NULL;
         if (!resolve_struct_access(expr, &def, &base, &fld, false))
             return NONE;
-        return fld->type;
+        return fld->desc.type;
     }
     default:
         return NONE;
@@ -3441,9 +3441,9 @@ float evaluate_expression_float(ASTNode *node)
         if (!resolve_struct_access(node, &def, &base, &fld, true))
             return 0;
         void *addr = (char *)base + fld->offset;
-        if (fld->pointer_level > 0)
+        if (fld->desc.pointer_level > 0)
             return (float)*(uintptr_t *)addr;
-        switch (fld->type)
+        switch (fld->desc.type)
         {
         case VAR_INT:
         case VAR_ENUM:
@@ -3587,9 +3587,9 @@ double evaluate_expression_double(ASTNode *node)
         if (!resolve_struct_access(node, &def, &base, &fld, true))
             return 0;
         void *addr = (char *)base + fld->offset;
-        if (fld->pointer_level > 0)
+        if (fld->desc.pointer_level > 0)
             return (double)*(uintptr_t *)addr;
-        switch (fld->type)
+        switch (fld->desc.type)
         {
         case VAR_INT:
         case VAR_ENUM:
@@ -3981,9 +3981,9 @@ short evaluate_expression_short(ASTNode *node)
         if (!resolve_struct_access(node, &def, &base, &fld, true))
             return 0;
         void *addr = (char *)base + fld->offset;
-        if (fld->pointer_level > 0)
+        if (fld->desc.pointer_level > 0)
             return (short)*(uintptr_t *)addr;
-        switch (fld->type)
+        switch (fld->desc.type)
         {
         case VAR_INT:
         case VAR_ENUM:
@@ -4200,9 +4200,9 @@ int evaluate_expression_int(ASTNode *node)
         if (!resolve_struct_access(node, &def, &base, &fld, true))
             return 0;
         void *addr = (char *)base + fld->offset;
-        if (fld->pointer_level > 0)
+        if (fld->desc.pointer_level > 0)
             return (int)*(uintptr_t *)addr;
-        switch (fld->type)
+        switch (fld->desc.type)
         {
         case VAR_INT:
         case VAR_ENUM:
@@ -4638,9 +4638,9 @@ bool evaluate_expression_bool(ASTNode *node)
         if (!resolve_struct_access(node, &def, &base, &fld, true))
             return 0;
         void *addr = (char *)base + fld->offset;
-        if (fld->pointer_level > 0)
+        if (fld->desc.pointer_level > 0)
             return (bool)*(uintptr_t *)addr;
-        switch (fld->type)
+        switch (fld->desc.type)
         {
         case VAR_INT:
         case VAR_ENUM:
@@ -4856,7 +4856,7 @@ bool is_expression(ASTNode *node, VarType type)
         StructField *fld = NULL;
         if (!resolve_struct_access(node, &def, &base, &fld, false))
             return false;
-        return fld->type == type;
+        return fld->desc.type == type;
     }
     default:
         return node->type == VART_TO_NODET(type);
@@ -5509,7 +5509,7 @@ void validate_struct_initializer_shape(StructDef *def, ExpressionList *list)
     while (fld && index < initializer_count)
     {
         bool is_nested_aggregate =
-            (fld->type == VAR_STRUCT && fld->pointer_level == 0);
+            (fld->desc.type == VAR_STRUCT && fld->desc.pointer_level == 0);
 
         if (is_nested_aggregate != (cur->sublist != NULL))
         {
@@ -5530,8 +5530,8 @@ void validate_struct_initializer_shape(StructDef *def, ExpressionList *list)
         }
         else if (is_nested_aggregate)
         {
-            validate_struct_initializer_shape(get_struct_def(fld->struct_name),
-                                              cur->sublist);
+            validate_struct_initializer_shape(
+                get_struct_def(fld->desc.struct_name), cur->sublist);
         }
 
         if (def->is_union)
@@ -5570,7 +5570,7 @@ static void populate_struct_fields(StructDef *def, void *base,
     {
         void *addr = (char *)base + fld->offset;
         bool is_nested_aggregate =
-            (fld->type == VAR_STRUCT && fld->pointer_level == 0);
+            (fld->desc.type == VAR_STRUCT && fld->desc.pointer_level == 0);
 
         /* A shape mismatch here (braced sub-initializer for a scalar
            field, or a bare value for a nested struct/union field) would
@@ -5585,16 +5585,16 @@ static void populate_struct_fields(StructDef *def, void *base,
         }
         else if (is_nested_aggregate)
         {
-            populate_struct_fields(get_struct_def(fld->struct_name), addr,
+            populate_struct_fields(get_struct_def(fld->desc.struct_name), addr,
                                    cur->sublist);
         }
-        else if (fld->pointer_level > 0)
+        else if (fld->desc.pointer_level > 0)
         {
             *(uintptr_t *)addr = evaluate_expression_pointer(cur->expr);
         }
         else
         {
-            switch (fld->type)
+            switch (fld->desc.type)
             {
             case VAR_INT:
             case VAR_ENUM:
@@ -6969,8 +6969,8 @@ void free_struct_registry(void)
         {
             StructField *nxt = f->next;
             SAFE_FREE(f->name);
-            SAFE_FREE(f->struct_name);
-            SAFE_FREE(f->enum_name);
+            SAFE_FREE(f->desc.struct_name);
+            SAFE_FREE(f->desc.enum_name);
             SAFE_FREE(f);
             f = nxt;
         }
@@ -7013,30 +7013,31 @@ StructField *find_struct_field(StructDef *def, const String name)
 static size_t get_struct_field_size(StructField *f)
 {
     size_t element_size;
-    if (f->pointer_level > 0)
+    if (f->desc.pointer_level > 0)
     {
         element_size = sizeof(uintptr_t);
     }
-    else if (f->type == VAR_STRUCT)
+    else if (f->desc.type == VAR_STRUCT)
     {
-        StructDef *nested = get_struct_def(f->struct_name);
+        StructDef *nested = get_struct_def(f->desc.struct_name);
         /* Should always be resolved by the parser before layout is
            computed; fall back defensively rather than corrupt offsets. */
         element_size = nested ? nested->total_size : 0;
     }
     else
     {
-        element_size = get_type_size_for_descriptor(f->type, 0, f->modifiers);
+        element_size =
+            get_type_size_for_descriptor(f->desc.type, 0, f->desc.modifiers);
         if (element_size == 0)
             element_size = sizeof(int);
     }
 
-    if (!f->is_array)
+    if (!f->desc.is_array)
         return element_size;
 
     size_t count = 1;
-    for (int i = 0; i < f->array_dimensions.num_dimensions; i++)
-        count *= (size_t)f->array_dimensions.dimensions[i];
+    for (int i = 0; i < f->desc.array_dimensions.num_dimensions; i++)
+        count *= (size_t)f->desc.array_dimensions.dimensions[i];
     return element_size * count;
 }
 
@@ -7055,18 +7056,18 @@ static size_t get_struct_field_size(StructField *f)
    answers array fields correctly without a special case. */
 static size_t get_struct_field_alignment(StructField *f)
 {
-    if (f->pointer_level > 0)
+    if (f->desc.pointer_level > 0)
         return _Alignof(uintptr_t);
 
-    if (f->type == VAR_STRUCT)
+    if (f->desc.type == VAR_STRUCT)
     {
-        StructDef *nested = get_struct_def(f->struct_name);
+        StructDef *nested = get_struct_def(f->desc.struct_name);
         /* Should always be resolved by the parser before layout is
            computed; fall back defensively rather than corrupt offsets. */
         return nested ? nested->alignment : 1;
     }
 
-    switch (f->type)
+    switch (f->desc.type)
     {
     case VAR_FLOAT:
         return _Alignof(float);
@@ -7079,9 +7080,9 @@ static size_t get_struct_field_alignment(StructField *f)
     case VAR_CHAR:
         return _Alignof(char);
     case VAR_INT:
-        if (f->modifiers.is_long_long)
+        if (f->desc.modifiers.is_long_long)
             return _Alignof(long long);
-        if (f->modifiers.is_long)
+        if (f->desc.modifiers.is_long)
             return _Alignof(long);
         return _Alignof(int);
     case VAR_STRING:

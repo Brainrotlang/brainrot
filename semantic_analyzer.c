@@ -416,8 +416,8 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
             StructField *fld = NULL;
             if (resolve_struct_access(node->data.array.base, &def, &base, &fld,
                                       false) &&
-                fld->is_array)
-                return fld->pointer_level;
+                fld->desc.is_array)
+                return fld->desc.pointer_level;
 
             StructDef *static_def = infer_struct_def_static(
                 node->data.array.base->data.struct_access.object, analyzer);
@@ -426,7 +426,8 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
             StructField *f = find_struct_field(
                 static_def,
                 node->data.array.base->data.struct_access.member_name);
-            return f && f->is_array ? f->pointer_level : node->pointer_level;
+            return f && f->desc.is_array ? f->desc.pointer_level
+                                         : node->pointer_level;
         }
         SymbolEntry *symbol = find_symbol(analyzer, node->data.array.name);
         if (symbol && symbol->is_array)
@@ -525,7 +526,7 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
         void *base = NULL;
         StructField *fld = NULL;
         if (resolve_struct_access(node, &def, &base, &fld, false))
-            return fld->pointer_level;
+            return fld->desc.pointer_level;
 
         StructDef *static_def =
             infer_struct_def_static(node->data.struct_access.object, analyzer);
@@ -533,7 +534,7 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
             return 0;
         StructField *f =
             find_struct_field(static_def, node->data.struct_access.member_name);
-        return f ? f->pointer_level : 0;
+        return f ? f->desc.pointer_level : 0;
     }
     default:
         return node->pointer_level;
@@ -606,10 +607,10 @@ static StructDef *infer_struct_def_static(ASTNode *expr,
            (needs an explicit `(*x)->`), matching that function's own rule.
            struct_name is populated for pointer-typed struct fields too, so
            get_struct_def() below still finds the pointee's definition. */
-        if (!fld || fld->type != VAR_STRUCT || fld->pointer_level > 1 ||
-            !fld->struct_name.data)
+        if (!fld || fld->desc.type != VAR_STRUCT ||
+            fld->desc.pointer_level > 1 || !fld->desc.struct_name.data)
             return NULL;
-        return get_struct_def(fld->struct_name);
+        return get_struct_def(fld->desc.struct_name);
     }
 
     return NULL;
@@ -665,7 +666,7 @@ static String infer_expression_struct_name(ASTNode *expr,
             return (String){0};
         StructField *fld =
             find_struct_field(parent_def, expr->data.struct_access.member_name);
-        return fld ? fld->struct_name : (String){0};
+        return fld ? fld->desc.struct_name : (String){0};
     }
     case NODE_ARRAY_ACCESS:
     {
@@ -685,8 +686,8 @@ static String infer_expression_struct_name(ASTNode *expr,
             StructField *fld = NULL;
             if (resolve_struct_access(expr->data.array.base, &def, &base, &fld,
                                       false) &&
-                fld->is_array)
-                return fld->struct_name;
+                fld->desc.is_array)
+                return fld->desc.struct_name;
 
             StructDef *static_def = infer_struct_def_static(
                 expr->data.array.base->data.struct_access.object, analyzer);
@@ -695,7 +696,7 @@ static String infer_expression_struct_name(ASTNode *expr,
             StructField *f = find_struct_field(
                 static_def,
                 expr->data.array.base->data.struct_access.member_name);
-            return f && f->is_array ? f->struct_name : (String){0};
+            return f && f->desc.is_array ? f->desc.struct_name : (String){0};
         }
         SymbolEntry *symbol = find_symbol(analyzer, expr->data.array.name);
         if (symbol && symbol->is_array)
@@ -826,8 +827,8 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
             StructField *fld = NULL;
             if (resolve_struct_access(node->data.array.base, &def, &base, &fld,
                                       false) &&
-                fld->is_array)
-                return fld->type;
+                fld->desc.is_array)
+                return fld->desc.type;
 
             StructDef *static_def = infer_struct_def_static(
                 node->data.array.base->data.struct_access.object, analyzer);
@@ -836,7 +837,7 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
             StructField *f = find_struct_field(
                 static_def,
                 node->data.array.base->data.struct_access.member_name);
-            return f && f->is_array ? f->type : NONE;
+            return f && f->desc.is_array ? f->desc.type : NONE;
         }
 
         const String array_name = node->data.array.name;
@@ -969,7 +970,7 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
         void *base = NULL;
         StructField *fld = NULL;
         if (resolve_struct_access(node, &def, &base, &fld, false))
-            return fld->type;
+            return fld->desc.type;
 
         /* resolve_struct_access() only works at runtime -- its object
            resolution goes through get_variable(), which is always NULL
@@ -994,7 +995,7 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
 
         StructField *f =
             find_struct_field(static_def, node->data.struct_access.member_name);
-        return f ? f->type : NONE;
+        return f ? f->desc.type : NONE;
     }
 
     default:
@@ -2039,13 +2040,13 @@ propagate_contextual_type_into_struct_initializer(ExpressionList *list,
         {
             if (current->expr)
             {
-                propagate_contextual_call_type(current->expr, field->type,
-                                               field->pointer_level);
+                propagate_contextual_call_type(current->expr, field->desc.type,
+                                               field->desc.pointer_level);
             }
-            else if (current->sublist && field->type == VAR_STRUCT &&
-                     field->pointer_level == 0)
+            else if (current->sublist && field->desc.type == VAR_STRUCT &&
+                     field->desc.pointer_level == 0)
             {
-                StructDef *nested_def = get_struct_def(field->struct_name);
+                StructDef *nested_def = get_struct_def(field->desc.struct_name);
                 propagate_contextual_type_into_struct_initializer(
                     current->sublist, nested_def ? nested_def->fields : NULL);
             }
@@ -2086,8 +2087,8 @@ static void check_struct_initializer_pointer_tags(SemanticAnalyzer *analyzer,
     {
         if (fld)
         {
-            if (current->expr && fld->type == VAR_STRUCT &&
-                fld->pointer_level > 0 &&
+            if (current->expr && fld->desc.type == VAR_STRUCT &&
+                fld->desc.pointer_level > 0 &&
                 !is_unresolved_contextual_call(current->expr))
             {
                 VarType elem_type =
@@ -2095,7 +2096,7 @@ static void check_struct_initializer_pointer_tags(SemanticAnalyzer *analyzer,
                 int elem_pl =
                     infer_expression_pointer_level(current->expr, analyzer);
                 if ((elem_type != NONE && elem_type != VAR_STRUCT) ||
-                    elem_pl != fld->pointer_level)
+                    elem_pl != fld->desc.pointer_level)
                 {
                     char error_msg[MAX_BUFFER_LEN];
                     snprintf(error_msg, sizeof(error_msg),
@@ -2103,10 +2104,11 @@ static void check_struct_initializer_pointer_tags(SemanticAnalyzer *analyzer,
                              "expected pointer to struct/union '%s' (level "
                              "%d), got %s pointer level %d",
                              fld->name.data ? fld->name.data : "?",
-                             fld->struct_name.data ? fld->struct_name.data
-                                                   : "?",
-                             fld->pointer_level, vartype_to_string(elem_type),
-                             elem_pl);
+                             fld->desc.struct_name.data
+                                 ? fld->desc.struct_name.data
+                                 : "?",
+                             fld->desc.pointer_level,
+                             vartype_to_string(elem_type), elem_pl);
                     add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
                                        STRING_LITERAL(error_msg), line);
                 }
@@ -2116,14 +2118,15 @@ static void check_struct_initializer_pointer_tags(SemanticAnalyzer *analyzer,
                     snprintf(prefix, sizeof(prefix),
                              "Type mismatch initializing field '%s'",
                              fld->name.data ? fld->name.data : "?");
-                    check_pointer_struct_tag_match(analyzer, fld->struct_name,
+                    check_pointer_struct_tag_match(analyzer,
+                                                   fld->desc.struct_name,
                                                    current->expr, prefix, line);
                 }
             }
-            else if (current->sublist && fld->type == VAR_STRUCT &&
-                     fld->pointer_level == 0)
+            else if (current->sublist && fld->desc.type == VAR_STRUCT &&
+                     fld->desc.pointer_level == 0)
             {
-                StructDef *nested_def = get_struct_def(fld->struct_name);
+                StructDef *nested_def = get_struct_def(fld->desc.struct_name);
                 check_struct_initializer_pointer_tags(
                     analyzer, current->sublist,
                     nested_def ? nested_def->fields : NULL, line);
@@ -3623,11 +3626,11 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
             break;
         }
 
-        node->var_type = fld->type;
-        node->pointer_level = fld->pointer_level;
-        node->modifiers = fld->modifiers;
-        if (fld->type == VAR_STRUCT && fld->struct_name.data)
-            node->data.struct_access.struct_name = fld->struct_name;
+        node->var_type = fld->desc.type;
+        node->pointer_level = fld->desc.pointer_level;
+        node->modifiers = fld->desc.modifiers;
+        if (fld->desc.type == VAR_STRUCT && fld->desc.struct_name.data)
+            node->data.struct_access.struct_name = fld->desc.struct_name;
         break;
     }
 

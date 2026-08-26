@@ -121,57 +121,58 @@ typedef enum
     NONE,
 } VarType;
 
+/* A complete description of a value's type: base VarType, indirection,
+   width/signedness modifiers, the struct/union or enum tag when relevant,
+   and (for a fixed-size array declaration) its dimensions. Used both as a
+   transient value (the `lit` alias machinery, make_type_descriptor()) and,
+   since #206 3b, embedded in the stored declarations that used to carry
+   these as parallel scalar fields (StructField). Tag strings are a
+   non-owning view for a transient descriptor; a STORED declaration that
+   embeds one owns and frees its own copies (StructField: freed in
+   free_struct_registry). */
 typedef struct
 {
     VarType type;
     int pointer_level;
     TypeModifiers modifiers;
-    /* Non-owning type view. Stored declarations copy tag names they keep. */
     String struct_name;
     String enum_name;
+    /* Set for a fixed-size array declaration (`chad params[4];`); the
+       fields above then describe the ELEMENT type. is_array == false for a
+       plain scalar/pointer, with array_dimensions left zeroed. */
+    bool is_array;
+    ArrayDimensions array_dimensions;
 } TypeDescriptor;
 
 /* A single field inside a struct definition */
 typedef struct StructField
 {
     String name;
-    VarType type;
-    String struct_name; /* nested struct/union tag; set whenever
-                            type == VAR_STRUCT, including pointer-typed
-                            fields (pointer_level > 0) — e.g. a
-                            self-referential `gang Node *next;` field records
-                            its tag so chaining `.` through it (`a.next.val`,
-                            #197) can resolve the pointee's definition when
-                            resolve_struct_access() follows the pointer */
-    String enum_name;   /* nested enum tag; set whenever type == VAR_ENUM */
-    int pointer_level;
-    /* is_long/is_long_long/is_unsigned, reachable ONLY via a `lit` alias
-       used as a field's type (e.g. `lit giga rizz Meters; gang G
-       { Meters m; };`) -- the `struct_field` grammar rule (lang.y) has
-       no modifier-prefixed production, so `giga rizz field;` written
-       directly inside a struct body does not parse at all; only the
-       `alias_type declarator SEMICOLON` alternative forwards real
-       modifiers, every other struct_field alternative passes
-       (TypeModifiers){0}. get_struct_field_size()/
-       get_struct_field_alignment() (ast.c) both key off this for
-       VAR_INT so a `giga`/`thicc`-aliased field's *slot* is 8 bytes at
-       an 8-aligned offset instead of silently being sized as a plain
-       4-byte int. This is occupancy only: the value actually stored in
-       that slot is still loaded/stored through a 4-byte int (see
-       evaluate_expression_int()/write_value_to_address()) -- the same
-       pre-existing gap plain `giga`/`thicc` variables have outside of
-       any struct, not something this field closes. */
-    TypeModifiers modifiers;
-    /* Fixed-size array field (e.g. `chad params[4];`), reachable only
-       through the `struct_field: type declarator dimensions SEMICOLON`
-       grammar rule -- pointer_level, struct_name, enum_name, and
-       modifiers above still describe the ELEMENT type, exactly like
-       Variable/Parameter's own is_array/array_dimensions pair. Array
-       fields of struct/union-typed elements are not supported yet
-       (build_struct_fields_from_params(), lang.y, rejects that
-       combination at parse time). */
-    bool is_array;
-    ArrayDimensions array_dimensions;
+    /* The field's full type (base VarType, pointer_level, modifiers,
+       struct/union or enum tag, and array-ness), collapsed from the
+       parallel scalar fields StructField used to carry into one
+       TypeDescriptor (#206 3b). Notes preserved from those fields:
+
+       - desc.struct_name: nested struct/union tag, set whenever
+         desc.type == VAR_STRUCT, INCLUDING pointer-typed fields
+         (pointer_level > 0) -- a self-referential `gang Node *next;` field
+         records its tag so `a.next.val` (#197) can resolve the pointee.
+         Heap-owned by this field (safe_strdup'd), freed in
+         free_struct_registry -- a StructField is a stored declaration, so
+         it owns its tag copies even though a transient TypeDescriptor's
+         are a non-owning view. desc.enum_name likewise, for VAR_ENUM.
+       - desc.modifiers (is_long/is_long_long/is_unsigned): reachable ONLY
+         via a `lit` alias field type (`lit giga rizz Meters; gang G {
+         Meters m; };`) -- struct_field has no modifier-prefixed grammar
+         production. get_struct_field_size()/get_struct_field_alignment()
+         key off it so a `giga`/`thicc`-aliased field's SLOT is 8 bytes at
+         an 8-aligned offset. Occupancy only: the value in that slot is
+         still loaded/stored through a 4-byte int (a pre-existing gap plain
+         giga/thicc variables share).
+       - desc.is_array / desc.array_dimensions: fixed-size array field
+         (`chad params[4];`); the rest of desc then describes the ELEMENT
+         type. Arrays of struct/union-typed elements are not supported. */
+    TypeDescriptor desc;
     size_t offset; /* byte offset within the struct blob */
     struct StructField *next;
 } StructField;
