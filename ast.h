@@ -250,11 +250,13 @@ typedef struct Parameter
 typedef struct Function
 {
     String name;
-    VarType return_type;
-    int return_pointer_level;
-    String return_struct_name; /* struct/union tag; set when
-                                   return_type == VAR_STRUCT */
-    String return_enum_name;   /* enum tag; set when return_type == VAR_ENUM */
+    /* The function's return type, collapsed from the parallel scalar
+       fields (return_type, return_pointer_level, return_struct_name,
+       return_enum_name) into one TypeDescriptor (#206 3b). return_desc.
+       struct_name is the struct/union tag when return_desc.type ==
+       VAR_STRUCT (a pointer-to-struct return keeps its tag too, #193);
+       return_desc.enum_name for VAR_ENUM. */
+    TypeDescriptor return_desc;
     Parameter *parameters;
     ASTNode *body;
 } Function;
@@ -272,20 +274,21 @@ typedef struct
         String strvalue;
         uintptr_t pvalue;
     } value;
-    VarType type;
-    int pointer_level;
-    /* struct/union tag, set when type == VAR_STRUCT *and* pointer_level ==
-       0 (a by-value struct return): value.pvalue then points at a heap
-       blob (malloc'd fresh in handle_return_statement, NOT scope-owned)
-       that the caller must copy out of and free -- see the comment on
-       handle_return_statement's VAR_STRUCT case, and free_pending_return_
-       value()'s pointer_level == 0 gate. For a pointer-to-struct return
-       (type == VAR_STRUCT, pointer_level > 0, #193) value.pvalue is a
-       BORROWED pointer to caller-owned storage, NOT an owned blob, and
-       struct_name is left empty -- do not free it, and do not memcpy from
-       it as if it were a blob. */
-    String struct_name;
-    String enum_name; /* enum tag, set when type == VAR_ENUM */
+    /* The return value's type, collapsed from the parallel scalar fields
+       (type, pointer_level, struct_name, enum_name) into one
+       TypeDescriptor (#206 3b). Notes preserved:
+       - desc.struct_name is the struct/union tag, set when desc.type ==
+         VAR_STRUCT *and* desc.pointer_level == 0 (a by-value struct
+         return): value.pvalue then points at a heap blob (malloc'd fresh
+         in handle_return_statement, NOT scope-owned) the caller must copy
+         out of and free -- see handle_return_statement's VAR_STRUCT case
+         and free_pending_return_value()'s pointer_level == 0 gate. For a
+         pointer-to-struct return (desc.type == VAR_STRUCT, desc.pointer_
+         level > 0, #193) value.pvalue is a BORROWED pointer to caller-owned
+         storage, NOT an owned blob, and desc.struct_name is left empty --
+         do not free it, and do not memcpy from it as if it were a blob.
+       - desc.enum_name is the enum tag, set when desc.type == VAR_ENUM. */
+    TypeDescriptor desc;
     /* Set when type == VAR_STRING: true iff value.strvalue.data is a
        heap buffer this ReturnValue is responsible for freeing once
        consumed. Two independent sources set it true, both meaning the

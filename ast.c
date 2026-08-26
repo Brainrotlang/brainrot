@@ -1978,7 +1978,7 @@ VarType get_expression_type(ASTNode *node)
         Function *func = get_function(func_name);
         if (func != NULL)
         {
-            return func->return_type;
+            return func->return_desc.type;
         }
         yyerror("Undefined function in get_expression_type");
         return NONE;
@@ -2170,7 +2170,7 @@ static VarType infer_runtime_expression_type_noeval(ASTNode *expr)
 
         Function *func = get_function(func_name);
         if (func != NULL)
-            return func->return_type;
+            return func->return_desc.type;
         return NONE;
     }
     case NODE_STRUCT_ACCESS:
@@ -3313,8 +3313,8 @@ static bool unbox_native_numeric_result(void *raw, VarType actual, double *out)
  * unreachable. */
 static bool warn_if_native_result_void(const char *context_name)
 {
-    if (current_return_value.type != VAR_VOID &&
-        current_return_value.type != NONE)
+    if (current_return_value.desc.type != VAR_VOID &&
+        current_return_value.desc.type != NONE)
         return false;
     char error_msg[MAX_BUFFER_LEN];
     snprintf(error_msg, sizeof(error_msg),
@@ -3418,16 +3418,16 @@ float evaluate_expression_float(ASTNode *node)
             return 0.0f;
         }
         double value;
-        if (!unbox_native_numeric_result(raw, current_return_value.type,
+        if (!unbox_native_numeric_result(raw, current_return_value.desc.type,
                                          &value))
         {
             char error_msg[MAX_BUFFER_LEN];
             snprintf(error_msg, sizeof(error_msg),
                      "Native call result (%s) cannot be used in a float "
                      "context",
-                     vartype_to_string(current_return_value.type));
+                     vartype_to_string(current_return_value.desc.type));
             yyerror(error_msg);
-            free_native_result_box(raw, current_return_value.type);
+            free_native_result_box(raw, current_return_value.desc.type);
             return 0.0f;
         }
         SAFE_FREE(raw);
@@ -3564,16 +3564,16 @@ double evaluate_expression_double(ASTNode *node)
             return 0.0L;
         }
         double value;
-        if (!unbox_native_numeric_result(raw, current_return_value.type,
+        if (!unbox_native_numeric_result(raw, current_return_value.desc.type,
                                          &value))
         {
             char error_msg[MAX_BUFFER_LEN];
             snprintf(error_msg, sizeof(error_msg),
                      "Native call result (%s) cannot be used in a double "
                      "context",
-                     vartype_to_string(current_return_value.type));
+                     vartype_to_string(current_return_value.desc.type));
             yyerror(error_msg);
-            free_native_result_box(raw, current_return_value.type);
+            free_native_result_box(raw, current_return_value.desc.type);
             return 0.0L;
         }
         SAFE_FREE(raw);
@@ -3809,13 +3809,13 @@ String evaluate_expression_string(ASTNode *node)
            STDROT_PTR result specifically -- this closes the identical
            hole for every other mismatched type too, e.g. a legacy
            STDROT_ANY export that actually returned an int). */
-        if (current_return_value.type != VAR_STRING)
+        if (current_return_value.desc.type != VAR_STRING)
         {
             char error_msg[MAX_BUFFER_LEN];
             snprintf(error_msg, sizeof(error_msg),
                      "Native call result (%s) cannot be used in a string "
                      "context",
-                     vartype_to_string(current_return_value.type));
+                     vartype_to_string(current_return_value.desc.type));
             yyerror(error_msg);
             SAFE_FREE(raw);
             return (String){.data = NULL, .len = 0};
@@ -3958,16 +3958,16 @@ short evaluate_expression_short(ASTNode *node)
             return 0;
         }
         double value;
-        if (!unbox_native_numeric_result(raw, current_return_value.type,
+        if (!unbox_native_numeric_result(raw, current_return_value.desc.type,
                                          &value))
         {
             char error_msg[MAX_BUFFER_LEN];
             snprintf(error_msg, sizeof(error_msg),
                      "Native call result (%s) cannot be used in an "
                      "integer context",
-                     vartype_to_string(current_return_value.type));
+                     vartype_to_string(current_return_value.desc.type));
             yyerror(error_msg);
-            free_native_result_box(raw, current_return_value.type);
+            free_native_result_box(raw, current_return_value.desc.type);
             return 0;
         }
         SAFE_FREE(raw);
@@ -4177,16 +4177,16 @@ int evaluate_expression_int(ASTNode *node)
             return 0;
         }
         double value;
-        if (!unbox_native_numeric_result(raw, current_return_value.type,
+        if (!unbox_native_numeric_result(raw, current_return_value.desc.type,
                                          &value))
         {
             char error_msg[MAX_BUFFER_LEN];
             snprintf(error_msg, sizeof(error_msg),
                      "Native call result (%s) cannot be used in an "
                      "integer context",
-                     vartype_to_string(current_return_value.type));
+                     vartype_to_string(current_return_value.desc.type));
             yyerror(error_msg);
-            free_native_result_box(raw, current_return_value.type);
+            free_native_result_box(raw, current_return_value.desc.type);
             return 0;
         }
         SAFE_FREE(raw);
@@ -4243,8 +4243,8 @@ static void marshal_native_return_value(ASTNode *node)
     NativeResult nr = native_call_consume(node);
     StdrotValue result = nr.value;
 
-    current_return_value.pointer_level = 0;
-    current_return_value.struct_name = (String){0};
+    current_return_value.desc.pointer_level = 0;
+    current_return_value.desc.struct_name = (String){0};
     /* nr.owns_string (NativeResult, stdrot.h) is scoped to exactly this
        `nr` -- not a global -- so it can only ever be true here when THIS
        call's own result really is the materialized string it describes,
@@ -4271,13 +4271,13 @@ static void marshal_native_return_value(ASTNode *node)
     {
         const StdrotEntry *entry =
             get_native_function(node->data.func_call.function_name);
-        current_return_value.type = VAR_INT;
-        current_return_value.pointer_level =
+        current_return_value.desc.type = VAR_INT;
+        current_return_value.desc.pointer_level =
             (entry ? entry->return_type.pointer_level : 0) + 1;
     }
     else
     {
-        current_return_value.type = stdrot_type_to_vartype(result.type);
+        current_return_value.desc.type = stdrot_type_to_vartype(result.type);
     }
     current_return_value.has_value = result.type != STDROT_NONE;
 
@@ -4362,14 +4362,14 @@ void *handle_function_call(ASTNode *node)
            returned NULL despite this call genuinely having a value),
            reinterpreting a real address as if it were the scalar value
            at that address, or discarding it outright. */
-        if (current_return_value.pointer_level > 0)
+        if (current_return_value.desc.pointer_level > 0)
         {
             return_value = SAFE_MALLOC(uintptr_t);
             *(uintptr_t *)return_value = current_return_value.value.pvalue;
             return return_value;
         }
 
-        switch (current_return_value.type)
+        switch (current_return_value.desc.type)
         {
         case VAR_INT:
             return_value = SAFE_MALLOC(int);
@@ -4615,15 +4615,15 @@ bool evaluate_expression_bool(ASTNode *node)
            legacy STDROT_ANY export that actually returned a string) must
            be rejected here the same way it already is for the numeric
            evaluators, not silently reinterpreted through a `bool *`. */
-        if (current_return_value.type != VAR_BOOL)
+        if (current_return_value.desc.type != VAR_BOOL)
         {
             char error_msg[MAX_BUFFER_LEN];
             snprintf(error_msg, sizeof(error_msg),
                      "Native call result (%s) cannot be used in a bool "
                      "context",
-                     vartype_to_string(current_return_value.type));
+                     vartype_to_string(current_return_value.desc.type));
             yyerror(error_msg);
-            free_native_result_box(raw, current_return_value.type);
+            free_native_result_box(raw, current_return_value.desc.type);
             return 0;
         }
         bool return_val = *(bool *)raw;
@@ -4885,7 +4885,7 @@ VarType get_function_return_type(const String name)
     Function *func = get_function(name);
     if (func != NULL)
     {
-        return func->return_type;
+        return func->return_desc.type;
     }
     yyerror("Undefined function in type check");
     return NONE;
@@ -4896,7 +4896,7 @@ static int get_function_return_pointer_level(const String name)
     Function *func = get_function(name);
     if (func != NULL)
     {
-        return func->return_pointer_level;
+        return func->return_desc.pointer_level;
     }
     yyerror("Undefined function in type check");
     return 0;
@@ -5940,8 +5940,8 @@ Function *create_function_ex(String name, VarType return_type,
     }
 
     func->name = safe_strdup(&name);
-    func->return_type = return_type;
-    func->return_pointer_level = return_pointer_level;
+    func->return_desc.type = return_type;
+    func->return_desc.pointer_level = return_pointer_level;
     func->parameters = params;
     func->body = body;
 
@@ -5980,8 +5980,8 @@ void execute_function_call(const String name, ArgumentList *args)
        before this call overwrites the slot. */
     free_pending_return_value();
 
-    current_return_value.type = func->return_type;
-    current_return_value.pointer_level = func->return_pointer_level;
+    current_return_value.desc.type = func->return_desc.type;
+    current_return_value.desc.pointer_level = func->return_desc.pointer_level;
     current_return_value.has_value = false;
 
     if (!enter_function_scope(func, args))
@@ -6042,19 +6042,19 @@ void free_pending_return_value(void)
        caller owns -- freeing it would destroy the caller's struct (a
        use-after-free when a discarded `pick(&p, &q);` statement releases
        the return slot). */
-    if (current_return_value.type == VAR_STRUCT &&
-        current_return_value.pointer_level == 0 &&
+    if (current_return_value.desc.type == VAR_STRUCT &&
+        current_return_value.desc.pointer_level == 0 &&
         current_return_value.value.pvalue)
     {
         free((void *)current_return_value.value.pvalue);
         current_return_value.value.pvalue = 0;
     }
-    if (current_return_value.struct_name.data)
+    if (current_return_value.desc.struct_name.data)
     {
-        SAFE_FREE(current_return_value.struct_name);
-        current_return_value.struct_name = (String){0};
+        SAFE_FREE(current_return_value.desc.struct_name);
+        current_return_value.desc.struct_name = (String){0};
     }
-    if (current_return_value.type == VAR_STRING &&
+    if (current_return_value.desc.type == VAR_STRING &&
         current_return_value.owns_strvalue &&
         current_return_value.value.strvalue.data)
     {
@@ -6112,8 +6112,8 @@ void handle_return_statement(ASTNode *expr)
         current_func = get_function(scope->function_name);
         if (current_func)
         {
-            declared_type = current_func->return_type;
-            declared_pointer_level = current_func->return_pointer_level;
+            declared_type = current_func->return_desc.type;
+            declared_pointer_level = current_func->return_desc.pointer_level;
         }
     }
     /* Not inside any function (declared_type/declared_pointer_level stay
@@ -6122,15 +6122,15 @@ void handle_return_statement(ASTNode *expr)
 
     if (!expr)
     {
-        current_return_value.type = declared_type;
-        current_return_value.pointer_level = declared_pointer_level;
+        current_return_value.desc.type = declared_type;
+        current_return_value.desc.pointer_level = declared_pointer_level;
         current_return_value.has_value = true;
     }
     else if (declared_pointer_level > 0)
     {
         uintptr_t pointer_result = evaluate_expression_pointer(expr);
-        current_return_value.type = declared_type;
-        current_return_value.pointer_level = declared_pointer_level;
+        current_return_value.desc.type = declared_type;
+        current_return_value.desc.pointer_level = declared_pointer_level;
         current_return_value.has_value = true;
         current_return_value.value.pvalue = pointer_result;
     }
@@ -6141,8 +6141,8 @@ void handle_return_statement(ASTNode *expr)
         case VAR_INT:
         {
             int result = evaluate_expression_int(expr);
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
             current_return_value.value.ivalue = result;
             break;
@@ -6150,8 +6150,8 @@ void handle_return_statement(ASTNode *expr)
         case VAR_FLOAT:
         {
             float result = evaluate_expression_float(expr);
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
             current_return_value.value.fvalue = result;
             break;
@@ -6159,8 +6159,8 @@ void handle_return_statement(ASTNode *expr)
         case VAR_DOUBLE:
         {
             double result = evaluate_expression_double(expr);
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
             current_return_value.value.dvalue = result;
             break;
@@ -6168,8 +6168,8 @@ void handle_return_statement(ASTNode *expr)
         case VAR_BOOL:
         {
             bool result = evaluate_expression_bool(expr);
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
             current_return_value.value.bvalue = result;
             break;
@@ -6177,8 +6177,8 @@ void handle_return_statement(ASTNode *expr)
         case VAR_SHORT:
         {
             short result = evaluate_expression_short(expr);
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
             current_return_value.value.svalue = result;
             break;
@@ -6186,8 +6186,8 @@ void handle_return_statement(ASTNode *expr)
         case VAR_ENUM:
         {
             int result = evaluate_expression_int(expr);
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
             current_return_value.value.ivalue = result;
             break;
@@ -6208,8 +6208,8 @@ void handle_return_statement(ASTNode *expr)
                already reads a char return from that exact union
                member. */
             int result = evaluate_expression_int(expr);
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
             current_return_value.value.ivalue = result;
             break;
@@ -6240,8 +6240,8 @@ void handle_return_statement(ASTNode *expr)
                while evaluating this string can't leave owns_strvalue
                or type stuck on ITS OWN (unrelated) return afterward. */
             String result = evaluate_expression_string(expr);
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
             current_return_value.value.strvalue = result;
             current_return_value.owns_strvalue = true;
@@ -6287,8 +6287,8 @@ void handle_return_statement(ASTNode *expr)
                     free_pending_return_value();
                 }
             }
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
             break;
         case VAR_STRUCT:
@@ -6310,7 +6310,7 @@ void handle_return_statement(ASTNode *expr)
                 execute_function_call(expr->data.func_call.function_name,
                                       expr->data.func_call.arguments);
                 if (!current_return_value.has_value ||
-                    current_return_value.type != VAR_STRUCT)
+                    current_return_value.desc.type != VAR_STRUCT)
                 {
                     yyerror("Return expression call does not return a "
                             "by-value struct/union");
@@ -6318,10 +6318,11 @@ void handle_return_statement(ASTNode *expr)
                     current_return_value.has_value = false;
                     break;
                 }
-                if (current_func && current_func->return_struct_name.data &&
-                    (!current_return_value.struct_name.data ||
-                     strcmp(current_return_value.struct_name.data,
-                            current_func->return_struct_name.data) != 0))
+                if (current_func &&
+                    current_func->return_desc.struct_name.data &&
+                    (!current_return_value.desc.struct_name.data ||
+                     strcmp(current_return_value.desc.struct_name.data,
+                            current_func->return_desc.struct_name.data) != 0))
                 {
                     yyerror("Return expression type does not match declared "
                             "return type");
@@ -6332,13 +6333,13 @@ void handle_return_statement(ASTNode *expr)
                 /* current_return_value already holds the correct blob/tag;
                    normalize the type metadata to this function's declared
                    return (identical to the callee's here) and keep it. */
-                current_return_value.type = declared_type;
-                current_return_value.pointer_level = 0;
+                current_return_value.desc.type = declared_type;
+                current_return_value.desc.pointer_level = 0;
                 current_return_value.has_value = true;
                 break;
             }
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
             /* The source blob is copied into a fresh, heap-owned
                allocation *before* the scope cleanup below runs: that
@@ -6378,9 +6379,9 @@ void handle_return_statement(ASTNode *expr)
                caller's own destination-type check (still correct, but
                the error would point at the call site instead of this
                return). */
-            if (current_func && current_func->return_struct_name.data &&
-                strcmp(src_tag.data, current_func->return_struct_name.data) !=
-                    0)
+            if (current_func && current_func->return_desc.struct_name.data &&
+                strcmp(src_tag.data,
+                       current_func->return_desc.struct_name.data) != 0)
             {
                 yyerror("Return expression type does not match declared "
                         "return type");
@@ -6394,7 +6395,7 @@ void handle_return_statement(ASTNode *expr)
                 if (blob && src_blob)
                     memcpy(blob, src_blob, def->total_size);
                 current_return_value.value.pvalue = (uintptr_t)blob;
-                current_return_value.struct_name = safe_strdup(&src_tag);
+                current_return_value.desc.struct_name = safe_strdup(&src_tag);
             }
             break;
         }
@@ -6513,7 +6514,7 @@ ASTNode *create_function_def_node_struct(String name, String struct_name,
     Function *func =
         create_function_ex(name, VAR_STRUCT, pointer_level, params, body);
     if (func)
-        func->return_struct_name = ARENA_STRDUP(struct_name);
+        func->return_desc.struct_name = ARENA_STRDUP(struct_name);
 
     return node;
 }
@@ -6531,7 +6532,7 @@ ASTNode *create_function_def_node_enum(String name, String enum_name,
 
     Function *func = get_function(name);
     if (func)
-        func->return_enum_name = ARENA_STRDUP(enum_name);
+        func->return_desc.enum_name = ARENA_STRDUP(enum_name);
 
     return node;
 }
@@ -6712,7 +6713,7 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                     curr_arg->expr->data.func_call.function_name,
                     curr_arg->expr->data.func_call.arguments);
                 if (!current_return_value.has_value ||
-                    current_return_value.type != VAR_STRUCT)
+                    current_return_value.desc.type != VAR_STRUCT)
                 {
                     yyerror("Struct argument call does not return a "
                             "by-value struct/union");
@@ -6721,9 +6722,9 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                                                 arg_count);
                     return false;
                 }
-                if (!current_return_value.struct_name.data ||
+                if (!current_return_value.desc.struct_name.data ||
                     !curr_param->desc.struct_name.data ||
-                    strcmp(current_return_value.struct_name.data,
+                    strcmp(current_return_value.desc.struct_name.data,
                            curr_param->desc.struct_name.data) != 0)
                 {
                     yyerror("Struct argument type does not match parameter "
