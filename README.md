@@ -300,12 +300,12 @@ Current limitations include:
 - Limited support for complex expressions
 - Basic error reporting
 - Struct/union function arguments, return values, and copy-initializers
-  accept a plain struct/union variable or a by-value member-access
+  accept a plain struct/union variable, a by-value member-access
   sub-expression (`take(b.corner)`, `bussin b.corner;`, `gang Point c =
-  b.corner;`) of the exact declared type, deep-copied (not aliased). A
-  struct-returning **call result** (`take(make_point())`) and a
-  **pointer-to-struct return type** (`gang Point *f()`) are not yet
-  supported
+  b.corner;`), or a struct-returning call result (`take(make_point())`,
+  `bussin make_point();`, `gang Point c = make_point();`) of the exact
+  declared type, deep-copied (not aliased). A **pointer-to-struct return
+  type** (`gang Point *f()`) is not yet supported
 - Arrays cannot be passed or returned by value (only via a pointer
   parameter, which aliases the caller's array like in C)
 - `ohio`/`based` (switch/default): `based` fires as soon as the interpreter's scan reaches it, so its position among the `sigma rule` cases matters — placing it before a case that would otherwise match currently pre-empts that match ([#179](https://github.com/Brainrotlang/brainrot/issues/179))

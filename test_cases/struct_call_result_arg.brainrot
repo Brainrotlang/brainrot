@@ -1,0 +1,36 @@
+🚽 Test case: #193 -- a struct-returning function CALL result can be passed
+🚽 directly as a by-value struct argument (`show(make(...))`), not just a
+🚽 plain variable or member access. A call's blob lives in the shared
+🚽 current_return_value slot, so it is copied into an owned temporary in
+🚽 enter_function_scope() and freed after binding -- proven here by passing
+🚽 TWO call results in one call (`show2(make(1,2), make(3,4))`), where the
+🚽 second call would overwrite the slot before the first is bound if the
+🚽 temporary weren't taken. Also mixes a plain variable with a call result.
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+gang Point make(rizz a, rizz b) {
+    gang Point p;
+    p.x = a;
+    p.y = b;
+    bussin p;
+}
+
+skibidi show(gang Point p) {
+    yapping("%d %d", p.x, p.y);
+}
+
+skibidi show2(gang Point p, gang Point q) {
+    yapping("%d %d %d %d", p.x, p.y, q.x, q.y);
+}
+
+skibidi main {
+    show(make(3, 7));
+    show2(make(1, 2), make(3, 4));
+    gang Point v;
+    v.x = 9;
+    v.y = 9;
+    show2(v, make(5, 6));
+}
