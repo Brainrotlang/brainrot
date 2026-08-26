@@ -6032,7 +6032,15 @@ void execute_function_call(const String name, ArgumentList *args)
  * anymore. */
 void free_pending_return_value(void)
 {
+    /* pointer_level == 0 gates the free: a by-value struct return owns the
+       heap blob at value.pvalue (allocated by handle_return_statement's
+       VAR_STRUCT arm) and must free it, but a pointer-to-struct return
+       (`gang Point *f()`, #193) stores a BORROWED pointer to storage the
+       caller owns -- freeing it would destroy the caller's struct (a
+       use-after-free when a discarded `pick(&p, &q);` statement releases
+       the return slot). */
     if (current_return_value.type == VAR_STRUCT &&
+        current_return_value.pointer_level == 0 &&
         current_return_value.value.pvalue)
     {
         free((void *)current_return_value.value.pvalue);
@@ -6488,22 +6496,19 @@ ASTNode *create_function_def_node_struct(String name, String struct_name,
     node->data.function_def.parameters = params;
     node->data.function_def.body = body;
 
-    if (pointer_level > 0)
-    {
-        /* By-value struct returns are copied (see handle_return_statement's
-           VAR_STRUCT case); a pointer-to-struct return would need its own,
-           not-yet-implemented handling (interpreter_visit_declaration
-           always allocates a fresh blob for a struct-typed variable,
-           which is wrong for one that should just hold an address).
-           Refuse to register the function rather than silently drop the
-           `*` and treat this as by-value -- get_function() returning NULL
-           at any call site gives a clear "Undefined function" instead of
-           a confusing runtime type error. */
-        yyerror("Struct pointer return types are not yet supported");
-        return node;
-    }
-
-    Function *func = create_function_ex(name, VAR_STRUCT, 0, params, body);
+    /* A pointer-to-struct return (`gang Point *f()`, #193) returns a
+       pointer VALUE, exactly like the already-supported scalar pointer
+       return (`rizz *f()`): handle_return_statement's declared_pointer_
+       level > 0 branch evaluates the return expression as a pointer and
+       boxes it, and interpreter_visit_declaration's pointer branch stores
+       that value into the pointer-typed destination -- no by-value blob is
+       allocated. Registered with its real pointer_level so a call site
+       sees return_pointer_level > 0. Returning `&local` dangles once the
+       callee's scope is freed, the same C undefined behavior the scalar
+       pointer return already has; the safe uses are returning a pointer
+       parameter or a pointer to storage that outlives the call. */
+    Function *func =
+        create_function_ex(name, VAR_STRUCT, pointer_level, params, body);
     if (func)
         func->return_struct_name = ARENA_STRDUP(struct_name);
 

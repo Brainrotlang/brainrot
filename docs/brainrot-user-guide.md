@@ -321,8 +321,10 @@ Q: 10 20 0.0
   function by value as a plain variable, a by-value member-access
   sub-expression (`take(b.corner)`), or a struct-returning call result
   (`take(make_point())`, `bussin make_point();`) of the exact matching
-  type; a pointer-to-struct return type is not yet supported. Arguments and
-  return values are deep-copied, never aliased.
+  type; by-value arguments and returns are deep-copied, never aliased. A
+  function may also return a pointer to a struct (`gang Point *f()`) — a
+  pointer value such as a parameter or longer-lived storage; returning
+  `&local` dangles once the call returns, as in C.
 
 ---
 

@@ -1,0 +1,15 @@
+🚽 Test case: #193 -- returning a struct-returning CALL result whose
+🚽 pointee tag doesn't match the declared return type (`bussin
+🚽 get_rect(r);` where get_rect returns `gang Rect *` but the function
+🚽 returns `gang Point *`) is rejected. infer_expression_struct_name()
+🚽 reads the called function's return_struct_name so the tag check sees
+🚽 through a call, not just an identifier/&/field (PR #255 review).
+gang Point { rizz x; rizz y; };
+gang Rect  { rizz w; rizz h; };
+gang Rect  *get_rect(gang Rect *r) { bussin r; }
+gang Point *bad(gang Rect *r)      { bussin get_rect(r); }
+skibidi main {
+    gang Rect rc; rc.w = 11; rc.h = 22;
+    gang Point *p = bad(&rc);
+    yapping("%d %d", p.x, p.y);
+}
