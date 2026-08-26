@@ -821,6 +821,22 @@ void validate_struct_initializer_shape(StructDef *def, ExpressionList *list);
    that shouldn't surface parse- or runtime-time diagnostics of their own. */
 bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                            StructField **field_out, bool report_errors);
+/* Resolve a by-value struct/union source expression -- a plain struct
+   variable (`p`) or a by-value struct/union member-access sub-expression
+   (`b.corner`, #193) -- to its blob address (*blob_out) and struct/union
+   tag (*tag_out, borrowed). This is the single shared "get me a by-value
+   struct blob" step behind the deep-copy that struct arguments, struct
+   returns, and struct copy-initializers all perform (enter_function_
+   scope(), handle_return_statement(), interpreter_visit_declaration()).
+   A member access transparently follows a pointer base or intermediate
+   field (resolve_struct_access(), #196/#197), but the *resolved* value
+   itself must be a by-value struct/union (pointer_level == 0 on both the
+   identifier and member forms): a struct POINTER where a by-value struct
+   is expected is a type error, not an implicit dereference. Returns false
+   on any failure, emitting exactly one diagnostic via yyerror() when
+   report_errors is true (callers must not add a second). */
+bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
+                                    String *tag_out, bool report_errors);
 /* Set when parsing produced a struct/union that's unusable (self-embedding
    by value, an unknown nested type, or — see populate_struct_fields() —
    a scalar/flattened value where a nested struct/union sub-initializer

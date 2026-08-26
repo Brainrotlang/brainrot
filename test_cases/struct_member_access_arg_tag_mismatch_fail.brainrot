@@ -1,0 +1,23 @@
+🚽 Test case: #193 -- a by-value struct member argument whose field type
+🚽 doesn't match the parameter's struct type (`show(b.thing)` where `thing`
+🚽 is a `gang Other` but `show` wants a `gang Point`) is rejected, the same
+🚽 tag check that already guards a plain struct-variable argument.
+gang Point {
+    rizz x;
+};
+gang Other {
+    rizz y;
+};
+gang Box {
+    gang Other thing;
+};
+
+skibidi show(gang Point p) {
+    yapping("%d", p.x);
+}
+
+skibidi main {
+    gang Box b;
+    b.thing.y = 1;
+    show(b.thing);
+}

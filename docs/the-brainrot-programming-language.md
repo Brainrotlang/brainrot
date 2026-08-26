@@ -490,9 +490,12 @@ Q: 10 20 0.0
   a multi-level pointer field (`gang Node **next`) is not followed and must
   be dereferenced explicitly.
 - A struct can be passed as a function parameter or returned from a
-  function, but only as a plain struct variable of the exact matching type
-  — not a sub-expression like a chained call or a member access. Arguments
-  and return values are deep-copied (C by-value semantics), never aliased.
+  function by value as a plain struct variable (`take(p)`, `bussin p;`) or
+  a by-value struct member-access sub-expression (`take(b.corner)`,
+  `bussin b.corner;`) of the exact matching type. A struct-returning **call
+  result** (`take(make_point())`) and a **pointer-to-struct return type**
+  (`gang Point *f()`) are not yet supported. Arguments and return values
+  are deep-copied (C by-value semantics), never aliased.
 
 ### 7.10. Unions (`chungus`)
 
@@ -591,7 +594,8 @@ follows a single-level pointer field per hop (like C's `->`).
   be dereferenced explicitly.
 - A union can be passed as a function parameter or returned from a
   function under the same rules as a struct (see [§7.9](#79-structs-gang)) —
-  plain variable of the exact matching type, deep-copied.
+  a plain variable or a by-value member-access sub-expression of the exact
+  matching type, deep-copied.
 
 ### 7.11. Enums (`gyatt`)
 
