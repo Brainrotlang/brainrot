@@ -451,11 +451,10 @@ static void register_anonymous_aggregate_typedef(String alias_name,
 
 %start program
 
-/* Define precedence for operators */
+/* Define precedence for operators, lowest to highest. */
 %nonassoc LOWER_THAN_ELSE
 %nonassoc ELSE
 
-%left DOT
 %right EQUALS           /* Assignment operator */
 %left OR                /* Logical OR */
 %left AND               /* Logical AND */
@@ -464,6 +463,13 @@ static void register_anonymous_aggregate_typedef(String alias_name,
 %left PLUS MINUS        /* Addition and subtraction */
 %left TIMES DIVIDE MOD  /* Multiplication, division, modulo */
 %right UMINUS           /* Unary minus */
+/* Member access `.` (struct_access: expression DOT IDENTIFIER) is a
+   postfix operator and must bind TIGHTER than every binary/assignment
+   operator above, matching C -- otherwise `v = m.x` parses as `(v = m).x`
+   and `a.x > b.x` as `((a.x) > b).x` (member access on an operation),
+   the two bugs a too-low DOT precedence caused. Highest precedence = last
+   in this list. */
+%left DOT
 
 %%
 

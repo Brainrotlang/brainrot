@@ -1,0 +1,30 @@
+🚽 Test case: comparing two struct-member reads in one expression (`a.x >
+🚽 b.x`), including through pointer parameters. This emitted a spurious
+🚽 "Unsupported struct member access expression" before the DOT-precedence
+🚽 fix: `.` bound looser than `>`, so `a.x > b.x` parsed as `((a.x) > b).x`
+🚽 -- a member access on the operation `(a.x) > b`. With `.` binding
+🚽 tightest (as in C) it is `(a.x) > (b.x)`.
+gang P {
+    rizz x;
+};
+
+skibidi bigger(gang P *a, gang P *b) {
+    edgy (a.x > b.x) {
+        yapping("A");
+    }
+    amogus {
+        yapping("B");
+    }
+}
+
+skibidi main {
+    gang P p;
+    p.x = 5;
+    gang P q;
+    q.x = 9;
+    bigger(&p, &q);
+    bigger(&q, &p);
+    rizz eq;
+    eq = p.x == q.x;
+    yapping("%d", eq);
+}
