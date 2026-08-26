@@ -265,13 +265,13 @@ static StructField *build_struct_fields_from_params(Parameter *params)
     {
         StructField *f = SAFE_MALLOC(StructField);
         f->name = safe_strdup(&p->name);
-        f->type = p->type;
-        f->struct_name = safe_strdup(&p->struct_name);
-        f->enum_name = safe_strdup(&p->enum_name);
-        f->pointer_level = p->pointer_level;
-        f->modifiers = p->modifiers;
-        f->is_array = p->is_array;
-        f->array_dimensions = p->array_dimensions;
+        f->desc.type = p->type;
+        f->desc.struct_name = safe_strdup(&p->struct_name);
+        f->desc.enum_name = safe_strdup(&p->enum_name);
+        f->desc.pointer_level = p->pointer_level;
+        f->desc.modifiers = p->modifiers;
+        f->desc.is_array = p->is_array;
+        f->desc.array_dimensions = p->array_dimensions;
         f->offset = 0;
         f->next = NULL;
         if (!tail)
