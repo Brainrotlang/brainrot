@@ -946,9 +946,10 @@ void stdrot_release_cstring(const char *p)
     SAFE_FREE(p);
 }
 
-void execute_builtin_function(const String func_name, ArgumentList *args)
+void execute_builtin_function(const String func_name, ArgumentList *args,
+                              int call_line)
 {
-    execute_func_call(func_name, args);
+    execute_func_call(func_name, args, call_line);
 }
 
 static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
@@ -1887,13 +1888,14 @@ NativeResult execute_native_call(const String func_name, ArgumentList *args,
     return (NativeResult){result, owns_string};
 }
 
-void execute_func_call(const String func_name, ArgumentList *args)
+void execute_func_call(const String func_name, ArgumentList *args,
+                       int call_line)
 {
-    /* Statement-position calls: ast.c's NODE_FUNC_CALL case already set
-       g_exec_context.line_number to the call node's own line before reaching
-       here, so forward it as the zero-arg fallback rather than losing it. */
-    NativeResult nr =
-        execute_native_call(func_name, args, g_exec_context.line_number);
+    /* Forward the caller's call-site line straight through: the live
+       statement dispatcher (interpreter_execute_call_statement()) does not
+       populate g_exec_context.line_number itself, so this must not read it
+       back as a fallback -- a zero-arg abort's line comes from call_line. */
+    NativeResult nr = execute_native_call(func_name, args, call_line);
     StdrotValue result = nr.value;
 
     /* Deprecated write-back: if first arg is an identifier and the function

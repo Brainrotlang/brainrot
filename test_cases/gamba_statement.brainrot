@@ -1,0 +1,11 @@
+🚽 Bare statement-position gamba(), result discarded. This runs through a
+🚽 different dispatcher (interpreter_execute_call_statement) than an
+🚽 initializer, and must ALSO report the call's own line on a wasm-stub abort,
+🚽 not "line 0" (issue #215 review). Native draws and discards, then prints;
+🚽 the wasm build errors at the line 8 gamba() call -- see the override in
+🚽 tests/run_wasm_tests.mjs.
+skibidi main {
+    gamba();
+    yapping("drew");
+    bussin 0;
+}

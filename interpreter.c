@@ -274,7 +274,10 @@ static void interpreter_execute_call_statement(ASTNode *node)
 
     if (is_builtin_function(func_name))
     {
-        execute_builtin_function(func_name, args);
+        /* Pass the call node's line so a zero-argument native (e.g. a bare
+           `gamba();`) that aborts reports its call site, not "line 0" -- this
+           statement path never populated g_exec_context.line_number. */
+        execute_builtin_function(func_name, args, node->line_number);
     }
     else
     {
@@ -883,7 +886,7 @@ void interpreter_visit_print_statement(Visitor *self, ASTNode *node)
     ASTNode *expr = node->data.op.left;
     ArgumentList args = {expr, NULL};
     execute_func_call((String){.data = "yapping", .len = sizeof("yapping")},
-                      &args);
+                      &args, node->line_number);
 }
 
 void interpreter_visit_error_statement(Visitor *self, ASTNode *node)
@@ -894,5 +897,6 @@ void interpreter_visit_error_statement(Visitor *self, ASTNode *node)
 
     ASTNode *expr = node->data.op.left;
     ArgumentList args = {expr, NULL};
-    execute_func_call((String){.data = "baka", .len = sizeof("baka")}, &args);
+    execute_func_call((String){.data = "baka", .len = sizeof("baka")}, &args,
+                      node->line_number);
 }

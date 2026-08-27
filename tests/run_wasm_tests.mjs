@@ -157,6 +157,11 @@ const WASM_EXPECTED_OVERRIDES = {
   // guarding that the no-arg form reports the real line, not "line 0".
   gamba_noarg:
     "Error: gamba: CSPRNG unavailable in this build (no OpenSSL) at line 8",
+  // Statement-position (bare `gamba();`) runs through a different dispatcher
+  // than the initializer above. It must ALSO report the call node's line
+  // (line 8), not "line 0" -- guarding the statement path fix.
+  gamba_statement:
+    "Error: gamba: CSPRNG unavailable in this build (no OpenSSL) at line 8",
 };
 
 // Fixtures that call a tests/stdrot/*.c native (poke_int, peek_int,

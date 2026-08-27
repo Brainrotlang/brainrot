@@ -38,8 +38,15 @@ void stdrot_load_module(const char *name, const char *so_path);
 
 /* ── Runtime query / dispatch ────────────────────────────────────────────── */
 bool is_builtin_function(const String func_name);
-void execute_builtin_function(const String func_name, ArgumentList *args);
-void execute_func_call(const String func_name, ArgumentList *args);
+/* call_line is the source line of the CALL node, forwarded to
+ * execute_native_call() as the line source a ZERO-argument native has (see
+ * that function's own comment). Statement-position callers
+ * (interpreter_execute_call_statement()) must pass node->line_number so a
+ * bare `gamba();` abort reports its call site, not "line 0". */
+void execute_builtin_function(const String func_name, ArgumentList *args,
+                              int call_line);
+void execute_func_call(const String func_name, ArgumentList *args,
+                       int call_line);
 /* Registry lookup for a native export's descriptor (name, return_type,
  * params, param_count, min_args, is_variadic). Returns NULL if func_name
  * isn't a registered native function. Used by the semantic analyzer to

@@ -5043,7 +5043,8 @@ void execute_statement(ASTNode *node)
         if (is_builtin_function(node->data.func_call.function_name))
         {
             execute_builtin_function(node->data.func_call.function_name,
-                                     node->data.func_call.arguments);
+                                     node->data.func_call.arguments,
+                                     node->line_number);
         }
         else
         {
@@ -6280,7 +6281,8 @@ void handle_return_statement(ASTNode *expr)
                 if (is_builtin_function(expr->data.func_call.function_name))
                 {
                     execute_builtin_function(expr->data.func_call.function_name,
-                                             expr->data.func_call.arguments);
+                                             expr->data.func_call.arguments,
+                                             expr->line_number);
                 }
                 else
                 {

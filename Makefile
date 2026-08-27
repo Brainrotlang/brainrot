@@ -531,7 +531,8 @@ cppcheck: ## Static analysis with cppcheck (CI static-analysis; needs >= 2.13). 
 .PHONY: tidy
 tidy: ## Static analysis with clang-tidy (needs clang-tidy-15). Nothing sus, certified W.
 	@command -v $(CLANG_TIDY) >/dev/null 2>&1 || { echo "Error: clang-tidy not found. Blud, install clang-tidy-15!"; exit 1; }
-	$(CLANG_TIDY) $(CPPCHECK_SRCS) -- $(CFLAGS) -I. -I$(SRC_DIR) -I$(STDROT_DIR)
+	$(CLANG_TIDY) $(CPPCHECK_SRCS) -- $(CFLAGS) $(CRYPTO_CFLAGS) -I. \
+		-I$(SRC_DIR) -I$(STDROT_DIR)
 	@echo "clang-tidy found nothing sus. Certified W."
 
 # Show help. Self-documenting: the target list is generated from the `## `
