@@ -30,6 +30,10 @@ extern char *current_filename;
 void cooked_init(const char *initial_filename);
 void cooked_cleanup(void);
 
+/* Module search path for #cooked <name>, implemented in lib/module_path.c */
+void module_path_init(void);
+void module_path_cleanup(void);
+
 /* Root of the AST */
 ASTNode *root = NULL;
 static bool parse_error_already_reported = false;
@@ -2059,6 +2063,7 @@ int main(int argc, char *argv[]) {
 
     yyin = source;
     cooked_init(argv[1]);
+    module_path_init();
     current_scope = create_scope(NULL);
 
     /* Phase 0: Load standard library (needed for semantic analysis) */
@@ -2142,6 +2147,7 @@ void cleanup() {
 
     // Close/free any files and strings left by an aborted #cooked include chain
     cooked_cleanup();
+    module_path_cleanup();
 
     // Free the AST
     free_ast();

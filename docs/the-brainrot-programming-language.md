@@ -805,18 +805,42 @@ directive, so a program can be split across multiple files.
 
 ```c
 #cooked "path/to/file.brainrot"
+#cooked <module_name>
 ```
 
-The directive must be alone on its line (leading whitespace is fine). Only
-the quoted form is supported — there is no `<...>` system-header equivalent,
-since stdrot's builtins are already globally available without an include.
+The directive must be alone on its line (leading whitespace is fine).
 
 #### Path resolution
 
-A relative path is resolved relative to the directory of the file
+A relative quoted path is resolved relative to the directory of the file
 *containing* the `#cooked` directive (like C's quote-form `#include`), not
-the current working directory `brainrot` was invoked from. An absolute path
-is used as-is.
+the current working directory `brainrot` was invoked from. An absolute
+quoted path is used as-is.
+
+The angle-bracket form takes a bare module name (no `/`) and resolves it by
+searching, in order:
+
+1. Each directory in `$BRAINROT_PATH` (colon-separated), if set.
+2. Exactly one of the following two — never both, so an install can never
+   shadow a source build or vice versa:
+   - The install module directory (`/usr/local/lib/brainrot`), if the
+     running `brainrot` executable's own directory is the install bin
+     directory (`/usr/local/bin`) — i.e. this *is* an installed binary.
+   - Otherwise, a `stdrot/` directory next to the running executable
+     itself, so an uninstalled build resolves a module sitting in its own
+     source tree with no install step.
+
+   "The running executable" means the actual binary that's executing, not
+   `argv[0]` — a bare command name typed at a shell prompt (as opposed to
+   `./brainrot` or an absolute path) carries no directory information at
+   all, so this is resolved via the OS (`/proc/self/exe` on Linux,
+   `_NSGetExecutablePath` on macOS) rather than guessed from `argv[0]` and
+   the current working directory.
+
+The first directory containing a `<module_name>.brainrot` file wins. This is
+currently the only artifact kind the angle-bracket form resolves to — a
+future phase extends it to native (`.so`) modules via the same search path
+and the same directive, per [the roadmap](ROADMAP.md#phase-4--native-modules-and-cooked).
 
 #### What can be included
 

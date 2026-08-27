@@ -347,7 +347,7 @@ ordinary Brainrot integer constants. They stay on the wishlist.
 
 ## Phase 4 — Native modules and `#cooked`
 
-**Status: not started · Priority: P1 · Depends on: Phase 2**
+**Status: in progress · Priority: P1 · Depends on: Phase 2**
 
 Today exactly one `.so` is loaded, by hardcoded name. Generalize to a module
 directory, each exporting a discovery entrypoint:
@@ -363,6 +363,19 @@ StdrotAPI brainrot_module_init(void);
 Then `#cooked <raylib>`, currently listed as unimplemented in the README, means:
 locate module → `dlopen` → fetch metadata → register types, constants, and
 functions. That is a far better fate for the directive than textual inclusion.
+
+**Landed:** the angle-bracket directive and the module search path resolve
+`#cooked <name>` to a `.brainrot` prelude. Search order: `$BRAINROT_PATH`,
+then exactly one of {the install module directory, `stdrot/` next to the
+running executable} — never both, decided by whether the running executable
+(resolved via `/proc/self/exe`/`_NSGetExecutablePath`, not `argv[0]`) is
+itself the installed binary. See Appendix B Q11's resolution for the full
+reasoning. **Still open:** resolving `<name>` to a native `.so`,
+`brainrot_module_init`, and multi-module registration in `stdrot.c` — no
+real native module (raylib or otherwise) exists in-tree yet,
+so this phase isn't done. Types/constants registration is deferred past this
+phase entirely: `StdrotAPI` only carries a function table today, and nothing
+in-tree needs more than that yet — see [issue #207](https://github.com/Brainrotlang/brainrot/issues/207).
 
 ---
 
@@ -644,29 +657,33 @@ skibidi main {
 opt in by cooking it, which keeps twelve common words out of every program's
 namespace and gives the library a place to live that isn't "more builtins".
 
-That requires the angle-bracket form of the directive, which does not exist yet:
-[lang.l:406](../lang.l#L406) matches only `#cooked "path"`, and anything else
-falls through to the malformed-directive rule at [lang.l:415](../lang.l#L415) and
-dies. So this phase owns a small, self-contained extension:
+That requires the angle-bracket form of the directive, which **landed as part of
+#207** (`lib/module_path.c`, `lang.l`'s `#cooked <name>` rule) rather than in this
+phase — Phase 4 needed the same search path Phase 9a was going to build, so it
+built it first. What remains for this phase specifically is `sussybaka` itself
+existing as a `.brainrot` prelude the resolver can find, not the resolver:
 
 | Form | Meaning | Status |
 | ---- | ------- | ------ |
 | `#cooked "path/to/file.brainrot"` | textual include, resolved relative to the including file | **implemented** |
-| `#cooked <name>` | resolve `name` on the **module search path** | new in this phase |
+| `#cooked <name>` | resolve `name` on the **module search path** | **implemented** (#207) |
 
 Search-path resolution tries, in order:
 
 1. `$BRAINROT_PATH` entries, if set.
-2. The install prefix's library directory (`$PREFIX/lib/brainrot/`).
-3. The in-tree `stdrot/` directory, so a build from source works with no install
-   step — which the test-suite rewrite in §9c depends on.
+2. Exactly ONE of the install module directory (`/usr/local/lib/brainrot`) or
+   the in-tree `stdrot/` directory next to the running executable — never
+   both; see Appendix B Q11's resolution for why the choice between them is
+   decided by which binary is actually running, not by trying both in a
+   fixed order. The in-tree half is what lets `#cooked <sussybaka>` resolve
+   `stdrot/sussybaka.brainrot` from a build with no install step, which the
+   test-suite rewrite in §9c depends on.
 
-A resolved name may be either a `.brainrot` **prelude** or, once Phase 4 lands, a
-native `.so` **module**. That is deliberate: one syntax, one search path, two
-possible artifact kinds. It also settles what the roadmap previously left vague —
-Phase 4's `#cooked <raylib>` and this phase's `#cooked <sussybaka>` are the same
-mechanism, and Phase 4 becomes "teach the existing resolver about `.so` files"
-rather than a whole new directive.
+A resolved name may be either a `.brainrot` **prelude** (implemented) or, once
+the rest of Phase 4 lands, a native `.so` **module**. That is deliberate: one
+syntax, one search path, two possible artifact kinds. It also settles what the
+roadmap previously left vague — Phase 4's `#cooked <raylib>` and this phase's
+`#cooked <sussybaka>` are the same mechanism.
 
 **How v1 splits:**
 
@@ -1285,10 +1302,23 @@ per keyword, and default to "library function" when in doubt.
     has, or is a runner-owned restore list enough? The general mechanism would
     also serve `logoff`, `gatekeep`/`letcook` (Phase 6), and `ghost` (Phase 8),
     which all have the same "must run even on abnormal exit" shape.
-11. **Module search path (Phase 9a).** `$BRAINROT_PATH` + install prefix +
+11. **Module search path (Phase 4/9a).** ~~`$BRAINROT_PATH` + install prefix +
     in-tree `stdrot/` is proposed. Does the in-tree fallback apply always, or
-    only for an uninstalled build? Getting this wrong means a system install
-    silently shadows the working tree, or vice versa.
+    only for an uninstalled build?~~ **Resolved (#207):** not "always, in a
+    fixed order" — exactly ONE of {install module directory, in-tree
+    `stdrot/`} is ever consulted for a given run, chosen by which binary is
+    actually running, so the two structurally cannot shadow each other in
+    either direction. The running executable's own directory is compared
+    against the install bin directory (`/usr/local/bin`); a match means this
+    IS the installed binary, so only the install module directory applies;
+    otherwise this is a source/dev build, so only `stdrot/` next to the
+    executable applies. "The running executable" is resolved via
+    `/proc/self/exe` (Linux) or `_NSGetExecutablePath` (macOS) —
+    deliberately not `argv[0]`, which for a bare `$PATH`-resolved command
+    name (typing `brainrot` after `make install`) has no directory
+    component at all and would resolve against cwd instead of the binary
+    that's actually running. `$BRAINROT_PATH` remains the highest-precedence
+    tier, checked before either half of this split.
 12. **Prelude versus builtins (Phase 9a).** The split is "primitives in
     `libstdrot.so`, surface in a cooked `.brainrot` prelude". The primitives are
     still globally visible builtins even when nobody cooks `sussybaka` — do they
