@@ -6,37 +6,155 @@ binding and its first cursed game, `examples/raylib/ohio_engine.brainrot`
 (Issue #208, Phase 5 "Road A").
 
 It is a **hand-written native module**, not part of the core standard library.
-raylib is an **optional dependency**: `make`, `make test`, and `make valgrind`
-neither build the module nor need raylib installed.
+raylib is an **optional dependency**: `make`, `make test`, `make valgrind`, and
+`make wasm` neither build the module nor need raylib installed. Only
+`make brainray` (and the `make play` convenience target) require it.
 
-## Building
+> **This page is the single source of truth for raylib setup.** The README,
+> the Makefile's `brainray` error message, and `examples/raylib/README.md` all
+> point here rather than repeating install steps.
 
-You need a real raylib discoverable through `pkg-config`:
+## Two libraries, not one
+
+There are **two different shared libraries** involved, and they are not
+interchangeable:
+
+| File | What it is | Who builds it |
+| --- | --- | --- |
+| `libraylib.so` | The **system raylib** C library | Your OS package / a source build of raylib |
+| `brainray/raylib.so` | Brainrot's **native module** wrapping it | `make brainray` |
+
+`#cooked <raylib>` does **not** load the system's `libraylib.so` directly.
+Brainrot searches its module path for a `raylib.brainrot` file or a `raylib.so`
+native module — so it needs the wrapper that `make brainray` produces:
+
+```text
+examples/raylib/ohio_engine.brainrot
+        |  #cooked <raylib>   (Brainrot searches $BRAINROT_PATH for raylib.so)
+        v
+brainray/raylib.so            <-- built by `make brainray`
+        |  raylib C API
+        v
+libraylib.so                  <-- the system raylib you install below
+```
+
+Installing `libraylib.so` alone is therefore **not** enough to run the example:
+without `brainray/raylib.so`, `#cooked <raylib>` cannot resolve the module.
+
+## Installing raylib
+
+`make brainray` finds raylib through **`pkg-config`**, so whatever route you
+pick must leave a working `raylib.pc`. Verify at any point with:
 
 ```bash
-# Debian/Ubuntu
-sudo apt-get install libraylib-dev
-# macOS
+pkg-config --exists raylib && pkg-config --modversion raylib
+```
+
+### Ubuntu / Debian
+
+There is **no `libraylib-dev` package in the official Ubuntu repositories** on
+current releases (22.04 Jammy, 24.04 Noble) — `sudo apt-get install
+libraylib-dev` fails with *"Unable to locate package libraylib-dev"*. Do not use
+it. Pick one of these instead:
+
+**Option A — the raylib PPA (quickest, recommended):** the community
+`ppa:texus/raylib` provides a version-numbered `libraylib<N>-dev` package that
+ships `raylib.pc`. On 22.04/24.04 the current package is `libraylib5-dev`
+(raylib 5.x):
+
+```bash
+sudo add-apt-repository ppa:texus/raylib
+sudo apt-get update
+sudo apt-get install libraylib5-dev
+```
+
+The package name tracks the raylib series (`libraylib5-dev` for 5.x); `apt-cache
+search libraylib` shows what the PPA currently offers for your release. brainray
+only uses long-stable primitives, so the 5.x package is fine.
+
+**Option B — build the latest raylib from source.** Install the build
+dependencies, then build raylib **with CMake** (its CMake install is what
+generates `raylib.pc`; raylib's plain `make install` does *not*, so pkg-config
+would not find it):
+
+```bash
+sudo apt-get install build-essential git cmake libasound2-dev libx11-dev \
+    libxrandr-dev libxi-dev libgl1-mesa-dev libglu1-mesa-dev libxcursor-dev \
+    libxinerama-dev libwayland-dev libxkbcommon-dev
+git clone --depth 1 --branch 6.0 https://github.com/raysan5/raylib.git
+cd raylib
+cmake -B build -DBUILD_SHARED_LIBS=ON -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+sudo cmake --install build
+sudo ldconfig
+```
+
+Two things that will otherwise bite you (both verified against the `6.0` tag):
+
+- **Pin a release tag** (`--branch 6.0`), not `master`. `master` is a
+  development branch (`6.1-dev`) and can drift.
+- **`-DBUILD_EXAMPLES=OFF` is required.** With the examples on, raylib's bundled
+  demos fail to link — a private-dependency generator expression leaks a bare
+  `-lglfw` / `$<BUILD_INTERFACE:pthread` onto the linker command line and the
+  build dies before install. `-DBUILD_EXAMPLES=OFF` builds and installs the
+  library and `raylib.pc` cleanly; you don't need the demos.
+- raylib 6.0's CMake needs **CMake ≥ 3.25**. Ubuntu 22.04's apt `cmake` is 3.22
+  and will refuse to configure — install a newer one first
+  (`pip install --user cmake` or `sudo snap install cmake --classic`), or just
+  use Option A.
+
+### macOS (Homebrew)
+
+Homebrew's raylib ships a `raylib.pc`, so this just works:
+
+```bash
 brew install raylib
 ```
 
-Then build the module (produces `brainray/raylib.so`):
+### Other platforms
+
+Any raylib install is fine as long as `pkg-config --exists raylib` succeeds. The
+official [raylib wiki](https://github.com/raysan5/raylib/wiki) covers Windows,
+BSD, and prebuilt release binaries.
+
+## Building the binding
+
+Once `pkg-config --exists raylib` passes, build the module (produces
+`brainray/raylib.so`):
 
 ```bash
 make brainray
 ```
 
+If raylib is not found, `make brainray` fails fast and points back to this page.
+
 ## Running the cursed game
 
 `#cooked <raylib>` resolves the module through the module search path, so point
-`$BRAINROT_PATH` at the `brainray/` directory:
+`$BRAINROT_PATH` at the `brainray/` directory. The canonical workflow from a
+source checkout is:
 
 ```bash
+# 1. install raylib for your OS (see above) and confirm pkg-config sees it
+pkg-config --exists raylib
+# 2. build the interpreter and the binding
+make
+make brainray
+# 3. run the example (or just `make play`, which does 2+3)
 BRAINROT_PATH=brainray ./brainrot examples/raylib/ohio_engine.brainrot
 ```
 
 A window opens with a bouncing "ABSOLUTE CINEMA" orb and live FPS. Hold
 **SPACE** to speed it up; **ESC** or the close button quits.
+
+`BRAINROT_PATH` is required because Brainrot has to find `raylib.so` on its
+module path. Running `./brainrot examples/raylib/ohio_engine.brainrot` **without**
+it — or `cd examples/raylib && brainrot ohio_engine.brainrot` — fails with a
+module-not-found error, because nothing on the default search path contains
+`raylib.so`. If you `make install` Brainrot globally, the interpreter looks in
+its install module directory too; copy `brainray/raylib.so` there (or keep
+pointing `BRAINROT_PATH` at a directory that holds it) so `#cooked <raylib>`
+resolves.
 
 ## How it works — the Road A ABI trick
 

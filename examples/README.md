@@ -456,13 +456,19 @@ skibidi main {
   (see [`raylib/README.md`](raylib/README.md) and
   [`docs/brainray.md`](../docs/brainray.md)).
 
-**Requires raylib** (an optional dependency). Build the module and run:
+**Requires raylib** (an optional dependency). Install a system raylib first —
+on Ubuntu that is **not** `apt-get install libraylib-dev`; see the canonical
+setup guide [`docs/brainray.md`](../docs/brainray.md#installing-raylib) (Ubuntu
+PPA / source build, macOS `brew install raylib`). Then build the wrapper module
+`brainray/raylib.so` and run (or just `make play`):
 
 ```bash
 make brainray
 BRAINROT_PATH=brainray ./brainrot examples/raylib/ohio_engine.brainrot
 ```
 
+`#cooked <raylib>` loads `brainray/raylib.so`, not the system `libraylib.so`
+directly, so `BRAINROT_PATH` must point at a directory containing it.
 `make`, `make test`, and `make valgrind` do **not** build this module and do
 not require raylib.
 
