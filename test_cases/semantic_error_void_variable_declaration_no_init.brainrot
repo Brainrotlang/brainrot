@@ -1,14 +1,14 @@
-🚽 Test case: round-20 review finding #1, no-initializer variant of the
-🚽 grammar-boundary fix -- `skibidi x;` (no initializer) reaches a
-🚽 DIFFERENT code path than `skibidi x = 5;`: create_default_node()
-🚽 (ast.c), called at parse time to synthesize a zero-value initializer
-🚽 for the declared type, since there's no explicit initializer
-🚽 expression to check against. Its switch had no VAR_VOID case, so this
-🚽 previously fell to the generic "Unsupported type for default node"
-🚽 fallback; now has its own case with a clearer message, exercised here
-🚽 specifically because it's a genuinely separate path from the with-
-🚽 initializer declaration rejection (semantic_visit_declaration(),
+🚽 Test case: no-initializer variant of the grammar-boundary check --
+🚽 `skibidi x;` (no initializer, scalar void) reaches a parse-time check
+🚽 in lang.y that rejects declaring a variable with type void via YYABORT,
+🚽 rather than waiting for semantic_visit_declaration() (which is
 🚽 exercised by semantic_error_void_variable_declaration.brainrot).
+🚽 This prevents creating an invalid declaration AST node and cleanly
+🚽 aborts parsing without hard exit(1) in create_default_node().
+🚽
+🚽 Exercised here as a separate parse-time rejection path.
+🚽
+🚽
 skibidi main {
     skibidi x;
     bussin 0;

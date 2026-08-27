@@ -45,9 +45,10 @@ Memory leak tests are run using Valgrind against the non-sanitized binary (`brai
 make valgrind
 ```
 
-Alternatively, make `run_valgrind_tests.sh` executable and run it directly (defaults to `./brainrot-valgrind`):
+Alternatively, build the Valgrind binary and run the script directly:
 
 ```bash
+make brainrot-valgrind
 chmod +x run_valgrind_tests.sh
 ./run_valgrind_tests.sh
 ```

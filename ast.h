@@ -830,5 +830,5 @@ extern Arena arena;
      : (var_type) == VAR_BOOL   ? NODE_BOOLEAN                                 \
      : (var_type) == VAR_CHAR   ? NODE_CHAR                                    \
      : (var_type) == VAR_STRING ? NODE_STRING                                  \
-                                : (NodeType)-1)
+                                : (NodeType) - 1)
 #endif /* AST_H */

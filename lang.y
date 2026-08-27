@@ -613,7 +613,14 @@ declaration:
                 SAFE_FREE($3.name);
                 YYABORT;
             }
-            $$ = create_declaration_node_ex($3.name, create_default_node($2, $3.pointer_level), $3.pointer_level);
+            ASTNode *default_val = create_default_node($2, $3.pointer_level);
+            if (!default_val)
+            {
+                yyerror("Unsupported type for default node");
+                SAFE_FREE($3.name);
+                YYABORT;
+            }
+            $$ = create_declaration_node_ex($3.name, default_val, $3.pointer_level);
             SAFE_FREE($3.name);
         }
     | optional_modifiers type declarator EQUALS expression

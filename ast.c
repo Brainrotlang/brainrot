@@ -4816,17 +4816,8 @@ ASTNode *create_default_node(VarType var_type, int pointer_level)
     case VAR_ENUM:
         return create_int_node(0);
     case VAR_VOID:
-        /* Reached only for pointer_level == 0 now (the pointer_level > 0
-           case -- `skibidi *p;` -- already returned above, alongside
-           every other pointer-typed default). `skibidi x;` (no
-           initializer, no pointer) is genuinely invalid -- a named
-           void variable was never valid; this just names the rejection
-           instead of falling through the generic default case below. */
-        yyerror("Cannot declare a variable with type void");
-        exit(1);
     default:
-        yyerror("Unsupported type for default node");
-        exit(1);
+        return NULL;
     }
 }
 

@@ -12,54 +12,79 @@ if [[ ! -x "$TARGET" ]]; then
     exit 1
 fi
 
-for f in test_cases/*.brainrot; do
-    echo "Running Valgrind on $f..."
-    base=$(basename "$f" .brainrot)
-    expected_exit=0
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-    case "$base" in
-        slorp_int)                            input="42" ;;
-        slorp_short)                          input="69" ;;
-        slorp_float)                          input="3.14" ;;
-        slorp_double)                         input="3.141592" ;;
-        slorp_char)                           input="c" ;;
-        slorp_bool)                           input="1" ;;
-        slorp_string)                         input="skibidi bop bop yes yes" ;;
-        slorp_identity_char_array)             input="hello" ;;
-        native_cstring_param_char_array)       input="hello" ;;
-        native_char_array_access)              input="hello" ;;
-        native_char_param_scalar)              input="c" ;;
-        identity_string_use_after_free)        input="hello" ;;
-        identity_ownership_nonstring_result)   input="hello" ;;
-        native_call_self_init)                 input="42" ;;
-        native_call_loop)                      input=$'1\n2\n3' ;;
-        native_call_string_arg)                input=$'skibidi\nq' ;;
-        native_call_do_while)                  input=$'5\n50\n6\n150' ;;
-        native_call_numeric_coercion)          input=""; expected_exit=3 ;;
-        *)                                     input="" ;;
-    esac
+python3 - "$TARGET" "$SCRIPT_DIR" << 'EOF'
+import json
+import os
+import subprocess
+import sys
 
-    if [[ -n "$input" ]]; then
-        echo "$input" | valgrind --leak-check=full --error-exitcode=100 "$TARGET" "$f"
-    else
-        valgrind --leak-check=full --error-exitcode=100 "$TARGET" "$f"
-    fi
+target = sys.argv[1]
+script_dir = sys.argv[2]
+test_cases_dir = os.path.join(script_dir, "test_cases")
 
-    valgrind_exit_code=$?  # Capture only valgrind’s exit code
+with open(os.path.join(script_dir, "tests", "stdin_fixtures.json"), "r") as f:
+    stdin_fixtures = json.load(f)
 
-    case $valgrind_exit_code in
-        0|1) ;;
-        100)
-            echo "Valgrind detected memory issues in $f" >&2
-            exit 1
-            ;;
-        *)
-            if [[ $valgrind_exit_code -ne $expected_exit ]]; then
-                echo "Valgrind failed while running $f (exit $valgrind_exit_code)" >&2
-                exit 1
-            fi
-            ;;
-    esac
+with open(os.path.join(script_dir, "tests", "expected_results.json"), "r") as f:
+    expected_results = json.load(f)
 
-    echo
-done
+def get_stdin(base):
+    for prefix, inp in stdin_fixtures:
+        if base.startswith(prefix):
+            return inp
+    return None
+
+def get_expected_exit(base):
+    exp = expected_results.get(base, "")
+    if exp.startswith("ExitCode:"):
+        return int(exp.split(":", 1)[1])
+    return 0
+
+files = sorted(
+    [
+        os.path.join(test_cases_dir, f)
+        for f in os.listdir(test_cases_dir)
+        if f.endswith(".brainrot")
+    ]
+)
+
+for file_path in files:
+    base = os.path.splitext(os.path.basename(file_path))[0]
+    print(f"Running Valgrind on test_cases/{base}.brainrot...")
+    inp = get_stdin(base)
+    expected_exit = get_expected_exit(base)
+
+    cmd = [
+        "valgrind",
+        "--track-origins=yes",
+        "--leak-check=full",
+        "--error-exitcode=100",
+        target,
+        file_path,
+    ]
+
+    proc = subprocess.run(
+        cmd,
+        input=inp.encode() if inp is not None else None,
+    )
+
+    exit_code = proc.returncode
+
+    if exit_code == 100:
+        print(
+            f"Valgrind detected memory issues in test_cases/{base}.brainrot",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if exit_code not in (0, 1) and exit_code != expected_exit:
+        print(
+            f"Valgrind failed while running test_cases/{base}.brainrot (exit {exit_code})",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    print()
+EOF
