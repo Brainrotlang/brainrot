@@ -397,9 +397,18 @@ There are two roads here and we should walk both, in order.
 
 ### Road A — maximum brainrot, immediately (needs only Phase 1)
 
-Link raylib into `libstdrot.so` and hand-write ~20 wrappers over primitives
-only. Textures become integer handles; C owns the `Texture2D textures[]` array
-and Brainrot holds an ID.
+**Status: shipped (#208).** Delivered as a hand-written raylib native module,
+`brainray/raylib.so`, loaded with `#cooked <raylib>` and built by the optional
+`make brainray` target — *not* linked into `libstdrot.so` as this section
+originally proposed, because Phase 4's native-module mechanism (which landed
+after this was written) is the cleaner home and keeps raylib out of the core
+library's build. raylib stays an optional dependency: `make` / `make test` /
+`make valgrind` never build the module and don't need raylib installed. Ships
+~20 primitive wrappers plus `examples/raylib/ohio_engine.brainrot`; see
+[docs/brainray.md](brainray.md). The original design sketch follows.
+
+Hand-write ~20 wrappers over primitives only. Textures become integer handles;
+C owns the `Texture2D textures[]` array and Brainrot holds an ID.
 
 ```c
 skibidi main {

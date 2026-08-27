@@ -401,4 +401,52 @@ Run with `BRAINROT_PATH=examples ./brainrot examples/modules_named.brainrot`.
   `#cooked` forms splice in identical content, they just resolve the target
   file differently.
 
+## 9. Ohio Engine — the first cursed game (raylib)
+
+**File Name:** `raylib/ohio_engine.brainrot`
+
+```c
+#cooked <raylib>
+
+skibidi main {
+    rl_init_window(1280, 720, "Ohio Engine");
+    rl_set_target_fps(60);
+
+    goon (rl_window_should_close() == L) {
+        rl_begin_drawing();
+        rl_clear_background(20, 20, 20, 255);
+        rl_draw_circle(640, 360, 60.0, 255, 0, 255, 255);
+        rl_draw_text("ABSOLUTE CINEMA", 510, 344, 32, 255, 255, 255, 255);
+        rl_end_drawing();
+    }
+
+    rl_close_window();
+    bussin 0;
+}
+```
+
+### What It Does
+
+- Runs an actual raylib game loop: a bouncing "ABSOLUTE CINEMA" orb with live
+  FPS. Hold **SPACE** to speed it up, **ESC** (or the window's close button)
+  to quit.
+- Demonstrates calling a real C library from Brainrot through the `brainray`
+  native module, loaded with `#cooked <raylib>`.
+- Colors are passed as four separate `r, g, b, a` integers and textures would
+  be integer handles — the native ABI does not carry C structs by value yet
+  (see [`raylib/README.md`](raylib/README.md) and
+  [`docs/brainray.md`](../docs/brainray.md)).
+
+**Requires raylib** (an optional dependency). Build the module and run:
+
+```bash
+make brainray
+BRAINROT_PATH=brainray ./brainrot examples/raylib/ohio_engine.brainrot
+```
+
+`make`, `make test`, and `make valgrind` do **not** build this module and do
+not require raylib.
+
+---
+
 Feel free to explore and modify each example to learn more about how this language’s syntax and features work!

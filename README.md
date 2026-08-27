@@ -208,6 +208,21 @@ Check out the [examples](examples/README.md):
 - [Fibonacci Sequence](examples/fibonacci.brainrot)
 - [Modules (`#cooked`)](examples/modules.brainrot)
 - [Named modules (`#cooked <name>`)](examples/modules_named.brainrot)
+- [Ohio Engine — the first cursed game (raylib)](examples/raylib/ohio_engine.brainrot)
+
+### 🎮 The first cursed game
+
+Yes, the joke language runs a real game loop. `examples/raylib/ohio_engine.brainrot`
+calls [raylib](https://www.raylib.com/) through the optional `brainray` native
+module (`#cooked <raylib>`) to bounce an "ABSOLUTE CINEMA" orb around a window.
+Build it and play (raylib required — it is **not** needed for `make`/`make test`):
+
+```bash
+make brainray
+BRAINROT_PATH=brainray ./brainrot examples/raylib/ohio_engine.brainrot
+```
+
+See [`docs/brainray.md`](docs/brainray.md) for the full binding reference.
 
 ## 🗪 Community
 
