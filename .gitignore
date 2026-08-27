@@ -5,6 +5,7 @@ lang.tab.h
 lex.yy.c
 lang.gv
 libstdrot.so
+brainray/raylib.so
 brainrot.wasm
 brainrot.mjs
 tests/brainrot-test.wasm

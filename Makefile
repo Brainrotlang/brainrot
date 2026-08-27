@@ -235,6 +235,37 @@ $(NATIVEMODULES_DIR)/no_module_init.so: $(NATIVEMODULES_DIR)/no_module_init.c \
 nativemodules: $(NATIVEMODULES_LIBS)
 	@echo "tests/nativemodules/*.so (native module fixtures) compiled."
 
+# ── Optional raylib binding: the first cursed game (Issue #208, Phase 5 Road A)
+# brainray/raylib.so is a hand-written native module (brainray/raylib.c) wrapping
+# ~20 raylib primitives, loaded at runtime by `#cooked <raylib>`. It links
+# against a real raylib resolved via pkg-config, so it is DELIBERATELY excluded
+# from `all`, `test`, `valgrind`, `install`, and `wasm`: raylib is an optional
+# dependency of THIS target only, and the whole test suite stays green without it
+# installed. Built with the same
+# -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init pattern as the nativemodules
+# fixtures above (registry.c's own comment has the reasoning), so brainray/raylib.c's
+# STDROT_EXPORT_SIG() entries are exported as brainrot_module_init().
+BRAINRAY_DIR := brainray
+BRAINRAY_LIB := $(BRAINRAY_DIR)/raylib.so
+RAYLIB_CFLAGS := $(shell pkg-config --cflags raylib 2>/dev/null)
+RAYLIB_LIBS := $(shell pkg-config --libs raylib 2>/dev/null)
+
+.PHONY: brainray
+brainray: $(BRAINRAY_LIB)
+
+$(BRAINRAY_LIB): $(BRAINRAY_DIR)/raylib.c $(STDROT_DIR)/registry.c
+	@pkg-config --exists raylib || { \
+		echo "Error: raylib not found (pkg-config --exists raylib failed)."; \
+		echo "Install it first (e.g. 'sudo apt-get install libraylib-dev' or"; \
+		echo "'brew install raylib'), then re-run 'make brainray'."; \
+		exit 1; }
+	$(CC) $(SO_CFLAGS) -Wall -Wextra \
+		-DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init \
+		-I. -I$(STDROT_DIR) $(RAYLIB_CFLAGS) -o $@ \
+		$(STDROT_DIR)/registry.c $< $(RAYLIB_LIBS) -lm $(SO_LDFLAGS)
+	@echo "brainray/raylib.so built. Run the cursed game with:"
+	@echo "  BRAINROT_PATH=$(BRAINRAY_DIR) ./brainrot examples/raylib/ohio_engine.brainrot"
+
 # Simulated pre-ABI-versioning libstdrot.so (see tests/old_abi_sim/ own file
 # comment): built standalone, with no dependency on stdrot_api.h or
 # registry.c, so it genuinely only exports the OLD "stdrot_get_api" symbol
@@ -327,6 +358,7 @@ clean:
 	rm -f tests/brainrot-test.wasm tests/brainrot-test.mjs
 	rm -f $(BADNATIVES_LIBS)
 	rm -f $(NATIVEMODULES_LIBS)
+	rm -f $(BRAINRAY_LIB)
 	rm -f $(OLD_ABI_SIM_LIB)
 	rm -f $(ABI_CHECK_BIN)
 	rm -f *.o

@@ -380,9 +380,10 @@ wrapper calling `stdrot_get_api_v2()` from inside a module is silently
 interposed by the always-loaded core library's own copy of that symbol).
 Its functions are registered alongside the core library's and any other
 already-cooked module's, with a load-time error on any name collision
-between them. **Still not done:** no real native module (raylib or
-otherwise) exists in-tree yet — that's Phase 5's job, not this phase's, and
-was never this phase's DoD. Types/constants registration is deferred past
+between them. The first real native module built on this mechanism is
+`brainray` (raylib), shipped by Phase 5 Road A (#208) — this phase delivered
+the loader, not a binding, which was never its DoD. Types/constants
+registration is deferred past
 this phase entirely: `StdrotAPI` only carries a function table today, and
 nothing in-tree needs more than that yet — see
 [issue #207](https://github.com/Brainrotlang/brainrot/issues/207).
@@ -391,15 +392,24 @@ nothing in-tree needs more than that yet — see
 
 ## Phase 5 — Bindings and the first cursed game
 
-**Status: not started · Priority: P1**
+**Status: Road A shipped (#208) · Road B not started · Priority: P1**
 
 There are two roads here and we should walk both, in order.
 
 ### Road A — maximum brainrot, immediately (needs only Phase 1)
 
-Link raylib into `libstdrot.so` and hand-write ~20 wrappers over primitives
-only. Textures become integer handles; C owns the `Texture2D textures[]` array
-and Brainrot holds an ID.
+**Status: shipped (#208).** Delivered as a hand-written raylib native module,
+`brainray/raylib.so`, loaded with `#cooked <raylib>` and built by the optional
+`make brainray` target — *not* linked into `libstdrot.so` as this section
+originally proposed, because Phase 4's native-module mechanism (which landed
+after this was written) is the cleaner home and keeps raylib out of the core
+library's build. raylib stays an optional dependency: `make` / `make test` /
+`make valgrind` never build the module and don't need raylib installed. Ships
+~20 primitive wrappers plus `examples/raylib/ohio_engine.brainrot`; see
+[docs/brainray.md](brainray.md). The original design sketch follows.
+
+Hand-write ~20 wrappers over primitives only. Textures become integer handles;
+C owns the `Texture2D textures[]` array and Brainrot holds an ID.
 
 ```c
 skibidi main {
@@ -417,7 +427,8 @@ skibidi main {
 }
 ```
 
-The joke language runs a game loop. Ships as `examples/ohio_engine.brainrot`.
+The joke language runs a game loop. Ships as
+`examples/raylib/ohio_engine.brainrot`.
 
 ### Road B — generate the real binding (needs Phases 2–4)
 

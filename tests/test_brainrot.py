@@ -585,5 +585,51 @@ def test_native_module_internal_duplicate_rejected(tmp_path):
     )
 
 
+REPO_ROOT = os.path.abspath(os.path.join(script_dir, ".."))
+BRAINRAY_DIR = os.path.join(REPO_ROOT, "brainray")
+
+
+def _raylib_available():
+    """True when pkg-config can find raylib, i.e. `make brainray` can build
+    the optional binding. raylib is not a dependency of `make test`, so when
+    it is absent the brainray test below skips (with a reason) rather than
+    failing -- matching #208's "make test does not require raylib"."""
+    if shutil.which("pkg-config") is None:
+        return False
+    return subprocess.run(
+        ["pkg-config", "--exists", "raylib"]).returncode == 0
+
+
+@pytest.mark.skipif(
+    not _raylib_available(),
+    reason="raylib not installed (pkg-config --exists raylib failed); "
+           "brainray is an optional dependency, not required by make test")
+def test_brainray_module_loads_when_raylib_present(tmp_path):
+    """When raylib IS present, `make brainray` builds brainray/raylib.so and
+    `#cooked <raylib>` loads it end to end. This proves the module exports
+    brainrot_module_init(), the module search path resolves the native `.so`,
+    and every rl_* arity/type descriptor passes validate_native_registry() at
+    load time. It calls no rl_* function, so it needs no window or display --
+    the load itself (dlopen at parse time) is what is under test."""
+    build = subprocess.run(
+        ["make", "brainray"], cwd=REPO_ROOT,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert build.returncode == 0, f"`make brainray` failed:\n{build.stdout}"
+    assert os.path.exists(os.path.join(BRAINRAY_DIR, "raylib.so")), (
+        "make brainray did not produce brainray/raylib.so")
+
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    source_path = tmp_path / "prog.brainrot"
+    source_path.write_text("#cooked <raylib>\nskibidi main { bussin 0; }\n")
+
+    env = dict(os.environ, BRAINROT_PATH=BRAINRAY_DIR)
+    result = subprocess.run(
+        [brainrot_path, str(source_path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+
+    assert result.returncode == 0, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
+
+
 if __name__ == "__main__":
     pytest.main(["-v", os.path.abspath(__file__)])
