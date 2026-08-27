@@ -1,0 +1,33 @@
+🚽 gamba() is the cryptographically safe RNG (issue #215). A CSPRNG can't be
+🚽 string-matched against a fixed roll, so this fixture asserts PROPERTIES that
+🚽 hold for every honest run, never a concrete value. (On the OpenSSL-free wasm
+🚽 build gamba is an erroring stub -- see WASM_EXPECTED_OVERRIDES in
+🚽 tests/run_wasm_tests.mjs, which anchors on the line 7 gamba call below.)
+skibidi main {
+    rizz fixed = gamba(1, 1);
+    yapping("fixed=%d", fixed);
+
+    🚽 gamba(n) lands in [0, n).
+    rizz r = gamba(5);
+    yapping("bounded=%b", r >= 0 && r < 5);
+
+    🚽 gamba(lo, hi) is inclusive on both ends, and a few hundred dice rolls
+    🚽 are not all the same face (catches a stuck "always return 0/lo").
+    rizz first = gamba(1, 6);
+    cap in_range = W;
+    cap varies = L;
+    rizz i = 0;
+    goon (i < 500) {
+        rizz face = gamba(1, 6);
+        edgy (face < 1 || face > 6) { in_range = L; }
+        edgy (face != first) { varies = W; }
+        i = i + 1;
+    }
+    yapping("dice_in_range=%b", in_range);
+    yapping("dice_varies=%b", varies);
+
+    🚽 gamba() with no argument is an unbiased value in [0, INT_MAX].
+    rizz nonce = gamba();
+    yapping("noarg_nonneg=%b", nonce >= 0);
+    bussin 0;
+}

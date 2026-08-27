@@ -209,8 +209,9 @@ static NativeResult native_call_peek(ASTNode *node)
         }
     }
 
-    NativeResult result = execute_native_call(
-        node->data.func_call.function_name, node->data.func_call.arguments);
+    NativeResult result =
+        execute_native_call(node->data.func_call.function_name,
+                            node->data.func_call.arguments, node->line_number);
     native_call_cache[free_slot].node = node;
     native_call_cache[free_slot].result = result;
     native_call_cache[free_slot].valid = true;
@@ -228,7 +229,8 @@ static NativeResult native_call_consume(ASTNode *node)
         }
     }
     return execute_native_call(node->data.func_call.function_name,
-                               node->data.func_call.arguments);
+                               node->data.func_call.arguments,
+                               node->line_number);
 }
 
 /* Helper to build a namespaced static key */
@@ -5041,7 +5043,8 @@ void execute_statement(ASTNode *node)
         if (is_builtin_function(node->data.func_call.function_name))
         {
             execute_builtin_function(node->data.func_call.function_name,
-                                     node->data.func_call.arguments);
+                                     node->data.func_call.arguments,
+                                     node->line_number);
         }
         else
         {
@@ -6278,7 +6281,8 @@ void handle_return_statement(ASTNode *expr)
                 if (is_builtin_function(expr->data.func_call.function_name))
                 {
                     execute_builtin_function(expr->data.func_call.function_name,
-                                             expr->data.func_call.arguments);
+                                             expr->data.func_call.arguments,
+                                             expr->line_number);
                 }
                 else
                 {

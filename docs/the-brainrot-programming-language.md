@@ -30,6 +30,9 @@ A Meme-Fueled Journey into Compiler Design, Internet Slang, and Skibidi Toilets
    - 8.3. `baka`
    - 8.4. `ragequit`
    - 8.5. `chill`
+   - 8.6. `slorp`
+   - 8.7. `bet`
+   - 8.8. `gamba`
 9. **Limitations**
 10. **Known Issues**
 11. **Cultural Context: The Rise of ‘Brain Rot’**
@@ -81,6 +84,11 @@ To compile Brainrot from source, you’ll need:
 - **GCC** (GNU Compiler Collection)
 - **Flex** (Fast Lexical Analyzer)
 - **Bison** (Parser Generator)
+- **OpenSSL** (`libcrypto`) — a **required** dependency of the standard
+  library (`libstdrot.so`), which uses it for the cryptographically safe
+  `gamba()` RNG (see [§8.8](#88-gamba)). The development headers are needed to
+  build; on Linux the runtime `libcrypto` is also needed to run. Building
+  without OpenSSL is a failed link, not a `gamba`-less interpreter.
 
 Installation commands vary by platform:
 
@@ -88,20 +96,24 @@ Installation commands vary by platform:
 
 ```bash
 sudo apt-get update
-sudo apt-get install gcc flex bison libfl-dev
+sudo apt-get install gcc flex bison libfl-dev libssl-dev
 ```
 
 ### Arch Linux
 
 ```bash
-sudo pacman -S gcc flex bison
+sudo pacman -S gcc flex bison openssl
 ```
 
 ### macOS (via Homebrew)
 
 ```bash
-brew install gcc flex bison
+brew install gcc flex bison openssl@3
 ```
+
+> **Note**: Homebrew's OpenSSL is keg-only, but `make` locates it
+> automatically and statically links `libcrypto` into `libstdrot.so`, so the
+> built standard library is self-contained.
 
 > **Note**: If you encounter `libfl` issues on macOS, you may need to locate and symlink `libfl.dylib` manually, as outlined in the README.
 
@@ -276,6 +288,7 @@ Brainrot supports common arithmetic and logical operators:
 - **`ragequit`**: terminates program execution immediately with the provided exit code.
 - **`chill`**: sleep for a integer number of seconds.
 - **`slorp`**: reads user input, similar to `scanf` but safe.
+- **`gamba`**: cryptographically safe random integers (OpenSSL `RAND_bytes`).
 
 ---
 
@@ -1122,6 +1135,50 @@ Error: bet: assertion failed at line 2: this assertion must fail
 ```
 
 The program terminates immediately when a `bet` fails, preventing further execution.
+
+---
+
+### 8.8. `gamba`
+
+```c
+rizz gamba();          /* unbiased value in [0, INT_MAX]        */
+rizz gamba(rizz n);    /* unbiased value in [0, n)              */
+rizz gamba(rizz lo, rizz hi);  /* unbiased value in [lo, hi], inclusive */
+```
+
+`gamba` is Brainrot's cryptographically safe random number generator. It is a
+standard-library builtin (no `#cooked`, no keyword) backed by OpenSSL's
+`RAND_bytes`, so `libcrypto` is a **required** native build dependency of
+`libstdrot.so`.
+
+- **Unbiased.** Ranges use rejection sampling, never `gamba() % n`, so every
+  value in the range is equally likely -- no modulo bias.
+- **Honest failures.** If the CSPRNG fails, `gamba` aborts with an error
+  rather than returning a look-alike `0`. It never falls back to C's
+  `rand()`/`random()` and there is no seed function (`gamba_seed` would be a
+  security bug -- OpenSSL seeds itself).
+- **Range checks.** `gamba(n)` requires `n > 0` and `gamba(lo, hi)` requires
+  `hi >= lo`; an invalid range aborts with an error, it does not wrap.
+- The three integer forms take no argument, one argument (`n`), or two
+  arguments (`lo, hi`); all arguments are `rizz` and the result is always
+  `rizz`.
+
+> A filling form `gamba_bytes(buf, n)` (raw random bytes into a buffer) is
+> planned but not yet available. On the WebAssembly build, which is
+> intentionally OpenSSL-free, `gamba` errors instead of returning a value.
+
+**Example**:
+
+```c
+skibidi main {
+    rizz roll = gamba(1, 6);
+    yapping("you rolled %d", roll);
+
+    rizz nonce = gamba();
+    yapping("nonce %d", nonce);
+    bussin 0;
+}
+```
 
 ---
 

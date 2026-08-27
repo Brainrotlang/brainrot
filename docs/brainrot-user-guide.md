@@ -375,6 +375,7 @@ Brainrot includes some built-in functions for convenience:
 | **chill**    | -           | -            | Sleeps for an integer number of seconds.                              |
 | **slorp**    | `stdin`     | -            | Reads user input.                                                     |
 | **bet**      | `stderr`    | No           | Tests conditions and terminates with error message if false.          |
+| **gamba**    | -           | -            | Cryptographically safe random integers (OpenSSL `RAND_bytes`).        |
 
 ## 10.1. yapping
 
@@ -577,6 +578,47 @@ skibidi main {
 Output:
 ```
 Error: bet: assertion failed at line 2: this assertion must fail
+```
+
+---
+
+## 10.8. gamba
+
+**Prototype**
+
+```c
+rizz gamba();                  /* unbiased value in [0, INT_MAX]        */
+rizz gamba(rizz n);            /* unbiased value in [0, n)              */
+rizz gamba(rizz lo, rizz hi);  /* unbiased value in [lo, hi], inclusive */
+```
+
+**Key Points**
+
+- `gamba` is the **cryptographically safe** random number generator, backed by
+  OpenSSL's `RAND_bytes`. It is a standard-library builtin -- globally
+  available, no `#cooked`, not a keyword.
+- The ranged forms are **unbiased**: they use rejection sampling, so you never
+  need `gamba() % n` (which would reintroduce modulo bias).
+- A CSPRNG failure is a **hard error**, never a silent `0`. There is no
+  fallback to C's `rand()`/`random()` and no seed function -- OpenSSL seeds
+  itself.
+- Invalid ranges abort: `gamba(n)` requires `n > 0`, and `gamba(lo, hi)`
+  requires `hi >= lo`.
+- Because `libcrypto` is a required native dependency, building `libstdrot.so`
+  needs OpenSSL development headers (e.g. `libssl-dev` on Ubuntu/Debian). The
+  WebAssembly build stays OpenSSL-free, and `gamba` errors there.
+
+### Example
+
+```c
+skibidi main {
+    rizz roll = gamba(1, 6);
+    yapping("you rolled %d", roll);
+
+    rizz nonce = gamba();
+    yapping("nonce %d", nonce);
+    bussin 0;
+}
 ```
 
 ---

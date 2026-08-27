@@ -946,9 +946,10 @@ void stdrot_release_cstring(const char *p)
     SAFE_FREE(p);
 }
 
-void execute_builtin_function(const String func_name, ArgumentList *args)
+void execute_builtin_function(const String func_name, ArgumentList *args,
+                              int call_line)
 {
-    execute_func_call(func_name, args);
+    execute_func_call(func_name, args, call_line);
 }
 
 static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
@@ -1604,7 +1605,8 @@ static bool finalize_native_string_result(StdrotValue *result)
     return true;
 }
 
-NativeResult execute_native_call(const String func_name, ArgumentList *args)
+NativeResult execute_native_call(const String func_name, ArgumentList *args,
+                                 int call_line)
 {
     if (!func_name.data || !functions)
     {
@@ -1620,12 +1622,20 @@ NativeResult execute_native_call(const String func_name, ArgumentList *args)
         return (NativeResult){{STDROT_NONE, {0}}, false};
     }
 
-    /* Set execution context - get line number from first argument node */
+    /* Set execution context. Prefer the first argument node's line (keeps
+       every existing multi-arg diagnostic byte-for-byte), and fall back to
+       the call node's own line -- the only source a ZERO-argument native has,
+       so an arg-less abort (a CSPRNG failure, the wasm gamba() stub) reports
+       the real call site instead of "line 0". */
     g_exec_context.function_name.data = func_name.data;
     g_exec_context.line_number = 0;
     if (args && args->expr && args->expr->line_number > 0)
     {
         g_exec_context.line_number = args->expr->line_number;
+    }
+    else if (call_line > 0)
+    {
+        g_exec_context.line_number = call_line;
     }
 
     /* Count first so the argument vector is sized to the actual call --
@@ -1878,9 +1888,14 @@ NativeResult execute_native_call(const String func_name, ArgumentList *args)
     return (NativeResult){result, owns_string};
 }
 
-void execute_func_call(const String func_name, ArgumentList *args)
+void execute_func_call(const String func_name, ArgumentList *args,
+                       int call_line)
 {
-    NativeResult nr = execute_native_call(func_name, args);
+    /* Forward the caller's call-site line straight through: the live
+       statement dispatcher (interpreter_execute_call_statement()) does not
+       populate g_exec_context.line_number itself, so this must not read it
+       back as a fallback -- a zero-arg abort's line comes from call_line. */
+    NativeResult nr = execute_native_call(func_name, args, call_line);
     StdrotValue result = nr.value;
 
     /* Deprecated write-back: if first arg is an identifier and the function

@@ -38,8 +38,15 @@ void stdrot_load_module(const char *name, const char *so_path);
 
 /* ── Runtime query / dispatch ────────────────────────────────────────────── */
 bool is_builtin_function(const String func_name);
-void execute_builtin_function(const String func_name, ArgumentList *args);
-void execute_func_call(const String func_name, ArgumentList *args);
+/* call_line is the source line of the CALL node, forwarded to
+ * execute_native_call() as the line source a ZERO-argument native has (see
+ * that function's own comment). Statement-position callers
+ * (interpreter_execute_call_statement()) must pass node->line_number so a
+ * bare `gamba();` abort reports its call site, not "line 0". */
+void execute_builtin_function(const String func_name, ArgumentList *args,
+                              int call_line);
+void execute_func_call(const String func_name, ArgumentList *args,
+                       int call_line);
 /* Registry lookup for a native export's descriptor (name, return_type,
  * params, param_count, min_args, is_variadic). Returns NULL if func_name
  * isn't a registered native function. Used by the semantic analyzer to
@@ -109,8 +116,18 @@ typedef struct
  * directly -- no write-back, no deprecation warning. This is what
  * expression-position native calls (ast.c's handle_function_call) use;
  * execute_func_call() layers the deprecated write-back convention on top
- * of this for statement-position calls. */
-NativeResult execute_native_call(const String func_name, ArgumentList *args);
+ * of this for statement-position calls.
+ *
+ * call_line is the source line of the CALL node itself, used to populate
+ * g_exec_context.line_number for a native that reports an error. It is the
+ * only line source for a ZERO-argument call (e.g. `gamba()`): the line was
+ * historically taken from the first argument's node, so an arg-less native
+ * that aborts (a CSPRNG failure, the wasm gamba stub) would otherwise report
+ * "line 0". A positive first-argument line still wins when present, keeping
+ * every existing multi-arg diagnostic unchanged; call_line is the fallback.
+ * Pass 0 when no call-site line is available. */
+NativeResult execute_native_call(const String func_name, ArgumentList *args,
+                                 int call_line);
 
 /* ── Stub functions (forward declarations for use by ast.c) ──────────────── */
 void yapping(const String format, ...);
