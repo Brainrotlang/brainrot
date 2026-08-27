@@ -369,5 +369,8 @@
     "lit_struct_alias_array_fail": "Error: Arrays of struct/union typedef aliases are not supported at line 9\nParsing failed",
     "lit_forward_struct_typedef_fail": "Error: Unknown struct/union type 'Ghost' at line 1\nParsing failed",
     "lit_enum_constant_alias_conflict_fail": "Error: Enum constant 'RED' is already defined at line 4\nParsing failed",
-    "lit_storage_class_typedef_fail": "Error: Storage-class modifiers are not allowed in typedef aliases at line 1\nParsing failed"
+    "lit_storage_class_typedef_fail": "Error: Storage-class modifiers are not allowed in typedef aliases at line 1\nParsing failed",
+    "gamba": "fixed=1\nbounded=W\ndice_in_range=W\ndice_varies=W\nnoarg_nonneg=W",
+    "gamba_range_fail": "Error: gamba: gamba(lo, hi) requires hi >= lo at line 4",
+    "gamba_zero_fail": "Error: gamba: gamba(n) requires n > 0 at line 4"
 }

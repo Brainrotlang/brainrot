@@ -29,17 +29,22 @@ runs:
           -o Acquire::Retries=3 \
           -o Acquire::http::Timeout=15 \
           -o Acquire::https::Timeout=15 \
-          install gcc flex bison libfl-dev -y
+          install gcc flex bison libfl-dev libssl-dev -y
 
     - name: Install release dependencies (macOS)
       if: ${{ inputs.os == 'darwin' }}
       shell: bash
       run: |
         set -euo pipefail
-        brew install flex bison
+        brew install flex bison openssl@3
         echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
         echo "$(brew --prefix flex)/bin" >> "$GITHUB_PATH"
         echo "FLEX_PREFIX=$(brew --prefix flex)" >> "$GITHUB_ENV"
+        # openssl is keg-only on Homebrew: point pkg-config at its .pc files
+        # so the Makefile's `pkg-config --libs libcrypto` resolves gamba's
+        # RAND_bytes dependency (issue #215) instead of falling back to a
+        # bare -lcrypto the linker can't find.
+        echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig" >> "$GITHUB_ENV"
 
     - name: Build release binaries
       shell: bash

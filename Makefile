@@ -13,6 +13,17 @@ LDFLAGS := -lfl -lm -ldl -rdynamic
 SO_CFLAGS := -fPIC -shared
 SO_LDFLAGS :=
 
+# OpenSSL libcrypto is a REQUIRED native build dependency of libstdrot.so:
+# stdrot/gamba.c calls RAND_bytes for the cryptographically safe gamba()
+# (issue #215). Resolved via pkg-config when available (picks up keg-only
+# Homebrew openssl on macOS through PKG_CONFIG_PATH), falling back to a plain
+# -lcrypto. A missing OpenSSL is meant to FAIL the native link, not compile a
+# gamba-less or rand()-backed interpreter -- so these flags are unconditional
+# for every native libstdrot.so target below. The wasm build (-DSTDROT_STATIC)
+# deliberately never sees them: gamba is an erroring stub there (issue #175).
+CRYPTO_CFLAGS := $(shell pkg-config --cflags libcrypto 2>/dev/null)
+CRYPTO_LIBS := $(shell pkg-config --libs libcrypto 2>/dev/null || echo -lcrypto)
+
 # `make release` ships binaries (GitHub Actions release matrix). Drop
 # sanitizers so the artifact doesn't need libasan/libubsan at runtime.
 # FLEX_PREFIX is for keg-only Homebrew flex on macOS (the release
@@ -166,7 +177,7 @@ release: clean all ## Sanitizer-free rpath build for shipped binaries. Certified
 
 # stdrot shared library build
 $(STDROT_LIB): $(STDROT_SRCS)
-	$(CC) $(SO_CFLAGS) -I. -o $@ $^ -lm $(SO_LDFLAGS)
+	$(CC) $(SO_CFLAGS) $(CRYPTO_CFLAGS) -I. -o $@ $^ -lm $(CRYPTO_LIBS) $(SO_LDFLAGS)
 	@echo "libstdrot.so compiled with max rizz."
 
 # Test-only stdrot shared library build (production natives + tests/stdrot/
@@ -174,7 +185,7 @@ $(STDROT_LIB): $(STDROT_SRCS)
 # "stdrot_api.h" the same bare way every production stdrot/*.c file already
 # does, despite living in a different directory.
 $(TEST_STDROT_LIB): $(STDROT_SRCS) $(TEST_STDROT_SRCS)
-	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $^ -lm $(SO_LDFLAGS)
+	$(CC) $(SO_CFLAGS) $(CRYPTO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $^ -lm $(CRYPTO_LIBS) $(SO_LDFLAGS)
 	@echo "tests/libstdrot.so (production + test-only natives) compiled."
 
 # Malformed-registry .so's: one per tests/badnatives/*.c, each linked

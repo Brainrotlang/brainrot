@@ -142,6 +142,16 @@ const WASM_EXPECTED_OVERRIDES = {
     "'mathmod' (looked for 'mathmod.brainrot' via $BRAINROT_PATH, then " +
     "either the install module directory or a 'stdrot' directory next " +
     "to this executable, whichever applies)",
+  // gamba is cryptographically safe RNG backed by OpenSSL RAND_bytes
+  // (issue #215). The wasm build is deliberately OpenSSL-free (issue #175),
+  // so gamba is a documented erroring stub there (stdrot/gamba.c's
+  // STDROT_STATIC branch) rather than a weaker generator. The happy-path
+  // fixture draws randomness on its first call (`rizz fixed = gamba(1, 1);`,
+  // line 7) and so aborts here instead of printing native's property
+  // assertions. The two invalid-range fixtures (gamba_range_fail,
+  // gamba_zero_fail) reject BEFORE touching the CSPRNG, so they emit the
+  // same error on wasm as native and need no override.
+  gamba: "Error: gamba: CSPRNG unavailable in this build (no OpenSSL) at line 7",
 };
 
 // Fixtures that call a tests/stdrot/*.c native (poke_int, peek_int,
