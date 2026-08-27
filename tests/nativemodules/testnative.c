@@ -5,7 +5,7 @@
  * brainrot_module_init() entrypoint end to end -- exports one ordinary
  * function so a test can prove it's actually callable after being cooked,
  * not just that loading didn't crash. Linked with stdrot/registry.c (like
- * tests/badnatives/*.c), whose linker-section collection already gathers
+ * tests/badnatives/ *.c files), whose linker-section collection already gathers
  * this file's STDROT_EXPORT_SIG() below -- built with
  * -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init (Makefile,
  * registry.c's own comment) so that collection is exported directly as

@@ -34,7 +34,7 @@ extern StdrotEntry *__stop_stdrot_exports;
 
 /* STDROT_REGISTRY_ENTRYPOINT lets this same linker-section-collecting body
  * serve two distinct roles under two distinct exported names, so that a
- * cooked native module built with it (tests/nativemodules/*.c,
+ * cooked native module built with it (tests/nativemodules/ *.c files,
  * -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init in the Makefile) NEVER
  * defines a symbol literally named stdrot_get_api_v2 at all:
  *
