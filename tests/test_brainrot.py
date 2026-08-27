@@ -488,6 +488,30 @@ def test_native_module_dual_load_and_include_once(tmp_path):
     assert result.stdout == "6\n", f"Actual stdout:\n{result.stdout}"
 
 
+def test_native_module_two_modules_loaded_at_once(tmp_path):
+    """Two DIFFERENT, non-colliding native modules are both loaded and both
+    remain independently callable -- #207's own "two modules loaded at
+    once" DoD item specifically, distinct from the dual-load test above
+    (core + one module, one of them cooked twice) and from
+    test_native_module_duplicate_with_module below (two modules, but the
+    second load must FAIL)."""
+    _assert_nativemodules_built("testnative.so", "testnative2.so")
+
+    result = _run_with_native_modules(
+        '#cooked <testnative>\n'
+        '#cooked <testnative2>\n'
+        'skibidi main {\n'
+        '    yapping("%d", tripled(2));\n'
+        '    yapping("%d", halved(10));\n'
+        '    bussin 0;\n'
+        '}\n', tmp_path)
+
+    assert result.returncode == 0, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert result.stdout == "6\n5\n", f"Actual stdout:\n{result.stdout}"
+
+
 def test_native_module_duplicate_with_core(tmp_path):
     """A module exporting a name the core library already provides ('bet')
     must be rejected, naming the core library as the existing source."""

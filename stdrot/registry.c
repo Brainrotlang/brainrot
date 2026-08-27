@@ -43,23 +43,32 @@ extern StdrotEntry *__stop_stdrot_exports;
  *   - Defined as brainrot_module_init (a cooked module's own build): this
  *     is brainrot_module_init(), dlsym'd by stdrot_load_module() (stdrot.c).
  *
- * That is load-bearing, not cosmetic: the core library and every cooked
- * module can be simultaneously dlopen'd with RTLD_GLOBAL into the SAME
- * process (stdrot_load()'s own comment explains why RTLD_GLOBAL is
- * needed at all -- so a module can see e.g. g_exec_context). If a
- * module's own entrypoint were instead a small wrapper that CALLED a
- * separately-named stdrot_get_api_v2() also present in that module's
- * binary, that call is an ordinary global-scope-resolved symbol
- * reference -- and since the core library's OWN same-named
- * stdrot_get_api_v2 was already loaded into that same global scope
- * first, the dynamic linker's normal "first definition in load order
- * wins" interposition rule would silently redirect the module's internal
- * call to the CORE's copy instead of its own, handing back the core
- * library's entire function table under the guise of loading the
- * module. Giving the module build a uniquely-named entrypoint instead of
- * an internal cross-symbol call removes the collision by construction --
- * there is no other symbol in the process named brainrot_module_init for
- * an ordinary global-scope lookup to redirect to. */
+ * That is load-bearing, not cosmetic, but NOT because brainrot_module_init
+ * is a process-wide-unique name -- it isn't: every cooked module is built
+ * with this same override, so two loaded modules both export a global
+ * symbol named brainrot_module_init, and that is fine. What actually
+ * matters is HOW each one gets called: stdrot_load_module() (stdrot.c)
+ * calls dlsym(handle, "brainrot_module_init") against that specific
+ * module's own dlopen() handle, which searches that object (and its own
+ * dependencies) directly -- never the process-wide global symbol scope --
+ * so which OTHER object also happens to export that name is irrelevant.
+ * Contrast that with the bug this rename fixes: a module built as this
+ * same registry.c PLUS a separate small wrapper that CALLS
+ * stdrot_get_api_v2() BY ORDINARY NAME from inside the module's own code
+ * is a normal global-scope-resolved symbol reference, not a dlsym-by-
+ * handle lookup -- and since the core library's own same-named
+ * stdrot_get_api_v2 was already loaded into that scope first (see
+ * stdrot_load_module()'s own comment on why cooked modules use
+ * RTLD_LOCAL specifically to keep this from ever mattering), the dynamic
+ * linker's "first definition in load order wins" interposition rule
+ * would silently redirect that internal call to the CORE's copy instead
+ * of the module's own, handing back the core library's entire function
+ * table under the guise of loading the module. Making the EXPORTED
+ * entrypoint itself do the collection -- no internal cross-symbol call at
+ * all -- removes that specific hazard by construction; RTLD_LOCAL
+ * (stdrot_load_module()) independently ensures a module's exports never
+ * reach the global scope to begin with, so this is defense in depth, not
+ * a single point of correctness. */
 #ifndef STDROT_REGISTRY_ENTRYPOINT
 #define STDROT_REGISTRY_ENTRYPOINT stdrot_get_api_v2
 #endif

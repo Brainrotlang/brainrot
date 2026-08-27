@@ -853,18 +853,23 @@ top-level content, so it should contain only function and struct
 definitions — **not** its own `skibidi main`. (A Brainrot program has
 exactly one `main`; splicing in a second one is a parse error.)
 
-A `#cooked <name>` that resolves to a native `.so` instead is dlopen'd and
-must export a `StdrotAPI brainrot_module_init(void)` entrypoint — the native
-counterpart of the core standard library's own `stdrot_get_api_v2()`, built
-the exact same way (`stdrot/registry.c`'s linker-section collection of every
+A `#cooked <name>` that resolves to a native `.so` instead is dlopen'd
+(`RTLD_LOCAL`, not the core library's `RTLD_GLOBAL`) and must export a
+`StdrotAPI brainrot_module_init(void)` entrypoint — the native counterpart
+of the core standard library's own `stdrot_get_api_v2()`, built the exact
+same way (`stdrot/registry.c`'s linker-section collection of every
 `STDROT_EXPORT_SIG()` in the module, exported under the module-specific name
 instead via `-DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init` — see
-`tests/nativemodules/testnative.c` for a minimal example and
-`stdrot/registry.c`'s own comment for why that name must be unique across
-every simultaneously-loaded module, not a shared symbol name resolved by
-generic dynamic-linker lookup). Its exported functions become callable
-alongside the core library's and any other already-cooked module's; a name
-colliding with either is a load-time error naming the existing source.
+`tests/nativemodules/testnative.c` for a minimal example). Every cooked
+module exports that *same* entrypoint name; that's fine because it's always
+looked up by that specific module's own `dlopen` handle (never a
+process-wide symbol search), and `RTLD_LOCAL` keeps it from ever entering
+the global symbol scope in the first place — see `stdrot/registry.c`'s own
+comment for why an *internal* cross-symbol call from inside a module (as
+opposed to this handle-scoped lookup) is the actual hazard this design
+avoids. Its exported functions become callable alongside the core
+library's and any other already-cooked module's; a name colliding with
+either is a load-time error naming the existing source.
 Missing or ABI-incompatible `brainrot_module_init()`, and a malformed
 function table, are both load-time errors for the same reason a
 `libstdrot.so` built against an incompatible ABI is (see `stdrot_load()`,

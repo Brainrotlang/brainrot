@@ -641,7 +641,23 @@ void stdrot_load_module(const char *name, const char *so_path)
         exit(1);
     }
 
-    void *handle = dlopen(so_path, RTLD_LAZY | RTLD_GLOBAL);
+    /* RTLD_LOCAL, unlike the core library's own dlopen() above: a cooked
+       module is looked up entirely by explicit handle --
+       dlsym(handle, "brainrot_module_init") below searches that specific
+       object (and its own dependencies), never the process-wide global
+       scope, so RTLD_GLOBAL buys nothing for that lookup. The core
+       library needs RTLD_GLOBAL because some of its OWN natives
+       (yapping's varargs stubs, stdrot_lookup_symbol() above) are reached
+       by ordinary natives dlsym'ing/linking against main-binary globals
+       like g_exec_context; a cooked module has no such need by design.
+       Keeping it RTLD_LOCAL also means a module's own exported symbols
+       (including, deliberately, its own brainrot_module_init -- every
+       cooked module built via -DSTDROT_REGISTRY_ENTRYPOINT=
+       brainrot_module_init exports one under that exact same name) never
+       enter the process-wide symbol scope at all, so two modules sharing
+       that name is never a collision to begin with, regardless of load
+       order -- not because the name happens to be unique (it isn't). */
+    void *handle = dlopen(so_path, RTLD_LAZY | RTLD_LOCAL);
     if (!handle)
     {
         fprintf(stderr, "Error: cannot load module '%s' (%s): %s\n", name,
