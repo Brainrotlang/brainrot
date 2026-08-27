@@ -872,7 +872,7 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
         }
 
         int num_indices = obj->data.array.num_dimensions;
-        int indices[MAX_DIMENSIONS];
+        int indices[MAX_DIMENSIONS] = {0};
         for (int i = 0; i < num_indices; i++)
             indices[i] = evaluate_expression_int(obj->data.array.indices[i]);
         size_t offset = calculate_array_offset(var->desc.is_array,
@@ -1013,7 +1013,7 @@ bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
             return false;
         }
         int num_indices = expr->data.array.num_dimensions;
-        int indices[MAX_DIMENSIONS];
+        int indices[MAX_DIMENSIONS] = {0};
         for (int i = 0; i < num_indices; i++)
             indices[i] = evaluate_expression_int(expr->data.array.indices[i]);
         size_t offset = calculate_array_offset(src->desc.is_array,
