@@ -339,8 +339,16 @@ Current limitations include:
 
 - Limited support for complex expressions
 - Basic error reporting
+- Structs/unions can be the element type of an array, including
+  multi-dimensional ones (`gang Point pts[3];`, `gang Point grid[2][2];`);
+  index-then-access composes (`pts[i].x`, `grid[r][c].y`, `lines[i].a.x`),
+  and an element is a by-value struct anywhere a plain struct variable is.
+  Whole-struct assignment to an existing element (`pts[i] = c;`) and array
+  brace initializers (`gang Point pts[2] = {{1,2},{3,4}};`) are not yet
+  supported — declare and assign per field, or copy-initialize
 - Struct/union function arguments, return values, and copy-initializers
-  accept a plain struct/union variable, a by-value member-access
+  accept a plain struct/union variable, an array element (`take(pts[i])`,
+  `bussin pts[i];`, `gang Point c = pts[i];`), a by-value member-access
   sub-expression (`take(b.corner)`, `bussin b.corner;`, `gang Point c =
   b.corner;`), or a struct-returning call result (`take(make_point())`,
   `bussin make_point();`, `gang Point c = make_point();`) of the exact

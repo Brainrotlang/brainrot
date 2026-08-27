@@ -1,0 +1,22 @@
+🚽 Test case: arrays of struct/union VALUES, e.g. `gang Point pts[3];`.
+🚽 Declares a one-dimensional array of structs, writes each element's
+🚽 fields by index in a loop, and reads them back -- the core path for
+🚽 an array whose elements are whole structs (distinct from an array
+🚽 FIELD inside a struct).
+gang Point {
+    rizz x;
+    chad y;
+};
+
+skibidi main {
+    gang Point pts[3];
+    rizz i;
+    flex (i = 0; i < 3; i = i + 1) {
+        pts[i].x = i * 10;
+        pts[i].y = i + 0.5;
+    }
+    flex (i = 0; i < 3; i = i + 1) {
+        yapping("pts[%d] = %d %.1f", i, pts[i].x, pts[i].y);
+    }
+    bussin 0;
+}

@@ -374,5 +374,13 @@
     "gamba_range_fail": "Error: gamba: gamba(lo, hi) requires hi >= lo at line 4",
     "gamba_zero_fail": "Error: gamba: gamba(n) requires n > 0 at line 4",
     "gamba_noarg": "nonneg=W",
-    "gamba_statement": "drew"
+    "gamba_statement": "drew",
+    "array_of_structs": "pts[0] = 0 0.5\npts[1] = 10 1.5\npts[2] = 20 2.5\n",
+    "array_of_structs_2d": "grid[0][0] = 0 0\ngrid[0][1] = 0 1\ngrid[1][0] = 1 0\ngrid[1][1] = 1 1\n",
+    "array_of_structs_nested": "line0 7 1.50\nline1 70 3.25\n",
+    "array_of_structs_by_value": "copy 5 6\nsum 11\npick 30 31\n",
+    "array_of_structs_pointers": "1 4\n",
+    "array_of_structs_unknown_type_fail": "Error: Unknown struct/union type 'Nope' at line 3\nParsing failed",
+    "array_of_structs_oob_fail": "Error: Array index out of bounds: dimension 1 (index=5, size=2) at line 11",
+    "array_of_structs_scalar_member_fail": "Error: Member access on non-struct/union value at line 7"
 }

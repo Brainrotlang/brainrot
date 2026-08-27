@@ -380,8 +380,7 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
      * parse time, into whatever scope happened to be active while parsing)
      * is what gives each call its own array instance and makes a
      * function-local array visible inside the function that declares it. */
-    if (node->is_array &&
-        (node->var_type != VAR_STRUCT || node->pointer_level > 0))
+    if (node->is_array)
     {
         if (node->modifiers.is_static && get_variable(name))
             return;

@@ -384,6 +384,21 @@ bool set_multi_array_variable(const String name, const int dimensions[],
 
     size_t element_size =
         get_type_size_for_descriptor(type, var->desc.pointer_level, mods);
+    /* A struct/union VALUE array's element is a whole blob, not a scalar --
+       get_type_size_for_descriptor() returns 0 for VAR_STRUCT because it has
+       no tag to size. Use the tag's computed layout instead so each element
+       gets its full, alignment-correct stride (a struct/union POINTER array
+       keeps its pointer-slot size from above). */
+    if (type == VAR_STRUCT && var->desc.pointer_level == 0)
+    {
+        StructDef *def = get_struct_def(var->desc.struct_name);
+        if (!def)
+        {
+            yyerror("Unknown struct/union type for array");
+            return false;
+        }
+        element_size = def->total_size;
+    }
     if (element_size == 0)
         element_size = sizeof(int);
 
@@ -823,6 +838,67 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
             parent_base = outer_field_addr;
         }
     }
+    else if (obj && obj->type == NODE_ARRAY_ACCESS && obj->data.array.name.data)
+    {
+        /* Member access on an element of an array of struct/union values or
+           pointers (`pts[i].x`, `ptrs[i].x`). Only the name-based array form
+           is an lvalue-addressable struct here; an array-typed struct FIELD
+           element (`foo.arr[i].x`, obj->data.array.base set) is not
+           supported and falls through to the error below. */
+        Variable *var = get_variable(obj->data.array.name);
+        if (!var || !var->desc.is_array || var->desc.type != VAR_STRUCT)
+        {
+            if (report_errors)
+                yyerror("Member access on a non-struct/union array element");
+            return false;
+        }
+        parent_def = get_struct_def(var->desc.struct_name);
+        if (!parent_def)
+        {
+            if (report_errors)
+                yyerror("Unknown struct or union type");
+            return false;
+        }
+        /* Same single-level implicit-`->` rule as the variable and nested-
+           field branches above: an array of `gang Foo *` follows one level
+           of indirection, an array of `gang Foo **` needs an explicit
+           dereference and is rejected. */
+        if (var->desc.pointer_level > 1)
+        {
+            if (report_errors)
+                yyerror("Member access via '.' through a multi-level "
+                        "pointer (pointer_level > 1) is not supported");
+            return false;
+        }
+
+        int num_indices = obj->data.array.num_dimensions;
+        int indices[MAX_DIMENSIONS];
+        for (int i = 0; i < num_indices; i++)
+            indices[i] = evaluate_expression_int(obj->data.array.indices[i]);
+        size_t offset = calculate_array_offset(var->desc.is_array,
+                                               &var->desc.array_dimensions,
+                                               indices, num_indices);
+        size_t stride = var->desc.pointer_level > 0 ? sizeof(uintptr_t)
+                                                    : parent_def->total_size;
+        void *element_addr = (char *)var->value.array_data + offset * stride;
+
+        if (var->desc.pointer_level == 1)
+        {
+            uintptr_t target = *(uintptr_t *)element_addr;
+            if (!target)
+            {
+                if (report_errors)
+                    yyerror("Null pointer dereference in struct member "
+                            "access");
+                return false;
+            }
+            parent_base = (void *)target;
+        }
+        else
+        {
+            parent_base = element_addr;
+        }
+    }
     else
     {
         if (report_errors)
@@ -904,6 +980,47 @@ bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
         }
         *blob_out = (char *)base + fld->offset;
         *tag_out = fld->desc.struct_name;
+        return true;
+    }
+
+    if (expr->type == NODE_ARRAY_ACCESS && expr->data.array.name.data)
+    {
+        /* An element of an array of struct/union VALUES (`pts[i]`) is itself
+           a by-value struct -- its blob lives inline in the array storage.
+           A pointer-element array (`gang Foo *ptrs[N]`) is rejected for the
+           same reason a struct-pointer variable is above: `ptrs[i]` is an
+           address, and using it where a value is expected would be an
+           implicit dereference. */
+        Variable *src = get_variable(expr->data.array.name);
+        if (!src || !src->desc.is_array || src->desc.type != VAR_STRUCT)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union value");
+            return false;
+        }
+        if (src->desc.pointer_level > 0)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union value, got a "
+                        "pointer");
+            return false;
+        }
+        StructDef *def = get_struct_def(src->desc.struct_name);
+        if (!def)
+        {
+            if (report_errors)
+                yyerror("Unknown struct or union type");
+            return false;
+        }
+        int num_indices = expr->data.array.num_dimensions;
+        int indices[MAX_DIMENSIONS];
+        for (int i = 0; i < num_indices; i++)
+            indices[i] = evaluate_expression_int(expr->data.array.indices[i]);
+        size_t offset = calculate_array_offset(src->desc.is_array,
+                                               &src->desc.array_dimensions,
+                                               indices, num_indices);
+        *blob_out = (char *)src->value.array_data + offset * def->total_size;
+        *tag_out = src->desc.struct_name;
         return true;
     }
 
@@ -1149,6 +1266,27 @@ void *evaluate_multi_array_access(ASTNode *node)
     // Calculate the offset
     size_t offset = calculate_array_offset(
         var->desc.is_array, &var->desc.array_dimensions, indices, num_indices);
+
+    /* An element of an array of struct/union VALUES is a whole blob, whose
+       stride get_type_size_for_descriptor() (below) reports as 0. Its byte
+       address is `array_data + offset * total_size`. Bare `pts[i]` used as
+       a scalar value is never meaningful for such an array -- member access
+       (`pts[i].f`) and by-value use (`gang P c = pts[i];`, `bussin pts[i];`)
+       resolve the element through resolve_struct_access()/resolve_by_value_
+       struct_source() instead -- so returning the element address here just
+       gives those (and the harmless return-statement pre-visit that discards
+       it) a valid pointer rather than hitting the zero-stride guard. A
+       struct/union POINTER array keeps its pointer-slot stride below. */
+    if (var->desc.type == VAR_STRUCT && var->desc.pointer_level == 0)
+    {
+        StructDef *def = get_struct_def(var->desc.struct_name);
+        if (!def)
+        {
+            yyerror("Unknown struct/union type for array");
+            exit(EXIT_FAILURE);
+        }
+        return (char *)var->value.array_data + offset * def->total_size;
+    }
 
     /* Stride by the variable's modifier-aware element size via the shared
        array_element_address() helper. This subsumes two fixes that used to

@@ -1624,6 +1624,35 @@ declaration:
             SAFE_FREE($3);
             SAFE_FREE($4.name);
         }
+    | optional_modifiers struct_or_union name_token declarator dimensions
+        {
+            /* Array of struct/union VALUES (`gang Point pts[3];`) or of
+               struct/union POINTERS (`gang Point *ptrs[3];`). Storage is
+               allocated at runtime by interpreter_visit_declaration, in the
+               scope current at execution time -- same reasoning as every
+               other array/struct local (see create_multi_array_declaration_
+               node()). The element struct/union tag rides along on the
+               declaration node's struct_name; the interpreter sizes each
+               element by that tag's layout (value arrays) or by a pointer
+               slot (pointer arrays). */
+            if (!get_struct_def($3))
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg), "Unknown struct/union type '%s'",
+                         $3.data ? $3.data : "?");
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
+            $$ = create_multi_array_declaration_node($4.name, $5.dimensions,
+                                                     $5.num_dimensions,
+                                                     VAR_STRUCT);
+            $$->pointer_level = $4.pointer_level;
+            $$->modifiers = get_current_modifiers();
+            $$->var_type = VAR_STRUCT;
+            $$->struct_name = ARENA_STRDUP($3);
+            SAFE_FREE($3);
+            SAFE_FREE($4.name);
+        }
     | optional_modifiers ENUM name_token declarator
         {
             /* Enum variable, e.g. `gyatt Color c;`. Unlike struct/union,
