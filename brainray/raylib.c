@@ -28,10 +28,24 @@
  *     outlives any statement) stays owned by C in g_textures[]; Brainrot
  *     only ever holds an integer HANDLE (its index), per the roadmap's
  *     "textures become integer handles, C owns the array" decision
- *     (Appendix B Q6).
+ *     (Appendix B Q6). A live handle always implies a live GL context and a
+ *     successful load: a failed load returns -1 without consuming a slot, and
+ *     rl_close_window() unloads every still-live texture before the context
+ *     dies. The handle is a plain index with no generation counter (Road A
+ *     stays crude), so after rl_unload_texture() the freed index is recycled
+ *     and a stale handle silently aliases the next load -- don't keep using a
+ *     handle past its rl_unload_texture().
  *
  * By-value struct passing and a generated binding are Road B, a separate
  * follow-up that needs an ABI extension this file deliberately sidesteps.
+ *
+ * ── String ownership ─────────────────────────────────────────────────────
+ * A STDROT_CSTRING argument is adapter-owned scratch, freed the instant the
+ * wrapper returns (stdrot_api.h). Most raylib calls here consume the string
+ * DURING the call (DrawText, MeasureText, LoadTexture) and are fine passing
+ * it straight through. InitWindow() is the exception: raylib RETAINS the
+ * title pointer (`CORE.Window.title = title;`, no copy), so br_init_window()
+ * hands it a module-owned copy that lives until rl_close_window().
  *
  * ── Key codes ───────────────────────────────────────────────────────────
  * rl_is_key_down()/rl_is_key_pressed() take a raw integer keycode. Until a
@@ -41,6 +55,8 @@
  */
 #include "stdrot_api.h"
 #include <raylib.h>
+#include <stdlib.h>
+#include <string.h>
 
 /* ── Texture handle table (C owns the real Texture2D objects) ───────────── */
 
@@ -48,6 +64,12 @@
 
 static Texture2D g_textures[BRAINRAY_MAX_TEXTURES];
 static bool g_texture_used[BRAINRAY_MAX_TEXTURES];
+
+/* Module-owned copy of the window title. raylib's InitWindow() retains the
+ * pointer it is given rather than copying it, so the adapter-owned
+ * STDROT_CSTRING argument cannot be handed straight through -- see the
+ * "String ownership" note in this file's header. */
+static char *g_window_title = NULL;
 
 /* Reassemble a raylib Color from four consecutive int arguments starting at
  * args[base]. Each channel is clamped into the unsigned-char range so a
@@ -77,7 +99,23 @@ static Color make_color(const StdrotValue *args, int base)
 static StdrotValue br_init_window(StdrotValue *args, int argc)
 {
     (void)argc;
-    InitWindow(args[0].val.i, args[1].val.i, args[2].val.cstr);
+    /* Give raylib a copy this module owns and keeps alive until
+     * rl_close_window(), since InitWindow() retains the pointer and the
+     * STDROT_CSTRING argument is freed the moment this call returns. On
+     * allocation failure fall back to no title rather than a dangling one. */
+    free(g_window_title);
+    g_window_title = NULL;
+    const char *title = args[2].val.cstr;
+    if (title != NULL)
+    {
+        size_t n = strlen(title) + 1;
+        g_window_title = malloc(n);
+        if (g_window_title != NULL)
+        {
+            memcpy(g_window_title, title, n);
+        }
+    }
+    InitWindow(args[0].val.i, args[1].val.i, g_window_title);
     return (StdrotValue){.type = STDROT_NONE};
 }
 
@@ -93,7 +131,21 @@ static StdrotValue br_close_window(StdrotValue *args, int argc)
 {
     (void)args;
     (void)argc;
+    /* A live handle must imply a live GL context, so unload every texture this
+     * module still owns before CloseWindow() destroys the context. Otherwise a
+     * later InitWindow() + rl_draw_texture(old_handle) would feed raylib a GPU
+     * id from a destroyed context. */
+    for (int i = 0; i < BRAINRAY_MAX_TEXTURES; i++)
+    {
+        if (g_texture_used[i])
+        {
+            UnloadTexture(g_textures[i]);
+            g_texture_used[i] = false;
+        }
+    }
     CloseWindow();
+    free(g_window_title);
+    g_window_title = NULL;
     return (StdrotValue){.type = STDROT_NONE};
 }
 
@@ -222,16 +274,25 @@ static StdrotValue br_is_key_pressed(StdrotValue *args, int argc)
 static StdrotValue br_load_texture(StdrotValue *args, int argc)
 {
     (void)argc;
+    Texture2D tex = LoadTexture(args[0].val.cstr);
+    if (tex.id == 0)
+    {
+        /* Load failed (missing/undecodable file): raylib hands back a zeroed
+         * Texture2D. Don't consume a slot; report the -1 failure sentinel so a
+         * live handle always means a successful load. */
+        return (StdrotValue){.type = STDROT_INT, .val = {.i = -1}};
+    }
     for (int i = 0; i < BRAINRAY_MAX_TEXTURES; i++)
     {
         if (!g_texture_used[i])
         {
-            g_textures[i] = LoadTexture(args[0].val.cstr);
+            g_textures[i] = tex;
             g_texture_used[i] = true;
             return (StdrotValue){.type = STDROT_INT, .val = {.i = i}};
         }
     }
-    /* Table full: -1 is the "no handle" sentinel. */
+    /* Table full: nothing owns this texture, so unload it and report -1. */
+    UnloadTexture(tex);
     return (StdrotValue){.type = STDROT_INT, .val = {.i = -1}};
 }
 

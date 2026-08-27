@@ -412,12 +412,31 @@ skibidi main {
     rl_init_window(1280, 720, "Ohio Engine");
     rl_set_target_fps(60);
 
-    goon (rl_window_should_close() == L) {
+    rizz x = 640;
+    rizz y = 360;
+    rizz vx = 6;
+    rizz vy = 5;
+
+    🚽 A native cap result is landed in a cap variable first, then tested.
+    cap running = W;
+
+    goon (running) {
+        cap boost = rl_is_key_down(32);   🚽 SPACE
+        rizz step = 1;
+        edgy (boost) { step = 2; }
+
+        x = x + vx * step;
+        y = y + vy * step;
+        🚽 ... bounce off the walls (elided) ...
+
         rl_begin_drawing();
         rl_clear_background(20, 20, 20, 255);
-        rl_draw_circle(640, 360, 60.0, 255, 0, 255, 255);
-        rl_draw_text("ABSOLUTE CINEMA", 510, 344, 32, 255, 255, 255, 255);
+        rl_draw_circle(x, y, 60.0, 255, 0, 255, 255);
+        rl_draw_text("ABSOLUTE CINEMA", x - 130, y - 16, 32, 255, 255, 255, 255);
         rl_end_drawing();
+
+        cap wants_close = rl_window_should_close();
+        edgy (wants_close) { running = L; }
     }
 
     rl_close_window();

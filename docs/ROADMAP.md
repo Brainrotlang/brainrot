@@ -380,9 +380,10 @@ wrapper calling `stdrot_get_api_v2()` from inside a module is silently
 interposed by the always-loaded core library's own copy of that symbol).
 Its functions are registered alongside the core library's and any other
 already-cooked module's, with a load-time error on any name collision
-between them. **Still not done:** no real native module (raylib or
-otherwise) exists in-tree yet — that's Phase 5's job, not this phase's, and
-was never this phase's DoD. Types/constants registration is deferred past
+between them. The first real native module built on this mechanism is
+`brainray` (raylib), shipped by Phase 5 Road A (#208) — this phase delivered
+the loader, not a binding, which was never its DoD. Types/constants
+registration is deferred past
 this phase entirely: `StdrotAPI` only carries a function table today, and
 nothing in-tree needs more than that yet — see
 [issue #207](https://github.com/Brainrotlang/brainrot/issues/207).
@@ -391,7 +392,7 @@ nothing in-tree needs more than that yet — see
 
 ## Phase 5 — Bindings and the first cursed game
 
-**Status: not started · Priority: P1**
+**Status: Road A shipped (#208) · Road B not started · Priority: P1**
 
 There are two roads here and we should walk both, in order.
 
@@ -426,7 +427,8 @@ skibidi main {
 }
 ```
 
-The joke language runs a game loop. Ships as `examples/ohio_engine.brainrot`.
+The joke language runs a game loop. Ships as
+`examples/raylib/ohio_engine.brainrot`.
 
 ### Road B — generate the real binding (needs Phases 2–4)
 

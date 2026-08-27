@@ -259,7 +259,8 @@ $(BRAINRAY_LIB): $(BRAINRAY_DIR)/raylib.c $(STDROT_DIR)/registry.c
 		echo "Install it first (e.g. 'sudo apt-get install libraylib-dev' or"; \
 		echo "'brew install raylib'), then re-run 'make brainray'."; \
 		exit 1; }
-	$(CC) $(SO_CFLAGS) -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init \
+	$(CC) $(SO_CFLAGS) -Wall -Wextra \
+		-DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init \
 		-I. -I$(STDROT_DIR) $(RAYLIB_CFLAGS) -o $@ \
 		$(STDROT_DIR)/registry.c $< $(RAYLIB_LIBS) -lm $(SO_LDFLAGS)
 	@echo "brainray/raylib.so built. Run the cursed game with:"

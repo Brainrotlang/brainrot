@@ -50,8 +50,17 @@ scalar arguments and rebuilds them on the C side:
   Brainrot.
 - A **`Texture2D`** cannot cross the boundary and outlives any single
   statement, so C keeps it in an internal table and Brainrot only ever holds an
-  integer **handle** (its index). `rl_load_texture` returns a handle (or `-1`
-  if the table is full); `rl_draw_texture` / `rl_unload_texture` take one back.
+  integer **handle** (its index). `rl_load_texture` returns a handle, or `-1`
+  if the load failed (missing/undecodable file) **or** the 256-slot table is
+  full — a non-negative handle therefore always refers to a successfully loaded
+  texture. `rl_draw_texture` / `rl_unload_texture` take one back.
+
+  A live handle also implies a live GL context: `rl_close_window` unloads every
+  still-live texture before the context is destroyed, so a handle from before a
+  window was closed is never usable afterward. The handle is a plain index with
+  **no generation counter** (Road A stays crude), so after `rl_unload_texture`
+  the index is recycled — don't keep using a handle past its unload, or it will
+  silently alias whatever loads into that slot next.
 
 By-value struct passing and a `raylib_api.json`-driven **generated** binding are
 "Road B" — a separate follow-up that needs an ABI extension this module
