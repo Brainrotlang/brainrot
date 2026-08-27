@@ -32,14 +32,45 @@ extern StdrotEntry *__stop_stdrot_exports;
 // NOLINTEND(bugprone-reserved-identifier)
 #endif
 
-/* Entry point called by stdrot.c after dlopen() -- named/numbered for
- * STDROT_ABI_VERSION (stdrot_api.h): renaming this alongside a real ABI
- * layout change means an old .so's stdrot_get_api() (the pre-v2 name)
- * is simply absent from a new host's dlsym() lookup, rather than being
- * called and returning a StdrotAPI populated from a completely
- * different memory layout. See that macro's own comment for the full
- * reasoning. */
-StdrotAPI stdrot_get_api_v2(void)
+/* STDROT_REGISTRY_ENTRYPOINT lets this same linker-section-collecting body
+ * serve two distinct roles under two distinct exported names, so that a
+ * cooked native module built with it (tests/nativemodules/*.c,
+ * -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init in the Makefile) NEVER
+ * defines a symbol literally named stdrot_get_api_v2 at all:
+ *
+ *   - Undefined (the core libstdrot.so build): this is stdrot_get_api_v2(),
+ *     dlsym'd by stdrot_load() (stdrot.c).
+ *   - Defined as brainrot_module_init (a cooked module's own build): this
+ *     is brainrot_module_init(), dlsym'd by stdrot_load_module() (stdrot.c).
+ *
+ * That is load-bearing, not cosmetic: the core library and every cooked
+ * module can be simultaneously dlopen'd with RTLD_GLOBAL into the SAME
+ * process (stdrot_load()'s own comment explains why RTLD_GLOBAL is
+ * needed at all -- so a module can see e.g. g_exec_context). If a
+ * module's own entrypoint were instead a small wrapper that CALLED a
+ * separately-named stdrot_get_api_v2() also present in that module's
+ * binary, that call is an ordinary global-scope-resolved symbol
+ * reference -- and since the core library's OWN same-named
+ * stdrot_get_api_v2 was already loaded into that same global scope
+ * first, the dynamic linker's normal "first definition in load order
+ * wins" interposition rule would silently redirect the module's internal
+ * call to the CORE's copy instead of its own, handing back the core
+ * library's entire function table under the guise of loading the
+ * module. Giving the module build a uniquely-named entrypoint instead of
+ * an internal cross-symbol call removes the collision by construction --
+ * there is no other symbol in the process named brainrot_module_init for
+ * an ordinary global-scope lookup to redirect to. */
+#ifndef STDROT_REGISTRY_ENTRYPOINT
+#define STDROT_REGISTRY_ENTRYPOINT stdrot_get_api_v2
+#endif
+
+/* Named/numbered for STDROT_ABI_VERSION (stdrot_api.h) in its default
+ * (core-library) role: renaming this alongside a real ABI layout change
+ * means an old .so's stdrot_get_api() (the pre-v2 name) is simply absent
+ * from a new host's dlsym() lookup, rather than being called and
+ * returning a StdrotAPI populated from a completely different memory
+ * layout. See that macro's own comment for the full reasoning. */
+StdrotAPI STDROT_REGISTRY_ENTRYPOINT(void)
 {
 #if defined(__APPLE__) && defined(__MACH__)
     unsigned long section_byte_len = 0;

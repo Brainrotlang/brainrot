@@ -76,6 +76,15 @@ BADNATIVES_DIR := tests/badnatives
 BADNATIVES_SRCS := $(wildcard $(BADNATIVES_DIR)/*.c)
 BADNATIVES_LIBS := $(BADNATIVES_SRCS:.c=.so)
 
+# Native module fixtures for #cooked <name> resolving to a ".so"
+# (module_path.h's MODULE_ARTIFACT_NATIVE, stdrot_load_module() in
+# stdrot.c) -- see tests/nativemodules/testnative.c's own file comment.
+# Built the same way as $(BADNATIVES_LIBS) above: registry.c linked in
+# fresh per fixture, since each is its own standalone .so.
+NATIVEMODULES_DIR := tests/nativemodules
+NATIVEMODULES_SRCS := $(wildcard $(NATIVEMODULES_DIR)/*.c)
+NATIVEMODULES_LIBS := $(NATIVEMODULES_SRCS:.c=.so)
+
 # Output files
 TARGET := brainrot
 BISON_OUTPUT := lang.tab.c
@@ -194,6 +203,38 @@ $(BADNATIVES_DIR)/bad_api_table_null_functions.so: \
 badnatives: $(BADNATIVES_LIBS)
 	@echo "tests/badnatives/*.so (malformed registries) compiled."
 
+# Native module fixtures ($(NATIVEMODULES_LIBS)): same registry.c-per-file
+# pattern as $(BADNATIVES_DIR) above, but these are valid modules (real
+# brainrot_module_init() entrypoints, well-formed tables except
+# testnative_internal_dup.c and no_module_init.c, which are deliberately
+# broken on purpose -- see their own file comments) used to exercise
+# stdrot_load_module() (stdrot.c) end to end, not just its rejection paths.
+#
+# -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init (registry.c's own
+# comment has the full reasoning): makes registry.c export
+# brainrot_module_init() directly, under a name no other loaded .so in the
+# process shares, instead of stdrot_get_api_v2() -- the same symbol name
+# the always-loaded core libstdrot.so already exports, which a same-named
+# wrapper calling it from inside a module would silently resolve to
+# instead of the module's own copy.
+$(NATIVEMODULES_DIR)/%.so: $(NATIVEMODULES_DIR)/%.c $(STDROT_DIR)/registry.c
+	$(CC) $(SO_CFLAGS) -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init \
+		-I. -I$(STDROT_DIR) -o $@ $(STDROT_DIR)/registry.c $< -lm $(SO_LDFLAGS)
+
+# Exception to the pattern rule above (GNU Make prefers an explicit target
+# rule for the same file): deliberately built WITHOUT the entrypoint
+# override, so this is a structurally valid .so that exports
+# stdrot_get_api_v2() but genuinely has no brainrot_module_init() at all --
+# see this fixture's own file comment for what that proves.
+$(NATIVEMODULES_DIR)/no_module_init.so: $(NATIVEMODULES_DIR)/no_module_init.c \
+	$(STDROT_DIR)/registry.c
+	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $(STDROT_DIR)/registry.c $< \
+		-lm $(SO_LDFLAGS)
+
+.PHONY: nativemodules
+nativemodules: $(NATIVEMODULES_LIBS)
+	@echo "tests/nativemodules/*.so (native module fixtures) compiled."
+
 # Simulated pre-ABI-versioning libstdrot.so (see tests/old_abi_sim/ own file
 # comment): built standalone, with no dependency on stdrot_api.h or
 # registry.c, so it genuinely only exports the OLD "stdrot_get_api" symbol
@@ -274,7 +315,7 @@ $(FLEX_OUTPUT): lang.l
 
 # Run tests
 .PHONY: test
-test: $(TARGET) $(TEST_STDROT_LIB) badnatives old-abi-sim abi-check
+test: $(TARGET) $(TEST_STDROT_LIB) badnatives nativemodules old-abi-sim abi-check
 	STDROT_LIB_PATH=$(CURDIR)/$(TEST_STDROT_LIB) $(PYTHON) -m pytest -v
 	@echo "Tests ran bussin', no cap."
 
@@ -285,6 +326,7 @@ clean:
 	rm -f $(WASM_TARGET) $(WASM_JS)
 	rm -f tests/brainrot-test.wasm tests/brainrot-test.mjs
 	rm -f $(BADNATIVES_LIBS)
+	rm -f $(NATIVEMODULES_LIBS)
 	rm -f $(OLD_ABI_SIM_LIB)
 	rm -f $(ABI_CHECK_BIN)
 	rm -f *.o
