@@ -179,38 +179,38 @@ sudo install -Dm755 brainray/raylib.so /usr/local/lib/brainrot/raylib.so
 Or just keep pointing `BRAINROT_PATH` at a directory that holds `raylib.so` so
 `#cooked <raylib>` resolves.
 
-## "LeakSanitizer: detected memory leaks" when you run it
+## Memory leaks: what brainray does and doesn't report
 
-The default `brainrot` is built with `-fsanitize=address`, so LeakSanitizer runs
-at exit. Running the windowed demo, it prints a wall of leaks (tens of KB across
-hundreds of allocations, e.g. [#267](https://github.com/Brainrotlang/brainrot/issues/267)).
+The default `brainrot` is built with `-fsanitize=address`, so LeakSanitizer
+checks for leaks at exit. raylib and the libraries it drives (GLFW, the GL
+driver / Mesa, X11, fontconfig) allocate process-lifetime global state — a GL
+context, the default font and shader, X11 and font caches — that they never
+return to the allocator; the OS reclaims it when the process ends. Reported
+verbatim, that would be a wall of "leaks" ([#267](https://github.com/Brainrotlang/brainrot/issues/267))
+that no application can free and that brainray does not own.
 
-**Those are not brainrot leaks — they belong to raylib and the graphics stack**
-(GLFW, Mesa/llvmpipe, X11, fontconfig). Those libraries allocate global state
-once and free it only at real process teardown, which happens *after* LSan has
-already taken its snapshot, so LSan reports it as leaked. With a full stack
-(`ASAN_OPTIONS=fast_unwind_on_malloc=0`), **815 of the 817 reported allocations
-are charged to a call stack passing through `execute_native_call`** — i.e. they
-are allocated *inside* a raylib call — and none are charged to brainray's own
-allocations. brainray frees everything it owns (the window-title copy and the
-texture table) in `rl_close_window`.
+So brainray brackets each raylib call with LeakSanitizer's allocator-scoped
+`__lsan_disable()` / `__lsan_enable()` (see `brainray/raylib.c`): allocations
+made *inside* a raylib call are excluded from the leak report on purpose, as
+unowned graphics-stack state. This is deliberately narrow — **everything
+brainray itself allocates stays fully checked**. The window-title copy and the
+texture table are allocated outside those brackets, so a real leak in the
+binding (say, forgetting to free the title in `rl_close_window`) is still
+reported. The controls are weak symbols, inert when the interpreter carries no
+sanitizer (`make release`), so the module loads either way.
 
-`make play` already turns leak detection off for this one windowed run
-(`ASAN_OPTIONS=detect_leaks=0`). If you launch the example yourself and want a
-quiet exit, do the same:
+The upshot: running the example — `make play`, or the plain command below —
+exits clean under the default sanitizer build, with leak checking still live for
+brainray's and the interpreter's own memory:
 
 ```bash
-ASAN_OPTIONS=detect_leaks=0 \
-  BRAINROT_PATH=brainray ./brainrot examples/raylib/ohio_engine.brainrot
+BRAINROT_PATH=brainray ./brainrot examples/raylib/ohio_engine.brainrot
 ```
 
-A shipped `brainrot` (`make release`) carries no sanitizer at all, so it never
-prints any of this. An LSan *suppression file* does **not** work here: the
-fast-unwind leak stacks stop at the stripped raylib frame, so name-based
-suppressions never match — turning the check off for the demo run is the
-reliable option. Leak detection stays fully on everywhere else: `make test` and
-`make valgrind` never run raylib, and the headless `#cooked <raylib>` module
-load is leak-clean under the default ASan.
+(An LSan *suppression file* is not used here: under the default fast unwind the
+leak stacks into the non-instrumented raylib `.so` are unsymbolized, so
+name-based suppressions can't match them anyway. Bracketing the calls tags the
+allocations at their source instead, which is reliable regardless of unwind.)
 
 ## How it works — the Road A ABI trick
 

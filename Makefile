@@ -272,26 +272,13 @@ $(BRAINRAY_LIB): $(BRAINRAY_DIR)/raylib.c $(STDROT_DIR)/registry.c
 # builds brainray/raylib.so and runs the example, so it needs both raylib and a
 # display -- with no display the raylib window init fails (it does NOT skip).
 # Still an explicit opt-in like `brainray` -- never a prerequisite of `all`/`test`.
-#
-# detect_leaks=0 (issue #267): the default interpreter is built with
-# -fsanitize=address, so LeakSanitizer runs at exit and reports the
-# raylib/GLFW/Mesa/X11/fontconfig globals the graphics stack allocates once and
-# frees only at real process teardown -- AFTER LSan has already run. Those are
-# third-party leaks, not brainrot's: with a full (slow-unwind) stack, 815 of the
-# 817 reported allocations are charged to a call stack passing through
-# execute_native_call (i.e. allocated *inside* a raylib call), and brainray's own
-# state -- the window title copy, the texture table -- is freed in
-# rl_close_window() (verified: no brainray malloc/strdup shows up). Rather than
-# ship an LSan suppression file that can't match (fast-unwind stacks stop at the
-# stripped raylib frame, so name-based suppressions never fire), turn leak
-# detection off for THIS windowed demo run only. It stays on for every other
-# target -- `make test`/`make valgrind` never run raylib -- and the headless
-# `#cooked <raylib>` load path (tests/test_brainrot.py) is leak-clean under the
-# default ASan. Append rather than clobber any ASAN_OPTIONS the caller set.
+# No ASAN_OPTIONS override: brainray brackets raylib's own calls with
+# __lsan_disable/enable (issue #267, brainray/raylib.c), so the sanitizer build
+# runs the game cleanly while still checking brainray's and the interpreter's
+# own allocations.
 .PHONY: play
 play: $(BRAINRAY_LIB) $(TARGET) ## Build brainray + run the Ohio Engine (needs raylib + a display). It's giving cinema.
-	ASAN_OPTIONS="$${ASAN_OPTIONS:+$${ASAN_OPTIONS}:}detect_leaks=0" \
-		BRAINROT_PATH=$(BRAINRAY_DIR) ./$(TARGET) examples/raylib/ohio_engine.brainrot
+	BRAINROT_PATH=$(BRAINRAY_DIR) ./$(TARGET) examples/raylib/ohio_engine.brainrot
 
 # Simulated pre-ABI-versioning libstdrot.so (see tests/old_abi_sim/ own file
 # comment): built standalone, with no dependency on stdrot_api.h or
