@@ -366,7 +366,8 @@
     "lit_top_level_only_anonymous_fail": "Error: lit declarations are only allowed at top level at line 2\nParsing failed",
     "lit_top_level_only_named_inline_fail": "Error: lit declarations are only allowed at top level at line 2\nParsing failed",
     "lit_top_level_only_alias_fail": "Error: lit declarations are only allowed at top level at line 4\nParsing failed",
-    "lit_struct_alias_array_fail": "Error: Arrays of struct/union typedef aliases are not supported at line 9\nParsing failed",
+    "lit_struct_alias_array_fail": "Error: Brace initialization of an array of struct/union values is not supported yet; declare the array and assign elements at line 13\nParsing failed",
+    "lit_struct_alias_array": "5 6 9 1\n",
     "lit_forward_struct_typedef_fail": "Error: Unknown struct/union type 'Ghost' at line 1\nParsing failed",
     "lit_enum_constant_alias_conflict_fail": "Error: Enum constant 'RED' is already defined at line 4\nParsing failed",
     "lit_storage_class_typedef_fail": "Error: Storage-class modifiers are not allowed in typedef aliases at line 1\nParsing failed",
@@ -380,6 +381,7 @@
     "array_of_structs_nested": "line0 7 1.50\nline1 70 3.25\n",
     "array_of_structs_by_value": "copy 5 6\nsum 11\npick 30 31\n",
     "array_of_structs_pointers": "1 4\n",
+    "array_of_structs_sizeof": "8 8 1 1\n",
     "array_of_structs_unknown_type_fail": "Error: Unknown struct/union type 'Nope' at line 3\nParsing failed",
     "array_of_structs_oob_fail": "Error: Array index out of bounds: dimension 1 (index=5, size=2) at line 11",
     "array_of_structs_scalar_member_fail": "Error: Member access on non-struct/union value at line 7"

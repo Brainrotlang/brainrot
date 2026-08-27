@@ -227,17 +227,23 @@ static void reject_storage_class_typedef(void)
     typedef_had_error = true;
 }
 
-static void reject_struct_alias_array(void)
-{
-    yyerror_current_line(
-        "Arrays of struct/union typedef aliases are not supported");
-    typedef_had_error = true;
-}
-
-static void maybe_reject_struct_alias_array(VarType type, int pointer_level)
+/* A brace initializer for an array of struct/union VALUES (via a `lit`
+   alias, `PointVal arr[2] = {...};`) is not supported yet -- the same scope
+   limit the direct `gang Tag name[dims]` spelling has (it has no `= {...}`
+   production at all). The array itself is fine; declare it and assign
+   elements. A struct/union POINTER alias array (`PointPtr values[2] = ...`,
+   pointer_level > 0) is a different, already-supported path and is left
+   alone. */
+static void maybe_reject_struct_alias_array_init(VarType type,
+                                                 int pointer_level)
 {
     if (type == VAR_STRUCT && pointer_level == 0)
-        reject_struct_alias_array();
+    {
+        yyerror_current_line(
+            "Brace initialization of an array of struct/union values is not "
+            "supported yet; declare the array and assign elements");
+        typedef_had_error = true;
+    }
 }
 
 static String make_anonymous_typedef_name(String alias_name)
@@ -1489,7 +1495,6 @@ declaration:
     | optional_modifiers alias_type declarator dimensions
         {
             int pointer_level = $2.pointer_level + $3.pointer_level;
-            maybe_reject_struct_alias_array($2.type, pointer_level);
             $$ = create_multi_array_declaration_node($3.name, $4.dimensions,
                                                      $4.num_dimensions,
                                                      $2.type);
@@ -1504,7 +1509,7 @@ declaration:
     | optional_modifiers alias_type declarator dimensions EQUALS array_init
         {
             int pointer_level = $2.pointer_level + $3.pointer_level;
-            maybe_reject_struct_alias_array($2.type, pointer_level);
+            maybe_reject_struct_alias_array_init($2.type, pointer_level);
             $$ = create_multi_array_declaration_node($3.name, $4.dimensions,
                                                      $4.num_dimensions,
                                                      $2.type);
@@ -1534,7 +1539,7 @@ declaration:
                 dims.dimensions[0] = (int)first;
             }
             int pointer_level = $2.pointer_level + $3.pointer_level;
-            maybe_reject_struct_alias_array($2.type, pointer_level);
+            maybe_reject_struct_alias_array_init($2.type, pointer_level);
             int tmp_dims[MAX_DIMENSIONS];
             for (int i = 0; i < dims.num_dimensions; i++) tmp_dims[i] = dims.dimensions[i];
             $$ = create_multi_array_declaration_node($3.name, tmp_dims,
