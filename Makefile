@@ -124,7 +124,7 @@ WASM_LDFLAGS := -lm \
 
 # Default target
 .PHONY: all
-all: $(STDROT_LIB) $(TARGET)
+all: $(STDROT_LIB) $(TARGET) ## Build the interpreter + libstdrot.so (default). Sigma grindset activated.
 
 # Ensure shared library exists for runtime targets
 .PHONY: ensure-stdrot
@@ -136,12 +136,12 @@ ensure-stdrot:
 
 # Build only the standard library
 .PHONY: lib
-lib: $(STDROT_LIB)
+lib: $(STDROT_LIB) ## Build only libstdrot.so, the builtin fanum tax collection.
 
 # Debug target
 .PHONY: debug
 debug: CFLAGS += $(DEBUG_FLAGS)
-debug: clean all
+debug: clean all ## Rebuild with -g (sanitizers on). Time to sigma grind with GDB.
 	@echo "Debug build compiled with -g. Time to sigma grind with GDB."
 
 # Release build: no sanitizers. Add rpath for the leaf-name
@@ -161,7 +161,7 @@ else
 release: CFLAGS := $(RELEASE_CFLAGS) $(FLEX_CPPFLAGS)
 release: LDFLAGS := $(FLEX_LIB) -lfl -lm -ldl -rdynamic -Wl,-rpath,'$$ORIGIN'
 endif
-release: clean all
+release: clean all ## Sanitizer-free rpath build for shipped binaries. Certified glizzy gladiator.
 	@echo "Release build: $(TARGET) + $(STDROT_LIB) (no sanitizers)."
 
 # stdrot shared library build
@@ -251,13 +251,15 @@ RAYLIB_CFLAGS := $(shell pkg-config --cflags raylib 2>/dev/null)
 RAYLIB_LIBS := $(shell pkg-config --libs raylib 2>/dev/null)
 
 .PHONY: brainray
-brainray: $(BRAINRAY_LIB)
+brainray: $(BRAINRAY_LIB) ## Build the optional raylib binding brainray/raylib.so (needs raylib; docs/brainray.md). Cursed game unlocked.
 
 $(BRAINRAY_LIB): $(BRAINRAY_DIR)/raylib.c $(STDROT_DIR)/registry.c
 	@pkg-config --exists raylib || { \
-		echo "Error: raylib not found (pkg-config --exists raylib failed)."; \
-		echo "Install it first (e.g. 'sudo apt-get install libraylib-dev' or"; \
-		echo "'brew install raylib'), then re-run 'make brainray'."; \
+		echo "Error: raylib not found via pkg-config (pkg-config --exists raylib failed)."; \
+		echo "raylib is an OPTIONAL dependency, needed only for 'make brainray'."; \
+		echo "Install it, then re-run 'make brainray'. Setup guide (Linux/macOS):"; \
+		echo "  docs/brainray.md"; \
+		echo "macOS: 'brew install raylib'. Verify with: pkg-config --exists raylib"; \
 		exit 1; }
 	$(CC) $(SO_CFLAGS) -Wall -Wextra \
 		-DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init \
@@ -265,6 +267,14 @@ $(BRAINRAY_LIB): $(BRAINRAY_DIR)/raylib.c $(STDROT_DIR)/registry.c
 		$(STDROT_DIR)/registry.c $< $(RAYLIB_LIBS) -lm $(SO_LDFLAGS)
 	@echo "brainray/raylib.so built. Run the cursed game with:"
 	@echo "  BRAINROT_PATH=$(BRAINRAY_DIR) ./brainrot examples/raylib/ohio_engine.brainrot"
+
+# Convenience: build the binding and launch the cursed game in one step. It
+# builds brainray/raylib.so and runs the example, so it needs both raylib and a
+# display -- with no display the raylib window init fails (it does NOT skip).
+# Still an explicit opt-in like `brainray` -- never a prerequisite of `all`/`test`.
+.PHONY: play
+play: $(BRAINRAY_LIB) $(TARGET) ## Build brainray + run the Ohio Engine (needs raylib + a display). It's giving cinema.
+	BRAINROT_PATH=$(BRAINRAY_DIR) ./$(TARGET) examples/raylib/ohio_engine.brainrot
 
 # Simulated pre-ABI-versioning libstdrot.so (see tests/old_abi_sim/ own file
 # comment): built standalone, with no dependency on stdrot_api.h or
@@ -298,7 +308,7 @@ $(ABI_CHECK_BIN): tests/abi/struct_layout_abi_check.c
 	$(CC) $(CFLAGS) -o $@ $<
 
 .PHONY: abi-check
-abi-check: $(ABI_CHECK_BIN)
+abi-check: $(ABI_CHECK_BIN) ## Run the struct/union ABI layout oracle (host sizeof/offsetof). No bytes left behind, no cap.
 	./$(ABI_CHECK_BIN)
 
 # Main executable build
@@ -309,7 +319,7 @@ $(TARGET): $(ALL_SRCS) $(STDROT_LIB)
 # WebAssembly build: stdrot sources go straight into the same binary
 # instead of a separate $(STDROT_LIB), so this does NOT depend on it.
 .PHONY: wasm
-wasm: $(GENERATED_SRCS)
+wasm: $(GENERATED_SRCS) ## Build brainrot.wasm/.mjs for the browser (needs emcc). Skibidi in the browser.
 	@command -v $(EMCC) >/dev/null 2>&1 || { echo "Error: emcc not found. Install the Emscripten SDK (emsdk) first."; exit 1; }
 	$(EMCC) $(WASM_CFLAGS) -I. -o $(WASM_JS) $(SRCS) $(STDROT_SRCS) $(GENERATED_SRCS) $(WASM_LDFLAGS)
 	@echo "brainrot.wasm compiled. Skibidi in the browser."
@@ -327,7 +337,7 @@ wasm: $(GENERATED_SRCS)
 # artifact from `wasm`'s, used only by tests/run_wasm_tests.mjs -- never
 # uploaded, installed, or otherwise shipped.
 .PHONY: wasm-test
-wasm-test: $(GENERATED_SRCS)
+wasm-test: $(GENERATED_SRCS) ## Build the wasm test binary (production + test-only natives; needs emcc). Browser edition, extra sauce.
 	@command -v $(EMCC) >/dev/null 2>&1 || { echo "Error: emcc not found. Install the Emscripten SDK (emsdk) first."; exit 1; }
 	$(EMCC) $(WASM_CFLAGS) -I. -I$(STDROT_DIR) -o tests/brainrot-test.mjs \
 		$(SRCS) $(STDROT_SRCS) $(TEST_STDROT_SRCS) $(GENERATED_SRCS) \
@@ -346,13 +356,13 @@ $(FLEX_OUTPUT): lang.l
 
 # Run tests
 .PHONY: test
-test: $(TARGET) $(TEST_STDROT_LIB) badnatives nativemodules old-abi-sim abi-check
+test: $(TARGET) $(TEST_STDROT_LIB) badnatives nativemodules old-abi-sim abi-check ## Build, then run the pytest suite. Huggy Wuggy approves.
 	STDROT_LIB_PATH=$(CURDIR)/$(TEST_STDROT_LIB) $(PYTHON) -m pytest -v
 	@echo "Tests ran bussin', no cap."
 
 # Clean build artifacts
 .PHONY: clean
-clean:
+clean: ## Remove all build artifacts (never touches source). Amogus sussy imposter mode.
 	rm -f $(TARGET) $(STDROT_LIB) $(TEST_STDROT_LIB) $(GENERATED_SRCS) lang.tab.h
 	rm -f $(WASM_TARGET) $(WASM_JS)
 	rm -f tests/brainrot-test.wasm tests/brainrot-test.mjs
@@ -366,7 +376,7 @@ clean:
 
 # Run Valgrind on all .brainrot tests
 .PHONY: valgrind
-valgrind: $(TARGET) $(TEST_STDROT_LIB)
+valgrind: $(TARGET) $(TEST_STDROT_LIB) ## Run every test_cases/*.brainrot under Valgrind. Checks for sussy memory leaks.
 	@STDROT_LIB_PATH=$(CURDIR)/$(TEST_STDROT_LIB) ./run_valgrind_tests.sh
 	@echo "Valgrind check done. If anything was sus, it'll show up with a non-zero exit code. No cap."
 
@@ -378,7 +388,7 @@ valgrind: $(TARGET) $(TEST_STDROT_LIB)
 # any working directory, not just the build tree (whose ./libstdrot.so is
 # tried first).
 .PHONY: install
-install: ensure-stdrot $(TARGET)
+install: ensure-stdrot $(TARGET) ## Install brainrot + libstdrot.so under /usr/local (needs root). You're goated with the sauce.
 	install -d /usr/local/bin /usr/local/lib
 	install -m 755 $(TARGET) /usr/local/bin/
 	install -m 755 $(STDROT_LIB) /usr/local/lib/
@@ -387,7 +397,7 @@ install: ensure-stdrot $(TARGET)
 
 # Uninstall target
 .PHONY: uninstall
-uninstall:
+uninstall: ## Remove an installed brainrot + libstdrot.so (needs root). Back to the grind.
 	rm -f /usr/local/bin/$(TARGET)
 	rm -f /usr/local/lib/$(STDROT_LIB)
 	ldconfig
@@ -395,7 +405,7 @@ uninstall:
 
 # Check dependencies
 .PHONY: check-deps
-check-deps:
+check-deps: ## Verify required bro apps are installed (gcc, bison, flex, python3, pytest).
 	@command -v $(CC) >/dev/null 2>&1 || { echo "Error: gcc not found. Blud, install gcc!"; exit 1; }
 	@command -v $(BISON) >/dev/null 2>&1 || { echo "Error: bison not found. Duke Dennis did you pray today?"; exit 1; }
 	@command -v $(FLEX) >/dev/null 2>&1 || { echo "Error: flex not found. Ayo, where's flex?"; exit 1; }
@@ -404,7 +414,7 @@ check-deps:
 
 # Development helper to rebuild everything from scratch
 .PHONY: rebuild
-rebuild: clean all
+rebuild: clean all ## Clean and re-grind the whole project from scratch. Turbulence cleared.
 	@echo "Whole bunch of turbulence cleared. Rebuilt everything."
 
 # Files formatted by clang-format: every tracked .c/.h, minus generated
@@ -417,14 +427,14 @@ CLANG_FORMAT ?= clang-format-15
 
 # Format source files (requires clang-format-15)
 .PHONY: format
-format:
+format: ## Reformat all C sources in-place with clang-format. No cringe, all kino.
 	@command -v $(CLANG_FORMAT) >/dev/null 2>&1 || { echo "Error: clang-format not found. Ratioed by clang."; exit 1; }
 	$(CLANG_FORMAT) -i $(FORMAT_FILES)
 	@echo "Source files got the rizz treatment, goated with the sauce."
 
 # Check formatting without modifying files (used by CI's lint job)
 .PHONY: format-check
-format-check:
+format-check: ## Check formatting without editing files (CI lint job). Stay drippy, no diffs.
 	@command -v $(CLANG_FORMAT) >/dev/null 2>&1 || { echo "Error: clang-format not found. Ratioed by clang."; exit 1; }
 	$(CLANG_FORMAT) --dry-run -Werror $(FORMAT_FILES)
 	@echo "Formatting check passed, no cap."
@@ -448,7 +458,7 @@ CPPCHECK_FLAGS := \
 # checks are deliberately not enabled here -- see issue #172 for why that's a
 # separate follow-up, not this gate.
 .PHONY: cppcheck
-cppcheck:
+cppcheck: ## Static analysis with cppcheck (CI static-analysis; needs >= 2.13). Certified W.
 	@command -v $(CPPCHECK) >/dev/null 2>&1 || { echo "Error: cppcheck not found. Blud, install cppcheck >= $(CPPCHECK_MIN_VERSION)!"; exit 1; }
 	@ver=$$($(CPPCHECK) --version | awk '{print $$2}'); \
 	awk -v v="$$ver" -v min="$(CPPCHECK_MIN_VERSION)" 'BEGIN { \
@@ -473,33 +483,31 @@ cppcheck:
 # list), so a real compilation database buys nothing. Checks are configured
 # in .clang-tidy (small allowlist, not checks=*; see issue #172).
 .PHONY: tidy
-tidy:
+tidy: ## Static analysis with clang-tidy (needs clang-tidy-15). Nothing sus, certified W.
 	@command -v $(CLANG_TIDY) >/dev/null 2>&1 || { echo "Error: clang-tidy not found. Blud, install clang-tidy-15!"; exit 1; }
 	$(CLANG_TIDY) $(CPPCHECK_SRCS) -- $(CFLAGS) -I. -I$(SRC_DIR) -I$(STDROT_DIR)
 	@echo "clang-tidy found nothing sus. Certified W."
 
-# Show help
+# Show help. Self-documenting: the target list is generated from the `## `
+# annotation on each target line above (a `target: ... ## description` line is
+# all it takes to appear here), so this never goes stale by hand. Internal
+# fixture builders (badnatives, nativemodules, old-abi-sim, ensure-stdrot) and
+# pattern rules are deliberately left un-annotated so they stay out of the list.
+# tests/test_docs_consistency.py guards that the key developer-facing targets
+# remain represented.
 .PHONY: help
-help:
-	@echo "Available targets (rizzy edition):"
-	@echo "  all        : Build the main executable (default target). Sigma grindset activated."
-	@echo "  release    : Sanitizer-free build with rpath for shipped binaries (GitHub releases)."
-	@echo "  install    : Install the binary to /usr/local/bin. Certified W."
-	@echo "  uninstall  : Uninstall the binary from /usr/local/bin. Back to square one."
-	@echo "  test       : Run the test suite. Huggy Wuggy approves."
-	@echo "  wasm       : Build brainrot.wasm/brainrot.mjs for the browser. Requires emcc (Emscripten SDK)."
-	@echo "  clean      : Remove all generated files. Amogus sussy imposter mode."
-	@echo "  check-deps : Verify all required bro apps are installed."
-	@echo "  rebuild    : Clean and re-grind the project."
-	@echo "  format     : Format source files using clang-format. No cringe, all kino."
-	@echo "  format-check : Check formatting without modifying files (CI lint job)."
-	@echo "  cppcheck   : Static analysis with cppcheck (CI static-analysis job)."
-	@echo "  tidy       : Static analysis with clang-tidy (CI static-analysis job)."
-	@echo "  valgrind   : Checks for sussy memory leaks with Valgrind."
-	@echo "  help       : Show this help for n00bs."
+help: ## Show this help for n00bs (the list of developer-facing targets).
+	@echo "Brainrot make targets (rizzy edition):"
+	@echo ""
+	@awk 'BEGIN {FS = ":.*## "} \
+		/^[a-zA-Z][a-zA-Z0-9_-]*:.*## / {printf "  %-14s %s\n", $$1, $$2}' \
+		$(MAKEFILE_LIST)
+	@echo ""
+	@echo "raylib is optional and only 'make brainray'/'make play' need it."
+	@echo "raylib setup guide (Ubuntu/macOS/source): docs/brainray.md"
 	@echo ""
 	@echo "Configuration (poggers):"
-	@echo "  CC        = $(CC)"
-	@echo "  CFLAGS    = $(CFLAGS)"
-	@echo "  LDFLAGS   = $(LDFLAGS)"
-	@echo "  TARGET    = $(TARGET)"
+	@echo "  CC      = $(CC)"
+	@echo "  CFLAGS  = $(CFLAGS)"
+	@echo "  LDFLAGS = $(LDFLAGS)"
+	@echo "  TARGET  = $(TARGET)"

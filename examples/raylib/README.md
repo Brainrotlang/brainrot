@@ -14,22 +14,40 @@ A bouncing "ABSOLUTE CINEMA" orb over a dark background with live FPS. Hold
 raylib is an **optional** dependency — `make`, `make test`, and `make valgrind`
 do not build the module and do not need it installed.
 
+You need a system raylib discoverable through `pkg-config`. Installation is
+distribution-dependent (on Ubuntu, `libraylib-dev` is **not** an official
+package — use the raylib PPA or a source build); the full, accurate setup for
+Ubuntu, macOS, and source builds lives in the one canonical guide:
+[`docs/brainray.md`](../../docs/brainray.md#installing-raylib). On macOS it's
+just `brew install raylib`. Confirm it worked with:
+
 ```bash
-# Debian/Ubuntu
-sudo apt-get install libraylib-dev
-# macOS
-brew install raylib
+pkg-config --exists raylib
 ```
+
+## Two libraries, not one
+
+`#cooked <raylib>` does **not** load the system `libraylib.so` directly. It
+loads `brainray/raylib.so` — a Brainrot native module built by `make brainray`
+that wraps raylib. So installing raylib alone is not enough; you also need the
+`brainray/raylib.so` wrapper on the module path. See
+[`docs/brainray.md`](../../docs/brainray.md#two-libraries-not-one) for the full
+picture.
 
 ## Build and run
 
 `#cooked <raylib>` resolves the module through the module search path, so point
-`$BRAINROT_PATH` at the `brainray/` directory:
+`$BRAINROT_PATH` at the `brainray/` directory (or run `make play`, which builds
+the binding and launches the example in one step):
 
 ```bash
 make brainray
 BRAINROT_PATH=brainray ./brainrot examples/raylib/ohio_engine.brainrot
 ```
+
+Running `brainrot ohio_engine.brainrot` from inside this directory without
+`BRAINROT_PATH` fails: nothing on the default module search path contains
+`raylib.so`.
 
 ## Notes
 

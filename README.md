@@ -215,14 +215,23 @@ Check out the [examples](examples/README.md):
 Yes, the joke language runs a real game loop. `examples/raylib/ohio_engine.brainrot`
 calls [raylib](https://www.raylib.com/) through the optional `brainray` native
 module (`#cooked <raylib>`) to bounce an "ABSOLUTE CINEMA" orb around a window.
-Build it and play (raylib required — it is **not** needed for `make`/`make test`):
+
+raylib is an **optional** dependency (not needed for `make`/`make test`), and
+`#cooked <raylib>` loads the `brainray/raylib.so` wrapper built by `make
+brainray` — **not** the system `libraylib.so` directly. First install a system
+raylib (on Ubuntu it is **not** `apt-get install libraylib-dev`; that package
+does not exist there — use the raylib PPA or a source build), then:
 
 ```bash
-make brainray
+pkg-config --exists raylib     # confirm raylib is installed
+make                           # build the interpreter
+make brainray                  # build the raylib binding (brainray/raylib.so)
 BRAINROT_PATH=brainray ./brainrot examples/raylib/ohio_engine.brainrot
 ```
 
-See [`docs/brainray.md`](docs/brainray.md) for the full binding reference.
+`make play` does the last two steps in one. See
+[`docs/brainray.md`](docs/brainray.md) for the full raylib setup guide (Ubuntu
+PPA vs. source build, macOS, the two-library model) and the binding reference.
 
 ## 🗪 Community
 
