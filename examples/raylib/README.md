@@ -49,6 +49,12 @@ Running `brainrot ohio_engine.brainrot` from inside this directory without
 `BRAINROT_PATH` fails: nothing on the default module search path contains
 `raylib.so`.
 
+Launching it directly (not via `make play`) prints a
+`LeakSanitizer: detected memory leaks` wall at exit — those are raylib/GLFW/Mesa/X11
+globals, not brainrot leaks. `make play` silences them; to do it yourself add
+`ASAN_OPTIONS=detect_leaks=0`. See
+[`docs/brainray.md`](../../docs/brainray.md#leaksanitizer-detected-memory-leaks-when-you-run-it).
+
 ## Notes
 
 - This example lives in a subdirectory so the top-level `examples/*.brainrot`

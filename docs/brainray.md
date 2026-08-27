@@ -179,6 +179,39 @@ sudo install -Dm755 brainray/raylib.so /usr/local/lib/brainrot/raylib.so
 Or just keep pointing `BRAINROT_PATH` at a directory that holds `raylib.so` so
 `#cooked <raylib>` resolves.
 
+## "LeakSanitizer: detected memory leaks" when you run it
+
+The default `brainrot` is built with `-fsanitize=address`, so LeakSanitizer runs
+at exit. Running the windowed demo, it prints a wall of leaks (tens of KB across
+hundreds of allocations, e.g. [#267](https://github.com/Brainrotlang/brainrot/issues/267)).
+
+**Those are not brainrot leaks — they belong to raylib and the graphics stack**
+(GLFW, Mesa/llvmpipe, X11, fontconfig). Those libraries allocate global state
+once and free it only at real process teardown, which happens *after* LSan has
+already taken its snapshot, so LSan reports it as leaked. With a full stack
+(`ASAN_OPTIONS=fast_unwind_on_malloc=0`), **815 of the 817 reported allocations
+are charged to a call stack passing through `execute_native_call`** — i.e. they
+are allocated *inside* a raylib call — and none are charged to brainray's own
+allocations. brainray frees everything it owns (the window-title copy and the
+texture table) in `rl_close_window`.
+
+`make play` already turns leak detection off for this one windowed run
+(`ASAN_OPTIONS=detect_leaks=0`). If you launch the example yourself and want a
+quiet exit, do the same:
+
+```bash
+ASAN_OPTIONS=detect_leaks=0 \
+  BRAINROT_PATH=brainray ./brainrot examples/raylib/ohio_engine.brainrot
+```
+
+A shipped `brainrot` (`make release`) carries no sanitizer at all, so it never
+prints any of this. An LSan *suppression file* does **not** work here: the
+fast-unwind leak stacks stop at the stripped raylib frame, so name-based
+suppressions never match — turning the check off for the demo run is the
+reliable option. Leak detection stays fully on everywhere else: `make test` and
+`make valgrind` never run raylib, and the headless `#cooked <raylib>` module
+load is leak-clean under the default ASan.
+
 ## How it works — the Road A ABI trick
 
 The Brainrot native ABI marshals scalars, C-strings, pointers, and bools, but
