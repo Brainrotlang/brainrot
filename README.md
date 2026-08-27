@@ -272,9 +272,10 @@ Join our community on:
 
 `#cooked "path/to/file.brainrot"` splices another Brainrot file's functions
 and structs into the current one, resolved relative to the including file's
-directory. `#cooked <name>` resolves `name` by searching `$BRAINROT_PATH`,
-then the install module directory, then the directory containing the
-`brainrot` executable itself, for a `<name>.brainrot` file. See
+directory. `#cooked <name>` resolves `name` for a `<name>.brainrot` file by
+searching `$BRAINROT_PATH`, then either the install module directory or a
+`stdrot/` directory next to the running executable (whichever applies — an
+install and a source build can't shadow each other). See
 [the language reference](docs/the-brainrot-programming-language.md#713-modules-cooked)
 for details (path resolution, the module search path, include-once behavior,
 circular-include detection).

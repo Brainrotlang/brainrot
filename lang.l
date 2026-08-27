@@ -300,9 +300,10 @@ static void handle_cooked_module_directive(const char *text) {
     if (!resolved) {
         char *base = basename_copy(current_filename);
         fprintf(stderr, "Error: %s:%d: cannot find module '%s' (looked "
-                "for '%s.brainrot' via $BRAINROT_PATH, the install module "
-                "directory, and the directory containing this brainrot "
-                "executable)\n", base, yylineno, name, name);
+                "for '%s.brainrot' via $BRAINROT_PATH, then either the "
+                "install module directory or a 'stdrot' directory next to "
+                "this executable, whichever applies)\n", base, yylineno,
+                name, name);
         free(base);
         free(name);
         cooked_die();

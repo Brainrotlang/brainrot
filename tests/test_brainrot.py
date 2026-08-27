@@ -194,17 +194,38 @@ def test_old_abi_rejected_at_load():
 # ── #cooked <name> module search path (lib/module_path.c) ──────────────────
 # test_cases/cooked_module_search_path.brainrot's own default run (no
 # $BRAINROT_PATH set, via the generic loop above) already covers the
-# "module not found" error path. The three tests below need a directory
-# layout the generic loop can't express -- a custom $BRAINROT_PATH, or a
-# copy of the binary sitting next to a module file -- so, like the
-# badnatives/old_abi_sim tests above, they run outside expected_results.json
-# with their own env/layout.
+# "module not found" error path. Everything below needs a directory layout
+# or a $PATH-style invocation the generic loop can't express, so -- like the
+# badnatives/old_abi_sim tests above -- these run outside
+# expected_results.json with their own env/layout.
+#
+# Search order (module_path.h): $BRAINROT_PATH, then EXACTLY ONE of
+# {install module dir, in-tree "stdrot/" next to the running executable} --
+# never both, decided by whether the running executable's own directory is
+# the install bin directory. "The running executable" is resolved via
+# /proc/self/exe (or _NSGetExecutablePath on macOS), never argv[0]/cwd, so
+# these tests specifically exercise a bare $PATH-style invocation (argv[0]
+# with no directory component) and a decoy in cwd -- the exact case
+# argv[0]-based resolution would get wrong.
+
+MATHMOD_SOURCE = os.path.join(script_dir, "modules", "mathmod.brainrot")
+COOKED_MODULE_SEARCH_PATH_SOURCE = os.path.join(
+    script_dir, "..", "test_cases", "cooked_module_search_path.brainrot")
+
+
+def _copy_binary(dest_dir):
+    """Copies the built `brainrot` binary into dest_dir, returns its path."""
+    repo_root = os.path.abspath(os.path.join(script_dir, ".."))
+    copied_binary = dest_dir / "brainrot"
+    shutil.copy(os.path.join(repo_root, "brainrot"), copied_binary)
+    os.chmod(copied_binary, 0o755)
+    return copied_binary
+
 
 def test_module_search_path_hit():
     """$BRAINROT_PATH pointed at tests/modules/ resolves #cooked <mathmod>."""
     brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
-    source_path = os.path.abspath(
-        os.path.join(script_dir, "../test_cases/cooked_module_search_path.brainrot"))
+    source_path = os.path.abspath(COOKED_MODULE_SEARCH_PATH_SOURCE)
     modules_dir = os.path.abspath(os.path.join(script_dir, "modules"))
 
     env = dict(os.environ, BRAINROT_PATH=modules_dir)
@@ -220,31 +241,30 @@ def test_module_search_path_hit():
 
 
 def test_module_in_tree_fallback(tmp_path):
-    """With no $BRAINROT_PATH, a module next to the executable still resolves.
+    """With no $BRAINROT_PATH, "stdrot/" next to the executable still resolves.
 
-    Copies the built binary into an empty tmp directory alongside
-    tests/modules/mathmod.brainrot, then runs that copy -- module_path.c's
-    third search tier is the directory containing argv[0], so this proves
-    an uninstalled build finds a module sitting next to it without needing
-    $BRAINROT_PATH at all. Runs with cwd=repo root so stdrot_load()'s own
-    cwd-relative "./libstdrot.so" lookup (stdrot.c) still finds the real
-    library; STDROT_LIB_PATH (set by `make test`, see the Makefile) takes
-    priority over that lookup anyway and is inherited from os.environ
-    regardless of cwd.
+    Copies the built binary into an empty tmp directory alongside a
+    stdrot/mathmod.brainrot of its own, then runs that copy with
+    $BRAINROT_PATH unset and while NOT the install bin directory (the
+    default -- BRAINROT_TEST_INSTALL_BIN_DIR is left unset here) --
+    module_path.c's in-tree tier is "stdrot/" next to the actual running
+    executable, resolved independently of argv[0]/cwd. Runs with cwd=repo
+    root so stdrot_load()'s own cwd-relative "./libstdrot.so" lookup
+    (stdrot.c) still finds the real library; STDROT_LIB_PATH (set by `make
+    test`, see the Makefile) takes priority over that lookup anyway and is
+    inherited from os.environ regardless of cwd.
     """
     repo_root = os.path.abspath(os.path.join(script_dir, ".."))
-    brainrot_path = os.path.join(repo_root, "brainrot")
     source_path = os.path.join(
         repo_root, "test_cases", "cooked_module_search_path.brainrot")
 
-    copied_binary = tmp_path / "brainrot"
-    shutil.copy(brainrot_path, copied_binary)
-    os.chmod(copied_binary, 0o755)
-    shutil.copy(os.path.join(script_dir, "modules", "mathmod.brainrot"),
-                tmp_path / "mathmod.brainrot")
+    copied_binary = _copy_binary(tmp_path)
+    (tmp_path / "stdrot").mkdir()
+    shutil.copy(MATHMOD_SOURCE, tmp_path / "stdrot" / "mathmod.brainrot")
 
     env = dict(os.environ)
     env.pop("BRAINROT_PATH", None)
+    env.pop("BRAINROT_TEST_INSTALL_BIN_DIR", None)
     result = subprocess.run([str(copied_binary), source_path],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=env, cwd=repo_root)
@@ -257,26 +277,24 @@ def test_module_in_tree_fallback(tmp_path):
 
 
 def test_module_search_path_precedence(tmp_path):
-    """$BRAINROT_PATH outranks the in-tree fallback (module_path.c order).
+    """$BRAINROT_PATH outranks the in-tree "stdrot/" tier (module_path.c order).
 
     Puts a DIFFERENT "mathmod" module in each tier (tests/modules_shadow/ vs
-    a copy of the binary's own directory) and checks the $BRAINROT_PATH one
+    a copy of the binary's own stdrot/) and checks the $BRAINROT_PATH one
     wins -- Appendix B Q11 (docs/ROADMAP.md): the two tiers must not
     silently shadow each other in the wrong order.
     """
     repo_root = os.path.abspath(os.path.join(script_dir, ".."))
-    brainrot_path = os.path.join(repo_root, "brainrot")
     source_path = os.path.join(
         repo_root, "test_cases", "cooked_module_search_path.brainrot")
     shadow_dir = os.path.abspath(os.path.join(script_dir, "modules_shadow"))
 
-    copied_binary = tmp_path / "brainrot"
-    shutil.copy(brainrot_path, copied_binary)
-    os.chmod(copied_binary, 0o755)
-    shutil.copy(os.path.join(script_dir, "modules", "mathmod.brainrot"),
-                tmp_path / "mathmod.brainrot")
+    copied_binary = _copy_binary(tmp_path)
+    (tmp_path / "stdrot").mkdir()
+    shutil.copy(MATHMOD_SOURCE, tmp_path / "stdrot" / "mathmod.brainrot")
 
     env = dict(os.environ, BRAINROT_PATH=shadow_dir)
+    env.pop("BRAINROT_TEST_INSTALL_BIN_DIR", None)
     result = subprocess.run([str(copied_binary), source_path],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=env, cwd=repo_root)
@@ -288,6 +306,132 @@ def test_module_search_path_precedence(tmp_path):
     assert result.stdout == "63\n", (
         f"Expected the $BRAINROT_PATH module (tripling) to win over the "
         f"in-tree one (doubling)\nActual stdout:\n{result.stdout}"
+    )
+
+
+def test_module_bare_command_name_uses_real_executable_dir(tmp_path):
+    """A bare, $PATH-resolved invocation must not resolve modules via cwd.
+
+    Regression test for exactly the bug a naive argv[0]-based
+    implementation has: typing a bare command name (no "./", no absolute
+    path -- the same shape as running an installed `brainrot` from $PATH)
+    gives argv[0] with no directory component at all. Resolving the
+    in-tree tier from argv[0]+cwd would then silently search the *caller's*
+    current directory instead of the directory the executed binary
+    actually lives in.
+
+    Sets up two candidate "stdrot/mathmod.brainrot" modules with different,
+    distinguishable content: one next to the real copied binary (via
+    $PATH), one in the subprocess's cwd (a decoy). Only the $PATH one may
+    win.
+    """
+    bindir = tmp_path / "bindir"
+    bindir.mkdir()
+    cwd_dir = tmp_path / "cwd"
+    cwd_dir.mkdir()
+
+    _copy_binary(bindir)
+    (bindir / "stdrot").mkdir()
+    shutil.copy(MATHMOD_SOURCE, bindir / "stdrot" / "mathmod.brainrot")
+
+    (cwd_dir / "stdrot").mkdir()
+    shutil.copy(os.path.join(script_dir, "modules_shadow", "mathmod.brainrot"),
+                cwd_dir / "stdrot" / "mathmod.brainrot")
+
+    source_path = os.path.abspath(COOKED_MODULE_SEARCH_PATH_SOURCE)
+
+    env = dict(os.environ, PATH=f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
+    env.pop("BRAINROT_PATH", None)
+    env.pop("BRAINROT_TEST_INSTALL_BIN_DIR", None)
+    # subprocess.run resolves a slash-free executable name via $PATH itself
+    # (like a shell would) while leaving argv[0] as the bare name "brainrot"
+    # -- exactly the invocation shape this test exists to cover.
+    result = subprocess.run(["brainrot", source_path],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env, cwd=cwd_dir)
+
+    assert result.returncode == 0, (
+        f"Expected success, got {result.returncode}\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert result.stdout == "42\n", (
+        f"Expected the module next to the real executable (doubling) to "
+        f"win over cwd's decoy (tripling) -- got:\n{result.stdout}"
+    )
+
+
+def test_module_install_dir_skips_in_tree(tmp_path):
+    """Once the running binary IS the install bin dir, in-tree is skipped.
+
+    BRAINROT_TEST_INSTALL_BIN_DIR (module_path.c, test-only seam) stands in
+    for the real /usr/local/bin so this doesn't have to write there. With
+    the copied binary's own directory treated as "installed", its sibling
+    stdrot/mathmod.brainrot must NOT be found -- only the (real, empty in
+    this environment) install module directory tier applies -- proving the
+    two tiers are mutually exclusive, not just ordered.
+    """
+    repo_root = os.path.abspath(os.path.join(script_dir, ".."))
+    source_path = os.path.join(
+        repo_root, "test_cases", "cooked_module_search_path.brainrot")
+
+    copied_binary = _copy_binary(tmp_path)
+    (tmp_path / "stdrot").mkdir()
+    shutil.copy(MATHMOD_SOURCE, tmp_path / "stdrot" / "mathmod.brainrot")
+
+    env = dict(os.environ, BRAINROT_TEST_INSTALL_BIN_DIR=str(tmp_path))
+    env.pop("BRAINROT_PATH", None)
+    env.pop("BRAINROT_TEST_INSTALL_MODULE_DIR", None)
+    result = subprocess.run([str(copied_binary), source_path],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env, cwd=repo_root)
+
+    assert result.returncode == 1, (
+        f"Expected 'module not found' (in-tree must be skipped once "
+        f"treated as installed), got {result.returncode}\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert "cannot find module 'mathmod'" in result.stderr, (
+        f"Actual stderr:\n{result.stderr}"
+    )
+
+
+def test_module_install_dir_used_when_installed(tmp_path):
+    """The install module dir IS consulted, and wins, once "installed".
+
+    Combines BRAINROT_TEST_INSTALL_BIN_DIR with
+    BRAINROT_TEST_INSTALL_MODULE_DIR (both test-only seams standing in for
+    /usr/local/bin and /usr/local/lib/brainrot) to prove the positive half
+    of the install/in-tree split actually finds a module there -- not just
+    that it skips in-tree (test_module_install_dir_skips_in_tree, above).
+    """
+    repo_root = os.path.abspath(os.path.join(script_dir, ".."))
+    source_path = os.path.join(
+        repo_root, "test_cases", "cooked_module_search_path.brainrot")
+    fake_install_module_dir = tmp_path / "fake_install_lib_brainrot"
+    fake_install_module_dir.mkdir()
+    shutil.copy(os.path.join(script_dir, "modules_shadow", "mathmod.brainrot"),
+                fake_install_module_dir / "mathmod.brainrot")
+
+    copied_binary = _copy_binary(tmp_path)
+    (tmp_path / "stdrot").mkdir()
+    shutil.copy(MATHMOD_SOURCE, tmp_path / "stdrot" / "mathmod.brainrot")
+
+    env = dict(os.environ,
+              BRAINROT_TEST_INSTALL_BIN_DIR=str(tmp_path),
+              BRAINROT_TEST_INSTALL_MODULE_DIR=str(fake_install_module_dir))
+    env.pop("BRAINROT_PATH", None)
+    result = subprocess.run([str(copied_binary), source_path],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env, cwd=repo_root)
+
+    assert result.returncode == 0, (
+        f"Expected success, got {result.returncode}\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert result.stdout == "63\n", (
+        f"Expected the install-dir module (tripling) to win over the "
+        f"in-tree one (doubling), which must be skipped entirely -- got:\n"
+        f"{result.stdout}"
     )
 
 

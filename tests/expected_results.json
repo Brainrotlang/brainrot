@@ -142,7 +142,7 @@
     "cooked_malformed": "Error: cooked_malformed.brainrot:1: malformed #cooked directive (expected: #cooked \"path/to/file.brainrot\" or #cooked <module_name>)",
     "cooked_module_empty_name": "Error: cooked_module_empty_name.brainrot:3: #cooked <>: module name must not be empty",
     "cooked_module_slash": "Error: cooked_module_slash.brainrot:3: #cooked <foo/bar>: module name must not contain '/' -- use #cooked \"path\" to include a file by path",
-    "cooked_module_search_path": "Error: cooked_module_search_path.brainrot:10: cannot find module 'mathmod' (looked for 'mathmod.brainrot' via $BRAINROT_PATH, the install module directory, and the directory containing this brainrot executable)",
+    "cooked_module_search_path": "Error: cooked_module_search_path.brainrot:10: cannot find module 'mathmod' (looked for 'mathmod.brainrot' via $BRAINROT_PATH, then either the install module directory or a 'stdrot' directory next to this executable, whichever applies)",
     "cooked_nested": "12",
     "cooked_self": "Error: cooked_self.brainrot:2: #cooked includes itself",
     "cooked_syntax_error": "Error: syntax error, unexpected LBRACE at line 3\nParsing failed",

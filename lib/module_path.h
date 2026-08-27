@@ -6,25 +6,34 @@
  * Search order, most to least specific:
  *   1. Each directory in $BRAINROT_PATH (colon-separated), in the order
  *      given.
- *   2. The install module directory (BRAINROT_INSTALL_MODULE_DIR,
- *      module_path.c).
- *   3. The directory containing the running `brainrot` executable itself
- *      (argv[0], see module_path_init) -- lets an uninstalled build resolve
- *      a module sitting next to the binary in the build tree. This can
- *      never shadow a real install: an installed binary's own directory
- *      (e.g. /usr/local/bin) never contains a module artifact, so this
- *      tier simply misses there and changes nothing for an installed
- *      binary. See docs/ROADMAP.md Appendix B, Q11.
+ *   2. Exactly ONE of the following two, decided by which binary is
+ *      actually running (see module_path_init) -- never both, so an
+ *      install can never shadow a working tree or vice versa regardless of
+ *      invocation-time cwd or $PATH:
+ *        - the install module directory (module_path.c) if the running
+ *          executable's own directory is the install bin directory, or
+ *        - "stdrot/" next to the running executable otherwise (an
+ *          uninstalled/source build resolves modules from here, matching
+ *          the in-tree source layout stdrot/, brainray/, ... described in
+ *          docs/ROADMAP.md's Phase 4).
+ *
+ * "The running executable" is resolved independently of argv[0]: argv[0]
+ * for a bare, $PATH-resolved command name (e.g. typing "brainrot" after
+ * `make install`) carries no directory component at all, so realpath() on
+ * it would resolve against cwd instead of the actual installed binary. See
+ * module_path.c's resolve_running_executable() for the platform-specific
+ * mechanism this uses instead.
  */
 
 #ifndef MODULE_PATH_H
 #define MODULE_PATH_H
 
 /* Called once from main(), before any #cooked <name> directive can be
- * lexed, with the program's own argv[0]. Resolves and remembers the
- * executable's directory for search tier 3 above; harmless (that tier is
- * simply unavailable) if argv[0] can't be resolved. */
-void module_path_init(const char *argv0);
+ * lexed. Determines the running executable's own directory and whether it
+ * is the installed one (see the search order above); harmless (search
+ * tier 2 is simply unavailable) if the running executable can't be
+ * determined on this platform. */
+void module_path_init(void);
 
 /* Frees state module_path_init() allocated. Idempotent. */
 void module_path_cleanup(void);

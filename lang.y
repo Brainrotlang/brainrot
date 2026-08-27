@@ -31,7 +31,7 @@ void cooked_init(const char *initial_filename);
 void cooked_cleanup(void);
 
 /* Module search path for #cooked <name>, implemented in lib/module_path.c */
-void module_path_init(const char *argv0);
+void module_path_init(void);
 void module_path_cleanup(void);
 
 /* Root of the AST */
@@ -2063,7 +2063,7 @@ int main(int argc, char *argv[]) {
 
     yyin = source;
     cooked_init(argv[1]);
-    module_path_init(argv[0]);
+    module_path_init();
     current_scope = create_scope(NULL);
 
     /* Phase 0: Load standard library (needed for semantic analysis) */
