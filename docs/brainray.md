@@ -179,6 +179,39 @@ sudo install -Dm755 brainray/raylib.so /usr/local/lib/brainrot/raylib.so
 Or just keep pointing `BRAINROT_PATH` at a directory that holds `raylib.so` so
 `#cooked <raylib>` resolves.
 
+## Memory leaks: what brainray does and doesn't report
+
+The default `brainrot` is built with `-fsanitize=address`, so LeakSanitizer
+checks for leaks at exit. raylib and the libraries it drives (GLFW, the GL
+driver / Mesa, X11, fontconfig) allocate process-lifetime global state — a GL
+context, the default font and shader, X11 and font caches — that they never
+return to the allocator; the OS reclaims it when the process ends. Reported
+verbatim, that would be a wall of "leaks" ([#267](https://github.com/Brainrotlang/brainrot/issues/267))
+that no application can free and that brainray does not own.
+
+So brainray brackets each raylib call with LeakSanitizer's allocator-scoped
+`__lsan_disable()` / `__lsan_enable()` (see `brainray/raylib.c`): allocations
+made *inside* a raylib call are excluded from the leak report on purpose, as
+unowned graphics-stack state. This is deliberately narrow — **everything
+brainray itself allocates stays fully checked**. The window-title copy and the
+texture table are allocated outside those brackets, so a real leak in the
+binding (say, forgetting to free the title in `rl_close_window`) is still
+reported. The controls are weak symbols, inert when the interpreter carries no
+sanitizer (`make release`), so the module loads either way.
+
+The upshot: running the example — `make play`, or the plain command below —
+exits clean under the default sanitizer build, with leak checking still live for
+brainray's and the interpreter's own memory:
+
+```bash
+BRAINROT_PATH=brainray ./brainrot examples/raylib/ohio_engine.brainrot
+```
+
+(An LSan *suppression file* is not used here: under the default fast unwind the
+leak stacks into the non-instrumented raylib `.so` are unsymbolized, so
+name-based suppressions can't match them anyway. Bracketing the calls tags the
+allocations at their source instead, which is reliable regardless of unwind.)
+
 ## How it works — the Road A ABI trick
 
 The Brainrot native ABI marshals scalars, C-strings, pointers, and bools, but

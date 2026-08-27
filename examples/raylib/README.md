@@ -49,6 +49,12 @@ Running `brainrot ohio_engine.brainrot` from inside this directory without
 `BRAINROT_PATH` fails: nothing on the default module search path contains
 `raylib.so`.
 
+The example exits clean under the default sanitizer build: brainray brackets
+raylib's own calls with LeakSanitizer's `__lsan_disable`/`__lsan_enable`, so the
+graphics stack's process-lifetime globals aren't reported as leaks while
+brainray's and the interpreter's own memory stays checked. See
+[`docs/brainray.md`](../../docs/brainray.md#memory-leaks-what-brainray-does-and-doesnt-report).
+
 ## Notes
 
 - This example lives in a subdirectory so the top-level `examples/*.brainrot`

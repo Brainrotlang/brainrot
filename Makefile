@@ -272,6 +272,10 @@ $(BRAINRAY_LIB): $(BRAINRAY_DIR)/raylib.c $(STDROT_DIR)/registry.c
 # builds brainray/raylib.so and runs the example, so it needs both raylib and a
 # display -- with no display the raylib window init fails (it does NOT skip).
 # Still an explicit opt-in like `brainray` -- never a prerequisite of `all`/`test`.
+# No ASAN_OPTIONS override: brainray brackets raylib's own calls with
+# __lsan_disable/enable (issue #267, brainray/raylib.c), so the sanitizer build
+# runs the game cleanly while still checking brainray's and the interpreter's
+# own allocations.
 .PHONY: play
 play: $(BRAINRAY_LIB) $(TARGET) ## Build brainray + run the Ohio Engine (needs raylib + a display). It's giving cinema.
 	BRAINROT_PATH=$(BRAINRAY_DIR) ./$(TARGET) examples/raylib/ohio_engine.brainrot

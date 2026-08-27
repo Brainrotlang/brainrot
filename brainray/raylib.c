@@ -71,6 +71,54 @@ static bool g_texture_used[BRAINRAY_MAX_TEXTURES];
  * "String ownership" note in this file's header. */
 static char *g_window_title = NULL;
 
+/* ── LeakSanitizer: disclaiming the graphics stack's globals (issue #267) ── *
+ * raylib and the libraries it drives (GLFW, the GL driver, X11, fontconfig)
+ * allocate process-lifetime global state -- a GL context, the default
+ * font/shader, X11 and font caches -- that they never return to the allocator;
+ * the OS reclaims it at exit. That state is not brainray's to free, but the
+ * interpreter is built with -fsanitize=address, so LeakSanitizer reports every
+ * one of those allocations when the demo exits (issue #267).
+ *
+ * Bracket each raylib call with LSan's allocator-scoped disable/enable so
+ * allocations made *inside* raylib are excluded from the leak report on
+ * purpose, as unowned. This is deliberately narrow: everything brainray itself
+ * allocates -- the window-title copy above, the texture table -- happens
+ * OUTSIDE these brackets and stays fully tracked, so a real brainray leak is
+ * still caught (a regression here does not go dark). The pure input/query
+ * getters (WindowShouldClose, IsKeyDown, GetScreenWidth, ...) are left
+ * unbracketed because they poll rather than allocate persistent state.
+ *
+ * The controls are weak symbols: they bind to libasan in a sanitizer build and
+ * are inert no-ops otherwise (e.g. `make release`), so the module loads either
+ * way. */
+__attribute__((weak)) void __lsan_disable(void);
+__attribute__((weak)) void __lsan_enable(void);
+
+static void br_lsan_ignore_begin(void)
+{
+    if (__lsan_disable)
+    {
+        __lsan_disable();
+    }
+}
+
+static void br_lsan_ignore_end(void)
+{
+    if (__lsan_enable)
+    {
+        __lsan_enable();
+    }
+}
+
+/* Run a void-returning raylib call with LSan leak-tracking suspended. */
+#define BR_RAYLIB_VOID(call)                                                   \
+    do                                                                         \
+    {                                                                          \
+        br_lsan_ignore_begin();                                                \
+        call;                                                                  \
+        br_lsan_ignore_end();                                                  \
+    } while (0)
+
 /* Reassemble a raylib Color from four consecutive int arguments starting at
  * args[base]. Each channel is clamped into the unsigned-char range so a
  * stray Brainrot value can't wrap unexpectedly. */
@@ -115,7 +163,7 @@ static StdrotValue br_init_window(StdrotValue *args, int argc)
             memcpy(g_window_title, title, n);
         }
     }
-    InitWindow(args[0].val.i, args[1].val.i, g_window_title);
+    BR_RAYLIB_VOID(InitWindow(args[0].val.i, args[1].val.i, g_window_title));
     return (StdrotValue){.type = STDROT_NONE};
 }
 
@@ -139,11 +187,11 @@ static StdrotValue br_close_window(StdrotValue *args, int argc)
     {
         if (g_texture_used[i])
         {
-            UnloadTexture(g_textures[i]);
+            BR_RAYLIB_VOID(UnloadTexture(g_textures[i]));
             g_texture_used[i] = false;
         }
     }
-    CloseWindow();
+    BR_RAYLIB_VOID(CloseWindow());
     free(g_window_title);
     g_window_title = NULL;
     return (StdrotValue){.type = STDROT_NONE};
@@ -152,7 +200,7 @@ static StdrotValue br_close_window(StdrotValue *args, int argc)
 static StdrotValue br_set_target_fps(StdrotValue *args, int argc)
 {
     (void)argc;
-    SetTargetFPS(args[0].val.i);
+    BR_RAYLIB_VOID(SetTargetFPS(args[0].val.i));
     return (StdrotValue){.type = STDROT_NONE};
 }
 
@@ -176,7 +224,7 @@ static StdrotValue br_begin_drawing(StdrotValue *args, int argc)
 {
     (void)args;
     (void)argc;
-    BeginDrawing();
+    BR_RAYLIB_VOID(BeginDrawing());
     return (StdrotValue){.type = STDROT_NONE};
 }
 
@@ -184,14 +232,14 @@ static StdrotValue br_end_drawing(StdrotValue *args, int argc)
 {
     (void)args;
     (void)argc;
-    EndDrawing();
+    BR_RAYLIB_VOID(EndDrawing());
     return (StdrotValue){.type = STDROT_NONE};
 }
 
 static StdrotValue br_clear_background(StdrotValue *args, int argc)
 {
     (void)argc;
-    ClearBackground(make_color(args, 0));
+    BR_RAYLIB_VOID(ClearBackground(make_color(args, 0)));
     return (StdrotValue){.type = STDROT_NONE};
 }
 
@@ -205,7 +253,7 @@ static StdrotValue br_get_frame_time(StdrotValue *args, int argc)
 static StdrotValue br_draw_fps(StdrotValue *args, int argc)
 {
     (void)argc;
-    DrawFPS(args[0].val.i, args[1].val.i);
+    BR_RAYLIB_VOID(DrawFPS(args[0].val.i, args[1].val.i));
     return (StdrotValue){.type = STDROT_NONE};
 }
 
@@ -214,24 +262,24 @@ static StdrotValue br_draw_fps(StdrotValue *args, int argc)
 static StdrotValue br_draw_circle(StdrotValue *args, int argc)
 {
     (void)argc;
-    DrawCircle(args[0].val.i, args[1].val.i, args[2].val.f,
-               make_color(args, 3));
+    BR_RAYLIB_VOID(DrawCircle(args[0].val.i, args[1].val.i, args[2].val.f,
+                              make_color(args, 3)));
     return (StdrotValue){.type = STDROT_NONE};
 }
 
 static StdrotValue br_draw_rectangle(StdrotValue *args, int argc)
 {
     (void)argc;
-    DrawRectangle(args[0].val.i, args[1].val.i, args[2].val.i, args[3].val.i,
-                  make_color(args, 4));
+    BR_RAYLIB_VOID(DrawRectangle(args[0].val.i, args[1].val.i, args[2].val.i,
+                                 args[3].val.i, make_color(args, 4)));
     return (StdrotValue){.type = STDROT_NONE};
 }
 
 static StdrotValue br_draw_line(StdrotValue *args, int argc)
 {
     (void)argc;
-    DrawLine(args[0].val.i, args[1].val.i, args[2].val.i, args[3].val.i,
-             make_color(args, 4));
+    BR_RAYLIB_VOID(DrawLine(args[0].val.i, args[1].val.i, args[2].val.i,
+                            args[3].val.i, make_color(args, 4)));
     return (StdrotValue){.type = STDROT_NONE};
 }
 
@@ -240,8 +288,8 @@ static StdrotValue br_draw_line(StdrotValue *args, int argc)
 static StdrotValue br_draw_text(StdrotValue *args, int argc)
 {
     (void)argc;
-    DrawText(args[0].val.cstr, args[1].val.i, args[2].val.i, args[3].val.i,
-             make_color(args, 4));
+    BR_RAYLIB_VOID(DrawText(args[0].val.cstr, args[1].val.i, args[2].val.i,
+                            args[3].val.i, make_color(args, 4)));
     return (StdrotValue){.type = STDROT_NONE};
 }
 
@@ -274,7 +322,9 @@ static StdrotValue br_is_key_pressed(StdrotValue *args, int argc)
 static StdrotValue br_load_texture(StdrotValue *args, int argc)
 {
     (void)argc;
+    br_lsan_ignore_begin();
     Texture2D tex = LoadTexture(args[0].val.cstr);
+    br_lsan_ignore_end();
     if (tex.id == 0)
     {
         /* Load failed (missing/undecodable file): raylib hands back a zeroed
@@ -292,7 +342,7 @@ static StdrotValue br_load_texture(StdrotValue *args, int argc)
         }
     }
     /* Table full: nothing owns this texture, so unload it and report -1. */
-    UnloadTexture(tex);
+    BR_RAYLIB_VOID(UnloadTexture(tex));
     return (StdrotValue){.type = STDROT_INT, .val = {.i = -1}};
 }
 
@@ -302,8 +352,8 @@ static StdrotValue br_draw_texture(StdrotValue *args, int argc)
     int handle = args[0].val.i;
     if (handle >= 0 && handle < BRAINRAY_MAX_TEXTURES && g_texture_used[handle])
     {
-        DrawTexture(g_textures[handle], args[1].val.i, args[2].val.i,
-                    make_color(args, 3));
+        BR_RAYLIB_VOID(DrawTexture(g_textures[handle], args[1].val.i,
+                                   args[2].val.i, make_color(args, 3)));
     }
     return (StdrotValue){.type = STDROT_NONE};
 }
@@ -314,7 +364,7 @@ static StdrotValue br_unload_texture(StdrotValue *args, int argc)
     int handle = args[0].val.i;
     if (handle >= 0 && handle < BRAINRAY_MAX_TEXTURES && g_texture_used[handle])
     {
-        UnloadTexture(g_textures[handle]);
+        BR_RAYLIB_VOID(UnloadTexture(g_textures[handle]));
         g_texture_used[handle] = false;
     }
     return (StdrotValue){.type = STDROT_NONE};

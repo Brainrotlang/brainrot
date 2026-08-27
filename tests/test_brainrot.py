@@ -631,5 +631,65 @@ def test_brainray_module_loads_when_raylib_present(tmp_path):
         f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
 
 
+@pytest.mark.skipif(
+    not _raylib_available() or not os.environ.get("DISPLAY"),
+    reason="needs raylib AND a display ($DISPLAY): raylib is optional and the "
+           "windowed run cannot open a window in headless CI")
+def test_brainray_windowed_run_is_leak_clean(tmp_path):
+    """The windowed demo must exit clean under the default (ASan) build --
+    the regression guard for issue #267. brainray brackets raylib's own calls
+    with __lsan_disable/__lsan_enable so the graphics stack's process-lifetime
+    globals are not reported, while brainray's own allocations (the window
+    title, the texture table) stay tracked. A leak on either side -- a real
+    brainray leak, or the bracketing being removed so raylib's globals surface
+    again -- makes ASan exit nonzero and prints "LeakSanitizer", failing here.
+
+    Uses a frame-capped program (the shipped example loops until the window is
+    closed) so the run terminates on its own. Skips without raylib or a
+    display, so headless CI never runs it."""
+    build = subprocess.run(
+        ["make", "brainray"], cwd=REPO_ROOT,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert build.returncode == 0, f"`make brainray` failed:\n{build.stdout}"
+
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    source_path = tmp_path / "leak_smoke.brainrot"
+    source_path.write_text(
+        "#cooked <raylib>\n"
+        "skibidi main {\n"
+        "    rl_init_window(160, 120, \"leak smoke\");\n"
+        "    rizz n = 0;\n"
+        "    cap running = W;\n"
+        "    goon (running) {\n"
+        "        cap down = rl_is_key_down(32);\n"
+        "        rl_begin_drawing();\n"
+        "        rl_clear_background(20, 20, 20, 255);\n"
+        "        rl_draw_circle(80, 60, 20.0, 255, 0, 255, 255);\n"
+        "        rl_draw_text(\"cinema\", 10, 10, 16, 255, 255, 255, 255);\n"
+        "        rl_end_drawing();\n"
+        "        cap wc = rl_window_should_close();\n"
+        "        edgy (wc) { running = L; }\n"
+        "        n = n + 1;\n"
+        "        edgy (n > 5) { running = L; }\n"
+        "    }\n"
+        "    rl_close_window();\n"
+        "    bussin 0;\n"
+        "}\n")
+
+    # Default env: leak detection stays ON (no ASAN_OPTIONS override). A leak
+    # would make ASan exit nonzero; assert the clean exit and no LSan report.
+    env = dict(os.environ, BRAINROT_PATH=BRAINRAY_DIR)
+    result = subprocess.run(
+        [brainrot_path, str(source_path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+        timeout=60)
+
+    assert "LeakSanitizer" not in result.stderr, (
+        f"LeakSanitizer reported leaks on the windowed run:\n{result.stderr}")
+    assert result.returncode == 0, (
+        f"Nonzero exit {result.returncode}\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
+
+
 if __name__ == "__main__":
     pytest.main(["-v", os.path.abspath(__file__)])
