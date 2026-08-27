@@ -209,8 +209,9 @@ static NativeResult native_call_peek(ASTNode *node)
         }
     }
 
-    NativeResult result = execute_native_call(
-        node->data.func_call.function_name, node->data.func_call.arguments);
+    NativeResult result =
+        execute_native_call(node->data.func_call.function_name,
+                            node->data.func_call.arguments, node->line_number);
     native_call_cache[free_slot].node = node;
     native_call_cache[free_slot].result = result;
     native_call_cache[free_slot].valid = true;
@@ -228,7 +229,8 @@ static NativeResult native_call_consume(ASTNode *node)
         }
     }
     return execute_native_call(node->data.func_call.function_name,
-                               node->data.func_call.arguments);
+                               node->data.func_call.arguments,
+                               node->line_number);
 }
 
 /* Helper to build a namespaced static key */

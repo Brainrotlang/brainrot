@@ -109,8 +109,18 @@ typedef struct
  * directly -- no write-back, no deprecation warning. This is what
  * expression-position native calls (ast.c's handle_function_call) use;
  * execute_func_call() layers the deprecated write-back convention on top
- * of this for statement-position calls. */
-NativeResult execute_native_call(const String func_name, ArgumentList *args);
+ * of this for statement-position calls.
+ *
+ * call_line is the source line of the CALL node itself, used to populate
+ * g_exec_context.line_number for a native that reports an error. It is the
+ * only line source for a ZERO-argument call (e.g. `gamba()`): the line was
+ * historically taken from the first argument's node, so an arg-less native
+ * that aborts (a CSPRNG failure, the wasm gamba stub) would otherwise report
+ * "line 0". A positive first-argument line still wins when present, keeping
+ * every existing multi-arg diagnostic unchanged; call_line is the fallback.
+ * Pass 0 when no call-site line is available. */
+NativeResult execute_native_call(const String func_name, ArgumentList *args,
+                                 int call_line);
 
 /* ── Stub functions (forward declarations for use by ast.c) ──────────────── */
 void yapping(const String format, ...);

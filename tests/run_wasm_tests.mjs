@@ -152,6 +152,11 @@ const WASM_EXPECTED_OVERRIDES = {
   // gamba_zero_fail) reject BEFORE touching the CSPRNG, so they emit the
   // same error on wasm as native and need no override.
   gamba: "Error: gamba: CSPRNG unavailable in this build (no OpenSSL) at line 7",
+  // Zero-argument gamba() aborts on the wasm stub too. Its error line comes
+  // from the call node (line 8), NOT a first-argument node it doesn't have --
+  // guarding that the no-arg form reports the real line, not "line 0".
+  gamba_noarg:
+    "Error: gamba: CSPRNG unavailable in this build (no OpenSSL) at line 8",
 };
 
 // Fixtures that call a tests/stdrot/*.c native (poke_int, peek_int,

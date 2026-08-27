@@ -13,17 +13,6 @@ LDFLAGS := -lfl -lm -ldl -rdynamic
 SO_CFLAGS := -fPIC -shared
 SO_LDFLAGS :=
 
-# OpenSSL libcrypto is a REQUIRED native build dependency of libstdrot.so:
-# stdrot/gamba.c calls RAND_bytes for the cryptographically safe gamba()
-# (issue #215). Resolved via pkg-config when available (picks up keg-only
-# Homebrew openssl on macOS through PKG_CONFIG_PATH), falling back to a plain
-# -lcrypto. A missing OpenSSL is meant to FAIL the native link, not compile a
-# gamba-less or rand()-backed interpreter -- so these flags are unconditional
-# for every native libstdrot.so target below. The wasm build (-DSTDROT_STATIC)
-# deliberately never sees them: gamba is an erroring stub there (issue #175).
-CRYPTO_CFLAGS := $(shell pkg-config --cflags libcrypto 2>/dev/null)
-CRYPTO_LIBS := $(shell pkg-config --libs libcrypto 2>/dev/null || echo -lcrypto)
-
 # `make release` ships binaries (GitHub Actions release matrix). Drop
 # sanitizers so the artifact doesn't need libasan/libubsan at runtime.
 # FLEX_PREFIX is for keg-only Homebrew flex on macOS (the release
@@ -41,6 +30,44 @@ ifeq ($(UNAME_S),Darwin)
 # g_exec_context at load time. ELF gets the same behavior from the main
 # binary's -rdynamic link; Darwin needs the dylib link to allow it.
 SO_LDFLAGS := -Wl,-undefined,dynamic_lookup
+endif
+
+# ── OpenSSL libcrypto: REQUIRED native build dependency of libstdrot.so ──────
+# stdrot/gamba.c calls RAND_bytes for the cryptographically safe gamba()
+# (issue #215). A missing OpenSSL must FAIL the native link, never compile a
+# gamba-less or rand()-backed interpreter, so these flags are unconditional
+# for every native libstdrot.so target. The wasm build (-DSTDROT_STATIC) never
+# sees them: gamba is an erroring stub there (issue #175).
+#
+# The two platforms link libcrypto DIFFERENTLY on purpose:
+CRYPTO_CFLAGS := $(shell pkg-config --cflags libcrypto 2>/dev/null)
+ifeq ($(UNAME_S),Darwin)
+# Homebrew's libcrypto is keg-only, so its dylib install_name is an absolute
+# prefix path (e.g. /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib). A
+# dynamic link bakes that path into libstdrot.so as an LC_LOAD_DYLIB, so the
+# shipped stdlib would only dlopen on a machine with that exact Homebrew
+# prefix present -- every Brainrot program, not just gamba, would fail to
+# load elsewhere. Statically link libcrypto.a instead: the resulting dylib is
+# self-contained, still fails the link when OpenSSL is absent, and wasm is
+# untouched. Auto-locate keg-only openssl for pkg-config so a plain `make`
+# works without the caller pre-exporting PKG_CONFIG_PATH.
+OPENSSL_PREFIX := $(shell brew --prefix openssl@3 2>/dev/null)
+ifneq ($(OPENSSL_PREFIX),)
+export PKG_CONFIG_PATH := $(OPENSSL_PREFIX)/lib/pkgconfig:$(PKG_CONFIG_PATH)
+CRYPTO_CFLAGS := $(shell pkg-config --cflags libcrypto 2>/dev/null)
+endif
+CRYPTO_LIBDIR := $(shell pkg-config --variable=libdir libcrypto 2>/dev/null)
+# An empty CRYPTO_LIBDIR yields "/libcrypto.a", which fails the link loudly --
+# the intended "OpenSSL missing => build fails" behavior, not a silent skip.
+CRYPTO_LIBS := $(CRYPTO_LIBDIR)/libcrypto.a
+else
+# Linux: libcrypto.so is a normal soname dependency (DT_NEEDED
+# libcrypto.so.3), resolved on any machine with OpenSSL's runtime installed
+# -- portable across hosts, unlike Homebrew's keg-only absolute path, so no
+# static link is needed here. (Distro libcrypto.a is typically non-PIC and
+# can't go into a shared object anyway.) Runtime dep is documented in
+# README.md / docs §4 alongside libssl-dev.
+CRYPTO_LIBS := $(shell pkg-config --libs libcrypto 2>/dev/null || echo -lcrypto)
 endif
 
 # Source files and directories
@@ -420,12 +447,16 @@ uninstall: ## Remove an installed brainrot + libstdrot.so (needs root). Back to 
 
 # Check dependencies
 .PHONY: check-deps
-check-deps: ## Verify required bro apps are installed (gcc, bison, flex, python3, pytest).
+check-deps: ## Verify required bro apps are installed (gcc, bison, flex, python3, pytest, openssl).
 	@command -v $(CC) >/dev/null 2>&1 || { echo "Error: gcc not found. Blud, install gcc!"; exit 1; }
 	@command -v $(BISON) >/dev/null 2>&1 || { echo "Error: bison not found. Duke Dennis did you pray today?"; exit 1; }
 	@command -v $(FLEX) >/dev/null 2>&1 || { echo "Error: flex not found. Ayo, where's flex?"; exit 1; }
 	@command -v $(PYTHON) >/dev/null 2>&1 || { echo "Error: python3 not found. Python in Ohio moment."; exit 1; }
 	@$(PYTHON) -c "import pytest" >/dev/null 2>&1 || { echo "Error: pytest not found. Install with: pip install pytest. That's the ocky way."; exit 1; }
+	@# OpenSSL (libcrypto) is a required dependency of libstdrot.so (gamba(),
+	@# issue #215). PKG_CONFIG_PATH is already extended for keg-only Homebrew
+	@# openssl above, so this check matches how the real build resolves it.
+	@pkg-config --exists libcrypto >/dev/null 2>&1 || { echo "Error: OpenSSL (libcrypto) not found via pkg-config. Install libssl-dev (Ubuntu/Debian), openssl (Arch), or 'brew install openssl@3' (macOS). No gamba without it, no cap."; exit 1; }
 
 # Development helper to rebuild everything from scratch
 .PHONY: rebuild

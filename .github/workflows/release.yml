@@ -75,7 +75,7 @@ jobs:
             -o Acquire::Retries=3 \
             -o Acquire::http::Timeout=15 \
             -o Acquire::https::Timeout=15 \
-            install gcc flex bison libfl-dev libasan8 libubsan1 \
+            install gcc flex bison libfl-dev libasan8 libubsan1 libssl-dev \
               python3 python3-pip python3-venv -y
 
       # Gate the release packaging on pytest via `make test`. The full

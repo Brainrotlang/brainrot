@@ -84,6 +84,11 @@ To compile Brainrot from source, you’ll need:
 - **GCC** (GNU Compiler Collection)
 - **Flex** (Fast Lexical Analyzer)
 - **Bison** (Parser Generator)
+- **OpenSSL** (`libcrypto`) — a **required** dependency of the standard
+  library (`libstdrot.so`), which uses it for the cryptographically safe
+  `gamba()` RNG (see [§8.8](#88-gamba)). The development headers are needed to
+  build; on Linux the runtime `libcrypto` is also needed to run. Building
+  without OpenSSL is a failed link, not a `gamba`-less interpreter.
 
 Installation commands vary by platform:
 
@@ -91,20 +96,24 @@ Installation commands vary by platform:
 
 ```bash
 sudo apt-get update
-sudo apt-get install gcc flex bison libfl-dev
+sudo apt-get install gcc flex bison libfl-dev libssl-dev
 ```
 
 ### Arch Linux
 
 ```bash
-sudo pacman -S gcc flex bison
+sudo pacman -S gcc flex bison openssl
 ```
 
 ### macOS (via Homebrew)
 
 ```bash
-brew install gcc flex bison
+brew install gcc flex bison openssl@3
 ```
+
+> **Note**: Homebrew's OpenSSL is keg-only, but `make` locates it
+> automatically and statically links `libcrypto` into `libstdrot.so`, so the
+> built standard library is self-contained.
 
 > **Note**: If you encounter `libfl` issues on macOS, you may need to locate and symlink `libfl.dylib` manually, as outlined in the README.
 
