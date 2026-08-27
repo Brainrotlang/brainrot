@@ -347,7 +347,7 @@ ordinary Brainrot integer constants. They stay on the wishlist.
 
 ## Phase 4 — Native modules and `#cooked`
 
-**Status: not started · Priority: P1 · Depends on: Phase 2**
+**Status: in progress · Priority: P1 · Depends on: Phase 2**
 
 Today exactly one `.so` is loaded, by hardcoded name. Generalize to a module
 directory, each exporting a discovery entrypoint:
@@ -363,6 +363,16 @@ StdrotAPI brainrot_module_init(void);
 Then `#cooked <raylib>`, currently listed as unimplemented in the README, means:
 locate module → `dlopen` → fetch metadata → register types, constants, and
 functions. That is a far better fate for the directive than textual inclusion.
+
+**Landed:** the angle-bracket directive and the module search path
+(`$BRAINROT_PATH` → install module directory → in-tree, resolved relative to
+the running executable — see Appendix B Q11's resolution) resolve `#cooked
+<name>` to a `.brainrot` prelude. **Still open:** resolving `<name>` to a
+native `.so`, `brainrot_module_init`, and multi-module registration in
+`stdrot.c` — no real native module (raylib or otherwise) exists in-tree yet,
+so this phase isn't done. Types/constants registration is deferred past this
+phase entirely: `StdrotAPI` only carries a function table today, and nothing
+in-tree needs more than that yet — see [issue #207](https://github.com/Brainrotlang/brainrot/issues/207).
 
 ---
 
@@ -1285,10 +1295,16 @@ per keyword, and default to "library function" when in doubt.
     has, or is a runner-owned restore list enough? The general mechanism would
     also serve `logoff`, `gatekeep`/`letcook` (Phase 6), and `ghost` (Phase 8),
     which all have the same "must run even on abnormal exit" shape.
-11. **Module search path (Phase 9a).** `$BRAINROT_PATH` + install prefix +
+11. **Module search path (Phase 4/9a).** ~~`$BRAINROT_PATH` + install prefix +
     in-tree `stdrot/` is proposed. Does the in-tree fallback apply always, or
-    only for an uninstalled build? Getting this wrong means a system install
-    silently shadows the working tree, or vice versa.
+    only for an uninstalled build?~~ **Resolved (#207):** the in-tree tier is
+    resolved relative to the running executable's own directory (`dirname`
+    of `realpath(argv[0])`), not the current working directory. An installed
+    binary's directory (e.g. `/usr/local/bin`) never contains a module
+    artifact, so that tier simply has nothing to find there — it can't shadow
+    a real install, or be shadowed by one, regardless of invocation-time cwd.
+    Precedence, most to least specific: `$BRAINROT_PATH` → install module
+    directory → in-tree.
 12. **Prelude versus builtins (Phase 9a).** The split is "primitives in
     `libstdrot.so`, surface in a cooked `.brainrot` prelude". The primitives are
     still globally visible builtins even when nobody cooks `sussybaka` — do they

@@ -1,0 +1,7 @@
+🚽 Test-only ".brainrot" prelude module, resolved via the #cooked <name>
+🚽 module search path (see lib/module_path.c). Exists purely so
+🚽 tests/test_brainrot.py's search-path-hit and in-tree-fallback tests have
+🚽 something real to find and call — not part of the production build.
+rizz doubled(rizz n) {
+    bussin n * 2;
+}

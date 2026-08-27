@@ -207,6 +207,7 @@ Check out the [examples](examples/README.md):
 - [One-dimensional Heat Equation Solver](examples/heat_equation_1d.brainrot)
 - [Fibonacci Sequence](examples/fibonacci.brainrot)
 - [Modules (`#cooked`)](examples/modules.brainrot)
+- [Named modules (`#cooked <name>`)](examples/modules_named.brainrot)
 
 ## 🗪 Community
 
@@ -271,9 +272,12 @@ Join our community on:
 
 `#cooked "path/to/file.brainrot"` splices another Brainrot file's functions
 and structs into the current one, resolved relative to the including file's
-directory. See [the language reference](docs/the-brainrot-programming-language.md#710-modules-cooked)
-for details (path resolution, include-once behavior, circular-include
-detection).
+directory. `#cooked <name>` resolves `name` by searching `$BRAINROT_PATH`,
+then the install module directory, then the directory containing the
+`brainrot` executable itself, for a `<name>.brainrot` file. See
+[the language reference](docs/the-brainrot-programming-language.md#713-modules-cooked)
+for details (path resolution, the module search path, include-once behavior,
+circular-include detection).
 
 ### Builtin functions
 

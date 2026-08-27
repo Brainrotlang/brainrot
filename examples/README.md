@@ -378,4 +378,27 @@ Run with `./brainrot examples/modules.brainrot`.
   - Relative path resolution (`#cooked` paths resolve relative to the file
     containing the directive).
 
+**File Name:** `modules_named.brainrot`
+
+```c
+#cooked <mathutils>
+
+skibidi main {
+    yapping("square(6) = %d", square(6));
+    yapping("cube(3) = %d", cube(3));
+    bussin 0;
+}
+```
+
+Run with `BRAINROT_PATH=examples ./brainrot examples/modules_named.brainrot`.
+
+### What It Does
+
+- Demonstrates the angle-bracket form of `#cooked`: instead of a path,
+  `<mathutils>` names a module and lets `$BRAINROT_PATH` (and the other
+  module search-path tiers) find `mathutils.brainrot` for it.
+- Reuses the same `mathutils.brainrot` module as the example above — the two
+  `#cooked` forms splice in identical content, they just resolve the target
+  file differently.
+
 Feel free to explore and modify each example to learn more about how this language’s syntax and features work!

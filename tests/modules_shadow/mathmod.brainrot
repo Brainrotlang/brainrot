@@ -1,0 +1,8 @@
+🚽 Deliberately a DIFFERENT "mathmod" than tests/modules/mathmod.brainrot —
+🚽 used only by test_module_search_path_precedence() in
+🚽 tests/test_brainrot.py to prove $BRAINROT_PATH outranks the in-tree
+🚽 fallback (module_path.c's search order) rather than the two silently
+🚽 shadowing each other depending on resolution order.
+rizz doubled(rizz n) {
+    bussin n * 3;
+}

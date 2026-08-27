@@ -8,6 +8,7 @@
 #include "ast.h"
 #include "lib/mem.h"
 #include "lib/arena.h"
+#include "lib/module_path.h"
 #include "lib/string_value.h"
 #include "lang.tab.h"
 
@@ -80,6 +81,23 @@ static char *extract_quoted_filename(const char *text) {
     return name;
 }
 
+/* Extracts the bare name out of the angle-bracket form, #cooked <name> --
+ * NULL only for a malformed match (empty <>), which the empty-name check
+ * in handle_cooked_module_directive() below reports with a clearer message
+ * than "malformed directive" would. */
+static char *extract_angle_name(const char *text) {
+    const char *open_angle = strchr(text, '<');
+    if (!open_angle) return NULL;
+    const char *close_angle = strchr(open_angle + 1, '>');
+    if (!close_angle) return NULL;
+    size_t len = (size_t)(close_angle - open_angle - 1);
+    char *name = malloc(len + 1);
+    if (!name) { fprintf(stderr, "out of memory\n"); exit(1); }
+    memcpy(name, open_angle + 1, len);
+    name[len] = '\0';
+    return name;
+}
+
 /* Resolves `raw` relative to the directory of current_filename (or as-is if
  * absolute), then canonicalizes it. Returns a libc-malloc'd absolute path;
  * exits with a diagnostic on failure. */
@@ -125,20 +143,15 @@ static char *resolve_cooked_path(const char *raw) {
     return resolved;
 }
 
-static void handle_cooked_directive(const char *text) {
-    char *raw_name = extract_quoted_filename(text);
-    if (!raw_name) {
-        char *base = basename_copy(current_filename);
-        fprintf(stderr, "Error: %s:%d: malformed #cooked directive "
-                "(expected: #cooked \"path/to/file.brainrot\")\n",
-                base, yylineno);
-        free(base);
-        cooked_die();
-    }
-
-    char *resolved = resolve_cooked_path(raw_name);
-    free(raw_name);
-
+/* Shared tail of both #cooked forms once each has independently resolved
+ * `resolved` to an absolute path -- the quoted form via resolve_cooked_path()
+ * (relative to the including file), the angle-bracket form via
+ * module_path_resolve_prelude() (via the module search path, module_path.h).
+ * From here on the two forms are indistinguishable: self/circular/visited
+ * checks, depth limit, and splicing the file in via flex's buffer stack.
+ * Takes ownership of `resolved` (frees it on every path, including error
+ * paths that call cooked_die()). */
+static void splice_cooked_file(char *resolved) {
     if (strcmp(current_filename, resolved) == 0) {
         char *base = basename_copy(current_filename);
         fprintf(stderr, "Error: %s:%d: #cooked includes itself\n", base, yylineno);
@@ -229,6 +242,73 @@ static void handle_cooked_directive(const char *text) {
     yylineno = 1; /* NOTE: a syntax error on this file's own line 1 will
                      print "line 0" — see the comment on yyerror in lang.y. */
     yypush_buffer_state(yy_create_buffer(inc, YY_BUF_SIZE));
+}
+
+static void handle_cooked_directive(const char *text) {
+    char *raw_name = extract_quoted_filename(text);
+    if (!raw_name) {
+        char *base = basename_copy(current_filename);
+        fprintf(stderr, "Error: %s:%d: malformed #cooked directive "
+                "(expected: #cooked \"path/to/file.brainrot\" or "
+                "#cooked <module_name>)\n",
+                base, yylineno);
+        free(base);
+        cooked_die();
+    }
+
+    char *resolved = resolve_cooked_path(raw_name);
+    free(raw_name);
+    splice_cooked_file(resolved);
+}
+
+/* Angle-bracket form: #cooked <name>. Resolves `name` via the module
+ * search path (module_path.h) to a ".brainrot" prelude, then splices it in
+ * exactly like the quoted form -- same self/circular/visited handling, same
+ * include-once behavior. A `name` resolving to a native ".so" module is not
+ * handled here yet; that lands in a follow-up (#207 tracks the native-module
+ * half separately from this angle-bracket/search-path half). */
+static void handle_cooked_module_directive(const char *text) {
+    char *name = extract_angle_name(text);
+    if (!name) {
+        char *base = basename_copy(current_filename);
+        fprintf(stderr, "Error: %s:%d: malformed #cooked directive "
+                "(expected: #cooked \"path/to/file.brainrot\" or "
+                "#cooked <module_name>)\n",
+                base, yylineno);
+        free(base);
+        cooked_die();
+    }
+    if (name[0] == '\0') {
+        char *base = basename_copy(current_filename);
+        fprintf(stderr, "Error: %s:%d: #cooked <>: module name must not "
+                "be empty\n", base, yylineno);
+        free(base);
+        free(name);
+        cooked_die();
+    }
+    if (strchr(name, '/')) {
+        char *base = basename_copy(current_filename);
+        fprintf(stderr, "Error: %s:%d: #cooked <%s>: module name must not "
+                "contain '/' -- use #cooked \"path\" to include a file by "
+                "path\n", base, yylineno, name);
+        free(base);
+        free(name);
+        cooked_die();
+    }
+
+    char *resolved = module_path_resolve_prelude(name);
+    if (!resolved) {
+        char *base = basename_copy(current_filename);
+        fprintf(stderr, "Error: %s:%d: cannot find module '%s' (looked "
+                "for '%s.brainrot' via $BRAINROT_PATH, the install module "
+                "directory, and the directory containing this brainrot "
+                "executable)\n", base, yylineno, name, name);
+        free(base);
+        free(name);
+        cooked_die();
+    }
+    free(name);
+    splice_cooked_file(resolved);
 }
 
 /* Called once from main() before yyparse(). */
@@ -413,10 +493,16 @@ extern int yylineno;
      * afterward, on its own turn. */
     handle_cooked_directive(yytext);
 }
+^[ \t]*"#cooked"[ \t]+"<"[^>\n]*">"[ \t]* {
+    /* Same yylineno-ordering rationale as the quoted form above -- don't
+     * consume the trailing newline here either. */
+    handle_cooked_module_directive(yytext);
+}
 ^[ \t]*"#cooked"[^\n]* {
     char *base = basename_copy(current_filename);
     fprintf(stderr, "Error: %s:%d: malformed #cooked directive "
-            "(expected: #cooked \"path/to/file.brainrot\")\n",
+            "(expected: #cooked \"path/to/file.brainrot\" or "
+            "#cooked <module_name>)\n",
             base, yylineno);
     free(base);
     cooked_die();

@@ -1,0 +1,7 @@
+🚽 #cooked <name> takes a bare module name, not a path — a '/' inside the
+🚽 brackets must be rejected with a pointer to the quoted form instead.
+#cooked <foo/bar>
+
+skibidi main {
+    bussin 0;
+}

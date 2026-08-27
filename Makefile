@@ -35,7 +35,7 @@ endif
 # Source files and directories
 SRC_DIR := lib
 DEBUG_FLAGS := -g
-SRCS := $(SRC_DIR)/hm.c $(SRC_DIR)/mem.c $(SRC_DIR)/arena.c ast.c visitor.c semantic_analyzer.c interpreter.c stdrot.c
+SRCS := $(SRC_DIR)/hm.c $(SRC_DIR)/mem.c $(SRC_DIR)/arena.c $(SRC_DIR)/module_path.c ast.c visitor.c semantic_analyzer.c interpreter.c stdrot.c
 GENERATED_SRCS := lang.tab.c lex.yy.c
 ALL_SRCS := $(SRCS) $(GENERATED_SRCS)
 

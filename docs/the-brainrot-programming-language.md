@@ -805,18 +805,33 @@ directive, so a program can be split across multiple files.
 
 ```c
 #cooked "path/to/file.brainrot"
+#cooked <module_name>
 ```
 
-The directive must be alone on its line (leading whitespace is fine). Only
-the quoted form is supported — there is no `<...>` system-header equivalent,
-since stdrot's builtins are already globally available without an include.
+The directive must be alone on its line (leading whitespace is fine).
 
 #### Path resolution
 
-A relative path is resolved relative to the directory of the file
+A relative quoted path is resolved relative to the directory of the file
 *containing* the `#cooked` directive (like C's quote-form `#include`), not
-the current working directory `brainrot` was invoked from. An absolute path
-is used as-is.
+the current working directory `brainrot` was invoked from. An absolute
+quoted path is used as-is.
+
+The angle-bracket form takes a bare module name (no `/`) and resolves it by
+searching, in order:
+
+1. Each directory in `$BRAINROT_PATH` (colon-separated), if set.
+2. The install module directory (`/usr/local/lib/brainrot`).
+3. The directory containing the running `brainrot` executable itself — this
+   lets an uninstalled build resolve a module sitting next to the binary in
+   the build tree, without that ever shadowing (or being shadowed by) a real
+   install: an installed binary's own directory never contains a module
+   artifact, so this tier simply has nothing to find there.
+
+The first directory containing a `<module_name>.brainrot` file wins. This is
+currently the only artifact kind the angle-bracket form resolves to — a
+future phase extends it to native (`.so`) modules via the same search path
+and the same directive, per [the roadmap](ROADMAP.md#phase-4--native-modules-and-cooked).
 
 #### What can be included
 

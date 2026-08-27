@@ -1,6 +1,7 @@
 import subprocess
 import json
 import os
+import shutil
 import pytest
 
 # Get the absolute path to the directory containing the script
@@ -187,6 +188,106 @@ def test_old_abi_rejected_at_load():
     assert "stdrot_get_api_v2" in result.stderr, (
         f"Expected stderr to name the missing versioned entrypoint\n"
         f"Actual stderr:\n{result.stderr}"
+    )
+
+
+# ── #cooked <name> module search path (lib/module_path.c) ──────────────────
+# test_cases/cooked_module_search_path.brainrot's own default run (no
+# $BRAINROT_PATH set, via the generic loop above) already covers the
+# "module not found" error path. The three tests below need a directory
+# layout the generic loop can't express -- a custom $BRAINROT_PATH, or a
+# copy of the binary sitting next to a module file -- so, like the
+# badnatives/old_abi_sim tests above, they run outside expected_results.json
+# with their own env/layout.
+
+def test_module_search_path_hit():
+    """$BRAINROT_PATH pointed at tests/modules/ resolves #cooked <mathmod>."""
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    source_path = os.path.abspath(
+        os.path.join(script_dir, "../test_cases/cooked_module_search_path.brainrot"))
+    modules_dir = os.path.abspath(os.path.join(script_dir, "modules"))
+
+    env = dict(os.environ, BRAINROT_PATH=modules_dir)
+    result = subprocess.run([brainrot_path, source_path],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env)
+
+    assert result.returncode == 0, (
+        f"Expected success with BRAINROT_PATH={modules_dir}, got "
+        f"{result.returncode}\nStdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert result.stdout == "42\n", f"Actual stdout:\n{result.stdout}"
+
+
+def test_module_in_tree_fallback(tmp_path):
+    """With no $BRAINROT_PATH, a module next to the executable still resolves.
+
+    Copies the built binary into an empty tmp directory alongside
+    tests/modules/mathmod.brainrot, then runs that copy -- module_path.c's
+    third search tier is the directory containing argv[0], so this proves
+    an uninstalled build finds a module sitting next to it without needing
+    $BRAINROT_PATH at all. Runs with cwd=repo root so stdrot_load()'s own
+    cwd-relative "./libstdrot.so" lookup (stdrot.c) still finds the real
+    library; STDROT_LIB_PATH (set by `make test`, see the Makefile) takes
+    priority over that lookup anyway and is inherited from os.environ
+    regardless of cwd.
+    """
+    repo_root = os.path.abspath(os.path.join(script_dir, ".."))
+    brainrot_path = os.path.join(repo_root, "brainrot")
+    source_path = os.path.join(
+        repo_root, "test_cases", "cooked_module_search_path.brainrot")
+
+    copied_binary = tmp_path / "brainrot"
+    shutil.copy(brainrot_path, copied_binary)
+    os.chmod(copied_binary, 0o755)
+    shutil.copy(os.path.join(script_dir, "modules", "mathmod.brainrot"),
+                tmp_path / "mathmod.brainrot")
+
+    env = dict(os.environ)
+    env.pop("BRAINROT_PATH", None)
+    result = subprocess.run([str(copied_binary), source_path],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env, cwd=repo_root)
+
+    assert result.returncode == 0, (
+        f"Expected the in-tree fallback to resolve 'mathmod', got "
+        f"{result.returncode}\nStdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert result.stdout == "42\n", f"Actual stdout:\n{result.stdout}"
+
+
+def test_module_search_path_precedence(tmp_path):
+    """$BRAINROT_PATH outranks the in-tree fallback (module_path.c order).
+
+    Puts a DIFFERENT "mathmod" module in each tier (tests/modules_shadow/ vs
+    a copy of the binary's own directory) and checks the $BRAINROT_PATH one
+    wins -- Appendix B Q11 (docs/ROADMAP.md): the two tiers must not
+    silently shadow each other in the wrong order.
+    """
+    repo_root = os.path.abspath(os.path.join(script_dir, ".."))
+    brainrot_path = os.path.join(repo_root, "brainrot")
+    source_path = os.path.join(
+        repo_root, "test_cases", "cooked_module_search_path.brainrot")
+    shadow_dir = os.path.abspath(os.path.join(script_dir, "modules_shadow"))
+
+    copied_binary = tmp_path / "brainrot"
+    shutil.copy(brainrot_path, copied_binary)
+    os.chmod(copied_binary, 0o755)
+    shutil.copy(os.path.join(script_dir, "modules", "mathmod.brainrot"),
+                tmp_path / "mathmod.brainrot")
+
+    env = dict(os.environ, BRAINROT_PATH=shadow_dir)
+    result = subprocess.run([str(copied_binary), source_path],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env, cwd=repo_root)
+
+    assert result.returncode == 0, (
+        f"Expected success, got {result.returncode}\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert result.stdout == "63\n", (
+        f"Expected the $BRAINROT_PATH module (tripling) to win over the "
+        f"in-tree one (doubling)\nActual stdout:\n{result.stdout}"
     )
 
 
