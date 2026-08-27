@@ -268,9 +268,10 @@ $(BRAINRAY_LIB): $(BRAINRAY_DIR)/raylib.c $(STDROT_DIR)/registry.c
 	@echo "brainray/raylib.so built. Run the cursed game with:"
 	@echo "  BRAINROT_PATH=$(BRAINRAY_DIR) ./brainrot examples/raylib/ohio_engine.brainrot"
 
-# Convenience: build the binding and launch the cursed game in one step. Opens a
-# window, so it needs both raylib and a display (no-op use in CI/headless). Still
-# an explicit opt-in like `brainray` -- never a prerequisite of `all`/`test`.
+# Convenience: build the binding and launch the cursed game in one step. It
+# builds brainray/raylib.so and runs the example, so it needs both raylib and a
+# display -- with no display the raylib window init fails (it does NOT skip).
+# Still an explicit opt-in like `brainray` -- never a prerequisite of `all`/`test`.
 .PHONY: play
 play: $(BRAINRAY_LIB) $(TARGET) ## Build brainray + run the Ohio Engine (needs raylib + a display). It's giving cinema.
 	BRAINROT_PATH=$(BRAINRAY_DIR) ./$(TARGET) examples/raylib/ohio_engine.brainrot

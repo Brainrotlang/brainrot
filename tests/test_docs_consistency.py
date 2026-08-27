@@ -8,11 +8,13 @@ Two things have gone stale before and should not silently regress:
    loses a target is if someone adds a target without annotating it -- this test
    asserts the essential set stays represented.
 
-2. `sudo apt-get install libraylib-dev` is WRONG on Ubuntu (no such official
-   package on 22.04/24.04; see docs/brainray.md). It must never come back as a
-   copy-pasteable instruction: neither inside a fenced code block of any tracked
-   Markdown file, nor anywhere in the Makefile. Prose that mentions the command
-   to tell readers NOT to run it (inline `code`, not a fenced block) is fine.
+2. `apt[-get] install libraylib-dev` is WRONG *on Ubuntu* (no such official
+   package on 22.04/24.04; see docs/brainray.md). It is *correct* on Debian
+   testing/unstable, which do ship an official `libraylib-dev`. So the guard is
+   scoped to the invariant we actually care about: an **Ubuntu-headed** section
+   must never present that command as a fenced install step, and the Makefile
+   must never hardcode it. A Debian-headed section using it is fine, and so is
+   prose that mentions it to tell readers NOT to run it (inline `code`).
 """
 
 import os
@@ -81,8 +83,9 @@ def test_make_help_lists_developer_targets():
 
 
 def test_no_bad_ubuntu_raylib_command_in_code_blocks():
-    """The bad apt command must not appear as an instruction (fenced code block
-    in Markdown, or anywhere in the Makefile)."""
+    """`apt install libraylib-dev` must not appear as a fenced install step under
+    an Ubuntu heading, and must not appear anywhere in the Makefile. It is left
+    alone under a Debian heading (Debian testing/unstable really ship it)."""
     offenders = []
     for rel in _tracked_files():
         path = os.path.join(REPO_ROOT, rel)
@@ -102,15 +105,25 @@ def test_no_bad_ubuntu_raylib_command_in_code_blocks():
             continue
 
         in_code_block = False
+        heading = ""  # nearest preceding Markdown heading
         for i, line in enumerate(lines, 1):
             if line.lstrip().startswith("```"):
                 in_code_block = not in_code_block
                 continue
-            if in_code_block and BAD_APT_PATTERN.search(line):
-                offenders.append(f"{rel}:{i}: {line.strip()}")
+            if not in_code_block and line.lstrip().startswith("#"):
+                heading = line.lower()
+                continue
+            if not (in_code_block and BAD_APT_PATTERN.search(line)):
+                continue
+            # Only an error when the governing section is Ubuntu-facing. A
+            # Debian section (its official package IS libraylib-dev) is fine.
+            if "ubuntu" in heading and "debian" not in heading:
+                offenders.append(f"{rel}:{i} (under '{heading.strip()}'): "
+                                 f"{line.strip()}")
 
     assert not offenders, (
-        "Found the known-bad Ubuntu raylib command presented as an "
-        "instruction. `libraylib-dev` is not an official Ubuntu package; see "
-        "docs/brainray.md. Offending lines:\n" + "\n".join(offenders)
+        "Found `apt install libraylib-dev` as a fenced install step under an "
+        "Ubuntu heading (or in the Makefile). It is not an official Ubuntu "
+        "package on 22.04/24.04; see docs/brainray.md. Offending lines:\n"
+        + "\n".join(offenders)
     )

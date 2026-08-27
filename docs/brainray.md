@@ -50,27 +50,28 @@ pick must leave a working `raylib.pc`. Verify at any point with:
 pkg-config --exists raylib && pkg-config --modversion raylib
 ```
 
-### Ubuntu / Debian
+### Ubuntu
 
 There is **no `libraylib-dev` package in the official Ubuntu repositories** on
 current releases (22.04 Jammy, 24.04 Noble) — `sudo apt-get install
 libraylib-dev` fails with *"Unable to locate package libraylib-dev"*. Do not use
-it. Pick one of these instead:
+it on Ubuntu. Pick one of these instead. (Debian is different — see below.)
 
 **Option A — the raylib PPA (quickest, recommended):** the community
-`ppa:texus/raylib` provides a version-numbered `libraylib<N>-dev` package that
-ships `raylib.pc`. On 22.04/24.04 the current package is `libraylib5-dev`
-(raylib 5.x):
+`ppa:texus/raylib` provides version-numbered `libraylib<N>-dev` packages that
+ship `raylib.pc`. The package name tracks the raylib series, and which series a
+release carries differs — 22.04 Jammy currently has only `libraylib5-dev`
+(raylib 5.x), while 24.04 Noble also publishes `libraylib6-dev` (raylib 6.x).
+List what the PPA built for *your* release and install the newest it offers:
 
 ```bash
 sudo add-apt-repository ppa:texus/raylib
 sudo apt-get update
-sudo apt-get install libraylib5-dev
+apt-cache search libraylib            # e.g. libraylib5-dev and/or libraylib6-dev
+sudo apt-get install libraylib5-dev   # or libraylib6-dev where available
 ```
 
-The package name tracks the raylib series (`libraylib5-dev` for 5.x); `apt-cache
-search libraylib` shows what the PPA currently offers for your release. brainray
-only uses long-stable primitives, so the 5.x package is fine.
+brainray only uses long-stable primitives, so any of these series is fine.
 
 **Option B — build the latest raylib from source.** Install the build
 dependencies, then build raylib **with CMake** (its CMake install is what
@@ -89,7 +90,7 @@ sudo cmake --install build
 sudo ldconfig
 ```
 
-Two things that will otherwise bite you (both verified against the `6.0` tag):
+Three things that will otherwise bite you (all verified against the `6.0` tag):
 
 - **Pin a release tag** (`--branch 6.0`), not `master`. `master` is a
   development branch (`6.1-dev`) and can drift.
@@ -102,6 +103,19 @@ Two things that will otherwise bite you (both verified against the `6.0` tag):
   and will refuse to configure — install a newer one first
   (`pip install --user cmake` or `sudo snap install cmake --classic`), or just
   use Option A.
+
+### Debian
+
+Debian is **not** Ubuntu here: Debian **testing** and **unstable** ship an
+official `libraylib-dev` (raylib 6.x, `6.0+ds-2`, in `main`), which installs a
+`raylib.pc`. On those releases the plain apt command is correct:
+
+```bash
+sudo apt install libraylib-dev
+```
+
+On Debian **stable** (bookworm), `libraylib-dev` is not available — use the
+source build from Option B above (the CMake steps are distro-independent).
 
 ### macOS (Homebrew)
 
@@ -151,10 +165,19 @@ A window opens with a bouncing "ABSOLUTE CINEMA" orb and live FPS. Hold
 module path. Running `./brainrot examples/raylib/ohio_engine.brainrot` **without**
 it — or `cd examples/raylib && brainrot ohio_engine.brainrot` — fails with a
 module-not-found error, because nothing on the default search path contains
-`raylib.so`. If you `make install` Brainrot globally, the interpreter looks in
-its install module directory too; copy `brainray/raylib.so` there (or keep
-pointing `BRAINROT_PATH` at a directory that holds it) so `#cooked <raylib>`
-resolves.
+`raylib.so`. If you `make install` Brainrot globally, the interpreter also
+searches its install module directory, **`/usr/local/lib/brainrot`**. Note that
+`make install` only installs `brainrot` and `libstdrot.so` (under
+`/usr/local/{bin,lib}`) — it does **not** create or populate
+`/usr/local/lib/brainrot`. To use the binding from an installed Brainrot, create
+that directory and copy the module in yourself:
+
+```bash
+sudo install -Dm755 brainray/raylib.so /usr/local/lib/brainrot/raylib.so
+```
+
+Or just keep pointing `BRAINROT_PATH` at a directory that holds `raylib.so` so
+`#cooked <raylib>` resolves.
 
 ## How it works — the Road A ABI trick
 
