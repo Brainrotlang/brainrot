@@ -347,7 +347,7 @@ ordinary Brainrot integer constants. They stay on the wishlist.
 
 ## Phase 4 — Native modules and `#cooked`
 
-**Status: in progress · Priority: P1 · Depends on: Phase 2**
+**Status: mechanism complete · Priority: P1 · Depends on: Phase 2**
 
 Today exactly one `.so` is loaded, by hardcoded name. Generalize to a module
 directory, each exporting a discovery entrypoint:
@@ -364,18 +364,28 @@ Then `#cooked <raylib>`, currently listed as unimplemented in the README, means:
 locate module → `dlopen` → fetch metadata → register types, constants, and
 functions. That is a far better fate for the directive than textual inclusion.
 
-**Landed:** the angle-bracket directive and the module search path resolve
-`#cooked <name>` to a `.brainrot` prelude. Search order: `$BRAINROT_PATH`,
-then exactly one of {the install module directory, `stdrot/` next to the
-running executable} — never both, decided by whether the running executable
-(resolved via `/proc/self/exe`/`_NSGetExecutablePath`, not `argv[0]`) is
-itself the installed binary. See Appendix B Q11's resolution for the full
-reasoning. **Still open:** resolving `<name>` to a native `.so`,
-`brainrot_module_init`, and multi-module registration in `stdrot.c` — no
-real native module (raylib or otherwise) exists in-tree yet,
-so this phase isn't done. Types/constants registration is deferred past this
-phase entirely: `StdrotAPI` only carries a function table today, and nothing
-in-tree needs more than that yet — see [issue #207](https://github.com/Brainrotlang/brainrot/issues/207).
+**Landed:** the full mechanism. The angle-bracket directive and the module
+search path resolve `#cooked <name>` to either a `.brainrot` prelude or a
+native `.so`, checking the former before the latter within each directory.
+Search order: `$BRAINROT_PATH`, then exactly one of {the install module
+directory, `stdrot/` next to the running executable} — never both, decided
+by whether the running executable (resolved via
+`/proc/self/exe`/`_NSGetExecutablePath`, not `argv[0]`) is itself the
+installed binary (Appendix B Q11's resolution has the full reasoning). A
+resolved `.so` is `dlopen`'d and must export `StdrotAPI
+brainrot_module_init(void)` (`stdrot_load_module()`, `stdrot.c`) — the exact
+signature this phase originally specified, given a collision-free exported
+name of its own (see `stdrot/registry.c`'s own comment: a naive same-named
+wrapper calling `stdrot_get_api_v2()` from inside a module is silently
+interposed by the always-loaded core library's own copy of that symbol).
+Its functions are registered alongside the core library's and any other
+already-cooked module's, with a load-time error on any name collision
+between them. **Still not done:** no real native module (raylib or
+otherwise) exists in-tree yet — that's Phase 5's job, not this phase's, and
+was never this phase's DoD. Types/constants registration is deferred past
+this phase entirely: `StdrotAPI` only carries a function table today, and
+nothing in-tree needs more than that yet — see
+[issue #207](https://github.com/Brainrotlang/brainrot/issues/207).
 
 ---
 

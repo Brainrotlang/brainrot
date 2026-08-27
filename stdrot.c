@@ -67,6 +67,42 @@ typedef struct
 
 static SymbolCache symbol_cache[STDROT_CACHE_SIZE];
 static int cache_count = 0;
+
+/* ── Cooked native modules (#cooked <name> resolving to a .so) ────────────
+ * A SEPARATE list from the core library's own functions/function_count
+ * above, rather than unifying the two: the core lib is always loaded
+ * unconditionally, once, before any Brainrot program has even been
+ * parsed, and is exercised by nearly every existing test in this repo --
+ * keeping it untouched keeps this purely additive, opt-in mechanism from
+ * putting that already thoroughly-tested path at risk. is_builtin_
+ * function()/get_native_function() below check the core lib first, then
+ * this list, in #cooked order.
+ *
+ * Fixed-size, not realloc'd: STDROT_MAX_COOKED_MODULES mirrors lang.l's
+ * own MAX_COOKED_FILES (the actual enforcement point -- lang.l refuses to
+ * even resolve a name once its shared visited-file/module budget is
+ * exhausted, so this array can never be asked to hold more than that many
+ * entries in practice). The bounds check in stdrot_load_module() below is
+ * defense in depth, the same relationship validate_native_registry() has
+ * to the semantic analyzer's own already-enforced checks. */
+#define STDROT_MAX_COOKED_MODULES 128
+
+typedef struct
+{
+    void *handle;
+    char *name; /* the #cooked <name> spelling, for diagnostics */
+    const StdrotEntry *const *functions;
+    int function_count;
+} LoadedNativeModule;
+
+static LoadedNativeModule cooked_modules[STDROT_MAX_COOKED_MODULES];
+static int cooked_module_count = 0;
+
+/* An in-flight module handle stdrot_load_module() has dlopen'd but not yet
+ * either closed itself or fully committed into cooked_modules[] -- see
+ * that function's own comment on why this exists. NULL whenever no
+ * stdrot_load_module() call is in progress. */
+static void *pending_module_handle = NULL;
 #endif
 
 #ifdef STDROT_STATIC
@@ -150,7 +186,8 @@ static void *stdrot_lookup_symbol(const String symbol_name)
  * arbitrary address space one StdrotEntry pointer at a time. */
 #define STDROT_MAX_PLAUSIBLE_FUNCTION_COUNT 4096
 
-static void validate_native_registry(void)
+static void validate_native_registry(const StdrotEntry *const *functions,
+                                     int function_count)
 {
     /* Validate the table itself before ever indexing into it --
        stdrot_get_api_v2() (registry.c) is trusted to return a StdrotAPI
@@ -410,13 +447,31 @@ void stdrot_load(void)
     StdrotAPI api = stdrot_get_api_v2();
     functions = api.functions;
     function_count = api.count;
-    validate_native_registry();
+    validate_native_registry(functions, function_count);
 }
 
 void stdrot_unload(void)
 {
     functions = NULL;
     function_count = 0;
+}
+
+/* wasm has no dynamic loader worth using (see this file's own top comment)
+ * -- module_path_resolve() (module_path.c) never resolves a #cooked <name>
+ * to a native module in this build, so this should never actually be
+ * called here. Fails loudly instead of silently doing nothing, on the same
+ * principle as every other ABI-enforcement function in this file: a path
+ * that's "supposed to be unreachable" still needs to fail safely if it's
+ * ever reached anyway (a module_path.c bug, or a future caller that
+ * doesn't route through the resolver), not corrupt state or crash. */
+void stdrot_load_module(const char *name, const char *so_path)
+{
+    (void)so_path;
+    fprintf(stderr,
+            "Error: cannot load native module '%s' -- native modules are "
+            "not supported in this build (no dynamic loader)\n",
+            name);
+    exit(1);
 }
 
 #else
@@ -509,7 +564,7 @@ void stdrot_load(void)
     StdrotAPI api = get_api();
     functions = api.functions;
     function_count = api.count;
-    validate_native_registry();
+    validate_native_registry(functions, function_count);
 }
 
 void stdrot_unload(void)
@@ -522,6 +577,179 @@ void stdrot_unload(void)
         function_count = 0;
         cache_count = 0;
     }
+    for (int i = 0; i < cooked_module_count; i++)
+    {
+        dlclose(cooked_modules[i].handle);
+        free(cooked_modules[i].name);
+    }
+    cooked_module_count = 0;
+    if (pending_module_handle)
+    {
+        /* stdrot_load_module() exited (e.g. via validate_native_registry())
+           before either closing this handle itself or committing it into
+           cooked_modules[] above -- see that function's own comment. */
+        dlclose(pending_module_handle);
+        pending_module_handle = NULL;
+    }
+}
+
+/* Describes whichever already-registered source (the core library, or an
+ * earlier #cooked module) provides `func_name` -- used only to name that
+ * source in stdrot_load_module()'s duplicate-export diagnostic below.
+ * Caller must already know func_name IS registered somewhere (e.g. via
+ * is_builtin_function()); returns a generic fallback description otherwise,
+ * which should be unreachable in practice. */
+static const char *describe_native_source(const char *func_name)
+{
+    for (int i = 0; i < function_count; i++)
+    {
+        if (strcmp(func_name, functions[i]->name) == 0)
+        {
+            return "the core standard library";
+        }
+    }
+    for (int m = 0; m < cooked_module_count; m++)
+    {
+        for (int i = 0; i < cooked_modules[m].function_count; i++)
+        {
+            if (strcmp(func_name, cooked_modules[m].functions[i]->name) == 0)
+            {
+                return cooked_modules[m].name;
+            }
+        }
+    }
+    return "another already-loaded source";
+}
+
+/* Loads a native module (a .so resolved from #cooked <name>, module_path.c)
+ * and registers its functions alongside the core library's. `name` is the
+ * #cooked <name> the user wrote; `so_path` is the already-resolved absolute
+ * path. Exits with a diagnostic on any failure -- dlopen, a missing/
+ * incompatible brainrot_module_init, a malformed registry, or a name
+ * already provided by the core library or an earlier #cooked module -- the
+ * same fail-loud posture stdrot_load() already has for the core library:
+ * none of these are something a Brainrot program can trigger or recover
+ * from, and every existing ABI-enforcement function in this file already
+ * treats that class of failure as exit(1), not a value to propagate. */
+void stdrot_load_module(const char *name, const char *so_path)
+{
+    if (cooked_module_count >= STDROT_MAX_COOKED_MODULES)
+    {
+        fprintf(stderr,
+                "stdrot: too many distinct #cooked files/modules (max %d)\n",
+                STDROT_MAX_COOKED_MODULES);
+        exit(1);
+    }
+
+    /* RTLD_LOCAL, unlike the core library's own dlopen() above: a cooked
+       module is looked up entirely by explicit handle --
+       dlsym(handle, "brainrot_module_init") below searches that specific
+       object (and its own dependencies), never the process-wide global
+       scope, so RTLD_GLOBAL buys nothing for that lookup. The core
+       library needs RTLD_GLOBAL because some of its OWN natives
+       (yapping's varargs stubs, stdrot_lookup_symbol() above) are reached
+       by ordinary natives dlsym'ing/linking against main-binary globals
+       like g_exec_context; a cooked module has no such need by design.
+       Keeping it RTLD_LOCAL also means a module's own exported symbols
+       (including, deliberately, its own brainrot_module_init -- every
+       cooked module built via -DSTDROT_REGISTRY_ENTRYPOINT=
+       brainrot_module_init exports one under that exact same name) never
+       enter the process-wide symbol scope at all, so two modules sharing
+       that name is never a collision to begin with, regardless of load
+       order -- not because the name happens to be unique (it isn't). */
+    void *handle = dlopen(so_path, RTLD_LAZY | RTLD_LOCAL);
+    if (!handle)
+    {
+        fprintf(stderr, "Error: cannot load module '%s' (%s): %s\n", name,
+                so_path, dlerror());
+        exit(1);
+    }
+    /* Recorded before this handle is fully validated, for the same reason
+       PendingNativeCallArgs (above) tracks an in-flight native call's own
+       scratch before it's done with it: validate_native_registry() below
+       can itself exit(1) on a malformed table, and that exit() doesn't
+       unwind this function's stack -- without this, `handle` would still
+       be open (mmap'd, not merely a heap pointer, so nothing else in this
+       file's cleanup would ever see it) with nothing tracking it for
+       stdrot_unload() (atexit(stdrot_unload), lang.y) to dlclose. Cleared
+       on every path out of this function, success or failure, so it never
+       describes a handle this function itself already closed or handed
+       off to cooked_modules[]. */
+    pending_module_handle = handle;
+
+    /* Same versioned-entrypoint discipline as stdrot_get_api_v2() above,
+       for the same reason: a module built against a stdrot_api.h whose
+       StdrotAPI/StdrotEntry layout has since changed must fail this
+       dlsym() cleanly, not have its actual memory misread as the current
+       shape. brainrot_module_init has no version suffix of its own
+       because, unlike stdrot_get_api_v2 (which needed a NEW name to
+       distinguish it from the pre-ABI-versioning "stdrot_get_api" some
+       .so out there might still export), there is no prior, differently-
+       shaped "brainrot_module_init" this is disambiguating from -- a
+       future incompatible StdrotAPI change renames THIS symbol the same
+       way stdrot_get_api_v2 itself would be renamed again. */
+    StdrotAPI (*module_init)(void);
+    *(void **)(&module_init) = dlsym(handle, "brainrot_module_init");
+    if (!module_init)
+    {
+        fprintf(stderr,
+                "Error: module '%s' (%s) does not export "
+                "brainrot_module_init() -- it was built against an "
+                "incompatible or missing module ABI (expected "
+                "STDROT_ABI_VERSION %d). Rebuild this module against the "
+                "current stdrot_api.h.\n",
+                name, so_path, STDROT_ABI_VERSION);
+        dlclose(handle);
+        pending_module_handle = NULL;
+        exit(1);
+    }
+
+    StdrotAPI api = module_init();
+    validate_native_registry(api.functions, api.count);
+
+    /* validate_native_registry() only proved this module's OWN table is
+       internally coherent -- it has no way to know about the core library
+       or any module cooked earlier in this same compilation. Without this,
+       a name colliding with an existing export would silently resolve to
+       whichever source happened to register it first, making a call's
+       target depend on #cooked order instead of on the program's own
+       text -- the exact class of ambiguity validate_native_registry()'s
+       own within-one-table duplicate check exists to reject, just across
+       tables instead of within one. */
+    for (int i = 0; i < api.count; i++)
+    {
+        const char *entry_name = api.functions[i]->name;
+        const String probe = {.data = (char *)entry_name,
+                              .len = strlen(entry_name)};
+        if (is_builtin_function(probe))
+        {
+            fprintf(stderr,
+                    "Error: module '%s' (%s): native export '%s' is "
+                    "already provided by %s\n",
+                    name, so_path, entry_name,
+                    describe_native_source(entry_name));
+            dlclose(handle);
+            pending_module_handle = NULL;
+            exit(1);
+        }
+    }
+
+    char *name_copy = strdup(name);
+    if (!name_copy)
+    {
+        fprintf(stderr, "out of memory\n");
+        dlclose(handle);
+        pending_module_handle = NULL;
+        exit(1);
+    }
+
+    cooked_modules[cooked_module_count].handle = handle;
+    cooked_modules[cooked_module_count].name = name_copy;
+    cooked_modules[cooked_module_count].functions = api.functions;
+    cooked_modules[cooked_module_count].function_count = api.count;
+    cooked_module_count++;
+    pending_module_handle =
+        NULL; /* ownership transferred to cooked_modules[] */
 }
 
 #endif /* STDROT_STATIC */
@@ -531,7 +759,7 @@ void stdrot_unload(void)
 
 bool is_builtin_function(const String func_name)
 {
-    if (!func_name.data || !functions)
+    if (!func_name.data)
         return false;
 
     for (int i = 0; i < function_count; i++)
@@ -541,12 +769,25 @@ bool is_builtin_function(const String func_name)
             return true;
         }
     }
+#ifndef STDROT_STATIC
+    for (int m = 0; m < cooked_module_count; m++)
+    {
+        for (int i = 0; i < cooked_modules[m].function_count; i++)
+        {
+            if (strcmp(func_name.data, cooked_modules[m].functions[i]->name) ==
+                0)
+            {
+                return true;
+            }
+        }
+    }
+#endif
     return false;
 }
 
 const StdrotEntry *get_native_function(const String func_name)
 {
-    if (!func_name.data || !functions)
+    if (!func_name.data)
         return NULL;
 
     for (int i = 0; i < function_count; i++)
@@ -556,6 +797,19 @@ const StdrotEntry *get_native_function(const String func_name)
             return functions[i];
         }
     }
+#ifndef STDROT_STATIC
+    for (int m = 0; m < cooked_module_count; m++)
+    {
+        for (int i = 0; i < cooked_modules[m].function_count; i++)
+        {
+            if (strcmp(func_name.data, cooked_modules[m].functions[i]->name) ==
+                0)
+            {
+                return cooked_modules[m].functions[i];
+            }
+        }
+    }
+#endif
     return NULL;
 }
 

@@ -38,10 +38,26 @@ void module_path_init(void);
 /* Frees state module_path_init() allocated. Idempotent. */
 void module_path_cleanup(void);
 
-/* Resolves `name` to an absolute path for "<name>.brainrot", searching the
- * path described above. Returns a malloc'd absolute path on success
- * (caller frees it), or NULL if no directory in the search path has a
- * matching, regular file. */
-char *module_path_resolve_prelude(const char *name);
+/* The two artifact kinds a resolved module name can be -- see
+ * module_path_resolve()'s own comment for how the choice between them is
+ * made. */
+typedef enum
+{
+    MODULE_ARTIFACT_PRELUDE, /* a .brainrot file, spliced in like a #cooked
+                                "path" include */
+    MODULE_ARTIFACT_NATIVE,  /* a .so, dlopen'd via brainrot_module_init()
+                                (native builds only -- see module_path.c) */
+} ModuleArtifactKind;
+
+/* Resolves `name` to an absolute path, searching the path described above.
+ * Within each directory, a "<name>.brainrot" prelude is checked before a
+ * "<name>.so" native module -- "one syntax, one search path, two possible
+ * artifact kinds" (#207), not two independent searches. Returns a malloc'd
+ * absolute path on success (caller frees it) and sets *out_kind, or
+ * returns NULL (leaving *out_kind untouched) if no directory in the search
+ * path has either. The native (".so") form is never resolved in a
+ * STDROT_STATIC (wasm) build, which has no dynamic loader to dlopen it
+ * with -- see module_path.c. */
+char *module_path_resolve(const char *name, ModuleArtifactKind *out_kind);
 
 #endif

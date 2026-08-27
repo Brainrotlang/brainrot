@@ -10,6 +10,10 @@ memleak:lib/mem.c
 # the standard is concerned; this is the intended ELF section-iteration idiom.
 # The check ID for this differs by cppcheck version (subtractPointers on
 # 2.17.x, comparePointers on 2.13.x, the version CI installs) -- suppress
-# both so the suppression survives either.
-subtractPointers:stdrot/registry.c:68
-comparePointers:stdrot/registry.c:68
+# both so the suppression survives either. File-wide, not pinned to a line
+# number: a #207 PR (native module loading) added an unrelated comment block
+# earlier in this file, shifting this line from 68 to 99 and silently
+# un-suppressing this exact finding -- a line-specific suppression is a
+# trap for the next edit above it, not just this one.
+subtractPointers:stdrot/registry.c
+comparePointers:stdrot/registry.c

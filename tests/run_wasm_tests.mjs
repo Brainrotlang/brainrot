@@ -130,6 +130,18 @@ const WASM_EXPECTED_OVERRIDES = {
   // each on wasm32 ILP32 (8 total) vs 8 bytes each on native LP64 (16
   // total) -- same root cause as native_void_pointer_struct_field above.
   struct_array_field_ptr: "ptr0 correct\nptr1 correct\n8",
+  // lang.l's "cannot find module" diagnostic is deliberately worded
+  // differently under STDROT_STATIC (wasm, no dynamic loader at all) vs.
+  // native: native mentions both "<name>.brainrot" and "<name>.so" as
+  // candidates the search path checked, wasm mentions only
+  // "<name>.brainrot" since module_path_resolve() (module_path.c) never
+  // even looks for a ".so" there. See lang.l's handle_cooked_module_
+  // directive for the #ifdef STDROT_STATIC split this mirrors.
+  cooked_module_search_path:
+    "Error: cooked_module_search_path.brainrot:10: cannot find module " +
+    "'mathmod' (looked for 'mathmod.brainrot' via $BRAINROT_PATH, then " +
+    "either the install module directory or a 'stdrot' directory next " +
+    "to this executable, whichever applies)",
 };
 
 // Fixtures that call a tests/stdrot/*.c native (poke_int, peek_int,

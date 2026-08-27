@@ -213,7 +213,31 @@ static void free_search_dirs(char **dirs, int count)
     free(dirs);
 }
 
-char *module_path_resolve_prelude(const char *name)
+/* Builds "<dir>/<name><suffix>", stats it, and returns a malloc'd realpath
+ * if it exists and is a regular file, else NULL. */
+static char *resolve_candidate(const char *dir, const char *name,
+                               const char *suffix)
+{
+    size_t len = strlen(dir) + 1 + strlen(name) + strlen(suffix) + 1;
+    char *candidate = malloc(len);
+    if (!candidate)
+    {
+        fprintf(stderr, "out of memory\n");
+        exit(1);
+    }
+    snprintf(candidate, len, "%s/%s%s", dir, name, suffix);
+
+    char *found = NULL;
+    struct stat st;
+    if (stat(candidate, &st) == 0 && S_ISREG(st.st_mode))
+    {
+        found = realpath(candidate, NULL);
+    }
+    free(candidate);
+    return found;
+}
+
+char *module_path_resolve(const char *name, ModuleArtifactKind *out_kind)
 {
     int count = 0;
     char **dirs = build_search_dirs(&count);
@@ -221,22 +245,24 @@ char *module_path_resolve_prelude(const char *name)
     char *found = NULL;
     for (int i = 0; i < count && !found; i++)
     {
-        size_t len =
-            strlen(dirs[i]) + 1 + strlen(name) + strlen(".brainrot") + 1;
-        char *candidate = malloc(len);
-        if (!candidate)
+        found = resolve_candidate(dirs[i], name, ".brainrot");
+        if (found)
         {
-            fprintf(stderr, "out of memory\n");
-            exit(1);
+            *out_kind = MODULE_ARTIFACT_PRELUDE;
+            break;
         }
-        snprintf(candidate, len, "%s/%s.brainrot", dirs[i], name);
-
-        struct stat st;
-        if (stat(candidate, &st) == 0 && S_ISREG(st.st_mode))
+#ifndef STDROT_STATIC
+        /* No dynamic loader exists in a STDROT_STATIC (wasm) build to
+         * dlopen a ".so" with (see stdrot.c's own STDROT_STATIC comment)
+         * -- never advertise one as resolvable there, rather than finding
+         * it here and only failing later, further from the actual cause,
+         * inside a load path that doesn't exist in that build at all. */
+        found = resolve_candidate(dirs[i], name, ".so");
+        if (found)
         {
-            found = realpath(candidate, NULL);
+            *out_kind = MODULE_ARTIFACT_NATIVE;
         }
-        free(candidate);
+#endif
     }
 
     free_search_dirs(dirs, count);

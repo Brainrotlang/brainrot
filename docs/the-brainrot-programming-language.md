@@ -797,9 +797,14 @@ Current limitations:
 
 ### 7.13. Modules (`#cooked`)
 
-`#cooked` is Brainrot's `#include`: it splices another `.brainrot` file's
-function and struct definitions into the current file at the point of the
-directive, so a program can be split across multiple files.
+`#cooked` is Brainrot's `#include`. The quoted form splices another
+`.brainrot` file's function and struct definitions into the current file at
+the point of the directive, so a program can be split across multiple files.
+The angle-bracket form names a module instead of a path, and can resolve to
+either a `.brainrot` file (spliced in the same way) or a native `.so`
+(dlopen'd and registered) — a native module's functions become ordinary
+native calls once cooked, indistinguishable from the core standard
+library's own.
 
 #### Syntax
 
@@ -837,25 +842,50 @@ searching, in order:
    `_NSGetExecutablePath` on macOS) rather than guessed from `argv[0]` and
    the current working directory.
 
-The first directory containing a `<module_name>.brainrot` file wins. This is
-currently the only artifact kind the angle-bracket form resolves to — a
-future phase extends it to native (`.so`) modules via the same search path
-and the same directive, per [the roadmap](ROADMAP.md#phase-4--native-modules-and-cooked).
+Within each directory, a `<module_name>.brainrot` file is checked before a
+`<module_name>.so` file — one syntax, one search path, two possible artifact
+kinds. The first directory containing either wins.
 
 #### What can be included
 
-A `#cooked`-included file is spliced in as top-level content, so it should
-contain only function and struct definitions — **not** its own `skibidi
-main`. (A Brainrot program has exactly one `main`; splicing in a second one
-is a parse error.)
+A `#cooked`-included `.brainrot` file (either form) is spliced in as
+top-level content, so it should contain only function and struct
+definitions — **not** its own `skibidi main`. (A Brainrot program has
+exactly one `main`; splicing in a second one is a parse error.)
+
+A `#cooked <name>` that resolves to a native `.so` instead is dlopen'd
+(`RTLD_LOCAL`, not the core library's `RTLD_GLOBAL`) and must export a
+`StdrotAPI brainrot_module_init(void)` entrypoint — the native counterpart
+of the core standard library's own `stdrot_get_api_v2()`, built the exact
+same way (`stdrot/registry.c`'s linker-section collection of every
+`STDROT_EXPORT_SIG()` in the module, exported under the module-specific name
+instead via `-DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init` — see
+`tests/nativemodules/testnative.c` for a minimal example). Every cooked
+module exports that *same* entrypoint name; that's fine because it's always
+looked up by that specific module's own `dlopen` handle (never a
+process-wide symbol search), and `RTLD_LOCAL` keeps it from ever entering
+the global symbol scope in the first place — see `stdrot/registry.c`'s own
+comment for why an *internal* cross-symbol call from inside a module (as
+opposed to this handle-scoped lookup) is the actual hazard this design
+avoids. Its exported functions become callable alongside the core
+library's and any other already-cooked module's; a name colliding with
+either is a load-time error naming the existing source.
+Missing or ABI-incompatible `brainrot_module_init()`, and a malformed
+function table, are both load-time errors for the same reason a
+`libstdrot.so` built against an incompatible ABI is (see `stdrot_load()`,
+`stdrot.c`) — a native module is exactly as fragile as the core library.
 
 #### Include-once and circular includes
 
-Including the same file more than once (e.g. two modules that both `#cooked`
-a shared third module) is a no-op after the first time — Brainrot has no
-`#edgydef`/`#slaps` guards yet, so this is handled automatically. A file that
-`#cooked`s itself, directly or through a cycle of other files, is a compile
-error that reports the include chain instead of hanging.
+Cooking the same artifact more than once (e.g. two modules that both
+`#cooked` a shared third one) is a no-op after the first time — for a
+`.brainrot` file this is because Brainrot has no `#edgydef`/`#slaps` guards
+yet, so it's handled automatically; a native `.so` is simply never
+`dlopen`'d twice. A `.brainrot` file that `#cooked`s itself, directly or
+through a cycle of other files, is a compile error that reports the include
+chain instead of hanging — a native module can't form a cycle this way
+(loading one never re-enters the lexer), so only the "already loaded, no-op"
+half applies to it.
 
 #### Example
 

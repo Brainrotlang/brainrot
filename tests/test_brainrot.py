@@ -435,5 +435,155 @@ def test_module_install_dir_used_when_installed(tmp_path):
     )
 
 
+# ── Native modules: #cooked <name> resolving to a ".so" (stdrot_load_module,
+# stdrot.c) ──────────────────────────────────────────────────────────────
+# tests/nativemodules/*.c (built by `make nativemodules`) are real modules
+# with a genuine brainrot_module_init() entrypoint -- unlike
+# tests/badnatives/*.so above (which simulate a malformed CORE
+# libstdrot.so, loaded via STDROT_LIB_PATH to exercise stdrot_load()),
+# these exercise the #cooked <name>-to-native-module path specifically.
+# Driver source is written inline per test (via tmp_path) rather than as
+# test_cases/*.brainrot fixtures, since every one of these needs
+# $BRAINROT_PATH set -- the generic expected_results.json loop can't
+# express that, the same reason the module-search-path tests above don't
+# either.
+NATIVEMODULES_DIR = os.path.join(script_dir, "nativemodules")
+
+
+def _run_with_native_modules(source, tmp_path):
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    source_path = tmp_path / "prog.brainrot"
+    source_path.write_text(source)
+
+    env = dict(os.environ, BRAINROT_PATH=NATIVEMODULES_DIR)
+    return subprocess.run([brainrot_path, str(source_path)],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True, env=env)
+
+
+def _assert_nativemodules_built(*so_names):
+    for so in so_names:
+        path = os.path.join(NATIVEMODULES_DIR, so)
+        assert os.path.exists(path), (
+            f"{path} not found -- run `make nativemodules` first")
+
+
+def test_native_module_dual_load_and_include_once(tmp_path):
+    """A native module's exports are callable alongside the core library's,
+    and cooking the same module twice is a no-op -- matching a ".brainrot"
+    prelude's own include-once behavior (splice_cooked_file, lang.l)."""
+    _assert_nativemodules_built("testnative.so")
+
+    result = _run_with_native_modules(
+        '#cooked <testnative>\n'
+        '#cooked <testnative>\n'
+        'skibidi main {\n'
+        '    yapping("%d", tripled(2));\n'
+        '    bussin 0;\n'
+        '}\n', tmp_path)
+
+    assert result.returncode == 0, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert result.stdout == "6\n", f"Actual stdout:\n{result.stdout}"
+
+
+def test_native_module_two_modules_loaded_at_once(tmp_path):
+    """Two DIFFERENT, non-colliding native modules are both loaded and both
+    remain independently callable -- #207's own "two modules loaded at
+    once" DoD item specifically, distinct from the dual-load test above
+    (core + one module, one of them cooked twice) and from
+    test_native_module_duplicate_with_module below (two modules, but the
+    second load must FAIL)."""
+    _assert_nativemodules_built("testnative.so", "testnative2.so")
+
+    result = _run_with_native_modules(
+        '#cooked <testnative>\n'
+        '#cooked <testnative2>\n'
+        'skibidi main {\n'
+        '    yapping("%d", tripled(2));\n'
+        '    yapping("%d", halved(10));\n'
+        '    bussin 0;\n'
+        '}\n', tmp_path)
+
+    assert result.returncode == 0, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert result.stdout == "6\n5\n", f"Actual stdout:\n{result.stdout}"
+
+
+def test_native_module_duplicate_with_core(tmp_path):
+    """A module exporting a name the core library already provides ('bet')
+    must be rejected, naming the core library as the existing source."""
+    _assert_nativemodules_built("testnative_dup_core.so")
+
+    result = _run_with_native_modules(
+        '#cooked <testnative_dup_core>\n'
+        'skibidi main { bussin 0; }\n', tmp_path)
+
+    assert result.returncode == 1, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert ("'bet' is already provided by the core standard library"
+            in result.stderr), f"Actual stderr:\n{result.stderr}"
+
+
+def test_native_module_duplicate_with_module(tmp_path):
+    """A module exporting a name an EARLIER cooked module already provides
+    must be rejected too, naming that earlier module (by its #cooked <name>
+    spelling) as the existing source -- not just the core library."""
+    _assert_nativemodules_built("testnative.so", "testnative_dup_module.so")
+
+    result = _run_with_native_modules(
+        '#cooked <testnative>\n'
+        '#cooked <testnative_dup_module>\n'
+        'skibidi main { bussin 0; }\n', tmp_path)
+
+    assert result.returncode == 1, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert "'tripled' is already provided by testnative" in result.stderr, (
+        f"Actual stderr:\n{result.stderr}"
+    )
+
+
+def test_native_module_missing_brainrot_module_init(tmp_path):
+    """A structurally valid .so with no brainrot_module_init() at all must
+    fail loudly and specifically, the same dlsym-failure posture
+    stdrot_load() already has for a pre-ABI-versioning libstdrot.so (see
+    test_old_abi_rejected_at_load above)."""
+    _assert_nativemodules_built("no_module_init.so")
+
+    result = _run_with_native_modules(
+        '#cooked <no_module_init>\n'
+        'skibidi main { bussin 0; }\n', tmp_path)
+
+    assert result.returncode == 1, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert "does not export brainrot_module_init()" in result.stderr, (
+        f"Actual stderr:\n{result.stderr}"
+    )
+
+
+def test_native_module_internal_duplicate_rejected(tmp_path):
+    """stdrot_load_module() (stdrot.c) runs validate_native_registry() on a
+    cooked module's own table -- the same rejection
+    test_bad_registry_rejected_at_load above already proves for the core
+    library's table, exercised here via the module-loading path instead."""
+    _assert_nativemodules_built("testnative_internal_dup.so")
+
+    result = _run_with_native_modules(
+        '#cooked <testnative_internal_dup>\n'
+        'skibidi main { bussin 0; }\n', tmp_path)
+
+    assert result.returncode == 1, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert "duplicate native export 'dup_within_module'" in result.stderr, (
+        f"Actual stderr:\n{result.stderr}"
+    )
+
+
 if __name__ == "__main__":
     pytest.main(["-v", os.path.abspath(__file__)])

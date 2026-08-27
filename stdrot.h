@@ -23,6 +23,18 @@
  */
 void stdrot_load(void);
 void stdrot_unload(void);
+/* Loads a native module resolved from #cooked <name> (module_path.c's
+ * MODULE_ARTIFACT_NATIVE) and registers its functions alongside the core
+ * library's. `name` is the #cooked <name> spelling (diagnostics only);
+ * `so_path` is the already-resolved absolute path to dlopen. Exits with a
+ * diagnostic on any failure, the same fail-loud posture stdrot_load() has
+ * for the core library -- see stdrot.c's own comment on this function.
+ * Unavailable in a STDROT_STATIC (wasm) build, which has no dynamic loader
+ * to dlopen a module with: calling it there always fails loudly rather
+ * than being silently absent, since module_path_resolve() (module_path.h)
+ * never resolves a name to MODULE_ARTIFACT_NATIVE in that build, so this
+ * should be unreachable there in practice. */
+void stdrot_load_module(const char *name, const char *so_path);
 
 /* ── Runtime query / dispatch ────────────────────────────────────────────── */
 bool is_builtin_function(const String func_name);

@@ -11,6 +11,7 @@
 #include "lib/module_path.h"
 #include "lib/string_value.h"
 #include "lang.tab.h"
+#include "stdrot.h"
 
 VarType current_var_type = NONE;
 
@@ -261,12 +262,66 @@ static void handle_cooked_directive(const char *text) {
     splice_cooked_file(resolved);
 }
 
+/* Whether `resolved` (an absolute path) has already been cooked earlier in
+ * this compilation -- shared by splice_cooked_file()'s own visited-path
+ * loop (a ".brainrot" file, either quoted-form or angle-bracket-resolved)
+ * and handle_cooked_native_module() below (a dlopen'd ".so"): the same
+ * include-once behavior applies to both artifact kinds, they just have
+ * different things to do on a first visit (splice tokens vs. dlopen). */
+static bool already_visited(const char *resolved) {
+    for (int i = 0; i < visited_count; i++) {
+        if (strcmp(visited_paths[i], resolved) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Records `resolved` as visited. Callers must already have checked
+ * visited_count < MAX_COOKED_FILES (splice_cooked_file() and
+ * handle_cooked_native_module() each report that error themselves, with
+ * their own file:line context). */
+static void mark_visited(const char *resolved) {
+    char *copy = strdup(resolved);
+    if (!copy) {
+        fprintf(stderr, "out of memory\n");
+        cooked_die();
+    }
+    visited_paths[visited_count] = copy;
+    visited_count++;
+}
+
+/* A `name` resolving to a native ".so" module (module_path.h's
+ * MODULE_ARTIFACT_NATIVE): unlike a ".brainrot" prelude, there are no
+ * tokens to splice and so no self/circular-include concept (dlopen'ing a
+ * .so doesn't re-enter the lexer) -- only include-once dedup applies.
+ * Takes ownership of `resolved`. */
+static void handle_cooked_native_module(const char *name, char *resolved) {
+    if (already_visited(resolved)) {
+        /* Already loaded elsewhere in this compilation: no-op, matching
+           the ".brainrot" prelude's own include-once behavior. */
+        free(resolved);
+        return;
+    }
+    if (visited_count >= MAX_COOKED_FILES) {
+        char *base = basename_copy(current_filename);
+        fprintf(stderr, "Error: %s:%d: too many distinct #cooked "
+                "files/modules (max %d)\n", base, yylineno, MAX_COOKED_FILES);
+        free(base);
+        free(resolved);
+        cooked_die();
+    }
+
+    stdrot_load_module(name, resolved); /* exits with a diagnostic on failure */
+    mark_visited(resolved);
+    free(resolved);
+}
+
 /* Angle-bracket form: #cooked <name>. Resolves `name` via the module
- * search path (module_path.h) to a ".brainrot" prelude, then splices it in
- * exactly like the quoted form -- same self/circular/visited handling, same
- * include-once behavior. A `name` resolving to a native ".so" module is not
- * handled here yet; that lands in a follow-up (#207 tracks the native-module
- * half separately from this angle-bracket/search-path half). */
+ * search path (module_path.h) to either a ".brainrot" prelude -- spliced in
+ * exactly like the quoted form, same self/circular/visited handling, same
+ * include-once behavior -- or a native ".so" module, dlopen'd and
+ * registered via handle_cooked_native_module() above. */
 static void handle_cooked_module_directive(const char *text) {
     char *name = extract_angle_name(text);
     if (!name) {
@@ -296,18 +351,34 @@ static void handle_cooked_module_directive(const char *text) {
         cooked_die();
     }
 
-    char *resolved = module_path_resolve_prelude(name);
+    ModuleArtifactKind kind;
+    char *resolved = module_path_resolve(name, &kind);
     if (!resolved) {
         char *base = basename_copy(current_filename);
+#ifdef STDROT_STATIC
         fprintf(stderr, "Error: %s:%d: cannot find module '%s' (looked "
                 "for '%s.brainrot' via $BRAINROT_PATH, then either the "
                 "install module directory or a 'stdrot' directory next to "
                 "this executable, whichever applies)\n", base, yylineno,
                 name, name);
+#else
+        fprintf(stderr, "Error: %s:%d: cannot find module '%s' (looked "
+                "for '%s.brainrot' or '%s.so' via $BRAINROT_PATH, then "
+                "either the install module directory or a 'stdrot' "
+                "directory next to this executable, whichever applies)\n",
+                base, yylineno, name, name, name);
+#endif
         free(base);
         free(name);
         cooked_die();
     }
+
+    if (kind == MODULE_ARTIFACT_NATIVE) {
+        handle_cooked_native_module(name, resolved);
+        free(name);
+        return;
+    }
+
     free(name);
     splice_cooked_file(resolved);
 }

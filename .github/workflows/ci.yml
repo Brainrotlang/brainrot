@@ -233,6 +233,14 @@ jobs:
       - name: Build simulated pre-ABI-versioning library
         run: make old-abi-sim
 
+      # tests/nativemodules/*.so: real native modules with a genuine
+      # brainrot_module_init() entrypoint (unlike tests/badnatives/*.so
+      # above, which simulate a malformed CORE libstdrot.so) -- exercise
+      # #cooked <name> resolving to a native ".so" (stdrot_load_module(),
+      # stdrot.c) end to end. See that directory's own file comments.
+      - name: Build native module test libraries
+        run: make nativemodules
+
       - name: Run Pytest
         run: |
           source .venv/bin/activate
