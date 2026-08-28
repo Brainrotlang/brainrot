@@ -311,10 +311,13 @@ static StdrotValue br_measure_text(StdrotValue *args, int argc)
  * and crash the host), the formatting is fixed here: a caller-supplied
  * literal prefix followed by exactly one integer.
  *
- * `pad` is the minimum digit count, zero-padded, so a HUD can hold a stable
- * width as the score grows ("SCORE 000450"); <= 1 means no padding, and it is
- * capped so a wild value cannot ask for an enormous allocation. A negative
- * value keeps its sign inside the padded field, as printf's "%0*d" does.
+ * `pad` is the minimum **field width** of the number, zero-padded -- printf's
+ * "%0*d", not a digit count. The distinction is visible on negatives: -450 at
+ * pad 6 is "-00450", six columns holding five digits, not six digits plus a
+ * sign. Field width is the right rule for the job, because holding a HUD
+ * column steady is what stops it jittering as a score grows, and "000450" and
+ * "-00450" occupy the same space. 0 means no padding, and the value is capped
+ * so a wild `pad` cannot ask for an enormous allocation.
  *
  * Returns freshly allocated storage the caller frees, or NULL if the
  * allocation failed. This is brainray's own memory, deliberately allocated
@@ -345,7 +348,10 @@ static char *br_format_text_int(const char *text, int value, int pad)
     {
         return NULL;
     }
-    snprintf(buf, (size_t)n + 1, "%s%0*d", text, pad, value);
+    /* Cannot truncate: the buffer was sized by the identical format above.
+     * Discard the count explicitly rather than by omission, so a future edit
+     * that makes the two format strings diverge reads as the mistake it is. */
+    (void)snprintf(buf, (size_t)n + 1, "%s%0*d", text, pad, value);
     return buf;
 }
 

@@ -241,11 +241,17 @@ jobs:
       - name: Build native module test libraries
         run: make nativemodules
 
+      # Collect every test module in tests/, not just test_brainrot.py. Naming
+      # one file meant test_docs_consistency.py never ran on the merge gate,
+      # even though `make test` (plain `pytest -v` from the repo root) has
+      # always collected it -- so CI was strictly narrower than the command
+      # contributors are told to run, and the docs guards it holds could go
+      # stale while CI stayed green.
       - name: Run Pytest
         run: |
           source .venv/bin/activate
           export STDROT_LIB_PATH="$GITHUB_WORKSPACE/tests/libstdrot.so"
-          pytest -v test_brainrot.py
+          pytest -v
         working-directory: tests
 
       - name: Run Valgrind on all .brainrot tests

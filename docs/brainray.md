@@ -283,8 +283,8 @@ there.
 rl_draw_text_int("SCORE ", score, 6, 20, 20, 28, 245, 200, 90, 255);
 ```
 
-`pad` is the minimum number of digits, zero-padded, which keeps a HUD from
-jittering as a counter grows:
+`pad` is the minimum **field width** of the number, zero-padded — printf's
+`%0*d`, not a count of digits:
 
 | `value` | `pad` | drawn |
 | --- | --- | --- |
@@ -293,9 +293,13 @@ jittering as a counter grows:
 | `-450` | `6` | `SCORE -00450` |
 | `0` | `6` | `SCORE 000000` |
 
-A negative value keeps its sign inside the padded field, exactly as printf's
-`%0*d` does. `pad` is clamped to 32 so a wild value can't request an enormous
-allocation, and an empty `text` is fine if you want the bare number.
+The difference shows on negatives: `-450` at `pad 6` is six columns holding
+five digits and a sign, not six digits plus a sign. Field width is the rule you
+want here — keeping the column steady is what stops a HUD jittering as a score
+grows, and `000450` and `-00450` take the same space.
+
+`pad` is clamped to 32 so a wild value can't request an enormous allocation, and
+an empty `text` is fine if you want the bare number.
 
 `rl_measure_text_int` takes the same `text`, `value` and `pad` and reports the
 width of the string the pair would draw, so numeric text can be centred the same
