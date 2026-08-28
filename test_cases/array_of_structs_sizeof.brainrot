@@ -1,0 +1,17 @@
+🚽 Test case: maxxing (sizeof) of an array-of-structs element is the
+🚽 struct's layout size -- the SAME size as a plain variable of that tag,
+🚽 and the array's total size is that times its length. Guards against the
+🚽 descriptor reporting a struct value as size 0 (PR #287 review).
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+skibidi main {
+    gang Point p;
+    gang Point pts[3];
+    yapping("%d %d %d %d", maxxing(p), maxxing(pts[0]),
+            maxxing(pts[0]) == maxxing(p),
+            maxxing(pts) == maxxing(pts[0]) * 3);
+    bussin 0;
+}

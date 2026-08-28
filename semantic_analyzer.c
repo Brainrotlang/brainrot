@@ -614,6 +614,28 @@ static StructDef *infer_struct_def_static(ASTNode *expr,
         return get_struct_def(fld->desc.struct_name);
     }
 
+    if (expr->type == NODE_ARRAY_ACCESS && expr->data.array.name.data)
+    {
+        /* An element of an array of struct/union values or single-level
+           pointers (`pts[i].field`) resolves to the array's element tag --
+           mirrors resolve_struct_access()'s own NODE_ARRAY_ACCESS object
+           branch (ast.c). A `pointer_level > 1` array element would need an
+           explicit dereference and is rejected there, so reject it here too. */
+        SymbolEntry *sym = find_symbol(analyzer, expr->data.array.name);
+        if (sym && sym->is_array)
+        {
+            if (sym->type != VAR_STRUCT || sym->pointer_level > 1 ||
+                !sym->struct_name.data)
+                return NULL;
+            return get_struct_def(sym->struct_name);
+        }
+        Variable *var = get_variable(expr->data.array.name);
+        if (var && var->desc.is_array && var->desc.type == VAR_STRUCT &&
+            var->desc.pointer_level <= 1 && var->desc.struct_name.data)
+            return get_struct_def(var->desc.struct_name);
+        return NULL;
+    }
+
     return NULL;
 }
 
@@ -3595,6 +3617,46 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                 obj->data.struct_access.struct_name.data)
                 parent_def =
                     get_struct_def(obj->data.struct_access.struct_name);
+        }
+        else if (obj && obj->type == NODE_ARRAY_ACCESS &&
+                 obj->data.array.name.data)
+        {
+            /* `pts[i].field`: the object is an element of an array of
+               struct/union values (or single-level pointers). Resolve the
+               element's tag from the array symbol, mirroring resolve_struct_
+               access()'s runtime NODE_ARRAY_ACCESS branch (ast.c). */
+            VarType obj_type = NONE;
+            int obj_pointer_level = 0;
+            String obj_struct_name = {0};
+            SymbolEntry *symbol = find_symbol(analyzer, obj->data.array.name);
+            if (symbol && symbol->is_array)
+            {
+                obj_type = symbol->type;
+                obj_pointer_level = symbol->pointer_level;
+                obj_struct_name = symbol->struct_name;
+            }
+            else
+            {
+                Variable *var = get_variable(obj->data.array.name);
+                if (!var || !var->desc.is_array)
+                    break;
+                obj_type = var->desc.type;
+                obj_pointer_level = var->desc.pointer_level;
+                obj_struct_name = var->desc.struct_name;
+            }
+            parent_is_struct_typed = (obj_type == VAR_STRUCT);
+            if (parent_is_struct_typed && obj_pointer_level > 1)
+            {
+                add_semantic_error(
+                    analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                    STRING_LITERAL(
+                        "Member access via '.' through a multi-level "
+                        "pointer (pointer_level > 1) is not supported"),
+                    node->line_number > 0 ? node->line_number : 1);
+                break;
+            }
+            if (parent_is_struct_typed)
+                parent_def = get_struct_def(obj_struct_name);
         }
         else
         {

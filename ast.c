@@ -286,6 +286,13 @@ static void write_value_to_address(void *address, VarType type,
                                    int pointer_level, ASTNode *expr,
                                    TypeModifiers mods, bool packed_storage);
 static void initialize_variable_from_expr(Variable *var, ASTNode *expr);
+static size_t get_array_element_stride(VarType type, int pointer_level,
+                                       TypeModifiers mods,
+                                       const String struct_name);
+static void *array_element_address(void *element_base, size_t offset,
+                                   VarType type, int pointer_level,
+                                   TypeModifiers mods,
+                                   const String struct_name);
 
 // Symbol table functions
 bool set_variable(const String name, void *value, VarType type,
@@ -382,8 +389,18 @@ bool set_multi_array_variable(const String name, const int dimensions[],
     var->desc.array_dimensions.total_size = total;
     var->array_length = total;
 
-    size_t element_size =
-        get_type_size_for_descriptor(type, var->desc.pointer_level, mods);
+    /* Element size = the one stride authority (get_array_element_stride):
+       a struct/union VALUE element is sized by its tag's layout, everything
+       else by its modifier-aware descriptor width. Reserving per element by
+       the SAME function array_element_address() later strides by is what
+       keeps storage size and element addressing from ever disagreeing. */
+    size_t element_size = get_array_element_stride(
+        type, var->desc.pointer_level, mods, var->desc.struct_name);
+    if (type == VAR_STRUCT && var->desc.pointer_level == 0 && element_size == 0)
+    {
+        yyerror("Unknown struct/union type for array");
+        return false;
+    }
     if (element_size == 0)
         element_size = sizeof(int);
 
@@ -823,6 +840,68 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
             parent_base = outer_field_addr;
         }
     }
+    else if (obj && obj->type == NODE_ARRAY_ACCESS && obj->data.array.name.data)
+    {
+        /* Member access on an element of an array of struct/union values or
+           pointers (`pts[i].x`, `ptrs[i].x`). Only the name-based array form
+           is an lvalue-addressable struct here; an array-typed struct FIELD
+           element (`foo.arr[i].x`, obj->data.array.base set) is not
+           supported and falls through to the error below. */
+        Variable *var = get_variable(obj->data.array.name);
+        if (!var || !var->desc.is_array || var->desc.type != VAR_STRUCT)
+        {
+            if (report_errors)
+                yyerror("Member access on a non-struct/union array element");
+            return false;
+        }
+        parent_def = get_struct_def(var->desc.struct_name);
+        if (!parent_def)
+        {
+            if (report_errors)
+                yyerror("Unknown struct or union type");
+            return false;
+        }
+        /* Same single-level implicit-`->` rule as the variable and nested-
+           field branches above: an array of `gang Foo *` follows one level
+           of indirection, an array of `gang Foo **` needs an explicit
+           dereference and is rejected. */
+        if (var->desc.pointer_level > 1)
+        {
+            if (report_errors)
+                yyerror("Member access via '.' through a multi-level "
+                        "pointer (pointer_level > 1) is not supported");
+            return false;
+        }
+
+        int num_indices = obj->data.array.num_dimensions;
+        int indices[MAX_DIMENSIONS] = {0};
+        for (int i = 0; i < num_indices; i++)
+            indices[i] = evaluate_expression_int(obj->data.array.indices[i]);
+        size_t offset = calculate_array_offset(var->desc.is_array,
+                                               &var->desc.array_dimensions,
+                                               indices, num_indices);
+        void *element_addr =
+            array_element_address(var->value.array_data, offset, var->desc.type,
+                                  var->desc.pointer_level, var->desc.modifiers,
+                                  var->desc.struct_name);
+
+        if (var->desc.pointer_level == 1)
+        {
+            uintptr_t target = *(uintptr_t *)element_addr;
+            if (!target)
+            {
+                if (report_errors)
+                    yyerror("Null pointer dereference in struct member "
+                            "access");
+                return false;
+            }
+            parent_base = (void *)target;
+        }
+        else
+        {
+            parent_base = element_addr;
+        }
+    }
     else
     {
         if (report_errors)
@@ -907,6 +986,49 @@ bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
         return true;
     }
 
+    if (expr->type == NODE_ARRAY_ACCESS && expr->data.array.name.data)
+    {
+        /* An element of an array of struct/union VALUES (`pts[i]`) is itself
+           a by-value struct -- its blob lives inline in the array storage.
+           A pointer-element array (`gang Foo *ptrs[N]`) is rejected for the
+           same reason a struct-pointer variable is above: `ptrs[i]` is an
+           address, and using it where a value is expected would be an
+           implicit dereference. */
+        Variable *src = get_variable(expr->data.array.name);
+        if (!src || !src->desc.is_array || src->desc.type != VAR_STRUCT)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union value");
+            return false;
+        }
+        if (src->desc.pointer_level > 0)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union value, got a "
+                        "pointer");
+            return false;
+        }
+        if (!get_struct_def(src->desc.struct_name))
+        {
+            if (report_errors)
+                yyerror("Unknown struct or union type");
+            return false;
+        }
+        int num_indices = expr->data.array.num_dimensions;
+        int indices[MAX_DIMENSIONS] = {0};
+        for (int i = 0; i < num_indices; i++)
+            indices[i] = evaluate_expression_int(expr->data.array.indices[i]);
+        size_t offset = calculate_array_offset(src->desc.is_array,
+                                               &src->desc.array_dimensions,
+                                               indices, num_indices);
+        *blob_out =
+            array_element_address(src->value.array_data, offset, src->desc.type,
+                                  src->desc.pointer_level, src->desc.modifiers,
+                                  src->desc.struct_name);
+        *tag_out = src->desc.struct_name;
+        return true;
+    }
+
     if (report_errors)
         yyerror("Expected a by-value struct/union value (a struct variable "
                 "or a struct member access)");
@@ -924,25 +1046,47 @@ void *evaluate_struct_member_address(ASTNode *node)
 }
 
 // Evaluate a multi-dimensional array access node
+/* The one place array element STRIDE is decided, so it can never drift from
+   the layout the storage was sized for. For a scalar or a pointer element
+   this is get_type_size_for_descriptor(type, pointer_level, mods) -- a
+   width-modified element (`lit thicc rizz Big; Big vals[N];`, giga/thicc)
+   strides by its real 8-byte slot, a pointer element by sizeof(uintptr_t).
+   For a struct/union VALUE element (pointer_level 0) the descriptor has no
+   tag and reports 0, so the tag's own computed layout size is used instead
+   -- the same total_size set_multi_array_variable() reserved per element.
+   `struct_name` is only consulted for that struct-value case; callers with
+   no struct element may pass an empty String. Returns 0 for a genuinely
+   unsizable element (VAR_VOID, or a struct tag that doesn't resolve); the
+   address helper below turns that into the "zero-sized" diagnostic. */
+static size_t get_array_element_stride(VarType type, int pointer_level,
+                                       TypeModifiers mods,
+                                       const String struct_name)
+{
+    if (type == VAR_STRUCT && pointer_level == 0)
+    {
+        StructDef *def = get_struct_def(struct_name);
+        return def ? def->total_size : 0;
+    }
+    return get_type_size_for_descriptor(type, pointer_level, mods);
+}
+
 /* Byte address of array element `offset` (measured in elements) from
-   element_base, strided by the SAME modifier-aware element size the layout
-   pass reserves -- get_type_size_for_descriptor(type, pointer_level, mods).
-   Both array-access paths (struct-field and name-based) funnel their final
-   address computation through here so element spacing can never drift from
-   layout: a width-modified element array (`lit thicc rizz Big; Big
-   vals[N];`, giga/thicc) strides by its real slot (8 bytes on LP64), not
-   sizeof(int); a pointer-element array by sizeof(uintptr_t) (this subsumes
-   the old `pointer_level > 0` special case). The VALUE at the returned
+   element_base, strided by get_array_element_stride() (above) so element
+   spacing can never drift from layout. Both array-access paths (struct-field
+   and name-based) and the struct-array member/by-value resolvers funnel
+   their final address computation through here. The VALUE at the returned
    address is still loaded/stored through its base VarType's C type by the
    caller -- occupancy of a wide scalar slot (storing a 4-byte int into an
    8-byte long-long slot) is a separate, pre-existing gap documented on
-   ast.h's Variable -- but the element STRIDE now matches the C array
-   layout the blob was sized for (PR #256 review). */
+   ast.h's Variable -- but the element STRIDE now matches the C array layout
+   the blob was sized for (PR #256 review). A struct/union VALUE element
+   returns the address of the whole element blob. */
 static void *array_element_address(void *element_base, size_t offset,
                                    VarType type, int pointer_level,
-                                   TypeModifiers mods)
+                                   TypeModifiers mods, const String struct_name)
 {
-    size_t stride = get_type_size_for_descriptor(type, pointer_level, mods);
+    size_t stride =
+        get_array_element_stride(type, pointer_level, mods, struct_name);
     if (stride == 0)
     {
         yyerror("Cannot index an array of zero-sized elements");
@@ -1042,7 +1186,8 @@ static void *evaluate_struct_field_array_access(ASTNode *node)
        indexed as if each element were 4 bytes -- elements 1+ landed inside
        the reservation's front, not at their C offsets (PR #256 review). */
     return array_element_address(element_base, offset, fld->desc.type,
-                                 fld->desc.pointer_level, fld->desc.modifiers);
+                                 fld->desc.pointer_level, fld->desc.modifiers,
+                                 fld->desc.struct_name);
 }
 
 void *evaluate_multi_array_access(ASTNode *node)
@@ -1150,26 +1295,30 @@ void *evaluate_multi_array_access(ASTNode *node)
     size_t offset = calculate_array_offset(
         var->desc.is_array, &var->desc.array_dimensions, indices, num_indices);
 
-    /* Stride by the variable's modifier-aware element size via the shared
-       array_element_address() helper. This subsumes two fixes that used to
-       live here as a special case + a base-type switch:
+    /* Stride by the variable's element size via the shared array_element_
+       address()/get_array_element_stride() authority. This subsumes several
+       fixes that used to live here as special cases + a base-type switch:
 
        - Round-23 review, finding #1: pointer_level dominates element stride
          (a `rizz *ptrs[N]` array's slots are sizeof(uintptr_t), not
          sizeof(int)); indexing them as int-wide made `ptrs[1]` land halfway
-         into slot 0 -- real memory corruption. get_type_size_for_
-         descriptor()'s own pointer_level > 0 check gives 8 here.
+         into slot 0 -- real memory corruption.
        - PR #256 review: the base-type switch dropped var->modifiers, so a
          width-modified element array (`lit thicc rizz Big; Big vals[N];`)
-         strided by sizeof(int) instead of its real 8-byte slot -- the same
-         element-vs-layout drift now fixed for struct-field arrays, shared
-         here so the name-based path can't keep the landmine.
+         strided by sizeof(int) instead of its real 8-byte slot.
+       - A struct/union VALUE array (`gang Point pts[N]`) strides by the tag's
+         layout size; the returned pointer is the element blob's address.
+         Bare `pts[i]` as a scalar value is never meaningful -- member access
+         (`pts[i].f`) and by-value use (`gang P c = pts[i];`) resolve the
+         element through resolve_struct_access()/resolve_by_value_struct_
+         source() -- so this just hands them (and the harmless return-
+         statement pre-visit that discards it) a valid pointer.
 
-       A VAR_VOID non-pointer element (get_type_size_for_descriptor == 0)
-       is rejected by the helper; a `skibidi *ptrs[N]` pointer array strides
-       fine (sizeof(uintptr_t)), exactly as the round-23 fix intended. */
+       A VAR_VOID non-pointer element (stride 0) is rejected by the helper; a
+       `skibidi *ptrs[N]` pointer array strides fine (sizeof(uintptr_t)). */
     return array_element_address(var->value.array_data, offset, var->desc.type,
-                                 var->desc.pointer_level, var->desc.modifiers);
+                                 var->desc.pointer_level, var->desc.modifiers,
+                                 var->desc.struct_name);
 }
 
 bool set_int_variable(const String name, int value, TypeModifiers mods)
@@ -3676,9 +3825,16 @@ size_t handle_sizeof(ASTNode *node)
     if (expr->type == NODE_ARRAY_ACCESS)
     {
         ArrayAccessElement elem;
-        if (resolve_array_access_element(expr, &elem))
+        if (resolve_array_access_element(expr, &elem) &&
+            !(elem.type == VAR_STRUCT && elem.pointer_level == 0))
             return get_type_size_for_descriptor(elem.type, elem.pointer_level,
                                                 elem.modifiers);
+        /* A struct/union VALUE element (`maxxing(pts[0])`) has no scalar
+           descriptor width -- get_type_size_for_descriptor() would report 0.
+           Fall through to the generic VAR_STRUCT path below, which sizes it
+           by the tag's own layout via get_struct_def_for_expression(), so an
+           element reports the same size as a plain struct variable of the
+           same tag. */
     }
 
     /* sizeof's operand is never evaluated -- that's its defining

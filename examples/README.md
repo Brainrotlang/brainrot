@@ -474,4 +474,48 @@ not require raylib.
 
 ---
 
+## 10. Array of Structs
+
+**File Name:** `array_of_structs.brainrot`
+
+```c
+gang Player {
+    rizz id;
+    rizz score;
+};
+
+skibidi main {
+    gang Player roster[4];
+    rizz i;
+
+    flex (i = 0; i < 4; i = i + 1) {
+        roster[i].id = i;
+        roster[i].score = ((i + 1) * 7) % 13;
+    }
+
+    rizz best = 0;
+    flex (i = 0; i < 4; i = i + 1) {
+        yapping("player %d scored %d", roster[i].id, roster[i].score);
+        edgy (roster[i].score > roster[best].score) {
+            best = i;
+        }
+    }
+
+    yapping("top scorer: player %d (%d)", roster[best].id, roster[best].score);
+    bussin 0;
+}
+```
+
+### What It Does
+
+- Declares `gang Player roster[4];` — an **array whose elements are whole
+  structs**, laid out with the struct's own alignment.
+- Index-then-access composes: `roster[i].id`, `roster[i].score`, and
+  `roster[best].score` all address the right element's blob.
+- Works with multi-dimensional arrays (`gang Point grid[2][2];`) and nested
+  struct fields (`lines[i].a.x`) too. See
+  [§7.9 of the language reference](../docs/the-brainrot-programming-language.md#79-structs-gang).
+
+---
+
 Feel free to explore and modify each example to learn more about how this language’s syntax and features work!

@@ -1,0 +1,32 @@
+🚽 Test case: an array-of-structs element used as a whole by-value
+🚽 struct -- copy-initialization (`gang P c = a[i];`), passing by value to
+🚽 a function, and returning one from a function. Mirrors the by-value
+🚽 struct support that already exists for plain struct variables.
+gang P {
+    rizz x;
+    rizz y;
+};
+
+rizz suma(gang P p) {
+    bussin p.x + p.y;
+}
+
+gang P pick(rizz i) {
+    gang P a[3];
+    a[0].x = 10; a[0].y = 11;
+    a[1].x = 20; a[1].y = 21;
+    a[2].x = 30; a[2].y = 31;
+    bussin a[i];
+}
+
+skibidi main {
+    gang P a[2];
+    a[1].x = 5;
+    a[1].y = 6;
+    gang P c = a[1];
+    yapping("copy %d %d", c.x, c.y);
+    yapping("sum %d", suma(a[1]));
+    gang P r = pick(2);
+    yapping("pick %d %d", r.x, r.y);
+    bussin 0;
+}

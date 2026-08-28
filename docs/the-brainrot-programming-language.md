@@ -497,8 +497,40 @@ Point: 3 4 5.0
 Q: 10 20 0.0
 ```
 
+**Arrays of structs.** A struct/union tag can be the element type of an array,
+including multi-dimensional arrays (`gang Point pts[3];`, `gang Point
+grid[2][2];`). Each element is a whole struct blob laid out with the tag's own
+alignment, so indexing composes with member access: `pts[i].x`,
+`grid[r][c].y`, and nested chains such as `lines[i].a.x`. An element is also a
+by-value struct wherever a plain struct variable is — it can copy-initialize
+another (`gang Point c = pts[i];`), be passed by value (`take(pts[i])`), or be
+returned (`bussin pts[i];`).
+
+```brainrot
+gang Point {
+    rizz x;
+    chad y;
+};
+
+skibidi main {
+    gang Point pts[3];
+    rizz i;
+    flex (i = 0; i < 3; i = i + 1) {
+        pts[i].x = i * 10;
+        pts[i].y = i + 0.5;
+    }
+    yapping("%d %.1f", pts[2].x, pts[2].y);
+    bussin 0;
+}
+```
+
 #### Current Limitations
 
+- Whole-struct assignment to an existing array element (`pts[i] = c;`) is not
+  supported, the same limitation plain struct variables have (`p = c;`); use
+  copy-initialization or per-field assignment instead.
+- A brace initializer for an array of structs (`gang Point pts[2] = {{1,
+  2}, {3, 4}};`) is not yet supported; declare the array and assign elements.
 - Chained access follows a single-level pointer field per hop (`a.next.val`);
   a multi-level pointer field (`gang Node **next`) is not followed and must
   be dereferenced explicitly.
