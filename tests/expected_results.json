@@ -192,7 +192,7 @@
     "struct_pointer_tag_mismatch_param_fail": "Error: 'bump' argument 1: type mismatch: expected pointer to struct/union 'Point', got pointer to 'Rect' at line 24",
     "struct_pointer_lit_alias_tag_mismatch_fail": "Error: Type mismatch in initialization of 'pp': expected pointer to struct/union 'Point', got pointer to 'Rect' at line 24",
     "struct_pointer_param_category_mismatch_fail": "Error: 'bump' argument 1: expected pointer to struct/union 'Point' (level 1), got int pointer level 1 at line 22",
-    "logical_not": "W L\nL W\nL\nW\nL\nL\nW L L\nW\nW\n9\nswitch: one\n2\n2.0\n1\n3\nne ok\n",
+    "logical_not": "W L\nL W\nL\nW\nL\nL\nW\nW\nW L L\nW\nW\nW L\n9\nswitch: one\n2\n2.0\n1\n3\nne ok\n",
     "logical_not_cap_to_rizz_fail": "Error: Type mismatch in initialization of 'k': expected int, got bool at line 1",
     "logical_not_rant_fail": "Error: Logical not requires a scalar or pointer operand, got string at line 9",
     "logical_not_struct_fail": "Error: Logical not requires a scalar or pointer operand, got struct at line 14",
