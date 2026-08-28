@@ -2268,11 +2268,52 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
                generic per-argument recursion (this function's caller,
                semantic_analyze_with_scope_tracking()'s NODE_FUNC_CALL
                case) walks into it. */
-            Parameter *param = func->parameters;
+            /* func->parameters is stored in REVERSE source order: every
+               `param_list COMMA ...` rule in lang.y hangs the accumulated
+               list off the NEW node's `next`, so `f(a, b, c)` is kept as
+               c -> b -> a. enter_function_scope() (ast.c) knows this and
+               snapshots a call-order view before it binds anything; this
+               loop did not, and walked the declaration list backwards
+               against a forward argument list -- checking argument 1
+               against the LAST parameter.
+
+               Invisible whenever a function's parameters share one type,
+               which is why it survived. But for
+               `skibidi step(gang Enemy *e, gang World *w)` it rejected the
+               correct call AND accepted the swapped one, and since the
+               runtime binds positionally (correctly), a user who trusted
+               the diagnostic and reordered the arguments got a program
+               that type-checked while writing one struct's field offsets
+               through the other struct's pointer. Silent cross-type
+               corruption out of a "helpful" error message.
+
+               Pair each argument with its source-order parameter here.
+               Note this array is NOT laid out like ast.c's `ordered[]`,
+               despite the shared name and purpose: that one reverses the
+               shared list first, so its ordered[0] is the FIRST source
+               parameter and it can index straight through. This one copies
+               the stored list as-is, so ordered[0] is the LAST source
+               parameter and the index arithmetic below is what compensates.
+               Reading rather than reversing is deliberate -- it never
+               mutates the shared list, so unlike the runtime's version
+               there is no window in which a nested call could observe it
+               reversed, and nothing to restore. */
+            Parameter *ordered[MAX_ARGUMENTS];
+            int param_count = 0;
+            for (Parameter *p = func->parameters;
+                 p && param_count < MAX_ARGUMENTS; p = p->next)
+            {
+                ordered[param_count++] = p;
+            }
+
             ArgumentList *arg = node->data.func_call.arguments;
             int arg_index = 0;
-            while (param && arg)
+            while (arg && arg_index < param_count)
             {
+                /* ordered[] holds the stored (reversed) order, so the
+                   argument at 0-based `arg_index` pairs with the parameter
+                   that many places from the END. */
+                Parameter *param = ordered[param_count - 1 - arg_index];
                 arg_index++;
                 if (arg->expr)
                 {
@@ -2347,7 +2388,6 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
                         }
                     }
                 }
-                param = param->next;
                 arg = arg->next;
             }
         }
