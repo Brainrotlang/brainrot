@@ -10,6 +10,9 @@
 🚽 (0.5 is true, so !0.5 is L -- truncating to int would call it false),
 🚽 and reading a rizz back through a bool is a type-punned load that UBSan
 🚽 rejects outright.
+gang Point { rizz x; };
+gang Box { rizz *ptr; };
+
 rizz takes_int(rizz x) { bussin x + 1; }
 chad takes_float(chad x) { bussin x * 2.0; }
 smol takes_short(smol x) { bussin x; }
@@ -28,10 +31,25 @@ skibidi main {
     yapping("%b", !d);
     yapping("%b", !s);
 
-    🚽 A truth value, never a pointer: `!p` is the null check it looks like.
-    🚽 Reporting pointer level 1 here made callers evaluate it as an address.
+    🚽 A truth value, never a pointer: `!p` is the null check it looks
+    🚽 like. Reporting pointer level 1 here made callers evaluate the
+    🚽 result as an address.
+    🚽
+    🚽 BOTH sides are reachable, so both are checked. There is no null
+    🚽 pointer *literal* -- `rizz *p = 0;`, a bare `rizz *p;` and NULL are
+    🚽 all rejected -- but that is not the same as no null pointer. A
+    🚽 struct-pointer declaration skips the pointer-level check entirely,
+    🚽 and variable_new() zeroes pvalue, so `gang Point *pp;` is null. A
+    🚽 pointer-typed struct FIELD gets there too, and that one is a null
+    🚽 `rizz *` rather than a struct pointer.
     rizz *p = &n;
     yapping("%b", !p);
+
+    gang Point *pp;
+    yapping("%b", !pp);
+
+    gang Box bx;
+    yapping("%b", !bx.ptr);
 
     🚽 Same precedence as unary minus, as in C: these are (!a) == W,
     🚽 (!a) && (!W), and !(!a) -- not negations of the whole expression.
@@ -49,6 +67,16 @@ skibidi main {
     yapping("%b", !packed[0]);
     smol *sp = &packed[0];
     yapping("%b", !(*sp));
+
+    🚽 A yap is a single byte and gets no dispatch arm of its own, because
+    🚽 evaluate_expression_int() already special-cases VAR_CHAR in its own
+    🚽 array path and reads that byte correctly. Covered here rather than
+    🚽 asserted in a comment -- the packed-smol bug above is what one
+    🚽 unverified "this one is fine" claim costs.
+    yap letters[2];
+    letters[0] = 0;
+    letters[1] = 65;
+    yapping("%b %b", !letters[0], !letters[1]);
 
     🚽 `!` yields cap, and cap does not silently become rizz here
     🚽 (`rizz k = W;` is a type error too -- see
