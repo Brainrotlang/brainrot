@@ -437,6 +437,14 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
                                          : node->pointer_level;
     }
     case NODE_UNARY_OPERATION:
+        /* A truth value is never a pointer, whatever the operand was.
+           Without this `!p` reports pointer level 1 and downstream code
+           tries to evaluate it as an address ("Invalid pointer
+           expression"), even though the answer it computes is correct. */
+        if (node->data.unary.op == OP_NOT)
+        {
+            return 0;
+        }
         if (node->data.unary.op == OP_ADDRESS_OF)
         {
             return infer_expression_pointer_level(node->data.unary.operand,
@@ -924,6 +932,15 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
     }
 
     case NODE_UNARY_OPERATION:
+        /* `!x` is a truth value whatever x was, so unlike `-x` it does not
+           inherit the operand's type. Must agree with ast.c's
+           get_expression_type(), or `cap b = !n;` is rejected here as
+           "expected bool, got int" while the interpreter would have
+           produced a perfectly good cap. */
+        if (node->data.unary.op == OP_NOT)
+        {
+            return VAR_BOOL;
+        }
         return infer_expression_type(node->data.unary.operand, analyzer);
 
     case NODE_FUNC_CALL:

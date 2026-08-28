@@ -192,6 +192,7 @@
     "struct_pointer_tag_mismatch_param_fail": "Error: 'bump' argument 1: type mismatch: expected pointer to struct/union 'Point', got pointer to 'Rect' at line 24",
     "struct_pointer_lit_alias_tag_mismatch_fail": "Error: Type mismatch in initialization of 'pp': expected pointer to struct/union 'Point', got pointer to 'Rect' at line 24",
     "struct_pointer_param_category_mismatch_fail": "Error: 'bump' argument 1: expected pointer to struct/union 'Point' (level 1), got int pointer level 1 at line 22",
+    "logical_not": "W L\nL W\nL\nW\nL\nL\nW L L\n9\nswitch: one\n2\n2.0\n1\n3\nne ok\n",
     "struct_pointer_param_order": "9.5\n5.5\n8.0\n5\n",
     "struct_pointer_param_order_swapped_fail": "Error: 'step' argument 2: type mismatch: expected pointer to struct/union 'World', got pointer to 'Enemy' at line 22\nError: 'step' argument 1: type mismatch: expected pointer to struct/union 'Enemy', got pointer to 'World' at line 22",
     "struct_pointer_array_element_tag_mismatch_fail": "Error: Assignment type mismatch: expected pointer to struct/union 'Point', got pointer to 'Rect' at line 26",

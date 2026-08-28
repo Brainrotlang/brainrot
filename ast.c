@@ -1921,6 +1921,12 @@ int get_expression_pointer_level(ASTNode *node)
         return node->pointer_level;
     }
     case NODE_UNARY_OPERATION:
+        /* A truth value is never a pointer, whatever the operand was.
+           Without this `!p` reports pointer level 1 and downstream code
+           tries to evaluate it as an address ("Invalid pointer
+           expression"), even though the answer it computes is correct. */
+        if (node->data.unary.op == OP_NOT)
+            return 0;
         if (node->data.unary.op == OP_ADDRESS_OF)
             return get_expression_pointer_level(node->data.unary.operand) + 1;
         if (node->data.unary.op == OP_DEREFERENCE)
@@ -2087,6 +2093,14 @@ VarType get_expression_type(ASTNode *node)
     }
     case NODE_UNARY_OPERATION:
     {
+        /* `!x` is a truth value whatever x was, so it does not inherit the
+           operand's type the way `-x` does. Without this, `!someInt` would
+           statically type as rizz and a `%b` print or a cap-typed context
+           would read it as the wrong width. */
+        if (node->data.unary.op == OP_NOT)
+        {
+            return VAR_BOOL;
+        }
         if (node->data.unary.op == OP_ADDRESS_OF ||
             node->data.unary.op == OP_DEREFERENCE)
         {
@@ -3150,6 +3164,41 @@ static void initialize_variable_from_expr(Variable *var, ASTNode *expr)
     }
 }
 
+/* Is an expression true, judged in ITS OWN type?
+ *
+ * `!` cannot reuse the caller's context type the way `-` can. Two things
+ * go wrong if it does. Reading a `rizz` variable back through a `bool *`
+ * is a type-punned load that UBSan rejects outright ("load of value 5,
+ * which is not a valid value for type '_Bool'"), and funnelling a `chad`
+ * through the int path silently changes the answer: `!0.5` would truncate
+ * to `!0` and report true, when 0.5 is as true as any other non-zero.
+ *
+ * So dispatch on the operand's own static type and let each evaluator read
+ * its own storage. A pointer operand is compared against NULL, which makes
+ * `!p` the null check it looks like. */
+static bool expression_is_truthy(ASTNode *expr)
+{
+    if (!expr)
+    {
+        return false;
+    }
+    if (get_expression_pointer_level(expr) > 0)
+    {
+        return evaluate_expression_pointer(expr) != (uintptr_t)0;
+    }
+    switch (get_expression_type(expr))
+    {
+    case VAR_FLOAT:
+        return evaluate_expression_float(expr) != 0.0f;
+    case VAR_DOUBLE:
+        return evaluate_expression_double(expr) != 0.0;
+    case VAR_BOOL:
+        return evaluate_expression_bool(expr);
+    default:
+        return evaluate_expression_int(expr) != 0;
+    }
+}
+
 void *handle_unary_expression(ASTNode *node, void *operand_value,
                               int operand_type)
 {
@@ -3189,6 +3238,51 @@ void *handle_unary_expression(ASTNode *node, void *operand_value,
         else
         {
             yyerror("Invalid type for unary negation");
+            return NULL;
+        }
+
+    /* Logical NOT. Returns storage of the SAME type the caller evaluated
+       the operand in -- every evaluate_expression_<T>() reads this back
+       through a T*, so handing bool* to the int path would reinterpret
+       one byte as four. The value is C's 0/1 either way, which is what
+       makes `rizz k = !n;` behave like C while `cap b = !c;` stays a
+       proper cap. get_expression_type() reports the static type of a
+       `!` expression as VAR_BOOL regardless; this is only about which
+       box the answer travels home in. */
+    case OP_NOT:
+        if (operand_type == VAR_INT)
+        {
+            int *result = SAFE_MALLOC(int);
+            *result = !(*(int *)operand_value);
+            return result;
+        }
+        else if (operand_type == VAR_SHORT)
+        {
+            short *result = SAFE_MALLOC(short);
+            *result = (short)!(*(short *)operand_value);
+            return result;
+        }
+        else if (operand_type == VAR_FLOAT)
+        {
+            float *result = SAFE_MALLOC(float);
+            *result = !(*(float *)operand_value) ? 1.0f : 0.0f;
+            return result;
+        }
+        else if (operand_type == VAR_DOUBLE)
+        {
+            double *result = SAFE_MALLOC(double);
+            *result = !(*(double *)operand_value) ? 1.0 : 0.0;
+            return result;
+        }
+        else if (operand_type == VAR_BOOL)
+        {
+            bool *result = SAFE_MALLOC(bool);
+            *result = !(*(bool *)operand_value);
+            return result;
+        }
+        else
+        {
+            yyerror("Invalid type for logical not");
             return NULL;
         }
 
@@ -3544,6 +3638,10 @@ float evaluate_expression_float(ASTNode *node)
             yyerror("Cannot use pointer in float context");
             return 0.0f;
         }
+        if (node->data.unary.op == OP_NOT)
+        {
+            return expression_is_truthy(node->data.unary.operand) ? 0.0f : 1.0f;
+        }
         float operand = evaluate_expression_float(node->data.unary.operand);
         float *result =
             (float *)handle_unary_expression(node, &operand, VAR_FLOAT);
@@ -3689,6 +3787,10 @@ double evaluate_expression_double(ASTNode *node)
         {
             yyerror("Cannot use pointer in double context");
             return 0.0;
+        }
+        if (node->data.unary.op == OP_NOT)
+        {
+            return expression_is_truthy(node->data.unary.operand) ? 0.0 : 1.0;
         }
         double operand = evaluate_expression_double(node->data.unary.operand);
         double *result =
@@ -4086,6 +4188,11 @@ short evaluate_expression_short(ASTNode *node)
             yyerror("Cannot use pointer in integer context");
             return 0;
         }
+        if (node->data.unary.op == OP_NOT)
+        {
+            return (short)(expression_is_truthy(node->data.unary.operand) ? 0
+                                                                          : 1);
+        }
         short operand = evaluate_expression_short(node->data.unary.operand);
         short *result =
             (short *)handle_unary_expression(node, &operand, VAR_SHORT);
@@ -4284,6 +4391,10 @@ int evaluate_expression_int(ASTNode *node)
         {
             yyerror("Cannot use pointer in integer context");
             return 0;
+        }
+        if (node->data.unary.op == OP_NOT)
+        {
+            return expression_is_truthy(node->data.unary.operand) ? 0 : 1;
         }
         int operand = evaluate_expression_int(node->data.unary.operand);
         int *result = (int *)handle_unary_expression(node, &operand, VAR_INT);
@@ -4724,6 +4835,10 @@ bool evaluate_expression_bool(ASTNode *node)
             // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
             return *(bool *)(uintptr_t)evaluate_expression_pointer(
                 node->data.unary.operand);
+        if (node->data.unary.op == OP_NOT)
+        {
+            return !expression_is_truthy(node->data.unary.operand);
+        }
         bool operand = evaluate_expression_bool(node->data.unary.operand);
         bool *result =
             (bool *)handle_unary_expression(node, &operand, VAR_BOOL);

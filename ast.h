@@ -367,6 +367,7 @@ typedef enum
     OP_AND,
     OP_OR,
     OP_NEG,
+    OP_NOT,
     OP_POST_INC,
     OP_POST_DEC,
     OP_PRE_INC,
