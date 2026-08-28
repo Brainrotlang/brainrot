@@ -219,7 +219,22 @@ Brainrot supports common arithmetic and logical operators:
 - `=` Assignment
 - `&&` Logical AND
 - `||` Logical OR
-- `!` Logical NOT (depending on grammar rules)
+- `!` Logical NOT. Yields a `cap`, whatever the operand was, and binds as
+  tightly as unary minus — so `!a == b` is `(!a) == b` and `!a && b` is
+  `(!a) && b`.
+
+  The operand is judged in its own type rather than the surrounding
+  context's, so `!0.5` is `L` (0.5 is true, and truncating it to `!0` would
+  say otherwise) and a packed `smol` is read at its own width. It must be a
+  scalar or a pointer: `!` on a `gang` or a `rant` is a semantic error,
+  since neither has a scalar truth value. On a pointer it is the null check
+  it looks like.
+
+  Because `cap` and `rizz` do not silently convert in either direction in
+  this language, `rizz k = !n;` is a type error exactly as `rizz k = W;`
+  is, and a native expecting `rizz` rejects a `!` argument the same way.
+  Untyped integer contexts — an array index, an `ohio` selector, an `edgy`
+  or `goon` condition — do get C's 0/1.
 - `++` Increment:
   - Pre-Increment (`++i`): Increments the value of `i` by 1 before it is used in an expression.
   - Post-Increment (`i++`): Uses the current value of `i`, then increments it by 1.

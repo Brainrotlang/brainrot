@@ -394,7 +394,7 @@ static void register_anonymous_aggregate_typedef(String alias_name,
 %token PLUS MINUS TIMES DIVIDE MOD SEMICOLON COLON COMMA
 %token AMPERSAND
 %token LPAREN RPAREN LBRACE RBRACE
-%token LT GT LE GE EQ NE EQUALS AND OR DEC INC
+%token LT GT LE GE EQ NE EQUALS AND OR DEC INC NOT
 %token BREAK CASE DEADASS CONTINUE DEFAULT DO DOUBLE ELSE ENUM
 %token EXTERN CHAD GIGACHAD FOR GOTO IF LONG SMOL SIGNED LONG_LONG
 %token SIZEOF STATIC STRUCT SWITCH TYPEDEF UNION UNSIGNED VOID VOLATILE GOON 
@@ -2031,6 +2031,10 @@ binary_operation:
 
 unary_operation:
       MINUS expression %prec UMINUS    { $$ = create_unary_operation_node(OP_NEG, $2); }
+    /* Same precedence as unary minus, which is where C puts logical NOT
+       too -- so `!a == b` parses as `(!a) == b` and `!a && b` as
+       `(!a) && b`, not as a negation of the whole comparison. */
+    | NOT expression %prec UMINUS      { $$ = create_unary_operation_node(OP_NOT, $2); }
     | TIMES expression %prec UMINUS
         { $$ = create_unary_operation_node(OP_DEREFERENCE, $2); }
     | AMPERSAND expression %prec UMINUS

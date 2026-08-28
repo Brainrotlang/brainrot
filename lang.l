@@ -527,6 +527,7 @@ extern int yylineno;
 
 "=="             { return EQ; }
 "!="             { return NE; }
+"!"              { return NOT; }
 "<="             { return LE; }
 ">="             { return GE; }
 "&&"             { return AND; }
