@@ -37,10 +37,29 @@ skibidi main {
     🚽 (!a) && (!W), and !(!a) -- not negations of the whole expression.
     yapping("%b %b %b", !a == W, !a && !W, !!a);
 
-    🚽 `!` yields cap, and cap does not silently become rizz in this
-    🚽 language (`rizz k = W;` is a type error too). But a context that
-    🚽 asks for a number still gets C's 0/1, which is what these three
-    🚽 reach: an array index, a switch, and typed parameters.
+    🚽 A smol is stored packed at sizeof(short), so judging it through
+    🚽 the int evaluator reads four bytes out of a two-byte slot. This
+    🚽 line answered L before expression_is_truthy() learned to dispatch
+    🚽 VAR_SHORT: arr[0] is 0, but the load pulled in arr[1] and saw
+    🚽 0x00010000. Both the array and the pointer form are covered because
+    🚽 they reach the packed storage by different routes -- a scalar smol
+    🚽 sits in zeroed union storage and passes either way, which is what
+    🚽 made this look fine.
+    smol packed[2] = {0, 1};
+    yapping("%b", !packed[0]);
+    smol *sp = &packed[0];
+    yapping("%b", !(*sp));
+
+    🚽 `!` yields cap, and cap does not silently become rizz here
+    🚽 (`rizz k = W;` is a type error too -- see
+    🚽 logical_not_cap_to_rizz_fail). Untyped integer contexts still get
+    🚽 C's 0/1: an array index and a switch selector below.
+    🚽
+    🚽 The three calls after them are NOT a checked conversion -- this
+    🚽 analyzer does not type-check user-defined call arguments against
+    🚽 their parameters. They are here because the runtime evaluates each
+    🚽 argument in the PARAMETER's type, which is the only way to reach
+    🚽 the chad, gigachad and smol OP_NOT intercepts at all.
     rizz arr[2] = {7, 9};
     yapping("%d", arr[!z]);
 

@@ -1,0 +1,16 @@
+🚽 Test case: `!` on a struct must be a semantic error, not a crash.
+🚽
+🚽 A `!` expression infers as cap whatever the operand was, which is right
+🚽 for scalars but removes the protection a struct used to get for free:
+🚽 `yapping("%b", -s)` is refused as "struct has no supported native ABI
+🚽 representation", while `!s` looks like an ordinary cap and used to sail
+🚽 through to an int evaluator with no int to read -- a null load and an
+🚽 ASan DEADLYSIGNAL.
+gang S { rizz a; };
+
+skibidi main {
+    gang S s;
+    s.a = 1;
+    yapping("%b", !s);
+    bussin 0;
+}

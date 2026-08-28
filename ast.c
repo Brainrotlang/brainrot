@@ -3194,7 +3194,18 @@ static bool expression_is_truthy(ASTNode *expr)
         return evaluate_expression_double(expr) != 0.0;
     case VAR_BOOL:
         return evaluate_expression_bool(expr);
+    case VAR_SHORT:
+        /* Not merely tidiness: a smol is stored packed at sizeof(short),
+           so letting this fall through to evaluate_expression_int() reads
+           four bytes out of a two-byte slot. `smol arr[2] = {0, 1};
+           !arr[0]` then loads 0x00010000 and answers false for a zero. */
+        return evaluate_expression_short(expr) != 0;
     default:
+        /* VAR_INT, VAR_CHAR and VAR_ENUM. A yap is already special-cased
+           inside evaluate_expression_int()'s own array path, so it reads
+           its single byte correctly; the others are int-width. Anything
+           without a scalar truth value -- struct, union, rant -- is
+           rejected by the semantic analyzer before it can reach here. */
         return evaluate_expression_int(expr) != 0;
     }
 }
@@ -3238,51 +3249,6 @@ void *handle_unary_expression(ASTNode *node, void *operand_value,
         else
         {
             yyerror("Invalid type for unary negation");
-            return NULL;
-        }
-
-    /* Logical NOT. Returns storage of the SAME type the caller evaluated
-       the operand in -- every evaluate_expression_<T>() reads this back
-       through a T*, so handing bool* to the int path would reinterpret
-       one byte as four. The value is C's 0/1 either way, which is what
-       makes `rizz k = !n;` behave like C while `cap b = !c;` stays a
-       proper cap. get_expression_type() reports the static type of a
-       `!` expression as VAR_BOOL regardless; this is only about which
-       box the answer travels home in. */
-    case OP_NOT:
-        if (operand_type == VAR_INT)
-        {
-            int *result = SAFE_MALLOC(int);
-            *result = !(*(int *)operand_value);
-            return result;
-        }
-        else if (operand_type == VAR_SHORT)
-        {
-            short *result = SAFE_MALLOC(short);
-            *result = (short)!(*(short *)operand_value);
-            return result;
-        }
-        else if (operand_type == VAR_FLOAT)
-        {
-            float *result = SAFE_MALLOC(float);
-            *result = !(*(float *)operand_value) ? 1.0f : 0.0f;
-            return result;
-        }
-        else if (operand_type == VAR_DOUBLE)
-        {
-            double *result = SAFE_MALLOC(double);
-            *result = !(*(double *)operand_value) ? 1.0 : 0.0;
-            return result;
-        }
-        else if (operand_type == VAR_BOOL)
-        {
-            bool *result = SAFE_MALLOC(bool);
-            *result = !(*(bool *)operand_value);
-            return result;
-        }
-        else
-        {
-            yyerror("Invalid type for logical not");
             return NULL;
         }
 

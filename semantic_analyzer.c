@@ -3093,6 +3093,47 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
  * its children) may call infer_expression_type()/infer_expression_pointer_
  * level() -- those are pure queries, not traversal, and are safe to call
  * as many times as needed. */
+/* `!` needs a scalar truth value; struct/union and rant do not have one.
+ *
+ * Rejecting them is not pedantry. infer_expression_type() reports VAR_BOOL
+ * for a `!` expression whatever the operand was -- correct for the scalars,
+ * but it also means a struct operand stops tripping the checks that would
+ * otherwise catch it. `yapping("%b", -s)` is refused with "struct has no
+ * supported native ABI representation"; `!s` looks like an ordinary cap and
+ * sails straight through to an int evaluator that has no int to read, then
+ * dies on a null load. A rant is refused for the quieter version of the same
+ * problem: it is not int-width, so judging it as one reads the wrong bytes
+ * instead of crashing.
+ *
+ * Called from both unary sites -- semantic_analyze_with_scope_tracking() and
+ * semantic_analyze_node() -- because they are parallel implementations and a
+ * check in only one of them is a check in neither, depending on how the
+ * expression was reached. */
+static void check_logical_not_operand(SemanticAnalyzer *analyzer, ASTNode *node)
+{
+    if (!node || node->data.unary.op != OP_NOT || !node->data.unary.operand)
+    {
+        return;
+    }
+    if (infer_expression_pointer_level(node->data.unary.operand, analyzer) != 0)
+    {
+        return; /* `!p` is a null check, which is fine. */
+    }
+    VarType operand_type =
+        infer_expression_type(node->data.unary.operand, analyzer);
+    if (operand_type != VAR_STRUCT && operand_type != VAR_STRING)
+    {
+        return;
+    }
+    char error_msg[MAX_BUFFER_LEN];
+    snprintf(error_msg, sizeof(error_msg),
+             "Logical not requires a scalar or pointer operand, got %s",
+             vartype_to_string(operand_type));
+    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                       STRING_LITERAL(error_msg),
+                       node->line_number > 0 ? node->line_number : 1);
+}
+
 void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                                           ASTNode *node)
 {
@@ -3335,6 +3376,7 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
             semantic_analyze_with_scope_tracking(analyzer,
                                                  node->data.unary.operand);
         }
+        check_logical_not_operand(analyzer, node);
         if (node->data.unary.op == OP_ADDRESS_OF)
         {
             ASTNode *operand = node->data.unary.operand;
@@ -4293,6 +4335,7 @@ void semantic_analyze_node(SemanticAnalyzer *analyzer, ASTNode *node)
         {
             semantic_analyze_node(analyzer, node->data.unary.operand);
         }
+        check_logical_not_operand(analyzer, node);
         if (node->data.unary.op == OP_ADDRESS_OF)
         {
             ASTNode *operand = node->data.unary.operand;
