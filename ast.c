@@ -4063,6 +4063,26 @@ String evaluate_expression_string(ASTNode *node)
     }
 }
 
+/* An identifier's numeric value, converted from whatever type the variable
+ * actually has.
+ *
+ * handle_identifier(..., 0) hands back a pointer to the variable's OWN
+ * storage, so casting that to the type the caller happens to want is a
+ * reinterpretation, not a conversion: for `chad g = 17.5; rizz k = g;` it
+ * read the float's bit pattern as an int and produced 1099694080. A `smol`
+ * target read the wrong two bytes and produced 0.
+ *
+ * Promote mode 1 already does the real conversion for every numeric type,
+ * so route through it and narrow. Every caller below guards pointer_level
+ * first, which matters because mode 1 refuses a pointer outright. Every
+ * numeric member of the Value union (int, short, bool, float) is exactly
+ * representable as a double, so the intermediate loses nothing. */
+static double identifier_numeric_value(ASTNode *node, const String error)
+{
+    double *promoted = (double *)handle_identifier(node, error, 1);
+    return promoted != NULL ? *promoted : 0.0;
+}
+
 short evaluate_expression_short(ASTNode *node)
 {
     if (!node)
@@ -4097,7 +4117,9 @@ short evaluate_expression_short(ASTNode *node)
         }
         String error = {.data = "Undefined variable",
                         .len = sizeof("Undefined variable") - 1};
-        return *(short *)handle_identifier(node, error, 0);
+        /* Truncates toward zero from the variable's real type -- see
+           identifier_numeric_value(). */
+        return (short)identifier_numeric_value(node, error);
     }
     case NODE_OPERATION:
     {
@@ -4275,7 +4297,9 @@ int evaluate_expression_int(ASTNode *node)
         }
         String error = {.data = "Undefined variable",
                         .len = sizeof("Undefined variable") - 1};
-        return *(int *)handle_identifier(node, error, 0);
+        /* Truncates toward zero from the variable's real type -- see
+           identifier_numeric_value(). */
+        return (int)identifier_numeric_value(node, error);
     }
     case NODE_OPERATION:
     {

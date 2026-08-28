@@ -1,6 +1,7 @@
 {
     "comparison_edge_case": "1\n",
     "division_edge_cases": "inf\n-nan\n-nan",
+    "float_to_int_conversion": "17 17 17\n42 -17\n17 17\n7.00 7.00\n17 42\n7.0 17.0\n",
     "float_precision": "0.000000\n",
     "integer_overflow": "-2147483648\n2147483647\n",
     "mixed_types": "131.880005\n131.880000\n",

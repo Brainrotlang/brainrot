@@ -117,6 +117,22 @@ static void process_yapping_format(const char *format, const StdrotValue *args,
                                               sizeof(buffer) - buffer_offset,
                                               specifier, (int)arg->val.b);
                 }
+                /* A chad or gigachad under an integer specifier used to match
+                   no branch at all and emit NOTHING -- `yapping("%d", f)`
+                   printed an empty string with no diagnostic. Truncate toward
+                   zero and print it, which is what the reader asked for. */
+                else if (arg->type == STDROT_FLOAT)
+                {
+                    buffer_offset += snprintf(buffer + buffer_offset,
+                                              sizeof(buffer) - buffer_offset,
+                                              specifier, (int)arg->val.f);
+                }
+                else if (arg->type == STDROT_DOUBLE)
+                {
+                    buffer_offset += snprintf(buffer + buffer_offset,
+                                              sizeof(buffer) - buffer_offset,
+                                              specifier, (int)arg->val.d);
+                }
             }
             else if (strchr("fFeEgGaA", spec))
             {
@@ -131,6 +147,27 @@ static void process_yapping_format(const char *format, const StdrotValue *args,
                     buffer_offset += snprintf(buffer + buffer_offset,
                                               sizeof(buffer) - buffer_offset,
                                               specifier, arg->val.d);
+                }
+                /* The mirror of the integer case above: an integral argument
+                   under %f matched nothing and printed nothing. printf's
+                   floating specifiers take a double, so widen. */
+                else if (arg->type == STDROT_INT)
+                {
+                    buffer_offset += snprintf(buffer + buffer_offset,
+                                              sizeof(buffer) - buffer_offset,
+                                              specifier, (double)arg->val.i);
+                }
+                else if (arg->type == STDROT_SHORT)
+                {
+                    buffer_offset += snprintf(buffer + buffer_offset,
+                                              sizeof(buffer) - buffer_offset,
+                                              specifier, (double)arg->val.s);
+                }
+                else if (arg->type == STDROT_BOOL)
+                {
+                    buffer_offset += snprintf(buffer + buffer_offset,
+                                              sizeof(buffer) - buffer_offset,
+                                              specifier, (double)arg->val.b);
                 }
             }
             else if (spec == 'c')

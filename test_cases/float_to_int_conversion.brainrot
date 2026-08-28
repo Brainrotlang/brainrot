@@ -1,0 +1,49 @@
+🚽 Test case: a bare float-typed variable read in an integer context must
+🚽 be CONVERTED, not reinterpreted.
+🚽
+🚽 handle_identifier(..., 0) returns a pointer to the variable's own
+🚽 storage, and the integer evaluators cast that pointer to their own type.
+🚽 For `chad g = 17.5; rizz k = g;` that read the float's bit pattern as an
+🚽 int and produced 1099694080 (0x418C0000, which is 17.5f). A smol target
+🚽 read the wrong two bytes and produced 0.
+🚽
+🚽 An arithmetic expression on the right-hand side always worked, because
+🚽 that path goes through a real conversion -- so `g * 1.0` gave 17 while a
+🚽 bare `g` did not, which is what made the bug easy to miss.
+skibidi main {
+    chad g = 17.5;
+    gigachad d = 42.9;
+
+    🚽 Declaration, assignment, and both integer widths.
+    rizz decl = g;
+    rizz assign = 0;
+    assign = g;
+    smol narrow = g;
+    yapping("%d %d %d", decl, assign, narrow);
+
+    🚽 From a double, and truncating toward zero rather than rounding.
+    rizz from_double = d;
+    chad neg = -17.9;
+    rizz negative = neg;
+    yapping("%d %d", from_double, negative);
+
+    🚽 The expression form that always worked must still agree.
+    rizz via_expr = g * 1.0;
+    rizz via_add = g + 0.0;
+    yapping("%d %d", via_expr, via_add);
+
+    🚽 The reverse direction was never broken; pin it so a fix here cannot
+    🚽 quietly trade one for the other.
+    rizz n = 7;
+    chad widened = n;
+    gigachad widened_d = n;
+    yapping("%.2f %.2f", widened, widened_d);
+
+    🚽 An integral value under a float specifier, and a float under an
+    🚽 integer one, both used to match no branch in yapping's dispatch and
+    🚽 print nothing at all.
+    yapping("%d %d", g, d);
+    yapping("%.1f %.1f", n, narrow);
+
+    bussin 0;
+}
