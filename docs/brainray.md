@@ -227,7 +227,10 @@ scalar arguments and rebuilds them on the C side:
   integer **handle** (its index). `rl_load_texture` returns a handle, or `-1`
   if the load failed (missing/undecodable file) **or** the 256-slot table is
   full — a non-negative handle therefore always refers to a successfully loaded
-  texture. `rl_draw_texture` / `rl_unload_texture` take one back.
+  texture. `rl_draw_texture`, `rl_draw_texture_rec` and
+  `rl_unload_texture` take one back — every function that consumes a handle
+  validates it the same way, so this list is the complete census and any new
+  handle-taking wrapper belongs in it.
 
   A live handle also implies a live GL context: `rl_close_window` unloads every
   still-live texture before the context is destroyed, so a handle from before a
