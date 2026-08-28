@@ -443,6 +443,45 @@ static StdrotValue br_draw_texture(StdrotValue *args, int argc)
     return (StdrotValue){.type = STDROT_NONE};
 }
 
+/* DrawTextureRec: one sub-rectangle of a texture, which is what makes sprite
+ * atlases and animation frames possible from Brainrot at all.
+ *
+ * Two aggregates come apart here rather than one. raylib's `rec` is a
+ * Rectangle (four floats) and `position` is a Vector2 (two floats), so the
+ * source box arrives as sx, sy, sw, sh and the destination corner as x, y --
+ * six `chad` arguments, then the usual four-int Color tail.
+ *
+ * Note the float position, which differs from rl_draw_texture()'s int x, y.
+ * That is not an inconsistency: it mirrors raylib, where DrawTexture() takes
+ * ints and DrawTextureRec() takes a Vector2. Sub-pixel placement is what a
+ * scrolling background wants anyway.
+ *
+ * A negative `sw` mirrors the sprite horizontally and a negative `sh`
+ * vertically -- raylib's own idiom, since the source rectangle's sign decides
+ * the texture coordinate order. That is the only way to face a sprite the
+ * other direction until DrawTexturePro's rotation is exposed, so it is worth
+ * knowing about rather than looking like a bug.
+ *
+ * The rectangle is handed to raylib unchanged: brainray does not clamp it to
+ * the texture, so sampling outside the image is raylib's business and not a
+ * guarantee this wrapper makes. Handle validation matches rl_draw_texture --
+ * an out-of-range or already-unloaded handle draws nothing rather than
+ * feeding raylib a stale GPU id. */
+static StdrotValue br_draw_texture_rec(StdrotValue *args, int argc)
+{
+    (void)argc;
+    int handle = args[0].val.i;
+    if (handle >= 0 && handle < BRAINRAY_MAX_TEXTURES && g_texture_used[handle])
+    {
+        Rectangle rec = {(float)args[1].val.f, (float)args[2].val.f,
+                         (float)args[3].val.f, (float)args[4].val.f};
+        Vector2 pos = {(float)args[5].val.f, (float)args[6].val.f};
+        BR_RAYLIB_VOID(
+            DrawTextureRec(g_textures[handle], rec, pos, make_color(args, 7)));
+    }
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
 static StdrotValue br_unload_texture(StdrotValue *args, int argc)
 {
     (void)argc;
@@ -560,6 +599,12 @@ static const StdrotParam p_draw_texture[] = {P_INT, P_INT, P_INT, P_INT,
                                              P_INT, P_INT, P_INT};
 STDROT_EXPORT_SIG("rl_draw_texture", br_draw_texture, R_NONE, p_draw_texture, 7,
                   7, false);
+
+static const StdrotParam p_draw_texture_rec[] = {
+    P_INT,   P_FLOAT, P_FLOAT, P_FLOAT, P_FLOAT, P_FLOAT,
+    P_FLOAT, P_INT,   P_INT,   P_INT,   P_INT};
+STDROT_EXPORT_SIG("rl_draw_texture_rec", br_draw_texture_rec, R_NONE,
+                  p_draw_texture_rec, 11, 11, false);
 
 static const StdrotParam p_unload_texture[] = {P_INT};
 STDROT_EXPORT_SIG("rl_unload_texture", br_unload_texture, R_NONE,
