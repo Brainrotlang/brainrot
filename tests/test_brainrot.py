@@ -644,6 +644,11 @@ def test_brainray_windowed_run_is_leak_clean(tmp_path):
     brainray leak, or the bracketing being removed so raylib's globals surface
     again -- makes ASan exit nonzero and prints "LeakSanitizer", failing here.
 
+    The program calls rl_draw_text_int/rl_measure_text_int on purpose: they are
+    the only wrappers besides rl_init_window that allocate, so a missing free()
+    in br_format_text_int() has to be visible somewhere, and this is that
+    somewhere. Both are called every iteration so a per-call leak accumulates.
+
     Uses a frame-capped program (the shipped example loops until the window is
     closed) so the run terminates on its own. Skips without raylib or a
     display, so headless CI never runs it."""
@@ -666,6 +671,8 @@ def test_brainray_windowed_run_is_leak_clean(tmp_path):
         "        rl_clear_background(20, 20, 20, 255);\n"
         "        rl_draw_circle(80, 60, 20.0, 255, 0, 255, 255);\n"
         "        rl_draw_text(\"cinema\", 10, 10, 16, 255, 255, 255, 255);\n"
+        "        rizz w = rl_measure_text_int(\"n \", n, 4, 16);\n"
+        "        rl_draw_text_int(\"n \", n, 4, w, 30, 16, 255, 255, 0, 255);\n"
         "        rl_end_drawing();\n"
         "        cap wc = rl_window_should_close();\n"
         "        edgy (wc) { running = L; }\n"
@@ -688,6 +695,95 @@ def test_brainray_windowed_run_is_leak_clean(tmp_path):
         f"LeakSanitizer reported leaks on the windowed run:\n{result.stderr}")
     assert result.returncode == 0, (
         f"Nonzero exit {result.returncode}\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
+
+
+@pytest.mark.skipif(
+    not _raylib_available() or not os.environ.get("DISPLAY"),
+    reason="needs raylib AND a display ($DISPLAY): MeasureText only reports "
+           "real widths once InitWindow has loaded the default font")
+def test_brainray_text_int_formatting_matches_docs(tmp_path):
+    """rl_draw_text_int/rl_measure_text_int exist to produce one specific
+    string -- prefix, then the number under printf's "%0*d". The leak smoke
+    above proves those wrappers allocate and free; it says nothing about what
+    they render, and would stay green against an implementation that ignored
+    `pad` and `value` entirely.
+
+    So check the rendered width against rl_measure_text() of the exact literals
+    documented in docs/brainray.md's table. Every row is asserted, including
+    the negative one, which is the row that pins `pad` as a FIELD WIDTH rather
+    than a digit count: -450 at pad 6 is "-00450" (six columns) and not
+    "-000450" (six digits plus a sign). Those are different strings and
+    different HUD widths, and only one of them is what the code does.
+
+    What this can and cannot catch, stated plainly:
+
+      - CAN catch a dropped or misapplied `pad`, an ignored `value`, and a
+        join of the wrong length. The final distinctness assertion makes the
+        `pad` case airtight rather than incidental: padded and unpadded must
+        measure differently, which also fails loudly if MeasureText degenerates
+        to 0 for everything (a broken font would otherwise make every equality
+        above trivially true).
+      - CANNOT catch prefix/number order being swapped. Text width is the sum
+        of glyph widths, so "SCORE 450" and "450SCORE " measure identically.
+        Proving order needs the actual bytes, which raylib gives no way to read
+        back.
+
+    Both wrappers share br_format_text_int(), so measuring one validates the
+    formatting of both -- for as long as they keep sharing it."""
+    build = subprocess.run(
+        ["make", "brainray"], cwd=REPO_ROOT,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert build.returncode == 0, f"`make brainray` failed:\n{build.stdout}"
+
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    source_path = tmp_path / "text_int_format.brainrot"
+    source_path.write_text(
+        "#cooked <raylib>\n"
+        "skibidi main {\n"
+        "    rl_init_window(320, 200, \"text_int format\");\n"
+        # Each row of the table in docs/brainray.md, as (call, literal).
+        "    rizz a1 = rl_measure_text_int(\"SCORE \", 450, 6, 16);\n"
+        "    rizz a2 = rl_measure_text(\"SCORE 000450\", 16);\n"
+        "    cap oka = a1 == a2;\n"
+        "    bet(oka, \"pad 6 of 450 must render SCORE 000450\");\n"
+        "    rizz b1 = rl_measure_text_int(\"SCORE \", 0 - 450, 6, 16);\n"
+        "    rizz b2 = rl_measure_text(\"SCORE -00450\", 16);\n"
+        "    cap okb = b1 == b2;\n"
+        "    bet(okb, \"pad 6 of -450 must render SCORE -00450, not -000450\");\n"
+        "    rizz c1 = rl_measure_text_int(\"SCORE \", 450, 0, 16);\n"
+        "    rizz c2 = rl_measure_text(\"SCORE 450\", 16);\n"
+        "    cap okc = c1 == c2;\n"
+        "    bet(okc, \"pad 0 must not pad\");\n"
+        "    rizz d1 = rl_measure_text_int(\"SCORE \", 0, 6, 16);\n"
+        "    rizz d2 = rl_measure_text(\"SCORE 000000\", 16);\n"
+        "    cap okd = d1 == d2;\n"
+        "    bet(okd, \"pad 6 of 0 must render SCORE 000000\");\n"
+        "    rizz e1 = rl_measure_text_int(\"\", 1234, 0, 16);\n"
+        "    rizz e2 = rl_measure_text(\"1234\", 16);\n"
+        "    cap oke = e1 == e2;\n"
+        "    bet(oke, \"an empty prefix must render the bare number\");\n"
+        # Padding must actually change the result. Guards against `pad` being
+        # dead code, and against MeasureText returning 0 for everything.
+        "    cap okf = a1 != c1;\n"
+        "    bet(okf, \"padded and unpadded must not measure the same\");\n"
+        "    rl_close_window();\n"
+        "    yapping(\"format ok\");\n"
+        "    bussin 0;\n"
+        "}\n")
+
+    env = dict(os.environ, BRAINROT_PATH=BRAINRAY_DIR)
+    result = subprocess.run(
+        [brainrot_path, str(source_path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+        timeout=60)
+
+    assert result.returncode == 0, (
+        f"a documented rl_draw_text_int row does not match what the binding "
+        f"renders (nonzero exit {result.returncode})\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
+    assert "format ok" in result.stdout, (
+        f"program did not reach the end; a bet() must have fired\n"
         f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
 
 

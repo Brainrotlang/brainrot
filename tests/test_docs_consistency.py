@@ -127,3 +127,56 @@ def test_no_bad_ubuntu_raylib_command_in_code_blocks():
         "package on 22.04/24.04; see docs/brainray.md. Offending lines:\n"
         + "\n".join(offenders)
     )
+
+
+# Every function brainray exports is spelled `STDROT_EXPORT_SIG("rl_...", ...)`.
+BRAINRAY_EXPORT_PATTERN = re.compile(r'STDROT_EXPORT_SIG\(\s*"(rl_[a-z0-9_]+)"')
+
+# A row of the function-reference table in docs/brainray.md, e.g.
+#     | `rl_draw_fps(x, y)` | `DrawFPS` | |
+# Anchored to the leading pipe so a passing mention in prose or in a fenced
+# code block cannot satisfy the check -- the point is that the function is
+# *documented in the table*, which is the only place a reader can look it up.
+BRAINRAY_TABLE_ROW_PATTERN = re.compile(
+    r"^\s*\|\s*`(rl_[a-z0-9_]+)\(", re.MULTILINE)
+
+
+def test_brainray_docs_list_every_exported_function():
+    """docs/brainray.md calls itself "the single source of truth" for the
+    binding, and README.md plus examples/raylib/README.md both defer to it
+    rather than repeating the function list. That only holds if the table
+    actually keeps up: a wrapper added to brainray/raylib.c without a matching
+    row is undiscoverable, because there is nowhere else to look it up.
+
+    Deliberately checks for a *table row*, not merely for the name appearing
+    somewhere in the file. A prose mention, a line in a fenced example, or a
+    half-deleted row would all satisfy "the name is in the document" while
+    leaving the reference table incomplete, which is the failure this guards."""
+    with open(os.path.join(REPO_ROOT, "brainray", "raylib.c")) as f:
+        exported = set(BRAINRAY_EXPORT_PATTERN.findall(f.read()))
+    assert exported, "no STDROT_EXPORT_SIG entries found in brainray/raylib.c"
+
+    with open(os.path.join(REPO_ROOT, "docs", "brainray.md")) as f:
+        documented = set(BRAINRAY_TABLE_ROW_PATTERN.findall(f.read()))
+    assert documented, (
+        "no function-reference table rows found in docs/brainray.md -- the "
+        "table format changed and this guard needs updating with it")
+
+    missing = sorted(exported - documented)
+    assert not missing, (
+        "brainray exports these functions but docs/brainray.md's function "
+        "reference table has no row for them:\n  "
+        + "\n  ".join(missing)
+        + "\nAdd a row to the table in docs/brainray.md -- it is the only "
+          "place the binding is documented."
+    )
+
+    # The reverse direction: a row for a function that no longer exists sends
+    # a reader looking for something that isn't there.
+    stale = sorted(documented - exported)
+    assert not stale, (
+        "docs/brainray.md's function reference table has rows for functions "
+        "brainray does not export:\n  "
+        + "\n  ".join(stale)
+        + "\nRemove the stale rows, or restore the wrappers."
+    )
