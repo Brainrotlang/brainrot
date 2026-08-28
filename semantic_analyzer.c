@@ -2287,9 +2287,17 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
                through the other struct's pointer. Silent cross-type
                corruption out of a "helpful" error message.
 
-               Snapshot the same call-order view here. Unlike ast.c's
-               version this never mutates the shared list -- it only reads
-               it -- so there is no reentrancy window needing a restore. */
+               Pair each argument with its source-order parameter here.
+               Note this array is NOT laid out like ast.c's `ordered[]`,
+               despite the shared name and purpose: that one reverses the
+               shared list first, so its ordered[0] is the FIRST source
+               parameter and it can index straight through. This one copies
+               the stored list as-is, so ordered[0] is the LAST source
+               parameter and the index arithmetic below is what compensates.
+               Reading rather than reversing is deliberate -- it never
+               mutates the shared list, so unlike the runtime's version
+               there is no window in which a nested call could observe it
+               reversed, and nothing to restore. */
             Parameter *ordered[MAX_ARGUMENTS];
             int param_count = 0;
             for (Parameter *p = func->parameters;
