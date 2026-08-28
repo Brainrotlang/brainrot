@@ -127,3 +127,34 @@ def test_no_bad_ubuntu_raylib_command_in_code_blocks():
         "package on 22.04/24.04; see docs/brainray.md. Offending lines:\n"
         + "\n".join(offenders)
     )
+
+
+# Every function brainray exports is spelled `STDROT_EXPORT_SIG("rl_...", ...)`.
+BRAINRAY_EXPORT_PATTERN = re.compile(r'STDROT_EXPORT_SIG\(\s*"(rl_[a-z0-9_]+)"')
+
+
+def test_brainray_docs_list_every_exported_function():
+    """docs/brainray.md calls itself "the single source of truth" for the
+    binding, and README.md plus examples/raylib/README.md both defer to it
+    rather than repeating the function list. That only holds if the table
+    actually keeps up: a wrapper added to brainray/raylib.c without a matching
+    row is undiscoverable, because there is nowhere else to look it up.
+
+    Checked by name against the source rather than by parsing the table's
+    columns, so reformatting the table can't break the test and can't hide a
+    missing entry either."""
+    with open(os.path.join(REPO_ROOT, "brainray", "raylib.c")) as f:
+        exported = set(BRAINRAY_EXPORT_PATTERN.findall(f.read()))
+    assert exported, "no STDROT_EXPORT_SIG entries found in brainray/raylib.c"
+
+    with open(os.path.join(REPO_ROOT, "docs", "brainray.md")) as f:
+        docs = f.read()
+
+    missing = sorted(name for name in exported if f"`{name}(" not in docs)
+    assert not missing, (
+        "brainray exports these functions but docs/brainray.md's function "
+        "reference does not document them:\n  "
+        + "\n  ".join(missing)
+        + "\nAdd a row to the table in docs/brainray.md -- it is the only "
+          "place the binding is documented."
+    )

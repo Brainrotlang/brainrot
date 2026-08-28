@@ -644,6 +644,11 @@ def test_brainray_windowed_run_is_leak_clean(tmp_path):
     brainray leak, or the bracketing being removed so raylib's globals surface
     again -- makes ASan exit nonzero and prints "LeakSanitizer", failing here.
 
+    The program calls rl_draw_text_int/rl_measure_text_int on purpose: they are
+    the only wrappers besides rl_init_window that allocate, so a missing free()
+    in br_format_text_int() has to be visible somewhere, and this is that
+    somewhere. Both are called every iteration so a per-call leak accumulates.
+
     Uses a frame-capped program (the shipped example loops until the window is
     closed) so the run terminates on its own. Skips without raylib or a
     display, so headless CI never runs it."""
@@ -666,6 +671,8 @@ def test_brainray_windowed_run_is_leak_clean(tmp_path):
         "        rl_clear_background(20, 20, 20, 255);\n"
         "        rl_draw_circle(80, 60, 20.0, 255, 0, 255, 255);\n"
         "        rl_draw_text(\"cinema\", 10, 10, 16, 255, 255, 255, 255);\n"
+        "        rizz w = rl_measure_text_int(\"n \", n, 4, 16);\n"
+        "        rl_draw_text_int(\"n \", n, 4, w, 30, 16, 255, 255, 0, 255);\n"
         "        rl_end_drawing();\n"
         "        cap wc = rl_window_should_close();\n"
         "        edgy (wc) { running = L; }\n"

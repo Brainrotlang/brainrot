@@ -262,11 +262,56 @@ Colors are always the trailing `r, g, b, a` integers (0–255, clamped).
 | `rl_draw_line(x1, y1, x2, y2, r, g, b, a)` | `DrawLine` | |
 | `rl_draw_text(text, x, y, size, r, g, b, a)` | `DrawText` | `text` is a string |
 | `rl_measure_text(text, size)` | `MeasureText` | returns `rizz` width |
+| `rl_draw_text_int(text, value, pad, x, y, size, r, g, b, a)` | `DrawText` | draws `text` followed by `value`; see below |
+| `rl_measure_text_int(text, value, pad, size)` | `MeasureText` | returns `rizz` width of the same string |
 | `rl_is_key_down(key)` | `IsKeyDown` | returns `cap`; `key` is a keycode int |
 | `rl_is_key_pressed(key)` | `IsKeyPressed` | returns `cap` |
 | `rl_load_texture(path)` | `LoadTexture` | returns integer handle or `-1` |
 | `rl_draw_texture(handle, x, y, r, g, b, a)` | `DrawTexture` | `r,g,b,a` = tint |
 | `rl_unload_texture(handle)` | `UnloadTexture` | |
+
+### Drawing a number
+
+Brainrot has no string concatenation and no `sprintf`, so `rl_draw_text` — which
+only ever receives a literal — cannot render a score, a level or a countdown.
+`rl_draw_text_int` closes that gap without opening a format-string hole: the
+formatting is fixed at *one literal prefix followed by exactly one integer*, so
+a Brainrot-supplied `"%s"` can never make the host read an argument that isn't
+there.
+
+```c
+rl_draw_text_int("SCORE ", score, 6, 20, 20, 28, 245, 200, 90, 255);
+```
+
+`pad` is the minimum number of digits, zero-padded, which keeps a HUD from
+jittering as a counter grows:
+
+| `value` | `pad` | drawn |
+| --- | --- | --- |
+| `450` | `0` | `SCORE 450` |
+| `450` | `6` | `SCORE 000450` |
+| `-450` | `6` | `SCORE -00450` |
+| `0` | `6` | `SCORE 000000` |
+
+A negative value keeps its sign inside the padded field, exactly as printf's
+`%0*d` does. `pad` is clamped to 32 so a wild value can't request an enormous
+allocation, and an empty `text` is fine if you want the bare number.
+
+`rl_measure_text_int` takes the same `text`, `value` and `pad` and reports the
+width of the string the pair would draw, so numeric text can be centred the same
+way a literal can:
+
+```c
+rizz w = rl_measure_text_int("FINAL SCORE ", score, 0, 36);
+rl_draw_text_int("FINAL SCORE ", score, 0, cx - w / 2, 320, 36, 245, 200, 90, 255);
+```
+
+Unlike every other wrapper here, these two allocate: they build the joined
+string on the heap and free it before returning. That allocation deliberately
+happens *outside* the LeakSanitizer brackets described above, so a missed
+`free()` here is still reported as brainray's own leak — and
+`test_brainray_windowed_run_is_leak_clean` exercises both functions for exactly
+that reason.
 
 ### Key codes
 

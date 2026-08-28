@@ -55,6 +55,7 @@
  */
 #include "stdrot_api.h"
 #include <raylib.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -301,6 +302,84 @@ static StdrotValue br_measure_text(StdrotValue *args, int argc)
         .val = {.i = MeasureText(args[0].val.cstr, args[1].val.i)}};
 }
 
+/* Build "<text><number>" for the *_text_int wrappers below.
+ *
+ * Brainrot has no string concatenation and no sprintf, so a program that
+ * wants to draw a score has no way to turn one into a drawable string --
+ * rl_draw_text() only ever receives a literal. Rather than expose a general
+ * format string (a Brainrot-supplied "%s" would read a nonexistent argument
+ * and crash the host), the formatting is fixed here: a caller-supplied
+ * literal prefix followed by exactly one integer.
+ *
+ * `pad` is the minimum digit count, zero-padded, so a HUD can hold a stable
+ * width as the score grows ("SCORE 000450"); <= 1 means no padding, and it is
+ * capped so a wild value cannot ask for an enormous allocation. A negative
+ * value keeps its sign inside the padded field, as printf's "%0*d" does.
+ *
+ * Returns freshly allocated storage the caller frees, or NULL if the
+ * allocation failed. This is brainray's own memory, deliberately allocated
+ * outside the LSan brackets so a leak here would still be reported. */
+#define BRAINRAY_MAX_PAD 32
+
+static char *br_format_text_int(const char *text, int value, int pad)
+{
+    if (text == NULL)
+    {
+        text = "";
+    }
+    if (pad < 0)
+    {
+        pad = 0;
+    }
+    else if (pad > BRAINRAY_MAX_PAD)
+    {
+        pad = BRAINRAY_MAX_PAD;
+    }
+    int n = snprintf(NULL, 0, "%s%0*d", text, pad, value);
+    if (n < 0)
+    {
+        return NULL;
+    }
+    char *buf = malloc((size_t)n + 1);
+    if (buf == NULL)
+    {
+        return NULL;
+    }
+    snprintf(buf, (size_t)n + 1, "%s%0*d", text, pad, value);
+    return buf;
+}
+
+static StdrotValue br_draw_text_int(StdrotValue *args, int argc)
+{
+    (void)argc;
+    char *s =
+        br_format_text_int(args[0].val.cstr, args[1].val.i, args[2].val.i);
+    if (s != NULL)
+    {
+        BR_RAYLIB_VOID(DrawText(s, args[3].val.i, args[4].val.i, args[5].val.i,
+                                make_color(args, 6)));
+        free(s);
+    }
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
+/* The rl_measure_text() counterpart, so text with a number in it can be
+ * centred the same way a literal can. Reports 0 if the string could not be
+ * built, matching the "draw nothing" behaviour above. */
+static StdrotValue br_measure_text_int(StdrotValue *args, int argc)
+{
+    (void)argc;
+    char *s =
+        br_format_text_int(args[0].val.cstr, args[1].val.i, args[2].val.i);
+    int width = 0;
+    if (s != NULL)
+    {
+        width = MeasureText(s, args[3].val.i);
+        free(s);
+    }
+    return (StdrotValue){.type = STDROT_INT, .val = {.i = width}};
+}
+
 /* ── Input ───────────────────────────────────────────────────────────────── */
 
 static StdrotValue br_is_key_down(StdrotValue *args, int argc)
@@ -451,6 +530,16 @@ STDROT_EXPORT_SIG("rl_draw_text", br_draw_text, R_NONE, p_draw_text, 8, 8,
 static const StdrotParam p_measure_text[] = {P_CSTRING, P_INT};
 STDROT_EXPORT_SIG("rl_measure_text", br_measure_text, R_INT, p_measure_text, 2,
                   2, false);
+
+static const StdrotParam p_draw_text_int[] = {
+    P_CSTRING, P_INT, P_INT, P_INT, P_INT, P_INT, P_INT, P_INT, P_INT, P_INT};
+STDROT_EXPORT_SIG("rl_draw_text_int", br_draw_text_int, R_NONE, p_draw_text_int,
+                  10, 10, false);
+
+static const StdrotParam p_measure_text_int[] = {P_CSTRING, P_INT, P_INT,
+                                                 P_INT};
+STDROT_EXPORT_SIG("rl_measure_text_int", br_measure_text_int, R_INT,
+                  p_measure_text_int, 4, 4, false);
 
 static const StdrotParam p_key[] = {P_INT};
 STDROT_EXPORT_SIG("rl_is_key_down", br_is_key_down, R_BOOL, p_key, 1, 1, false);
