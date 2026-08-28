@@ -469,10 +469,11 @@ static void register_anonymous_aggregate_typedef(String alias_name,
 %left OR                /* Logical OR */
 %left AND               /* Logical AND */
 %nonassoc EQ NE         /* Equality operators */
-%nonassoc LT GT LE GE DEC INC   /* Relational operators */
+%nonassoc LT GT LE GE   /* Relational operators */
 %left PLUS MINUS        /* Addition and subtraction */
 %left TIMES DIVIDE MOD  /* Multiplication, division, modulo */
 %right UMINUS           /* Unary minus */
+%left POSTFIX_OP DEC INC/* Unary postfix inc/dec ops */
 /* Member access `.` (struct_access: expression DOT IDENTIFIER) is a
    postfix operator and must bind TIGHTER than every binary/assignment
    operator above, matching C -- otherwise `v = m.x` parses as `(v = m).x`
@@ -2043,9 +2044,9 @@ unary_operation:
         { $$ = create_unary_operation_node(OP_PRE_INC, $2); }
     | DEC expression %prec LOWER_THAN_ELSE
         { $$ = create_unary_operation_node(OP_PRE_DEC, $2); }
-    | expression INC %prec LOWER_THAN_ELSE
+    | expression INC %prec POSTFIX_OP
         { $$ = create_unary_operation_node(OP_POST_INC, $1); }
-    | expression DEC %prec LOWER_THAN_ELSE
+    | expression DEC %prec POSTFIX_OP
         { $$ = create_unary_operation_node(OP_POST_DEC, $1); }
     ;
 
