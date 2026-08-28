@@ -2,6 +2,8 @@ import subprocess
 import json
 import os
 import shutil
+import struct
+import zlib
 import pytest
 
 # Get the absolute path to the directory containing the script
@@ -783,6 +785,135 @@ def test_brainray_text_int_formatting_matches_docs(tmp_path):
         f"renders (nonzero exit {result.returncode})\n"
         f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
     assert "format ok" in result.stdout, (
+        f"program did not reach the end; a bet() must have fired\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
+
+
+def _write_rgba_png(path, width, height, pixel):
+    """Write a minimal valid RGBA PNG, hand-rolled from zlib + struct.
+
+    rl_draw_texture_rec needs a real texture, and a real texture needs a real
+    image file. Encoding eight bytes of PNG here is cheaper than adding an
+    imaging library to this suite's dependencies for one fixture, and it keeps
+    the test hermetic -- nothing outside tmp_path, no checked-in binary."""
+    raw = b""
+    for _ in range(height):
+        raw += b"\x00" + bytes(pixel) * width   # filter byte 0, then the row
+
+    def chunk(kind, payload):
+        return (struct.pack(">I", len(payload)) + kind + payload
+                + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF))
+
+    png = b"\x89PNG\r\n\x1a\n"
+    png += chunk(b"IHDR",
+                 struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+    png += chunk(b"IDAT", zlib.compress(raw))
+    png += chunk(b"IEND", b"")
+    with open(path, "wb") as f:
+        f.write(png)
+
+
+@pytest.mark.skipif(
+    not _raylib_available() or not os.environ.get("DISPLAY"),
+    reason="needs raylib AND a display ($DISPLAY): loading a texture requires "
+           "a live GL context, so this cannot run on a headless runner")
+def test_brainray_draw_texture_rec_handle_contract(tmp_path):
+    """rl_draw_texture_rec's handle contract, and an honest account of what
+    this can and cannot establish.
+
+    VERIFIED, in the sense that the assertion fails if the behaviour changes:
+
+      - a generated PNG loads to a non-negative handle;
+      - a missing file loads to -1, the documented failure sentinel (this had
+        no test before; flipping it to 0 makes this test fail);
+      - the whole sequence -- load, five draw forms, three guard cases,
+        unload, close -- exits 0 under ASan with no LeakSanitizer report, so
+        nothing in the new code path leaks or aborts.
+
+    NOT VERIFIED, and deliberately not claimed:
+
+      - Which pixels landed. brainray cannot read the framebuffer or a texture
+        back, so "the source rectangle was respected" is not machine-checkable.
+        An implementation ignoring `rec` and blitting the whole texture would
+        pass. The sub-rect, the tint and both mirror directions were checked by
+        eye against a four-frame atlas instead; the image is in the PR.
+      - That the handle guards do their job. The out-of-range, negative and
+        post-unload draws below run without crashing, but that is not evidence:
+        SO_CFLAGS is `-fPIC -shared` with no sanitizers, as it is for every
+        shared object here including libstdrot.so, so an out-of-bounds read of
+        g_textures[] inside this module is invisible to ASan. Deleting the
+        bounds check entirely still passes this test -- confirmed by trying it.
+        The guards are here to match rl_draw_texture and to keep a bogus GPU id
+        away from raylib, and they are reviewed rather than tested.
+
+    Closing either gap needs something outside this PR: a pixel-readback
+    wrapper (LoadImageFromTexture / TakeScreenshot) for the first, and
+    sanitizer-instrumented shared objects for the second."""
+    build = subprocess.run(
+        ["make", "brainray"], cwd=REPO_ROOT,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert build.returncode == 0, f"`make brainray` failed:\n{build.stdout}"
+
+    atlas = tmp_path / "atlas.png"
+    # 8x4 of solid opaque magenta: two 4x4 "frames" side by side, so the
+    # sub-rect draws below address a real region of a real image.
+    _write_rgba_png(str(atlas), 8, 4, (255, 0, 255, 255))
+
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    source_path = tmp_path / "texture_rec.brainrot"
+    source_path.write_text(
+        "#cooked <raylib>\n"
+        "skibidi main {\n"
+        "    rl_init_window(160, 120, \"texture rec\");\n"
+        f"    rizz tex = rl_load_texture(\"{atlas}\");\n"
+        "    cap loaded = tex >= 0;\n"
+        "    bet(loaded, \"a valid PNG must load to a non-negative handle\");\n"
+        # The documented -1 sentinel for a load failure.
+        f"    rizz bad = rl_load_texture(\"{tmp_path}/does_not_exist.png\");\n"
+        "    cap failed = bad == 0 - 1;\n"
+        "    bet(failed, \"a missing file must load to -1\");\n"
+        "    rl_begin_drawing();\n"
+        "    rl_clear_background(20, 20, 20, 255);\n"
+        # whole frame, sub-rect, h-flip, v-flip, tinted
+        "    rl_draw_texture_rec(tex, 0.0, 0.0, 8.0, 4.0, 10.0, 10.0,"
+        " 255, 255, 255, 255);\n"
+        "    rl_draw_texture_rec(tex, 4.0, 0.0, 4.0, 4.0, 30.0, 10.0,"
+        " 255, 255, 255, 255);\n"
+        "    rl_draw_texture_rec(tex, 0.0, 0.0, 0.0 - 4.0, 4.0, 50.0, 10.0,"
+        " 255, 255, 255, 255);\n"
+        "    rl_draw_texture_rec(tex, 0.0, 0.0, 4.0, 0.0 - 4.0, 70.0, 10.0,"
+        " 255, 255, 255, 255);\n"
+        "    rl_draw_texture_rec(tex, 0.0, 0.0, 4.0, 4.0, 90.0, 10.0,"
+        " 255, 120, 120, 200);\n"
+        # guards: must draw nothing rather than crash or use a stale id
+        "    rl_draw_texture_rec(0 - 1, 0.0, 0.0, 4.0, 4.0, 10.0, 40.0,"
+        " 255, 255, 255, 255);\n"
+        "    rl_draw_texture_rec(999, 0.0, 0.0, 4.0, 4.0, 30.0, 40.0,"
+        " 255, 255, 255, 255);\n"
+        "    rl_end_drawing();\n"
+        # and after the handle is retired
+        "    rl_unload_texture(tex);\n"
+        "    rl_begin_drawing();\n"
+        "    rl_draw_texture_rec(tex, 0.0, 0.0, 4.0, 4.0, 50.0, 40.0,"
+        " 255, 255, 255, 255);\n"
+        "    rl_end_drawing();\n"
+        "    rl_close_window();\n"
+        "    yapping(\"texture rec ok\");\n"
+        "    bussin 0;\n"
+        "}\n")
+
+    env = dict(os.environ, BRAINROT_PATH=BRAINRAY_DIR)
+    result = subprocess.run(
+        [brainrot_path, str(source_path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+        timeout=60)
+
+    assert "LeakSanitizer" not in result.stderr, (
+        f"LeakSanitizer reported leaks:\n{result.stderr}")
+    assert result.returncode == 0, (
+        f"Nonzero exit {result.returncode}\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
+    assert "texture rec ok" in result.stdout, (
         f"program did not reach the end; a bet() must have fired\n"
         f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
 

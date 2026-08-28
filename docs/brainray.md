@@ -227,7 +227,10 @@ scalar arguments and rebuilds them on the C side:
   integer **handle** (its index). `rl_load_texture` returns a handle, or `-1`
   if the load failed (missing/undecodable file) **or** the 256-slot table is
   full — a non-negative handle therefore always refers to a successfully loaded
-  texture. `rl_draw_texture` / `rl_unload_texture` take one back.
+  texture. `rl_draw_texture`, `rl_draw_texture_rec` and
+  `rl_unload_texture` take one back — every function that consumes a handle
+  validates it the same way, so this list is the complete census and any new
+  handle-taking wrapper belongs in it.
 
   A live handle also implies a live GL context: `rl_close_window` unloads every
   still-live texture before the context is destroyed, so a handle from before a
@@ -268,6 +271,7 @@ Colors are always the trailing `r, g, b, a` integers (0–255, clamped).
 | `rl_is_key_pressed(key)` | `IsKeyPressed` | returns `cap` |
 | `rl_load_texture(path)` | `LoadTexture` | returns integer handle or `-1` |
 | `rl_draw_texture(handle, x, y, r, g, b, a)` | `DrawTexture` | `r,g,b,a` = tint |
+| `rl_draw_texture_rec(handle, sx, sy, sw, sh, x, y, r, g, b, a)` | `DrawTextureRec` | one sub-rectangle; see below |
 | `rl_unload_texture(handle)` | `UnloadTexture` | |
 
 ### Drawing a number
@@ -316,6 +320,45 @@ happens *outside* the LeakSanitizer brackets described above, so a missed
 `free()` here is still reported as brainray's own leak — and
 `test_brainray_windowed_run_is_leak_clean` exercises both functions for exactly
 that reason.
+
+### Sprite atlases and flipping
+
+`rl_draw_texture` blits a whole image, which means one file per animation frame
+and no way to face a sprite the other direction. `rl_draw_texture_rec` takes a
+source rectangle instead, so a single texture can hold a strip of frames:
+
+```c
+🚽 frame `i` of a 64x64 strip, drawn at (px, py)
+rl_draw_texture_rec(atlas, i * 64.0, 0.0, 64.0, 64.0, px, py, 255, 255, 255, 255);
+```
+
+Two aggregates come apart here rather than one: raylib's `rec` is a `Rectangle`
+(four floats) and `position` is a `Vector2` (two floats), so the source box is
+`sx, sy, sw, sh` and the destination corner is `x, y` — six `chad` arguments,
+then the usual four-int `Color`.
+
+Note that this position is **floating point**, where `rl_draw_texture`'s `x, y`
+are integers. That mirrors raylib rather than contradicting it: `DrawTexture`
+takes ints and `DrawTextureRec` takes a `Vector2`. Sub-pixel placement is what
+a smoothly scrolling background wants anyway.
+
+**A negative `sw` mirrors the sprite horizontally, and a negative `sh` mirrors
+it vertically** — raylib's own idiom, since the sign of the source rectangle
+decides the order of the texture coordinates:
+
+```c
+🚽 same frame, facing the other way
+rl_draw_texture_rec(atlas, 0.0, 0.0, -64.0, 64.0, px, py, 255, 255, 255, 255);
+```
+
+Until `DrawTexturePro`'s scaling and rotation are exposed, that is the only way
+to flip a sprite, so it is worth knowing rather than looking like a bug.
+
+The rectangle is passed to raylib unchanged: brainray does **not** clamp it to
+the texture, so what happens when it reaches outside the image is raylib's
+behaviour and not a guarantee this binding makes. Handle validation matches
+`rl_draw_texture` — an out-of-range, negative, or already-unloaded handle draws
+nothing rather than handing raylib a stale GPU id.
 
 ### Key codes
 
