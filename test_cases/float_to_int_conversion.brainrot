@@ -10,6 +10,8 @@
 🚽 An arithmetic expression on the right-hand side always worked, because
 🚽 that path goes through a real conversion -- so `g * 1.0` gave 17 while a
 🚽 bare `g` did not, which is what made the bug easy to miss.
+gang Holder { chad v; };
+
 skibidi main {
     chad g = 17.5;
     gigachad d = 42.9;
@@ -32,12 +34,44 @@ skibidi main {
     rizz via_add = g + 0.0;
     yapping("%d %d", via_expr, via_add);
 
-    🚽 The reverse direction was never broken; pin it so a fix here cannot
-    🚽 quietly trade one for the other.
+    🚽 The identifier path is only one of four load shapes. An array
+    🚽 element and a pointer target used to cast the address to whatever
+    🚽 type the calling evaluator wanted, so these were still wrong after
+    🚽 the identifier fix -- and printing the same rvalue disagreed with
+    🚽 assigning it, because yapping reads by type and the assignment did
+    🚽 not. A struct field was already correct and is pinned here so it
+    🚽 stays that way.
+    chad from_arr[1];
+    from_arr[0] = 17.5;
+    chad *fp = &g;
+    gigachad wide_arr[1];
+    wide_arr[0] = 42.9;
+    rizz via_array = from_arr[0];
+    rizz via_deref = *fp;
+    smol narrow_array = from_arr[0];
+    rizz via_wide_array = wide_arr[0];
+    yapping("%d %d %d %d", via_array, via_deref, narrow_array,
+            via_wide_array);
+    yapping("%d %d", from_arr[0], via_array);
+
+    gang Holder h;
+    h.v = 17.5;
+    rizz via_field = h.v;
+    yapping("%d", via_field);
+
+    🚽 Both directions, all four shapes. The reverse was broken for arrays
+    🚽 and derefs too -- identifier and field were not -- so pin every one
+    🚽 of them and a later change cannot trade one direction for the other.
     rizz n = 7;
     chad widened = n;
     gigachad widened_d = n;
-    yapping("%.2f %.2f", widened, widened_d);
+    rizz int_arr[1];
+    int_arr[0] = 7;
+    rizz *np = &n;
+    chad from_int_array = int_arr[0];
+    chad from_int_deref = *np;
+    yapping("%.2f %.2f %.2f %.2f", widened, widened_d, from_int_array,
+            from_int_deref);
 
     🚽 An integral value under a float specifier, and a float under an
     🚽 integer one, both used to match no branch in yapping's dispatch and
