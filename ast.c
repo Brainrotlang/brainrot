@@ -3535,6 +3535,49 @@ static bool warn_if_native_result_void(const char *context_name)
     return true;
 }
 
+/* Load a numeric value from `addr`, reading it as `type` actually stores it.
+ *
+ * The counterpart of identifier_numeric_value() for the load sites that do
+ * not go through handle_identifier(): array elements and pointer targets.
+ * Those used to cast the address to whichever type the calling evaluator
+ * happened to want, which is a reinterpretation and not a conversion --
+ * `chad arr[1]; arr[0] = 17.5; rizz k = arr[0];` produced 1099694080, the
+ * bit pattern of 17.5f, and the reverse (`rizz arr[1]; chad f = arr[0];`)
+ * produced 0.00. Worse, printing and assigning the same rvalue disagreed,
+ * because yapping's dispatch reads it by type while the assignment did not.
+ *
+ * Every numeric member of the Value union is exactly representable as a
+ * double, so this is the lossless common currency; callers narrow. VAR_CHAR
+ * is one byte and unsigned on purpose -- char_scalar_slot_value() (ast.h)
+ * zero-extends a scalar yap on every write, so a signed packed read would
+ * disagree with a scalar read of the same logical value for every byte
+ * >= 128. NODE_STRUCT_ACCESS already had its own by-field-type switch and
+ * was already correct; it is deliberately left alone rather than given a
+ * second implementation here. */
+static double numeric_load(const void *addr, VarType type)
+{
+    if (addr == NULL)
+    {
+        return 0.0;
+    }
+    switch (type)
+    {
+    case VAR_DOUBLE:
+        return *(const double *)addr;
+    case VAR_FLOAT:
+        return (double)*(const float *)addr;
+    case VAR_SHORT:
+        return (double)*(const short *)addr;
+    case VAR_BOOL:
+        return *(const bool *)addr ? 1.0 : 0.0;
+    case VAR_CHAR:
+        return (double)*(const unsigned char *)addr;
+    default:
+        /* VAR_INT and VAR_ENUM; both int-width. */
+        return (double)*(const int *)addr;
+    }
+}
+
 float evaluate_expression_float(ASTNode *node)
 {
     if (!node)
@@ -3549,7 +3592,8 @@ float evaluate_expression_float(ASTNode *node)
             yyerror("Cannot use pointer in float context");
             return 0.0f;
         }
-        return *(float *)evaluate_multi_array_access(node);
+        return (float)numeric_load(evaluate_multi_array_access(node),
+                                   get_expression_type(node));
     }
     case NODE_FLOAT:
         return node->data.fvalue;
@@ -3596,8 +3640,10 @@ float evaluate_expression_float(ASTNode *node)
                 yyerror("Cannot use pointer in float context");
                 return 0.0f;
             }
-            return *(float *)(uintptr_t)evaluate_expression_pointer(
-                node->data.unary.operand);
+            return (float)numeric_load(
+                (const void *)(uintptr_t)evaluate_expression_pointer(
+                    node->data.unary.operand),
+                get_expression_type(node));
         }
         if (node->data.unary.op == OP_ADDRESS_OF)
         {
@@ -3699,7 +3745,8 @@ double evaluate_expression_double(ASTNode *node)
             yyerror("Cannot use pointer in double context");
             return 0.0;
         }
-        return *(double *)evaluate_multi_array_access(node);
+        return numeric_load(evaluate_multi_array_access(node),
+                            get_expression_type(node));
     }
     case NODE_DOUBLE:
         return node->data.dvalue;
@@ -3746,8 +3793,10 @@ double evaluate_expression_double(ASTNode *node)
                 yyerror("Cannot use pointer in double context");
                 return 0.0;
             }
-            return *(double *)(uintptr_t)evaluate_expression_pointer(
-                node->data.unary.operand);
+            return numeric_load(
+                (const void *)(uintptr_t)evaluate_expression_pointer(
+                    node->data.unary.operand),
+                get_expression_type(node));
         }
         if (node->data.unary.op == OP_ADDRESS_OF)
         {
@@ -4063,6 +4112,26 @@ String evaluate_expression_string(ASTNode *node)
     }
 }
 
+/* An identifier's numeric value, converted from whatever type the variable
+ * actually has.
+ *
+ * handle_identifier(..., 0) hands back a pointer to the variable's OWN
+ * storage, so casting that to the type the caller happens to want is a
+ * reinterpretation, not a conversion: for `chad g = 17.5; rizz k = g;` it
+ * read the float's bit pattern as an int and produced 1099694080. A `smol`
+ * target read the wrong two bytes and produced 0.
+ *
+ * Promote mode 1 already does the real conversion for every numeric type,
+ * so route through it and narrow. Every caller below guards pointer_level
+ * first, which matters because mode 1 refuses a pointer outright. Every
+ * numeric member of the Value union (int, short, bool, float) is exactly
+ * representable as a double, so the intermediate loses nothing. */
+static double identifier_numeric_value(ASTNode *node, const String error)
+{
+    double *promoted = (double *)handle_identifier(node, error, 1);
+    return promoted != NULL ? *promoted : 0.0;
+}
+
 short evaluate_expression_short(ASTNode *node)
 {
     if (!node)
@@ -4097,7 +4166,9 @@ short evaluate_expression_short(ASTNode *node)
         }
         String error = {.data = "Undefined variable",
                         .len = sizeof("Undefined variable") - 1};
-        return *(short *)handle_identifier(node, error, 0);
+        /* Truncates toward zero from the variable's real type -- see
+           identifier_numeric_value(). */
+        return (short)identifier_numeric_value(node, error);
     }
     case NODE_OPERATION:
     {
@@ -4146,8 +4217,10 @@ short evaluate_expression_short(ASTNode *node)
                 yyerror("Cannot use pointer in integer context");
                 return 0;
             }
-            return *(short *)(uintptr_t)evaluate_expression_pointer(
-                node->data.unary.operand);
+            return (short)numeric_load(
+                (const void *)(uintptr_t)evaluate_expression_pointer(
+                    node->data.unary.operand),
+                get_expression_type(node));
         }
         if (node->data.unary.op == OP_ADDRESS_OF)
         {
@@ -4173,7 +4246,8 @@ short evaluate_expression_short(ASTNode *node)
             yyerror("Cannot use pointer in integer context");
             return 0;
         }
-        return *(short *)evaluate_multi_array_access(node);
+        return (short)numeric_load(evaluate_multi_array_access(node),
+                                   get_expression_type(node));
     }
     case NODE_FUNC_CALL:
     {
@@ -4275,7 +4349,9 @@ int evaluate_expression_int(ASTNode *node)
         }
         String error = {.data = "Undefined variable",
                         .len = sizeof("Undefined variable") - 1};
-        return *(int *)handle_identifier(node, error, 0);
+        /* Truncates toward zero from the variable's real type -- see
+           identifier_numeric_value(). */
+        return (int)identifier_numeric_value(node, error);
     }
     case NODE_OPERATION:
     {
@@ -4347,11 +4423,8 @@ int evaluate_expression_int(ASTNode *node)
                >= 128 (confirmed: after `c = 1000`, a scalar read gives
                232, a signed packed read gave -24) even though both are
                reading what should be the same logical value. */
-            if (get_expression_type(node) == VAR_CHAR)
-                // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
-                return (int)*(unsigned char *)pointee;
             // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
-            return *(int *)pointee;
+            return (int)numeric_load(pointee, get_expression_type(node));
         }
         if (node->data.unary.op == OP_ADDRESS_OF)
         {
@@ -4393,10 +4466,8 @@ int evaluate_expression_int(ASTNode *node)
            disagree with a scalar `yap` variable's own always-0-255
            representation (char_scalar_slot_value(), ast.h) for every
            byte >= 128. */
-        void *addr = evaluate_multi_array_access(node);
-        if (get_expression_type(node) == VAR_CHAR)
-            return (int)*(unsigned char *)addr;
-        return *(int *)addr;
+        return (int)numeric_load(evaluate_multi_array_access(node),
+                                 get_expression_type(node));
     }
     case NODE_FUNC_CALL:
     {
