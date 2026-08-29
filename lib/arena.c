@@ -125,14 +125,18 @@ String arena_strdup(Arena *arena, String str)
 
 void arena_reset(Arena *arena)
 {
-    arena->end = arena->start;
-    while (arena->end->next != NULL)
+    if (arena == NULL || arena->start == NULL)
     {
-        Region *next = arena->end->next;
-        region_free(arena->end);
-        arena->end = next;
+        return;
     }
-    arena->end->count = 0;
+
+    Region *current = arena->start;
+    while (current != NULL)
+    {
+        current->count = 0;
+        current = current->next;
+    }
+    arena->end = arena->start;
 }
 
 /*
