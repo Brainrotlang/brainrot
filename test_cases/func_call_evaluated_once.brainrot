@@ -22,7 +22,13 @@ skibidi void_ret(rizz *n) { bussin bump(n) + 0; }
 skibidi void_arr(rizz *n) { rizz a[3] = {7, 8, 9}; bussin a[bump(n)]; }
 
 gang Pt { rizz x; };
-gang Pt make_pt(rizz *n) { gang Pt p; p.x = bump(n); bussin p; }
+
+🚽 The field is bump()+6, so the VALUE distinguishes "the call ran" from
+🚽 "the call ran and its struct survived long enough to read". Counting calls
+🚽 alone hid a version of this that invoked handle_function_call(), whose
+🚽 VAR_STRUCT case is discard-and-free: the count was right and every field
+🚽 read produced 0.
+gang Pt make_pt(rizz *n) { gang Pt p; p.x = bump(n) + 6; bussin p; }
 
 🚽 A void `bussin` of a field read off a call, and of an ASSIGNMENT.
 🚽 ast_accept()'s assignment visitor already performs the write, so the void
@@ -111,8 +117,24 @@ skibidi main {
     yapping("field stmt  %d", calls);
 
     calls = 0;
-    make_pt(&calls).x + 0;
-    yapping("field expr  %d", calls);
+    rizz fv = make_pt(&calls).x;
+    yapping("field decl  %d %d", calls, fv);
+
+    calls = 0;
+    rizz fa = 0;
+    fa = make_pt(&calls).x;
+    yapping("field assign %d %d", calls, fa);
+
+    calls = 0;
+    rizz fe = make_pt(&calls).x + 0;
+    yapping("field expr  %d %d", calls, fe);
+
+    calls = 0;
+    cap fc = make_pt(&calls).x == 7;
+    yapping("field cond  %d %b", calls, fc);
+
+    calls = 0;
+    yapping("field print %d", make_pt(&calls).x);
 
     calls = 0;
     v_field(&calls);

@@ -902,7 +902,7 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
             parent_base = element_addr;
         }
     }
-    else if (obj->type == NODE_FUNC_CALL)
+    else if (obj && obj->type == NODE_FUNC_CALL)
     {
         /* `f().x`, and by recursion `f().inner.x`.
          *
@@ -922,7 +922,20 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
         {
             return false;
         }
-        handle_function_call(obj);
+        /* execute_function_call(), NOT handle_function_call(). The latter's
+           VAR_STRUCT case is discard-and-free: it exists precisely so a
+           struct return does not sit in the shared slot, so by the time it
+           returns pvalue is 0 and there is no field left to read. Using it
+           here ran the call -- the side effect looked right, and a test that
+           only counted calls could not tell -- while every read of the field
+           silently produced 0. */
+        if (is_builtin_function(obj->data.func_call.function_name))
+        {
+            /* No native can return a struct across the Road A ABI. */
+            return false;
+        }
+        execute_function_call(obj->data.func_call.function_name,
+                              obj->data.func_call.arguments);
         if (current_return_value.desc.type != VAR_STRUCT ||
             current_return_value.desc.pointer_level != 0 ||
             !current_return_value.value.pvalue)
