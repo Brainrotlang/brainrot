@@ -433,12 +433,20 @@ ABI, so C owns them and Brainrot holds an integer index — 16 music slots, 64
 sound slots. A failed load returns `-1` without consuming a slot, so a
 non-negative handle always means a decodable file.
 
+Both loaders refuse before they reach raylib if `rl_is_audio_device_ready()` is
+false, so a non-negative handle also always implies a **live device**. Without
+that gate `LoadMusicStream` can report a frame count from the file while the
+playback stream behind it was never attached, and a later query would reach for
+a miniaudio mutex that `CloseAudioDevice` had already destroyed.
+
 `rl_close_audio_device` unloads every stream this module still owns before the
-device goes away, exactly as `rl_close_window` does for textures: a live handle
-has to imply a live device, or a later init plus a stale handle hands raylib a
-freed stream. As with textures there is no generation counter, so a handle used
-after its unload is not reused, it is *inert* — every wrapper checks the slot is
-still owned and does nothing if it isn't.
+device goes away, exactly as `rl_close_window` does for textures.
+
+As with textures the handle is a plain index with **no generation counter**, so
+after an unload the index is **recycled** — a stale handle silently aliases
+whatever loads into that slot next. Don't keep using a handle past its unload.
+(Until something else takes the slot the wrappers do check ownership and do
+nothing, but that is a temporary courtesy, not the contract.)
 
 ### Key codes
 

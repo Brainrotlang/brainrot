@@ -586,6 +586,23 @@ static StdrotValue br_close_audio_device(StdrotValue *args, int argc)
 static StdrotValue br_load_music(StdrotValue *args, int argc)
 {
     (void)argc;
+    /* Refuse before raylib is asked, not after. LoadMusicStream() sets
+     * frameCount from the FILE once the decoder opens it; attaching the
+     * playback stream is a separate step that can leave buffer == NULL when
+     * the device was never ready or is already closed. So frameCount > 0 is
+     * not evidence of a usable stream, and a slot minted from one would
+     * break this module's central invariant -- a live handle implies a live
+     * device -- with a later rl_is_music_playing() reaching for a miniaudio
+     * mutex that was destroyed by CloseAudioDevice() or never initialised.
+     *
+     * rl_load_sound() does not have that hole (LoadSoundFromWave leaves
+     * frameCount == 0 when it cannot make a buffer) but is gated too, so the
+     * rule is one rule rather than a property of two different raylib
+     * functions that happen to differ. */
+    if (!IsAudioDeviceReady())
+    {
+        return (StdrotValue){.type = STDROT_INT, .val = {.i = -1}};
+    }
     br_lsan_ignore_begin();
     Music m = LoadMusicStream(args[0].val.cstr);
     br_lsan_ignore_end();
@@ -726,6 +743,11 @@ static StdrotValue br_is_sound_playing(StdrotValue *args, int argc)
 static StdrotValue br_load_sound(StdrotValue *args, int argc)
 {
     (void)argc;
+    /* Same gate as rl_load_music(); see the note there. */
+    if (!IsAudioDeviceReady())
+    {
+        return (StdrotValue){.type = STDROT_INT, .val = {.i = -1}};
+    }
     br_lsan_ignore_begin();
     Sound snd = LoadSound(args[0].val.cstr);
     br_lsan_ignore_end();
