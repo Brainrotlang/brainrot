@@ -32,8 +32,9 @@ with tests.** A PR that asks reviewers to take your word for it is not ready
 for review and will be sent back.
 
 "I ran it on my machine" is not a test. "The old suite still passes" is not
-proof of a *new* fix or feature. Add fixtures that would have **failed before
-your change** and **pass after it.**
+proof of a *new* fix or feature. Add a regression that would have **failed
+before your change** and **pass after it**, at the layer that can actually
+exercise the broken contract (see below).
 
 ## What your tests must cover
 
@@ -41,9 +42,22 @@ For the behavior you are changing, include all of the following that apply —
 and if you think one does not apply, you are probably wrong:
 
 1. **Happy path.** The intended use actually works.
-2. **The bug itself (fixes).** A fixture that reproduced the failure *before*
-   the patch and now asserts the correct result. If you cannot show the bug
-   in a `test_cases/*.brainrot` program, you have not proven the fix.
+2. **The bug itself (fixes).** A regression that reproduced the failure
+   *before* the patch and now asserts the correct result. Put that test at
+   the **lowest appropriate layer that can exercise the broken contract**:
+   - Prefer `test_cases/*.brainrot` for language-visible behavior (anything
+     a Brainrot program can observe).
+   - Internal runtime/library behavior that cannot be reached from Brainrot
+     source must be tested with a host-side C test that calls the API
+     directly, built with the same ASan/UBSan flags as the rest of the tree,
+     and **wired into `make test`**. `arena_reset()` is the textbook case:
+     it currently has no Brainrot-level caller, so a `.brainrot` fixture
+     cannot prove the fix. The proper test is a host binary that exercises
+     the arena API (the same pattern as
+     `tests/abi/struct_layout_abi_check.c`, which `make test` already runs
+     via the `abi-check` target).
+   If you cannot show the bug at *some* layer `make test` runs, you have
+   not proven the fix.
 3. **Error and rejection cases.** Invalid input is rejected with the expected
    diagnostic. Follow `semantic_error_*.brainrot` and `*_fail.brainrot`.
 4. **Edge cases.** Empty input, zero, one, max/min, nested, already-at-bound,
@@ -54,8 +68,9 @@ and if you think one does not apply, you are probably wrong:
    thing a hostile user would try after reading your patch. If you can imagine
    a way the fix is incomplete, that is a test you still owe.
 
-If you cannot write a test, the change is not ready. "Hard to test" means you
-have not figured out how to test it yet. It is not a waiver.
+If the existing harness cannot test the behavior, extend the harness or add
+an appropriate lower-level test. "Hard to test" means you have not figured
+out how to test it yet. It is not a waiver.
 
 ## The only exception
 
@@ -69,15 +84,30 @@ tests.** A documentation PR that also touches `lang.l`, `lang.y`, any `.c` /
 
 ## How to add the tests
 
+**Language-visible behavior** (a Brainrot program can hit it):
+
 1. Add one or more programs under `test_cases/<descriptive_name>.brainrot`.
 2. Add the expected stdout, stderr, and/or exit behavior to
    `tests/expected_results.json`, keyed by the fixture basename (no
    `.brainrot` suffix).
 3. Name failure fixtures like the existing suite:
    `*_fail.brainrot`, `semantic_error_*.brainrot`.
-4. Run `make test`. Your new fixtures must pass. Nothing else may break.
-5. Run `make valgrind` (or `./run_valgrind_tests.sh`). No new leaks or invalid
-   access.
+
+**Internal runtime/library contracts** that Brainrot source cannot reach:
+
+1. Add a host-side C test (a small binary that calls the API directly).
+2. Build it with the same `$(CFLAGS)` as the rest of the tree (ASan/UBSan
+   included).
+3. Wire it into `make test` so it actually runs — follow
+   `tests/abi/struct_layout_abi_check.c` and the `abi-check` Makefile
+   target. A C file that is not a `make test` dependency is not a test.
+
+Then, for every change:
+
+4. Run `make test`. Your new tests must pass. Nothing else may break.
+5. Run `make valgrind` (or `./run_valgrind_tests.sh`) for anything that
+   executes as a Brainrot program. Host-side C tests are covered by the
+   sanitizers `make test` already compiles them with.
 
 Existing tests continuing to pass is **necessary and not sufficient.**
 
@@ -203,8 +233,11 @@ substitute:
 1. **Every** bug fix, feature, refactor, performance change, and breaking
    change that can affect behavior must include tests that prove it. Not just
    new features.
-2. Fixtures go in `test_cases/*.brainrot`.
-3. Expected outputs go in `tests/expected_results.json`.
+2. Language-visible fixtures go in `test_cases/*.brainrot`, with expected
+   output in `tests/expected_results.json`.
+3. Internal runtime/library contracts that Brainrot source cannot reach get
+   a host-side C test wired into `make test` (see
+   `tests/abi/struct_layout_abi_check.c`).
 4. Tests must cover happy path, the original bug (for fixes), error
    conditions, edge cases, **and** adversarial cases.
 5. `make test` and `make valgrind` must both pass.
