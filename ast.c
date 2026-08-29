@@ -2338,8 +2338,18 @@ static StructDef *get_struct_def_for_expression(ASTNode *expr)
         StructDef *def = NULL;
         void *base = NULL;
         StructField *fld = NULL;
-        if (resolve_struct_access(expr, &def, &base, &fld, false) &&
-            fld->desc.type == VAR_STRUCT && fld->desc.struct_name.data)
+        if (!resolve_struct_access(expr, &def, &base, &fld, false))
+        {
+            /* The sixth site, and the one that needs a LAYOUT rather than a
+               VarType. Once infer_runtime_expression_type_noeval() learned
+               to report VAR_STRUCT for `f().inner`, handle_sizeof()'s
+               "type is not statically known" gate started passing -- and
+               then failed here instead with "Invalid type in sizeof",
+               because the storage walk still found nothing to take a
+               definition from. Declared types have it. */
+            fld = static_struct_field(expr);
+        }
+        if (fld && fld->desc.type == VAR_STRUCT && fld->desc.struct_name.data)
             return get_struct_def(fld->desc.struct_name);
         return NULL;
     }
@@ -5429,9 +5439,11 @@ void execute_assignment(ASTNode *node)
 /* Does ast_accept()'s own walk compute this expression's value?
  *
  * The visitor's expression cases exist so a shared visitor -- the semantic
- * analyzer -- can inspect a node; they deliberately do not evaluate. Exactly
- * two are exceptions: interpreter_visit_unary_operation() performs a pre/post
- * increment, and interpreter_visit_array_access() performs the access.
+ * analyzer -- can inspect a node; they deliberately do not evaluate. Three
+ * are exceptions: interpreter_visit_unary_operation() performs a pre/post
+ * increment, interpreter_visit_array_access() performs the access, and
+ * interpreter_visit_assignment() performs the write. NODE_SIZEOF is
+ * evaluated by its visitor too and is listed for the same reason.
  *
  * Both places that have to decide "has this already run, or must I run it?"
  * ask HERE rather than keeping their own list. They had separate lists for

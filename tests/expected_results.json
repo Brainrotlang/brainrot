@@ -87,7 +87,7 @@
     "slorp_contextual_struct_braced_init": "5 1",
     "semantic_error_slorp_ptr_native_arg": "Error: cannot infer type for slorp(); use it in a typed context at line 10",
     "fib": "55",
-    "func_call_evaluated_once": "declaration 1 1\nassignment  1 1\nexpression  1 1\nargument    1\nstatement   1\ncondition   1\nreported    W (must be W)\nexpr stmt   1\nunary stmt  1\nfor-incr    2\nvoid bussin 1\nfield stmt  1\nfield decl  1 7\nfield assign 1 7\nfield expr  1 7\nfield cond  1 W\nfield print 7\nfield bussin 1\nfield chad  3.500000\nfield sizeof 4\nfield nested 7 1\nvoid assign 1\nvoid arr    1\ninc stmts   2\n",
+    "func_call_evaluated_once": "declaration 1 1\nassignment  1 1\nexpression  1 1\nargument    1\nstatement   1\ncondition   1\nreported    W (must be W)\nexpr stmt   1\nunary stmt  1\nfor-incr    2\nvoid bussin 1\nfield stmt  1\nfield decl  1 7\nfield assign 1 7\nfield expr  1 7\nfield cond  1 W\nfield print 7\nfield bussin 1\nfield chad  3.500000\nfield sizeof 4\nfield nested 7 1\nfield layout 8\nvoid assign 1\nvoid arr    1\ninc stmts   2\n",
     "func_scope": "from inner 10\nfrom outer 4\n",
     "func-modifier": "Error: Cannot modify const variable at line 7\n",
     "multi_array": "1\n2\n3\n4\n",

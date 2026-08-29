@@ -21,7 +21,9 @@ skibidi void_ret(rizz *n) { bussin bump(n) + 0; }
 🚽 so the void arm must not evaluate this a second time.
 skibidi void_arr(rizz *n) { rizz a[3] = {7, 8, 9}; bussin a[bump(n)]; }
 
-gang Pt { rizz x; };
+🚽 Two fields on purpose: sizeof(Pt) is then 8, distinct from sizeof(rizz),
+🚽 so the layout assertion below cannot be satisfied by the scalar answer.
+gang Pt { rizz x; rizz y; };
 gang Fl { chad f; };
 gang Outer { gang Pt inner; };
 
@@ -119,10 +121,9 @@ skibidi main {
     🚽 bare statement, a larger expression and a void `bussin` all work
     🚽 through one path rather than one special case each.
     🚽
-    🚽 Nested -- `f().inner.x` -- is still rejected, and deliberately not
-    🚽 pinned here: typing it needs the parse-time eager resolve, which
-    🚽 cannot run a call, so it stays a known limitation rather than a
-    🚽 claim.
+    🚽 The nested form works too, and is pinned below -- it turned out to be
+    🚽 the same defect rather than a separate one, since typing a chain reads
+    🚽 the var_type the eager parse-time resolve fills in.
     calls = 0;
     make_pt(&calls).x;
     yapping("field stmt  %d", calls);
@@ -163,15 +164,26 @@ skibidi main {
     calls = 0;
     yapping("field nested %d %d", make_outer(&calls).inner.x, calls);
 
+    🚽 maxxing() of a struct-typed field off a call. Unlike the scalar case
+    🚽 above this needs a LAYOUT, not a VarType, so it goes through a sixth
+    🚽 site -- and once the type gate started passing, that site failed
+    🚽 instead with "Invalid type in sizeof", printing 0. A scalar field
+    🚽 cannot pin it, and neither can a one-field struct whose size happens
+    🚽 to equal a rizz.
+    yapping("field layout %d", maxxing(make_outer(&calls).inner));
+
     calls = 0;
     v_assign(&calls);
     yapping("void assign %d", calls);
 
     🚽 An array access inside a void `bussin`. The pre-visit already ran it,
-    🚽 so the void arm must not. Deliberately AFTER the struct case above:
-    🚽 a `bussin arr[f()]` in a void function followed by a struct-returning
-    🚽 call segfaults in free_pending_return_value(), which reproduces on
-    🚽 origin/main untouched and is not this change's to fix.
+    🚽 so the void arm must not.
+    🚽
+    🚽 This used to have to come last: a `bussin arr[f()]` in a void function
+    🚽 followed by a struct-returning call segfaulted in
+    🚽 free_pending_return_value(), reproducing on origin/main untouched.
+    🚽 Blanking the pending slot's union fixed that, so the ordering here is
+    🚽 no longer load-bearing.
     calls = 0;
     void_arr(&calls);
     yapping("void arr    %d", calls);
