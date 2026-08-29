@@ -273,6 +273,24 @@ Colors are always the trailing `r, g, b, a` integers (0–255, clamped).
 | `rl_draw_texture(handle, x, y, r, g, b, a)` | `DrawTexture` | `r,g,b,a` = tint |
 | `rl_draw_texture_rec(handle, sx, sy, sw, sh, x, y, r, g, b, a)` | `DrawTextureRec` | one sub-rectangle; see below |
 | `rl_unload_texture(handle)` | `UnloadTexture` | |
+| `rl_init_audio_device()` | `InitAudioDevice` | see below |
+| `rl_is_audio_device_ready()` | `IsAudioDeviceReady` | returns `cap` |
+| `rl_close_audio_device()` | `CloseAudioDevice` | unloads every live stream first |
+| `rl_load_music(path)` | `LoadMusicStream` | streamed; returns handle or `-1` |
+| `rl_play_music(handle)` | `PlayMusicStream` | |
+| `rl_update_music(handle)` | `UpdateMusicStream` | **every frame, or it stops** |
+| `rl_stop_music(handle)` | `StopMusicStream` | |
+| `rl_set_music_volume(handle, vol)` | `SetMusicVolume` | `vol` is `chad`, 1.0 is full |
+| `rl_set_music_looping(handle, on)` | `music.looping` | `on` is `cap`; raylib defaults to true |
+| `rl_is_music_playing(handle)` | `IsMusicStreamPlaying` | returns `cap` |
+| `rl_music_time_played(handle)` | `GetMusicTimePlayed` | returns `chad` seconds |
+| `rl_music_time_length(handle)` | `GetMusicTimeLength` | returns `chad` seconds |
+| `rl_unload_music(handle)` | `UnloadMusicStream` | |
+| `rl_load_sound(path)` | `LoadSound` | decoded whole; returns handle or `-1` |
+| `rl_play_sound(handle)` | `PlaySound` | |
+| `rl_is_sound_playing(handle)` | `IsSoundPlaying` | returns `cap` |
+| `rl_set_sound_volume(handle, vol)` | `SetSoundVolume` | `vol` is `chad` |
+| `rl_unload_sound(handle)` | `UnloadSound` | |
 
 ### Drawing a number
 
@@ -359,6 +377,76 @@ the texture, so what happens when it reaches outside the image is raylib's
 behaviour and not a guarantee this binding makes. Handle validation matches
 `rl_draw_texture` — an out-of-range, negative, or already-unloaded handle draws
 nothing rather than handing raylib a stale GPU id.
+
+### Audio
+
+Nothing here does anything until `rl_init_audio_device()` has succeeded — and
+raylib does not tell you when it hasn't. On a machine with no sound device, or
+in a container, `InitAudioDevice()` logs a warning and carries on, after which
+every load and every play silently does nothing. `rl_is_audio_device_ready()` is
+the only way a Brainrot program can tell *playing quietly* from *not playing*:
+
+```c
+rl_init_audio_device();
+cap ready = rl_is_audio_device_ready();
+edgy (!ready) { yapping("no audio device; running silent"); }
+```
+
+#### Music must be pumped every frame
+
+`rl_update_music()` refills the decode buffer. **Miss it and the track plays for
+a fraction of a second and stops**, with no error and no diagnostic — it is the
+one contract in this binding that fails silently and looks like a broken file.
+
+```c
+rizz track = rl_load_music("assets/music/tung-tung.ogg");
+rl_set_music_looping(track, W);
+rl_play_music(track);
+
+goon (running) {
+    rl_update_music(track);      🚽 every frame, not once
+    ...
+}
+```
+
+Measured rather than asserted: over the same two seconds of wall clock, a pumped
+stream reported 1.60 s of playback and an unpumped one reported 0.00 s. That
+comparison is `test_brainray_audio_stream_advances_only_when_pumped`.
+
+#### Music or Sound is a real choice
+
+| | `rl_load_music` | `rl_load_sound` |
+| --- | --- | --- |
+| Decoding | streamed, a buffer at a time | whole file into memory at load |
+| Needs pumping | **yes**, every frame | no |
+| Suits | a background track | a short one-shot, like the bat connecting |
+
+An 80-second stereo track loaded as a `Sound` is tens of megabytes of PCM; a
+one-shot loaded as `Music` is a stream you have to remember to pump. Neither
+mistake produces an error, which is why the distinction is spelled out here
+rather than left to the function names.
+
+#### Handles
+
+Same model as textures. `Music` and `Sound` are structs that cannot cross the
+ABI, so C owns them and Brainrot holds an integer index — 16 music slots, 64
+sound slots. A failed load returns `-1` without consuming a slot, so a
+non-negative handle always means a decodable file.
+
+Both loaders refuse before they reach raylib if `rl_is_audio_device_ready()` is
+false, so a non-negative handle also always implies a **live device**. Without
+that gate `LoadMusicStream` can report a frame count from the file while the
+playback stream behind it was never attached, and a later query would reach for
+a miniaudio mutex that `CloseAudioDevice` had already destroyed.
+
+`rl_close_audio_device` unloads every stream this module still owns before the
+device goes away, exactly as `rl_close_window` does for textures.
+
+As with textures the handle is a plain index with **no generation counter**, so
+after an unload the index is **recycled** — a stale handle silently aliases
+whatever loads into that slot next. Don't keep using a handle past its unload.
+(Until something else takes the slot the wrappers do check ownership and do
+nothing, but that is a temporary courtesy, not the contract.)
 
 ### Key codes
 

@@ -66,6 +66,39 @@
 static Texture2D g_textures[BRAINRAY_MAX_TEXTURES];
 static bool g_texture_used[BRAINRAY_MAX_TEXTURES];
 
+/* ── Audio handle tables (C owns the real Music/Sound objects) ──────────── *
+ * Same Road A trick as textures: Music and Sound are structs that cannot
+ * cross the ABI and outlive any single statement, so C keeps them and
+ * Brainrot holds an integer index. A failed load returns -1 without
+ * consuming a slot, so a non-negative handle always means a real stream.
+ *
+ * MUSIC is streamed and SOUND is decoded whole into memory, which is a
+ * choice the caller has to make rather than an implementation detail: an
+ * 80-second background track as a Sound is tens of megabytes of PCM, and a
+ * one-shot hit as a Music is a stream you have to remember to pump. */
+
+#define BRAINRAY_MAX_MUSIC 16
+#define BRAINRAY_MAX_SOUNDS 64
+
+static Music g_music[BRAINRAY_MAX_MUSIC];
+static bool g_music_used[BRAINRAY_MAX_MUSIC];
+static Sound g_sounds[BRAINRAY_MAX_SOUNDS];
+static bool g_sound_used[BRAINRAY_MAX_SOUNDS];
+
+/* Is this handle a slot this module currently owns? Both predicates live
+ * here, beside the tables they guard, so every wrapper validates the same
+ * way -- an out-of-range or already-unloaded handle does nothing rather
+ * than handing raylib a freed stream. */
+static bool br_music_live(int handle)
+{
+    return handle >= 0 && handle < BRAINRAY_MAX_MUSIC && g_music_used[handle];
+}
+
+static bool br_sound_live(int handle)
+{
+    return handle >= 0 && handle < BRAINRAY_MAX_SOUNDS && g_sound_used[handle];
+}
+
 /* Module-owned copy of the window title. raylib's InitWindow() retains the
  * pointer it is given rather than copying it, so the adapter-owned
  * STDROT_CSTRING argument cannot be handed straight through -- see the
@@ -494,6 +527,281 @@ static StdrotValue br_unload_texture(StdrotValue *args, int argc)
     return (StdrotValue){.type = STDROT_NONE};
 }
 
+/* ── Audio ───────────────────────────────────────────────────────────────── *
+ * rl_init_audio_device() must succeed before anything else here does
+ * anything at all. raylib does not report failure from InitAudioDevice() --
+ * on a machine with no sound device, or in a container, it logs and carries
+ * on, and every later call silently does nothing. rl_is_audio_device_ready()
+ * is the only way a Brainrot program can tell "playing quietly" from "not
+ * playing", so it is exposed rather than left as a diagnostic.
+ *
+ * The one contract that bites: rl_update_music() MUST be called every frame
+ * for every playing stream. It refills the decode buffer. Miss it and the
+ * track plays for a fraction of a second and stops, with no error. */
+
+static StdrotValue br_init_audio_device(StdrotValue *args, int argc)
+{
+    (void)args;
+    (void)argc;
+    BR_RAYLIB_VOID(InitAudioDevice());
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
+static StdrotValue br_is_audio_device_ready(StdrotValue *args, int argc)
+{
+    (void)args;
+    (void)argc;
+    return (StdrotValue){.type = STDROT_BOOL,
+                         .val = {.b = IsAudioDeviceReady()}};
+}
+
+static StdrotValue br_close_audio_device(StdrotValue *args, int argc)
+{
+    (void)args;
+    (void)argc;
+    /* A live handle must imply a live audio device, exactly as a texture
+     * handle implies a live GL context: unload everything this module still
+     * owns before the device goes away, or a later init plus a stale handle
+     * hands raylib a freed stream. */
+    for (int i = 0; i < BRAINRAY_MAX_MUSIC; i++)
+    {
+        if (g_music_used[i])
+        {
+            BR_RAYLIB_VOID(UnloadMusicStream(g_music[i]));
+            g_music_used[i] = false;
+        }
+    }
+    for (int i = 0; i < BRAINRAY_MAX_SOUNDS; i++)
+    {
+        if (g_sound_used[i])
+        {
+            BR_RAYLIB_VOID(UnloadSound(g_sounds[i]));
+            g_sound_used[i] = false;
+        }
+    }
+    BR_RAYLIB_VOID(CloseAudioDevice());
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
+static StdrotValue br_load_music(StdrotValue *args, int argc)
+{
+    (void)argc;
+    /* Refuse before raylib is asked, not after. LoadMusicStream() sets
+     * frameCount from the FILE once the decoder opens it; attaching the
+     * playback stream is a separate step that can leave buffer == NULL when
+     * the device was never ready or is already closed. So frameCount > 0 is
+     * not evidence of a usable stream, and a slot minted from one would
+     * break this module's central invariant -- a live handle implies a live
+     * device -- with a later rl_is_music_playing() reaching for a miniaudio
+     * mutex that was destroyed by CloseAudioDevice() or never initialised.
+     *
+     * rl_load_sound() does not have that hole (LoadSoundFromWave leaves
+     * frameCount == 0 when it cannot make a buffer) but is gated too, so the
+     * rule is one rule rather than a property of two different raylib
+     * functions that happen to differ. */
+    if (!IsAudioDeviceReady())
+    {
+        return (StdrotValue){.type = STDROT_INT, .val = {.i = -1}};
+    }
+    br_lsan_ignore_begin();
+    Music m = LoadMusicStream(args[0].val.cstr);
+    br_lsan_ignore_end();
+    /* frameCount 0 means raylib could not decode it (missing file, or a
+     * format this build has no decoder for). Don't consume a slot. */
+    if (m.frameCount == 0)
+    {
+        BR_RAYLIB_VOID(UnloadMusicStream(m));
+        return (StdrotValue){.type = STDROT_INT, .val = {.i = -1}};
+    }
+    for (int i = 0; i < BRAINRAY_MAX_MUSIC; i++)
+    {
+        if (!g_music_used[i])
+        {
+            g_music[i] = m;
+            g_music_used[i] = true;
+            return (StdrotValue){.type = STDROT_INT, .val = {.i = i}};
+        }
+    }
+    BR_RAYLIB_VOID(UnloadMusicStream(m));
+    return (StdrotValue){.type = STDROT_INT, .val = {.i = -1}};
+}
+
+static StdrotValue br_play_music(StdrotValue *args, int argc)
+{
+    (void)argc;
+    if (br_music_live(args[0].val.i))
+    {
+        BR_RAYLIB_VOID(PlayMusicStream(g_music[args[0].val.i]));
+    }
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
+static StdrotValue br_update_music(StdrotValue *args, int argc)
+{
+    (void)argc;
+    if (br_music_live(args[0].val.i))
+    {
+        BR_RAYLIB_VOID(UpdateMusicStream(g_music[args[0].val.i]));
+    }
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
+static StdrotValue br_stop_music(StdrotValue *args, int argc)
+{
+    (void)argc;
+    if (br_music_live(args[0].val.i))
+    {
+        BR_RAYLIB_VOID(StopMusicStream(g_music[args[0].val.i]));
+    }
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
+static StdrotValue br_set_music_volume(StdrotValue *args, int argc)
+{
+    (void)argc;
+    if (br_music_live(args[0].val.i))
+    {
+        BR_RAYLIB_VOID(
+            SetMusicVolume(g_music[args[0].val.i], (float)args[1].val.f));
+    }
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
+/* `looping` is a plain field on the Music struct rather than a call, so it
+ * cannot be reached from Brainrot at all without a setter. raylib defaults
+ * it to true; a background track wants that and a jingle does not. */
+static StdrotValue br_set_music_looping(StdrotValue *args, int argc)
+{
+    (void)argc;
+    if (br_music_live(args[0].val.i))
+    {
+        g_music[args[0].val.i].looping = args[1].val.b;
+    }
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
+static StdrotValue br_unload_music(StdrotValue *args, int argc)
+{
+    (void)argc;
+    int handle = args[0].val.i;
+    if (br_music_live(handle))
+    {
+        BR_RAYLIB_VOID(UnloadMusicStream(g_music[handle]));
+        g_music_used[handle] = false;
+    }
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
+/* Playback state, exposed so a program -- and a test -- can tell a stream
+ * that is running from one that silently is not. Without these, "did the
+ * music play?" has no answer inside Brainrot, and the rl_update_music()
+ * contract below has no way to be verified rather than asserted. */
+static StdrotValue br_is_music_playing(StdrotValue *args, int argc)
+{
+    (void)argc;
+    bool playing = false;
+    if (br_music_live(args[0].val.i))
+    {
+        playing = IsMusicStreamPlaying(g_music[args[0].val.i]);
+    }
+    return (StdrotValue){.type = STDROT_BOOL, .val = {.b = playing}};
+}
+
+static StdrotValue br_music_time_played(StdrotValue *args, int argc)
+{
+    (void)argc;
+    float t = 0.0f;
+    if (br_music_live(args[0].val.i))
+    {
+        t = GetMusicTimePlayed(g_music[args[0].val.i]);
+    }
+    return (StdrotValue){.type = STDROT_FLOAT, .val = {.f = t}};
+}
+
+static StdrotValue br_music_time_length(StdrotValue *args, int argc)
+{
+    (void)argc;
+    float t = 0.0f;
+    if (br_music_live(args[0].val.i))
+    {
+        t = GetMusicTimeLength(g_music[args[0].val.i]);
+    }
+    return (StdrotValue){.type = STDROT_FLOAT, .val = {.f = t}};
+}
+
+static StdrotValue br_is_sound_playing(StdrotValue *args, int argc)
+{
+    (void)argc;
+    bool playing = false;
+    if (br_sound_live(args[0].val.i))
+    {
+        playing = IsSoundPlaying(g_sounds[args[0].val.i]);
+    }
+    return (StdrotValue){.type = STDROT_BOOL, .val = {.b = playing}};
+}
+
+static StdrotValue br_load_sound(StdrotValue *args, int argc)
+{
+    (void)argc;
+    /* Same gate as rl_load_music(); see the note there. */
+    if (!IsAudioDeviceReady())
+    {
+        return (StdrotValue){.type = STDROT_INT, .val = {.i = -1}};
+    }
+    br_lsan_ignore_begin();
+    Sound snd = LoadSound(args[0].val.cstr);
+    br_lsan_ignore_end();
+    if (snd.frameCount == 0)
+    {
+        BR_RAYLIB_VOID(UnloadSound(snd));
+        return (StdrotValue){.type = STDROT_INT, .val = {.i = -1}};
+    }
+    for (int i = 0; i < BRAINRAY_MAX_SOUNDS; i++)
+    {
+        if (!g_sound_used[i])
+        {
+            g_sounds[i] = snd;
+            g_sound_used[i] = true;
+            return (StdrotValue){.type = STDROT_INT, .val = {.i = i}};
+        }
+    }
+    BR_RAYLIB_VOID(UnloadSound(snd));
+    return (StdrotValue){.type = STDROT_INT, .val = {.i = -1}};
+}
+
+static StdrotValue br_play_sound(StdrotValue *args, int argc)
+{
+    (void)argc;
+    if (br_sound_live(args[0].val.i))
+    {
+        BR_RAYLIB_VOID(PlaySound(g_sounds[args[0].val.i]));
+    }
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
+static StdrotValue br_set_sound_volume(StdrotValue *args, int argc)
+{
+    (void)argc;
+    if (br_sound_live(args[0].val.i))
+    {
+        BR_RAYLIB_VOID(
+            SetSoundVolume(g_sounds[args[0].val.i], (float)args[1].val.f));
+    }
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
+static StdrotValue br_unload_sound(StdrotValue *args, int argc)
+{
+    (void)argc;
+    int handle = args[0].val.i;
+    if (br_sound_live(handle))
+    {
+        BR_RAYLIB_VOID(UnloadSound(g_sounds[handle]));
+        g_sound_used[handle] = false;
+    }
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
 /* ── Signatures / self-registration ──────────────────────────────────────── *
  * Param descriptors let the semantic analyzer check arity and argument
  * types ahead of the call, exactly like a Brainrot-defined function. A
@@ -514,6 +822,10 @@ static StdrotValue br_unload_texture(StdrotValue *args, int argc)
 #define P_CSTRING                                                              \
     {                                                                          \
         STDROT_CSTRING, NULL, 0                                                \
+    }
+#define P_BOOL                                                                 \
+    {                                                                          \
+        STDROT_BOOL, NULL, 0                                                   \
     }
 #define R_INT ((StdrotParam){STDROT_INT, NULL, 0})
 #define R_FLOAT ((StdrotParam){STDROT_FLOAT, NULL, 0})
@@ -605,6 +917,48 @@ static const StdrotParam p_draw_texture_rec[] = {
     P_FLOAT, P_INT,   P_INT,   P_INT,   P_INT};
 STDROT_EXPORT_SIG("rl_draw_texture_rec", br_draw_texture_rec, R_NONE,
                   p_draw_texture_rec, 11, 11, false);
+
+static const StdrotParam p_handle[] = {P_INT};
+static const StdrotParam p_handle_float[] = {P_INT, P_FLOAT};
+static const StdrotParam p_handle_bool[] = {P_INT, P_BOOL};
+static const StdrotParam p_path[] = {P_CSTRING};
+
+STDROT_EXPORT_SIG("rl_init_audio_device", br_init_audio_device, R_NONE, NULL, 0,
+                  0, false);
+STDROT_EXPORT_SIG("rl_is_audio_device_ready", br_is_audio_device_ready, R_BOOL,
+                  NULL, 0, 0, false);
+STDROT_EXPORT_SIG("rl_close_audio_device", br_close_audio_device, R_NONE, NULL,
+                  0, 0, false);
+
+STDROT_EXPORT_SIG("rl_load_music", br_load_music, R_INT, p_path, 1, 1, false);
+STDROT_EXPORT_SIG("rl_play_music", br_play_music, R_NONE, p_handle, 1, 1,
+                  false);
+STDROT_EXPORT_SIG("rl_update_music", br_update_music, R_NONE, p_handle, 1, 1,
+                  false);
+STDROT_EXPORT_SIG("rl_stop_music", br_stop_music, R_NONE, p_handle, 1, 1,
+                  false);
+STDROT_EXPORT_SIG("rl_set_music_volume", br_set_music_volume, R_NONE,
+                  p_handle_float, 2, 2, false);
+STDROT_EXPORT_SIG("rl_set_music_looping", br_set_music_looping, R_NONE,
+                  p_handle_bool, 2, 2, false);
+STDROT_EXPORT_SIG("rl_unload_music", br_unload_music, R_NONE, p_handle, 1, 1,
+                  false);
+STDROT_EXPORT_SIG("rl_is_music_playing", br_is_music_playing, R_BOOL, p_handle,
+                  1, 1, false);
+STDROT_EXPORT_SIG("rl_music_time_played", br_music_time_played, R_FLOAT,
+                  p_handle, 1, 1, false);
+STDROT_EXPORT_SIG("rl_music_time_length", br_music_time_length, R_FLOAT,
+                  p_handle, 1, 1, false);
+STDROT_EXPORT_SIG("rl_is_sound_playing", br_is_sound_playing, R_BOOL, p_handle,
+                  1, 1, false);
+
+STDROT_EXPORT_SIG("rl_load_sound", br_load_sound, R_INT, p_path, 1, 1, false);
+STDROT_EXPORT_SIG("rl_play_sound", br_play_sound, R_NONE, p_handle, 1, 1,
+                  false);
+STDROT_EXPORT_SIG("rl_set_sound_volume", br_set_sound_volume, R_NONE,
+                  p_handle_float, 2, 2, false);
+STDROT_EXPORT_SIG("rl_unload_sound", br_unload_sound, R_NONE, p_handle, 1, 1,
+                  false);
 
 static const StdrotParam p_unload_texture[] = {P_INT};
 STDROT_EXPORT_SIG("rl_unload_texture", br_unload_texture, R_NONE,

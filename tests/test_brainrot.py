@@ -918,5 +918,157 @@ def test_brainray_draw_texture_rec_handle_contract(tmp_path):
         f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
 
 
+def _write_sine_wav(path, seconds=3, rate=22050, freq=440.0):
+    """Write a small mono 16-bit PCM WAV.
+
+    The audio tests need a real decodable file, and hand-rolling a RIFF
+    header is cheaper than adding an encoder dependency or checking a binary
+    into the tree. raylib loads WAV for both Sound and Music."""
+    import math
+    frames = int(rate * seconds)
+    pcm = bytearray()
+    for i in range(frames):
+        v = int(12000 * math.sin(2.0 * math.pi * freq * i / rate))
+        pcm += struct.pack("<h", v)
+    hdr = b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt "
+    hdr += struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+    hdr += b"data" + struct.pack("<I", len(pcm))
+    with open(path, "wb") as f:
+        f.write(hdr + bytes(pcm))
+
+
+@pytest.mark.skipif(
+    not _raylib_available(),
+    reason="needs raylib; brainray is an optional dependency")
+def test_brainray_audio_handles_and_pump_contract(tmp_path):
+    """Audio, in two halves, so that a headless runner still proves something.
+
+    WITHOUT a playback device -- the normal case in CI -- both loaders must
+    refuse before they reach raylib and return the documented -1. That is not
+    a nicety: LoadMusicStream() reports a frame count from the file once the
+    decoder opens it, while attaching the playback stream is a separate step
+    that can leave the stream unusable. A handle minted from that would break
+    the module's central invariant (a live handle implies a live device) and a
+    later query would reach for a miniaudio mutex that CloseAudioDevice()
+    destroyed or that was never initialised. So this half is asserted on every
+    machine, device or not.
+
+    WITH a device, the pump contract. rl_update_music() refills the decode
+    buffer, must be called every frame, and raylib reports nothing when it is
+    not -- the track plays for a fraction of a second and stops, looking
+    exactly like a broken file. So this does not assert that pumping is
+    required, it measures it: two identical streams over the same wall clock,
+    one pumped and one not. The sound path (load, volume, play, unload) runs
+    here too, since B3 is as much about the one-shot as the stream."""
+    build = subprocess.run(
+        ["make", "brainray"], cwd=REPO_ROOT,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert build.returncode == 0, f"`make brainray` failed:\n{build.stdout}"
+
+    wav = tmp_path / "tone.wav"
+    _write_sine_wav(str(wav))
+
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    source_path = tmp_path / "audio.brainrot"
+    source_path.write_text(
+        "#cooked <raylib>\n"
+        "skibidi main {\n"
+        # Before any init at all: nothing may be loadable.
+        f"    rizz cold_m = rl_load_music(\"{wav}\");\n"
+        f"    rizz cold_s = rl_load_sound(\"{wav}\");\n"
+        "    yapping(\"cold %d %d\", cold_m, cold_s);\n"
+        "    rl_init_audio_device();\n"
+        "    cap ready = rl_is_audio_device_ready();\n"
+        "    yapping(\"ready %b\", ready);\n"
+        f"    rizz missing = rl_load_music(\"{tmp_path}/nope.wav\");\n"
+        "    yapping(\"missing %d\", missing);\n"
+        "    edgy (ready) {\n"
+        f"        rizz a = rl_load_music(\"{wav}\");\n"
+        "        cap la = a >= 0;\n"
+        "        bet(la, \"generated wav must load as music\");\n"
+        "        rl_set_music_looping(a, W);\n"
+        "        rl_set_music_volume(a, 0.0);\n"
+        "        rl_play_music(a);\n"
+        "        flex (rizz i = 0; i < 2; i = i + 1) {\n"
+        "            rl_update_music(a); chill(1); rl_update_music(a);\n"
+        "        }\n"
+        "        chad pumped = rl_music_time_played(a);\n"
+        "        rl_unload_music(a);\n"
+        f"        rizz b = rl_load_music(\"{wav}\");\n"
+        "        rl_set_music_volume(b, 0.0);\n"
+        "        rl_play_music(b);\n"
+        "        flex (rizz i = 0; i < 2; i = i + 1) { chill(1); }\n"
+        "        chad idle = rl_music_time_played(b);\n"
+        "        rl_unload_music(b);\n"
+        "        yapping(\"pumped %.2f idle %.2f\", pumped, idle);\n"
+        # guards: out of range, negative, and a handle past its unload
+        "        rl_play_music(999);\n"
+        "        rl_update_music(0 - 1);\n"
+        "        rl_play_music(b);\n"
+        # the one-shot half of B3
+        f"        rizz snd = rl_load_sound(\"{wav}\");\n"
+        "        cap ls = snd >= 0;\n"
+        "        bet(ls, \"generated wav must load as a sound\");\n"
+        "        rl_set_sound_volume(snd, 0.0);\n"
+        "        rl_play_sound(snd);\n"
+        "        cap sp = rl_is_sound_playing(snd);\n"
+        "        yapping(\"sound played %b\", sp);\n"
+        "        rl_unload_sound(snd);\n"
+        "        rl_play_sound(999);\n"
+        "    }\n"
+        "    amogus {\n"
+        # No device: the loaders are the contract, and CI can check it.
+        f"        rizz nm = rl_load_music(\"{wav}\");\n"
+        f"        rizz ns = rl_load_sound(\"{wav}\");\n"
+        "        yapping(\"nodevice %d %d\", nm, ns);\n"
+        "    }\n"
+        "    rl_close_audio_device();\n"
+        # And after the device is gone, still nothing.
+        f"    rizz post_m = rl_load_music(\"{wav}\");\n"
+        f"    rizz post_s = rl_load_sound(\"{wav}\");\n"
+        "    yapping(\"postclose %d %d\", post_m, post_s);\n"
+        "    yapping(\"audio ok\");\n"
+        "    bussin 0;\n"
+        "}\n")
+
+    env = dict(os.environ, BRAINROT_PATH=BRAINRAY_DIR)
+    result = subprocess.run(
+        [brainrot_path, str(source_path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+        timeout=120)
+    out = result.stdout
+
+    assert "LeakSanitizer" not in result.stderr, (
+        f"LeakSanitizer reported leaks:\n{result.stderr}")
+    assert result.returncode == 0, (
+        f"Nonzero exit {result.returncode}\nStdout:\n{out}\n"
+        f"Stderr:\n{result.stderr}")
+    assert "audio ok" in out, f"a bet() fired before the end:\n{out}"
+
+    # Asserted everywhere, device or not.
+    assert "cold -1 -1" in out, (
+        f"loading before rl_init_audio_device() must return -1 from both "
+        f"loaders; a handle from a dead device breaks the live-handle "
+        f"invariant.\n{out}")
+    assert "postclose -1 -1" in out, (
+        f"loading after rl_close_audio_device() must return -1 from both "
+        f"loaders.\n{out}")
+    assert "missing -1" in out, f"a missing file must load to -1\n{out}"
+
+    if "ready W" not in out:
+        assert "nodevice -1 -1" in out, (
+            f"with no playback device both loaders must return -1\n{out}")
+        return
+
+    line = [x for x in out.splitlines() if x.startswith("pumped ")][0]
+    pumped, idle = float(line.split()[1]), float(line.split()[3])
+    assert idle == 0.0, (
+        f"an unpumped stream reported {idle}s of playback; if this is no "
+        f"longer 0 then rl_update_music() is not what advances a stream and "
+        f"this test proves nothing")
+    assert pumped > 0.2, (
+        f"a pumped stream only advanced {pumped}s over ~2s of wall clock")
+
+
 if __name__ == "__main__":
     pytest.main(["-v", os.path.abspath(__file__)])
