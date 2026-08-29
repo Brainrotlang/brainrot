@@ -425,6 +425,65 @@ ASTNode *create_struct_def_node(String name, StructField *fields)
     return node;
 }
 
+/* Type a member access from DECLARED types alone, executing nothing.
+ *
+ * resolve_struct_access() answers by walking real storage, which a call base
+ * has none of until the call runs -- and the type queries below must never
+ * run it. They ask with report_errors = false precisely because they are
+ * probes, and create_struct_access_node()'s eager resolve happens while the
+ * file is still being parsed.
+ *
+ * So `f().x` and `f().inner.x` were "unknown" to every static query: a chad
+ * field printed through %f came out as an int, maxxing() reported the type as
+ * not statically known, and get_expression_pointer_level() returned 0. The
+ * declared return type of f answers all of it without a single side effect,
+ * which is what this does.
+ *
+ * Returns the field, or NULL when the shape genuinely is not statically
+ * knowable (a base that is not a call or a chain of them, a call returning
+ * something other than a by-value struct, a function not yet defined). */
+static StructField *static_struct_field(ASTNode *node)
+{
+    if (!node || node->type != NODE_STRUCT_ACCESS)
+    {
+        return NULL;
+    }
+    ASTNode *obj = node->data.struct_access.object;
+    StructDef *parent = NULL;
+
+    if (obj && obj->type == NODE_FUNC_CALL)
+    {
+        if (is_builtin_function(obj->data.func_call.function_name))
+        {
+            return NULL; /* no native returns a struct across the ABI */
+        }
+        Function *func = get_function(obj->data.func_call.function_name);
+        if (!func || func->return_desc.type != VAR_STRUCT ||
+            func->return_desc.pointer_level != 0 ||
+            !func->return_desc.struct_name.data)
+        {
+            return NULL;
+        }
+        parent = get_struct_def(func->return_desc.struct_name);
+    }
+    else if (obj && obj->type == NODE_STRUCT_ACCESS)
+    {
+        StructField *outer = static_struct_field(obj);
+        if (!outer || outer->desc.type != VAR_STRUCT ||
+            !outer->desc.struct_name.data)
+        {
+            return NULL;
+        }
+        parent = get_struct_def(outer->desc.struct_name);
+    }
+
+    if (!parent)
+    {
+        return NULL;
+    }
+    return find_struct_field(parent, node->data.struct_access.member_name);
+}
+
 ASTNode *create_struct_access_node(ASTNode *object, String member)
 {
     ASTNode *node = ARENA_ALLOC_ASTNODE();
@@ -442,8 +501,15 @@ ASTNode *create_struct_access_node(ASTNode *object, String member)
     StructDef *def = NULL;
     void *base = NULL;
     StructField *fld = NULL;
-    if (resolve_struct_access(node, &def, &base, &fld,
-                              /* report_errors */ false))
+    if (!resolve_struct_access(node, &def, &base, &fld,
+                               /* report_errors */ false))
+    {
+        /* No storage to walk -- a forward reference, or a call base, which
+           this resolve is forbidden to execute. Fall back to declared
+           types, which is all a call base ever needed. */
+        fld = static_struct_field(node);
+    }
+    if (fld)
     {
         node->var_type = fld->desc.type;
         node->pointer_level = fld->desc.pointer_level;
@@ -2044,7 +2110,13 @@ int get_expression_pointer_level(ASTNode *node)
         void *base = NULL;
         StructField *fld = NULL;
         if (!resolve_struct_access(node, &def, &base, &fld, false))
-            return 0;
+        {
+            /* Declared types answer a call base; nothing here may run it. */
+            fld = static_struct_field(node);
+            if (!fld)
+                return node->pointer_level;
+        }
+        return fld->desc.pointer_level;
         return fld->desc.pointer_level;
     }
     default:
@@ -2210,7 +2282,13 @@ VarType get_expression_type(ASTNode *node)
         void *base = NULL;
         StructField *fld = NULL;
         if (!resolve_struct_access(node, &def, &base, &fld, false))
-            return NONE;
+        {
+            /* Declared types answer a call base; nothing here may run it. */
+            fld = static_struct_field(node);
+            if (!fld)
+                return node->var_type;
+        }
+        return fld->desc.type;
         return fld->desc.type;
     }
     default:
@@ -2400,7 +2478,15 @@ static VarType infer_runtime_expression_type_noeval(ASTNode *expr)
         void *base = NULL;
         StructField *fld = NULL;
         if (!resolve_struct_access(expr, &def, &base, &fld, false))
-            return NONE;
+        {
+            /* Declared types answer a call base. This function exists
+               specifically to type an expression WITHOUT evaluating it --
+               maxxing()'s operand is never run -- so a static answer is the
+               only kind allowed here, and it is available. */
+            fld = static_struct_field(expr);
+            if (!fld)
+                return NONE;
+        }
         return fld->desc.type;
     }
     default:
@@ -5221,7 +5307,16 @@ bool is_expression(ASTNode *node, VarType type)
         void *base = NULL;
         StructField *fld = NULL;
         if (!resolve_struct_access(node, &def, &base, &fld, false))
-            return false;
+        {
+            /* A call base has no storage to walk, and this probe must not
+               run the call to make some. Declared types answer it. Without
+               this the field reported no type at all and
+               ast_expr_to_stdrot_value() fell through to STDROT_INT, so a
+               chad field printed with %f came out as an integer. */
+            fld = static_struct_field(node);
+            if (!fld)
+                return false;
+        }
         return fld->desc.type == type;
     }
     default:

@@ -22,6 +22,17 @@ skibidi void_ret(rizz *n) { bussin bump(n) + 0; }
 skibidi void_arr(rizz *n) { rizz a[3] = {7, 8, 9}; bussin a[bump(n)]; }
 
 gang Pt { rizz x; };
+gang Fl { chad f; };
+gang Outer { gang Pt inner; };
+
+🚽 A chad field, so the TYPE path is pinned and not just the value path.
+🚽 Every static type query resolves a member access by walking storage, which
+🚽 a call base has none of until it runs -- and those queries are forbidden
+🚽 to run it. So they reported no type, and the variadic marshaller fell
+🚽 through to STDROT_INT: this printed 3.000000 through %f. Declared types
+🚽 answer it without evaluating anything.
+gang Fl make_fl() { gang Fl q; q.f = 3.5; bussin q; }
+gang Outer make_outer(rizz *n) { gang Outer o; o.inner.x = bump(n) + 6; bussin o; }
 
 🚽 The field is bump()+6, so the VALUE distinguishes "the call ran" from
 🚽 "the call ran and its struct survived long enough to read". Counting calls
@@ -139,6 +150,18 @@ skibidi main {
     calls = 0;
     v_field(&calls);
     yapping("field bussin %d", calls);
+
+    🚽 The type path, not the value path: a chad field through %f, and
+    🚽 maxxing(), whose operand is never evaluated so a static answer is the
+    🚽 only kind allowed.
+    yapping("field chad  %f", make_fl().f);
+    yapping("field sizeof %d", maxxing(make_pt(&calls).x));
+
+    🚽 Nested. Typing a chain reads the var_type filled in by the eager
+    🚽 parse-time resolve, which cannot run a call -- so this needed the same
+    🚽 static fallback rather than a fifth special case.
+    calls = 0;
+    yapping("field nested %d %d", make_outer(&calls).inner.x, calls);
 
     calls = 0;
     v_assign(&calls);
