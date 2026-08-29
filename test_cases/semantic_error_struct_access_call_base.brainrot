@@ -1,0 +1,22 @@
+🚽 Test case: `.` on a call whose declared return type is not a by-value
+🚽 struct is a SEMANTIC error, reported before anything runs.
+🚽
+🚽 Two separate gaps let this through. resolve_struct_access() (ast.c)
+🚽 returned false silently when the call produced no struct, on the theory
+🚽 that its callers were probes -- but all of them are real use sites and
+🚽 none adds a second diagnostic, so the failure was reported nowhere: the
+🚽 call ran, the member access quietly failed, the evaluator returned 0 and
+🚽 the process exited 0. And semantic_analyze_with_scope_tracking()'s own
+🚽 NODE_STRUCT_ACCESS case had no NODE_FUNC_CALL arm at all, so it never
+🚽 validated the member, leaving the node's type to whatever the parse-time
+🚽 eager resolve happened to leave behind.
+🚽
+🚽 The analyzer now answers this from the DECLARED return type, which is the
+🚽 only way it can: it must not run the call to find out.
+rizz not_a_struct() { bussin 5; }
+
+skibidi main {
+    rizz x = not_a_struct().nope;
+    yapping("must not print %d", x);
+    bussin 0;
+}

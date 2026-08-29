@@ -601,6 +601,21 @@ static StructDef *infer_struct_def_static(ASTNode *expr,
         return get_struct_def(sym->struct_name);
     }
 
+    if (expr->type == NODE_FUNC_CALL)
+    {
+        /* `f().x`, and as a base for a chain, `f().inner.x`. The return
+           type is declared, so this is answerable statically without
+           running anything -- which matters, because this is the analyzer.
+           A pointer-to-struct return is excluded for the same reason a
+           multi-level pointer field is below: `.` does not follow it. */
+        Function *func = get_function(expr->data.func_call.function_name);
+        if (!func || func->return_desc.type != VAR_STRUCT ||
+            func->return_desc.pointer_level != 0 ||
+            !func->return_desc.struct_name.data)
+            return NULL;
+        return get_struct_def(func->return_desc.struct_name);
+    }
+
     if (expr->type == NODE_STRUCT_ACCESS)
     {
         StructDef *parent_def =
@@ -3756,6 +3771,47 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
             }
             if (parent_is_struct_typed)
                 parent_def = get_struct_def(obj_struct_name);
+        }
+        else if (obj && obj->type == NODE_FUNC_CALL)
+        {
+            /* `f().x`, and as the base of `f().inner.x`. The return type is
+               declared, so this is answerable statically -- which is the
+               only option here, since the analyzer must not run the call.
+               Without this arm the case fell through to `break` below and
+               validated nothing: a non-struct `f().x` reached the
+               interpreter with no semantic error, and the node's var_type /
+               struct_name were only ever whatever create_struct_access_
+               node()'s parse-time resolve happened to leave behind.
+
+               Same rules as infer_struct_def_static(): a by-value struct
+               return only. `.` does not follow a pointer-to-struct return,
+               matching resolve_struct_access()'s own pointer_level == 0
+               requirement at runtime. */
+            if (is_builtin_function(obj->data.func_call.function_name))
+            {
+                /* No native returns a struct across the Road A ABI. */
+                add_semantic_error(
+                    analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                    STRING_LITERAL("Member access on the result of a "
+                                   "built-in function"),
+                    node->line_number > 0 ? node->line_number : 1);
+                break;
+            }
+            Function *func = get_function(obj->data.func_call.function_name);
+            if (!func)
+                break; /* undefined function is reported elsewhere */
+            parent_is_struct_typed = (func->return_desc.type == VAR_STRUCT);
+            if (parent_is_struct_typed && func->return_desc.pointer_level > 0)
+            {
+                add_semantic_error(
+                    analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                    STRING_LITERAL("Member access via '.' on a call "
+                                   "returning a pointer is not supported"),
+                    node->line_number > 0 ? node->line_number : 1);
+                break;
+            }
+            if (parent_is_struct_typed)
+                parent_def = get_struct_def(func->return_desc.struct_name);
         }
         else
         {

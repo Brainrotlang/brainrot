@@ -1,5 +1,12 @@
 🚽 Test case: a storage-class modifier on an alias use belongs to the
 🚽 declaration, not the typedef alias itself.
+🚽
+🚽 The counter is `salty`, so it persists across calls and the output is a
+🚽 direct count of how many times the body ran. This expected "2 4" until
+🚽 interpreter_visit_function_call() stopped executing user-defined
+🚽 functions during ast_accept()'s pre-visit: two calls, each run twice,
+🚽 gave 1,2 then 3,4. One invocation each gives 1 and 2, which is what a
+🚽 static counter incremented once per call should say.
 lit rizz Count;
 
 rizz next_count() {

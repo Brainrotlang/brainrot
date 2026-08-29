@@ -425,6 +425,65 @@ ASTNode *create_struct_def_node(String name, StructField *fields)
     return node;
 }
 
+/* Type a member access from DECLARED types alone, executing nothing.
+ *
+ * resolve_struct_access() answers by walking real storage, which a call base
+ * has none of until the call runs -- and the type queries below must never
+ * run it. They ask with report_errors = false precisely because they are
+ * probes, and create_struct_access_node()'s eager resolve happens while the
+ * file is still being parsed.
+ *
+ * So `f().x` and `f().inner.x` were "unknown" to every static query: a chad
+ * field printed through %f came out as an int, maxxing() reported the type as
+ * not statically known, and get_expression_pointer_level() returned 0. The
+ * declared return type of f answers all of it without a single side effect,
+ * which is what this does.
+ *
+ * Returns the field, or NULL when the shape genuinely is not statically
+ * knowable (a base that is not a call or a chain of them, a call returning
+ * something other than a by-value struct, a function not yet defined). */
+static StructField *static_struct_field(ASTNode *node)
+{
+    if (!node || node->type != NODE_STRUCT_ACCESS)
+    {
+        return NULL;
+    }
+    ASTNode *obj = node->data.struct_access.object;
+    StructDef *parent = NULL;
+
+    if (obj && obj->type == NODE_FUNC_CALL)
+    {
+        if (is_builtin_function(obj->data.func_call.function_name))
+        {
+            return NULL; /* no native returns a struct across the ABI */
+        }
+        Function *func = get_function(obj->data.func_call.function_name);
+        if (!func || func->return_desc.type != VAR_STRUCT ||
+            func->return_desc.pointer_level != 0 ||
+            !func->return_desc.struct_name.data)
+        {
+            return NULL;
+        }
+        parent = get_struct_def(func->return_desc.struct_name);
+    }
+    else if (obj && obj->type == NODE_STRUCT_ACCESS)
+    {
+        StructField *outer = static_struct_field(obj);
+        if (!outer || outer->desc.type != VAR_STRUCT ||
+            !outer->desc.struct_name.data)
+        {
+            return NULL;
+        }
+        parent = get_struct_def(outer->desc.struct_name);
+    }
+
+    if (!parent)
+    {
+        return NULL;
+    }
+    return find_struct_field(parent, node->data.struct_access.member_name);
+}
+
 ASTNode *create_struct_access_node(ASTNode *object, String member)
 {
     ASTNode *node = ARENA_ALLOC_ASTNODE();
@@ -442,8 +501,15 @@ ASTNode *create_struct_access_node(ASTNode *object, String member)
     StructDef *def = NULL;
     void *base = NULL;
     StructField *fld = NULL;
-    if (resolve_struct_access(node, &def, &base, &fld,
-                              /* report_errors */ false))
+    if (!resolve_struct_access(node, &def, &base, &fld,
+                               /* report_errors */ false))
+    {
+        /* No storage to walk -- a forward reference, or a call base, which
+           this resolve is forbidden to execute. Fall back to declared
+           types, which is all a call base ever needed. */
+        fld = static_struct_field(node);
+    }
+    if (fld)
     {
         node->var_type = fld->desc.type;
         node->pointer_level = fld->desc.pointer_level;
@@ -902,6 +968,65 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
             parent_base = element_addr;
         }
     }
+    else if (obj && obj->type == NODE_FUNC_CALL)
+    {
+        /* `f().x`, and by recursion `f().inner.x`. Executing the call here
+         * rather than in each caller is what lets a bare statement, a
+         * larger expression (`f().x + 0`), a `bussin f().x` and a nested
+         * field share one implementation.
+         *
+         * INVARIANT: report_errors == false means "do not execute". That
+         * flag is the only thing separating this from the eager parse-time
+         * resolve in create_struct_access_node() and the type probes in
+         * get_expression_type() and friends, which must answer from
+         * declared types alone (static_struct_field) -- running a user
+         * function from any of them would execute the program out of
+         * order, or while it is still being parsed. */
+        if (!report_errors)
+        {
+            return false;
+        }
+        if (is_builtin_function(obj->data.func_call.function_name))
+        {
+            /* No native can return a struct across the Road A ABI. */
+            yyerror("Member access on the result of a built-in function");
+            return false;
+        }
+        /* execute_function_call(), NOT handle_function_call(): the latter's
+           VAR_STRUCT case is discard-and-free, so by the time it returns
+           pvalue is 0 and there is no field left to read. */
+        execute_function_call(obj->data.func_call.function_name,
+                              obj->data.func_call.arguments);
+        if (current_return_value.desc.type != VAR_STRUCT ||
+            current_return_value.desc.pointer_level != 0 ||
+            !current_return_value.value.pvalue)
+        {
+            /* Every other failure path here reports, and no caller adds a
+               second diagnostic -- they all assume this one spoke. Staying
+               silent let `rizz x = not_a_struct().nope;` run the call,
+               yield 0 and exit 0. Semantic analysis does not catch it
+               either, so this is the only check. */
+            yyerror("Member access on a call that does not return a "
+                    "by-value struct or union");
+            free_pending_return_value();
+            return false;
+        }
+        parent_def = get_struct_def(current_return_value.desc.struct_name);
+        if (!parent_def)
+        {
+            yyerror("Unknown struct or union type");
+            free_pending_return_value();
+            return false;
+        }
+        /* BORROWED from the pending-return slot, which the next call's
+           free_pending_return_value() releases. That is safe only for a
+           caller that reads the field before anything else runs -- a scalar
+           `f().x` load. A caller that keeps the blob past that point must
+           copy it out and drop the slot itself; see
+           struct_access_executes_call() in resolve_by_value_struct_source(),
+           which is the one such caller. */
+        parent_base = (void *)current_return_value.value.pvalue;
+    }
     else
     {
         if (report_errors)
@@ -921,6 +1046,14 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                      member.data);
             yyerror(msg);
         }
+        /* `f().nope`. The call arm above left its result in the pending
+           slot for the caller to read a field out of, and there is no
+           field -- so nothing downstream will consume it. Semantic
+           analysis rejects this shape before it runs whenever the callee
+           is resolvable, which is why no test reaches here; free it
+           anyway rather than depend on that. */
+        if (obj && obj->type == NODE_FUNC_CALL)
+            free_pending_return_value();
         return false;
     }
 
@@ -930,9 +1063,26 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
     return true;
 }
 
-bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
-                                    String *tag_out, bool report_errors)
+/* Does resolving this member access run a user function -- i.e. does its
+ * base chain bottom out in a call? If so, resolve_struct_access() hands
+ * back a base that points INTO the pending-return slot's blob, and the
+ * blob dies at the next free_pending_return_value(). Every caller of
+ * resolve_by_value_struct_source() keeps the pointer past that point, so
+ * they need an owned copy instead of the borrow. */
+static bool struct_access_executes_call(const ASTNode *node)
 {
+    while (node && node->type == NODE_STRUCT_ACCESS)
+    {
+        node = node->data.struct_access.object;
+    }
+    return node && node->type == NODE_FUNC_CALL;
+}
+
+bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
+                                    String *tag_out, bool *owned_out,
+                                    bool report_errors)
+{
+    *owned_out = false;
     if (!expr)
     {
         if (report_errors)
@@ -979,7 +1129,42 @@ bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
         {
             if (report_errors)
                 yyerror("Expected a by-value struct/union field");
+            if (struct_access_executes_call(expr))
+                free_pending_return_value();
             return false;
+        }
+        if (struct_access_executes_call(expr))
+        {
+            /* `make_outer().inner`. Copy the field out of the pending-return
+               blob and release the blob now, before returning a pointer the
+               caller will still be holding when the next call reuses that
+               slot. Leaving it borrowed made `take(make_outer().inner, g())`
+               a heap-use-after-free -- g()'s cleanup freed the Outer, then
+               the bind loop copied from it -- and made `bussin
+               make_outer().inner;` leak the Outer, because that path
+               overwrites value.pvalue with its own fresh blob. */
+            StructDef *fdef = get_struct_def(fld->desc.struct_name);
+            if (!fdef)
+            {
+                if (report_errors)
+                    yyerror("Unknown struct or union type");
+                free_pending_return_value();
+                return false;
+            }
+            void *owned = calloc(1, fdef->total_size);
+            if (!owned)
+            {
+                if (report_errors)
+                    yyerror("Out of memory for struct/union value");
+                free_pending_return_value();
+                return false;
+            }
+            memcpy(owned, (char *)base + fld->offset, fdef->total_size);
+            free_pending_return_value();
+            *blob_out = owned;
+            *tag_out = fld->desc.struct_name;
+            *owned_out = true;
+            return true;
         }
         *blob_out = (char *)base + fld->offset;
         *tag_out = fld->desc.struct_name;
@@ -1988,7 +2173,12 @@ int get_expression_pointer_level(ASTNode *node)
         void *base = NULL;
         StructField *fld = NULL;
         if (!resolve_struct_access(node, &def, &base, &fld, false))
-            return 0;
+        {
+            /* Declared types answer a call base; nothing here may run it. */
+            fld = static_struct_field(node);
+            if (!fld)
+                return node->pointer_level;
+        }
         return fld->desc.pointer_level;
     }
     default:
@@ -2154,7 +2344,12 @@ VarType get_expression_type(ASTNode *node)
         void *base = NULL;
         StructField *fld = NULL;
         if (!resolve_struct_access(node, &def, &base, &fld, false))
-            return NONE;
+        {
+            /* Declared types answer a call base; nothing here may run it. */
+            fld = static_struct_field(node);
+            if (!fld)
+                return node->var_type;
+        }
         return fld->desc.type;
     }
     default:
@@ -2204,8 +2399,18 @@ static StructDef *get_struct_def_for_expression(ASTNode *expr)
         StructDef *def = NULL;
         void *base = NULL;
         StructField *fld = NULL;
-        if (resolve_struct_access(expr, &def, &base, &fld, false) &&
-            fld->desc.type == VAR_STRUCT && fld->desc.struct_name.data)
+        if (!resolve_struct_access(expr, &def, &base, &fld, false))
+        {
+            /* The sixth site, and the one that needs a LAYOUT rather than a
+               VarType. Once infer_runtime_expression_type_noeval() learned
+               to report VAR_STRUCT for `f().inner`, handle_sizeof()'s
+               "type is not statically known" gate started passing -- and
+               then failed here instead with "Invalid type in sizeof",
+               because the storage walk still found nothing to take a
+               definition from. Declared types have it. */
+            fld = static_struct_field(expr);
+        }
+        if (fld && fld->desc.type == VAR_STRUCT && fld->desc.struct_name.data)
             return get_struct_def(fld->desc.struct_name);
         return NULL;
     }
@@ -2344,7 +2549,15 @@ static VarType infer_runtime_expression_type_noeval(ASTNode *expr)
         void *base = NULL;
         StructField *fld = NULL;
         if (!resolve_struct_access(expr, &def, &base, &fld, false))
-            return NONE;
+        {
+            /* Declared types answer a call base. This function exists
+               specifically to type an expression WITHOUT evaluating it --
+               maxxing()'s operand is never run -- so a static answer is the
+               only kind allowed here, and it is available. */
+            fld = static_struct_field(expr);
+            if (!fld)
+                return NONE;
+        }
         return fld->desc.type;
     }
     default:
@@ -5165,7 +5378,16 @@ bool is_expression(ASTNode *node, VarType type)
         void *base = NULL;
         StructField *fld = NULL;
         if (!resolve_struct_access(node, &def, &base, &fld, false))
-            return false;
+        {
+            /* A call base has no storage to walk, and this probe must not
+               run the call to make some. Declared types answer it. Without
+               this the field reported no type at all and
+               ast_expr_to_stdrot_value() fell through to STDROT_INT, so a
+               chad field printed with %f came out as an integer. */
+            fld = static_struct_field(node);
+            if (!fld)
+                return false;
+        }
         return fld->desc.type == type;
     }
     default:
@@ -5273,6 +5495,47 @@ void execute_assignment(ASTNode *node)
     void *address = evaluate_lvalue_address(target);
     write_value_to_address(address, target_type, target_pointer_level,
                            value_node, mods, packed_storage);
+}
+
+/* Does ast_accept()'s own walk compute this expression's value?
+ *
+ * The visitor's expression cases exist so a shared visitor -- the semantic
+ * analyzer -- can inspect a node; they deliberately do not evaluate. Three
+ * are exceptions: interpreter_visit_unary_operation() performs a pre/post
+ * increment, interpreter_visit_array_access() performs the access, and
+ * interpreter_visit_assignment() performs the write. NODE_SIZEOF is
+ * evaluated by its visitor too and is listed for the same reason.
+ *
+ * Both places that have to decide "has this already run, or must I run it?"
+ * ask HERE rather than keeping their own list. They had separate lists for
+ * one revision and immediately disagreed: the statement path excluded
+ * increments and array accesses to avoid running them twice, while the void
+ * `bussin` arm did not, so `bussin arr[f()];` in a skibidi function ran f
+ * twice -- the exact mirror of the bug the statement list was written to
+ * avoid. */
+bool ast_accept_evaluates_expression(const ASTNode *node)
+{
+    if (!node)
+    {
+        return false;
+    }
+    switch (node->type)
+    {
+    case NODE_ARRAY_ACCESS: /* interpreter_visit_array_access */
+    case NODE_ASSIGNMENT:   /* interpreter_visit_assignment performs
+                               the write */
+    case NODE_SIZEOF:       /* interpreter_visit_sizeof */
+        return true;
+    case NODE_UNARY_OPERATION: /* only the increments; OP_NEG and friends
+                                  are inspected, not computed */
+    {
+        OperatorType op = node->data.unary.op;
+        return op == OP_POST_INC || op == OP_PRE_INC || op == OP_POST_DEC ||
+               op == OP_PRE_DEC;
+    }
+    default:
+        return false;
+    }
 }
 
 void execute_statement(ASTNode *node)
@@ -6294,6 +6557,16 @@ void execute_function_call(const String name, ArgumentList *args)
     current_return_value.desc.type = func->return_desc.type;
     current_return_value.desc.pointer_level = func->return_desc.pointer_level;
     current_return_value.has_value = false;
+    /* INVARIANT: never leave a value behind under a type it does not
+       belong to. current_return_value.value is a UNION, and the line above
+       has just declared it VAR_STRUCT for a struct-returning callee while
+       the bytes still hold the PREVIOUS call's integer. The first nested
+       call inside the body then frees that integer as a heap pointer:
+       `take(v, bump(&n)); gang Outer o = make_outer(&n);` is a SEGV on
+       origin/main for exactly this reason -- bump's int, retyped as
+       make_outer's blob pointer. Same hazard the void `bussin` arm in
+       handle_return_statement() blanks for. */
+    current_return_value.value.pvalue = 0;
 
     if (!enter_function_scope(func, args))
     {
@@ -6599,6 +6872,30 @@ void handle_return_statement(ASTNode *expr)
                     free_pending_return_value();
                 }
             }
+            else if (expr)
+            {
+                /* Anything else discarded by a void `bussin`.
+                 *
+                 * INVARIANT: do not evaluate a node ast_accept() has
+                 * already evaluated. Its pre-visit does compute an
+                 * increment and an array access, so this must ask rather
+                 * than assume. */
+                if (!ast_accept_evaluates_expression(expr))
+                {
+                    evaluate_expression(expr);
+                }
+                /* If the expression contained a call, its result is left in
+                 * the shared slot with nothing coming to consume it, and
+                 * the next call's cleanup would free it a second time. */
+                free_pending_return_value();
+                /* INVARIANT: leave no live value behind either.
+                 * current_return_value.value is a UNION, so a discarded
+                 * integer result occupies the same bytes as .pvalue --
+                 * handing the next return a "pointer" that is really a
+                 * small integer, freed later as though it were heap. */
+                current_return_value.value.pvalue = 0;
+                current_return_value.has_value = false;
+            }
             current_return_value.desc.type = declared_type;
             current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
@@ -6673,8 +6970,9 @@ void handle_return_statement(ASTNode *expr)
                findings 1 & 2). */
             void *src_blob = NULL;
             String src_tag = {0};
+            bool src_owned = false;
             if (!resolve_by_value_struct_source(expr, &src_blob, &src_tag,
-                                                true))
+                                                &src_owned, true))
             {
                 /* The helper already reported the specific failure; add no
                    second diagnostic. value.pvalue may hold a stale bit
@@ -6698,6 +6996,8 @@ void handle_return_statement(ASTNode *expr)
                 yyerror("Return expression type does not match declared "
                         "return type");
                 current_return_value.has_value = false;
+                if (src_owned)
+                    free(src_blob);
                 break;
             }
             StructDef *def = get_struct_def(src_tag);
@@ -6709,6 +7009,12 @@ void handle_return_statement(ASTNode *expr)
                 current_return_value.value.pvalue = (uintptr_t)blob;
                 current_return_value.desc.struct_name = safe_strdup(&src_tag);
             }
+            /* `bussin make_outer().inner;` -- the helper already released
+               the call's own blob and handed us a copy to own. Assigning
+               value.pvalue above would otherwise have been the only
+               reference to it. */
+            if (src_owned)
+                free(src_blob);
             break;
         }
         default:
@@ -7019,6 +7325,7 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                (see free_owned_struct_arg_blobs). */
             void *src_blob = NULL;
             String src_tag = {0};
+            bool src_owned = false;
             if (curr_arg->expr->type == NODE_FUNC_CALL)
             {
                 execute_function_call(
@@ -7060,7 +7367,7 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                 break;
             }
             if (!resolve_by_value_struct_source(curr_arg->expr, &src_blob,
-                                                &src_tag, true))
+                                                &src_tag, &src_owned, true))
             {
                 free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
                                             arg_count);
@@ -7070,11 +7377,20 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                 strcmp(src_tag.data, curr_param->desc.struct_name.data) != 0)
             {
                 yyerror("Struct argument type does not match parameter type");
+                if (src_owned)
+                    free(src_blob);
                 free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
                                             arg_count);
                 return false;
             }
+            /* `take(make_outer().inner, ...)` resolves to an OWNED copy for
+               the same reason the bare-call arm above allocates one: the
+               deep copy into the parameter happens in the binding loop
+               below, and a later argument's call would have freed the
+               original first. Recording it here hands it to
+               free_owned_struct_arg_blobs() along with the rest. */
             arg_values[arg_count].pvalue = (uintptr_t)src_blob;
+            arg_owns_blob[arg_count] = src_owned;
             break;
         }
         case VAR_PTR:

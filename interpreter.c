@@ -293,42 +293,30 @@ static void interpreter_execute_call_statement(ASTNode *node)
     }
 }
 
-/* ast_accept()'s generic pre-visit runs this on a NODE_FUNC_CALL reached as
-   part of a declaration/assignment/return/print/error statement's
-   right-hand expression, or (via visitor.c's NODE_DO_WHILE_STATEMENT case)
-   a do-while condition -- in every one of those cases, the statement's own
-   dedicated visitor (interpreter_visit_declaration et al., or this
-   interpreter's own per-iteration evaluate_expression_int() condition
-   check) is about to evaluate this exact node for real via
-   evaluate_expression_* / handle_function_call. That pre-visit exists so
-   shared visitors (e.g. the semantic analyzer, validating the call exists)
-   get a chance to look at it; it is not itself a place where executing the
-   call is correct. Doing so anyway is actively wrong, not just redundant:
-   for a self-referential declaration like `rizz n = slorp(n);`, the
-   pre-visit runs before interpreter_visit_declaration has created `n`, so
-   the argument silently evaluates to nothing and the (wrong) result gets
-   cached; for a do-while condition, the pre-visit runs before the loop
-   body has executed even once, so the first real check reads a stale
-   pre-loop value instead of re-evaluating. Do nothing here and let the
-   downstream evaluate_expression_*() call populate the memo cache itself,
-   at the right time. (Bare statement-position and for-loop init/incr
-   calls never reach here at all -- see interpreter_execute_call_statement()
-   above.) User-defined functions have no such cache and are still invoked
-   from both places -- a pre-existing gap, not introduced here, tracked
-   separately from native-call support. */
+/* INVARIANT: a pre-visit must not execute the call.
+ *
+ * ast_accept() reaches a NODE_FUNC_CALL as part of a declaration /
+ * assignment / return / print statement's right-hand expression, or a
+ * do-while condition. In every one of those the statement's own visitor
+ * (interpreter_visit_declaration et al., or the per-iteration condition
+ * check) evaluates this exact node for real afterwards, so executing here
+ * would run it twice. The pre-visit exists only so shared visitors -- the
+ * semantic analyzer -- get a look at the node.
+ *
+ * Twice is not merely wasteful, because the second result is the one that
+ * survives: `cap fired = try_fire(&p);` would report the attempt that
+ * found the work already done. And a pre-visit runs at the wrong time --
+ * before interpreter_visit_declaration creates `n` in `rizz n = slorp(n);`,
+ * and before a do-while body has run once.
+ *
+ * Natives are no different: the downstream evaluate_expression_* populates
+ * their memo cache itself, at the right time. Bare statement-position and
+ * for-loop init/incr calls never reach here -- see
+ * interpreter_execute_call_statement() above. */
 void *interpreter_visit_function_call(Visitor *self, ASTNode *node)
 {
     (void)self;
-    if (!node)
-        return NULL;
-
-    if (!is_builtin_function(node->data.func_call.function_name))
-    {
-        execute_function_call(node->data.func_call.function_name,
-                              node->data.func_call.arguments);
-        free_pending_return_value();
-    }
-
+    (void)node;
     return NULL;
 }
 
@@ -341,14 +329,53 @@ void *interpreter_visit_function_call(Visitor *self, ASTNode *node)
    wrapping a call is unaffected: it still goes through ast_accept()
    normally, since interpreter_visit_declaration() et al. *are* that real
    evaluation. */
+/* Is this node an expression standing alone as a statement?
+ *
+ * `f() + 0;`, `-f();`, `f().x;` and a bare identifier all parse as
+ * `expression SEMICOLON`, and nothing on the ast_accept() path evaluates
+ * them -- so without this they would silently never run. NODE_ARRAY_ACCESS
+ * and the increments are expressions too, but ast_accept DOES evaluate
+ * those, which is why the caller consults
+ * ast_accept_evaluates_expression() rather than this predicate alone. */
+static bool interpreter_is_expression_statement(const ASTNode *node)
+{
+    switch (node->type)
+    {
+    case NODE_OPERATION:
+    case NODE_UNARY_OPERATION:
+    case NODE_IDENTIFIER:
+    case NODE_INT:
+    case NODE_SHORT:
+    case NODE_FLOAT:
+    case NODE_DOUBLE:
+    case NODE_CHAR:
+    case NODE_BOOLEAN:
+    case NODE_SIZEOF:
+    case NODE_STRUCT_ACCESS:
+    case NODE_ARRAY_ACCESS:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static void interpreter_accept_or_execute_call(ASTNode *node, Visitor *self)
 {
     if (!node)
         return;
     if (node->type == NODE_FUNC_CALL)
+    {
         interpreter_execute_call_statement(node);
+    }
+    else if (interpreter_is_expression_statement(node) &&
+             !ast_accept_evaluates_expression(node))
+    {
+        evaluate_expression(node);
+    }
     else
+    {
         ast_accept(node, self);
+    }
 }
 
 void *interpreter_visit_sizeof(Visitor *self, ASTNode *node)
@@ -498,8 +525,9 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
                        variable). */
                     void *msrc_blob = NULL;
                     String msrc_tag = {0};
-                    if (resolve_by_value_struct_source(src_expr, &msrc_blob,
-                                                       &msrc_tag, true))
+                    bool msrc_owned = false;
+                    if (resolve_by_value_struct_source(
+                            src_expr, &msrc_blob, &msrc_tag, &msrc_owned, true))
                     {
                         if (msrc_tag.data && sv->value.array_data &&
                             strcmp(msrc_tag.data, struct_type.data) == 0)
@@ -513,6 +541,11 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
                             yyerror("Cannot copy-initialize from a struct/"
                                     "union value of a different type");
                         }
+                        /* `gang Inner c = make_outer().inner;` -- the blob
+                           is our copy of a call result whose own storage
+                           the helper already released. */
+                        if (msrc_owned)
+                            free(msrc_blob);
                     }
                 }
             }

@@ -689,6 +689,7 @@ int evaluate_expression_int(ASTNode *node);
 short evaluate_expression_short(ASTNode *node);
 bool evaluate_expression_bool(ASTNode *node);
 int evaluate_expression(ASTNode *node);
+bool ast_accept_evaluates_expression(const ASTNode *node);
 /* Zero-extends `raw` to what a scalar VAR_CHAR Variable's own 4-byte
    union slot (value.ivalue -- there is no dedicated 1-byte member)
    must always hold: upper 3 bytes zero, regardless of `raw`'s actual
@@ -845,9 +846,17 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
    identifier and member forms): a struct POINTER where a by-value struct
    is expected is a type error, not an implicit dereference. Returns false
    on any failure, emitting exactly one diagnostic via yyerror() when
-   report_errors is true (callers must not add a second). */
+   report_errors is true (callers must not add a second).
+
+   *owned_out tells the caller who owns *blob_out. False (the common case)
+   means the blob is borrowed from live storage -- a variable, an array
+   element, a field of one -- and must not be freed. True means the source
+   was a call result (`make_outer().inner`) copied into a fresh allocation,
+   because the call's own blob is released before this returns; the caller
+   must free() *blob_out once it has copied out of it. */
 bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
-                                    String *tag_out, bool report_errors);
+                                    String *tag_out, bool *owned_out,
+                                    bool report_errors);
 /* Set when parsing produced a struct/union that's unusable (self-embedding
    by value, an unknown nested type, or — see populate_struct_fields() —
    a scalar/flattened value where a nested struct/union sub-initializer
