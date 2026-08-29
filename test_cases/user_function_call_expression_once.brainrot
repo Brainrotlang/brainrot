@@ -7,8 +7,34 @@ gigachad widen() {
     bussin noisy();
 }
 
+rizz loop_init() {
+    yappin("INIT\n");
+    bussin 0;
+}
+
+rizz loop_increment() {
+    yappin("INCREMENT\n");
+    bussin 0;
+}
+
 skibidi main {
+    yappin("direct\n");
+    noisy();
+
+    yappin("nested\n");
+    noisy() + 1;
+
+    yappin("initializer\n");
     gigachad x = widen();
-    yappin("%f\n", x);
+
+    yappin("assignment\n");
+    x = noisy();
+
+    rizz i = 0;
+    yappin("for expressions\n");
+    flex (loop_init() + 0; i < 2; loop_increment() + i++) {
+    }
+
+    yappin("%f %d\n", x, i);
     bussin 0;
 }

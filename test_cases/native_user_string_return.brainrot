@@ -7,17 +7,10 @@
 🚽 the checker approved a contract the producer couldn't fulfill. Fixed
 🚽 by adding both cases, mirroring exactly how handle_function_call()'s
 🚽 own consumer-side switch already knows how to box a String/char
-🚽 return. Fixing this exposed a second, narrower bug: a user-defined
-🚽 function has no memo cache the way a native call does
-🚽 (interpreter_visit_function_call()'s own comment), so it's genuinely
-🚽 invoked TWICE for a call embedded in a declaration initializer -- the
-🚽 first (pre-visit) call's owned string result was never consumed or
-🚽 freed, a leak that could never manifest before this fix (every other
-🚽 return type either owns no separate heap allocation, or -- for
-🚽 VAR_STRUCT -- already had its own pending-value cleanup). Closed by
-🚽 extending free_pending_struct_return_value()'s existing "clear
-🚽 whatever's still sitting in current_return_value before this slot
-🚽 gets overwritten" sweep to also cover an unconsumed owned string.
+🚽 return. The initializer below is evaluated exactly once by the
+🚽 declaration's value evaluator; structural visitor traversal does not
+🚽 execute its nested call. If a returned owned string is discarded,
+🚽 free_pending_return_value() releases it alongside pending struct values.
 rant hello() {
     bussin "hello";
 }

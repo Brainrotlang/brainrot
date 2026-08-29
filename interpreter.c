@@ -34,6 +34,7 @@ extern double evaluate_expression_double(ASTNode *node);
 extern short evaluate_expression_short(ASTNode *node);
 extern bool evaluate_expression_bool(ASTNode *node);
 extern String evaluate_expression_string(ASTNode *node);
+extern VarType get_expression_type(ASTNode *node);
 extern void *evaluate_multi_array_access(ASTNode *node);
 extern void *handle_function_call(ASTNode *node);
 extern size_t handle_sizeof(ASTNode *node);
@@ -320,6 +321,107 @@ static void interpreter_execute_call_statement(ASTNode *node)
     }
 }
 
+/* Evaluate an expression whose value is intentionally discarded. This is
+   deliberately separate from ast_accept(): the latter is a structural AST
+   walk, so its expression visitors cannot safely execute nested calls (the
+   enclosing evaluator would execute them again), while a discarded
+   expression still has to run exactly once for its side effects. Return true
+   when node was an expression and was executed here; statement nodes return
+   false so the caller can dispatch them through the regular visitor. */
+static bool interpreter_execute_discarded_expression(ASTNode *node)
+{
+    if (!node)
+        return false;
+
+    if (node->type == NODE_FUNC_CALL)
+    {
+        /* Preserve the deprecated native write-back convention for a call
+           used as a statement, and explicitly discard user-function return
+           storage. */
+        interpreter_execute_call_statement(node);
+        return true;
+    }
+
+    if (node->type == NODE_ASSIGNMENT)
+    {
+        execute_assignment(node);
+        return true;
+    }
+
+    switch (node->type)
+    {
+    case NODE_INT:
+    case NODE_SHORT:
+    case NODE_FLOAT:
+    case NODE_DOUBLE:
+    case NODE_CHAR:
+    case NODE_BOOLEAN:
+    case NODE_STRING:
+    case NODE_STRING_LITERAL:
+    case NODE_IDENTIFIER:
+    case NODE_OPERATION:
+    case NODE_UNARY_OPERATION:
+    case NODE_SIZEOF:
+    case NODE_ARRAY_ACCESS:
+    case NODE_STRUCT_ACCESS:
+        break;
+    default:
+        return false;
+    }
+
+    if (get_expression_pointer_level(node) > 0)
+    {
+        (void)evaluate_expression_pointer(node);
+        return true;
+    }
+
+    /* get_expression_type() has no literal-string arm; evaluate those
+       directly and release the otherwise-discarded owned copy. */
+    if (node->type == NODE_STRING || node->type == NODE_STRING_LITERAL)
+    {
+        String result = evaluate_expression_string(node);
+        SAFE_FREE(result.data);
+        return true;
+    }
+
+    switch (get_expression_type(node))
+    {
+    case VAR_SHORT:
+        (void)evaluate_expression_short(node);
+        break;
+    case VAR_FLOAT:
+        (void)evaluate_expression_float(node);
+        break;
+    case VAR_DOUBLE:
+        (void)evaluate_expression_double(node);
+        break;
+    case VAR_BOOL:
+        (void)evaluate_expression_bool(node);
+        break;
+    case VAR_STRING:
+    {
+        String result = evaluate_expression_string(node);
+        SAFE_FREE(result.data);
+        break;
+    }
+    case VAR_INT:
+    case VAR_CHAR:
+    case VAR_ENUM:
+        (void)evaluate_expression_int(node);
+        break;
+    case VAR_STRUCT:
+    case VAR_PTR:
+    case VAR_VOID:
+    case NONE:
+        /* A struct value has no scalar evaluator and no effect to realize;
+           VAR_PTR was handled by pointer_level above. Void and unknown
+           values cannot occur here for a valid non-call expression. */
+        break;
+    }
+
+    return true;
+}
+
 /* ast_accept()'s generic pre-visit runs this on a NODE_FUNC_CALL reached as
    part of a declaration/assignment/return/print/error statement's
    right-hand expression, or (via visitor.c's NODE_DO_WHILE_STATEMENT case)
@@ -349,22 +451,13 @@ void *interpreter_visit_function_call(Visitor *self, ASTNode *node)
     return NULL;
 }
 
-/* ast_accept(), but a bare NODE_FUNC_CALL is executed directly via
-   interpreter_execute_call_statement() instead of going through
-   interpreter_visit_function_call()'s pre-visit no-op. Use this at any site
-   where a bare call has no other visitor coming along afterward to
-   evaluate it for real -- currently statement-list entries and a for
-   loop's own init/increment clause. A declaration/assignment (etc.)
-   wrapping a call is unaffected: it still goes through ast_accept()
-   normally, since interpreter_visit_declaration() et al. *are* that real
-   evaluation. */
-static void interpreter_accept_or_execute_call(ASTNode *node, Visitor *self)
+/* Execute expression statements explicitly; use ast_accept() only for real
+   statement nodes whose dedicated visitor owns their runtime semantics. */
+static void interpreter_execute_statement_node(ASTNode *node, Visitor *self)
 {
     if (!node)
         return;
-    if (node->type == NODE_FUNC_CALL)
-        interpreter_execute_call_statement(node);
-    else
+    if (!interpreter_execute_discarded_expression(node))
         ast_accept(node, self);
 }
 
@@ -680,7 +773,7 @@ void interpreter_visit_for_statement(Visitor *self, ASTNode *node)
 
         if (node->data.for_stmt.init)
         {
-            interpreter_accept_or_execute_call(node->data.for_stmt.init, self);
+            interpreter_execute_statement_node(node->data.for_stmt.init, self);
         }
 
         while (1)
@@ -704,7 +797,7 @@ void interpreter_visit_for_statement(Visitor *self, ASTNode *node)
 
             if (node->data.for_stmt.incr)
             {
-                interpreter_accept_or_execute_call(node->data.for_stmt.incr,
+                interpreter_execute_statement_node(node->data.for_stmt.incr,
                                                    self);
             }
             exit_scope();
@@ -852,7 +945,7 @@ void interpreter_visit_statement_list(Visitor *self, ASTNode *node)
     while (stmt)
     {
         if (stmt->statement)
-            interpreter_accept_or_execute_call(stmt->statement, self);
+            interpreter_execute_statement_node(stmt->statement, self);
         stmt = stmt->next;
     }
 }
