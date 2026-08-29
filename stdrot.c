@@ -1506,18 +1506,6 @@ static bool coerce_arg_to_param(StdrotValue *value, StdrotType declared)
             return true;
         }
         return false;
-    case STDROT_STRUCT:
-        /* Nothing to coerce INTO a by-value aggregate: no scalar or
-           string has a meaningful conversion to one, and a struct
-           argument already arrives tagged STDROT_STRUCT from
-           ast_expr_to_stdrot_value() (so it returned at the top of this
-           function without reaching here). The defensive copy that
-           STDROT_STRUCT's contract promises is therefore NOT made here
-           -- it happens in execute_native_call(), next to the ownership
-           arrays that have to free it, because this function is only
-           reached when a conversion is actually needed and the copy must
-           happen on every struct argument, converted or not. */
-        return false;
     default:
         /* STDROT_BOOL/STDROT_CHAR/STDROT_STRING/STDROT_ANY/STDROT_PTR/
            STDROT_HANDLE/STDROT_NONE: the semantic checker requires an
@@ -1529,7 +1517,21 @@ static bool coerce_arg_to_param(StdrotValue *value, StdrotType declared)
            reached with a value that has no available coercion. Returning
            false here (as opposed to silently accepting) is correct;
            enforce_arg_type() below is what actually catches the
-           still-mismatched value afterward. */
+           still-mismatched value afterward.
+
+           STDROT_STRUCT belongs here rather than in a case of its own,
+           because "no coercion applies" is the whole of its behavior:
+           nothing converts INTO a by-value aggregate, and a struct
+           argument already arrives tagged STDROT_STRUCT from
+           ast_expr_to_stdrot_value(), so it returns at the top of this
+           function without ever reaching the switch. (A separate case
+           returning the same `false` was a genuine branch clone, which
+           clang-tidy is right to reject -- the distinction was only ever
+           documentary.) The defensive copy STDROT_STRUCT's contract
+           promises is not made here at all: it happens in
+           execute_native_call(), next to the ownership arrays that have
+           to free it, since it must happen for every struct argument
+           whether or not any coercion was needed. */
         return false;
     }
 }
