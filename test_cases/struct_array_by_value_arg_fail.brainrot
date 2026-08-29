@@ -10,9 +10,41 @@
 🚽 `rizz a[2]` passed to a scalar parameter gets "int arrays cannot be
 🚽 passed where a scalar/string is expected".
 🚽
-🚽 The same rejection covers the native-call path (a declared
-🚽 STDROT_STRUCT parameter), which additionally reports it at analysis
-🚽 time -- see tests/test_brainrot.py's struct_array_for_by_value case.
+🚽 ── What this fixture pins, and why it prints the result ──────────────
+🚽 The call's result is PRINTED rather than discarded on purpose. Pinning
+🚽 only the diagnostic would leave an implementation that reports the
+🚽 error and then binds garbage passing this fixture -- the failed call
+🚽 has to yield something, and what it yields is part of the contract
+🚽 (PR #307 review, round 2). The parameter is left zeroed, so this
+🚽 prints 0.0; if a regression ever went back to quietly binding pts[0],
+🚽 this line would print 25.0 and the fixture would catch it even if the
+🚽 diagnostic were still emitted.
+🚽
+🚽 ── Two known-wrong things this fixture deliberately bakes in ─────────
+🚽 Both are PRE-EXISTING behavior of this whole family of runtime
+🚽 yyerror() diagnostics, not something this rejection introduced -- but
+🚽 a fixture is where wrong behavior becomes *expected* behavior, so
+🚽 neither should be read as correct:
+🚽
+🚽   1. The reported line is 63 -- main's closing brace -- not 61, where
+🚽      the offending `len2(pts)` actually is. These runtime errors report
+🚽      wherever the lexer's line counter finished rather than the call
+🚽      site's own line; `len2(*p)` misattributes identically on main.
+🚽   2. Execution CONTINUES after the error and the process exits 0. A
+🚽      Brainrot program that hits one of these does not abort.
+🚽
+🚽 ── Why the native path is stricter ───────────────────────────────────
+🚽 The same rejection covers a native call taking a declared
+🚽 STDROT_STRUCT parameter, but there it is reported at ANALYSIS time and
+🚽 exits 1 (see tests/test_brainrot.py's struct_array_for_by_value case).
+🚽 The asymmetry is not arbitrary: semantic_check_native_call() has a
+🚽 StdrotParam that names the expected tag, so the mismatch is knowable
+🚽 before anything runs, and refusing to run at all is the only safe
+🚽 answer when the alternative is memcpy'ing bytes into a C struct inside
+🚽 someone else's library. A Brainrot-defined callee has no such
+🚽 descriptor at this call site, so the check necessarily happens while
+🚽 evaluating the argument -- by which point the interpreter is already
+🚽 running and this family's convention is to report and carry on.
 gang Point {
     chad x;
     chad y;
@@ -26,6 +58,6 @@ skibidi main {
     gang Point pts[2];
     pts[0].x = 3.0;
     pts[0].y = 4.0;
-    len2(pts);
+    yapping("%.1f", len2(pts));
     bussin 0;
 }
