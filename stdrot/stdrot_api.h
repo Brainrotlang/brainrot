@@ -259,8 +259,17 @@ typedef struct
         {
             /* The Brainrot tag, NUL-terminated and WITHOUT the `gang`/
                `chungus` keyword: `gang Vector2` is "Vector2". Borrowed
-               for the duration of the call (it points into the caller's
-               StructDef, which outlives every call). Checked against the
+               for the duration of the call, and anchored to the type
+               registry rather than to any caller-side storage: it points
+               into the registered StructDef's own name, which outlives
+               every call. That is a property of the single producer of
+               these values -- marshal_struct_argument() (stdrot.c),
+               which sets it from def->name.data specifically so this
+               sentence stays true even when the source expression it
+               resolved was a temporary. Any future second producer must
+               do the same; pointing it at a live Variable's descriptor
+               instead would silently narrow the documented lifetime to
+               that variable's scope. Checked against the
                declared StdrotParam.type_name by enforce_arg_type()
                (stdrot.c) before entry->fn() ever sees it, so a native
                may read this purely for its own dispatch/debugging and is

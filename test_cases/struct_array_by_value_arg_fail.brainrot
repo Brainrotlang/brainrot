@@ -1,0 +1,31 @@
+🚽 Test case: PR #307 review, finding 1 -- an ARRAY of structs is not a
+🚽 by-value struct value, and passing one where a struct parameter is
+🚽 declared must say so rather than silently hand over element 0.
+🚽
+🚽 `gang Point pts[2]` keeps the whole array in the same Variable slot a
+🚽 single struct uses, so resolve_by_value_struct_source() (ast.c) would
+🚽 otherwise copy total_size bytes out of it and pass pts[0] -- the caller
+🚽 writes `len2(pts)`, the callee receives pts[0], and nothing anywhere
+🚽 objects. Every other type already rejected this shape:
+🚽 `rizz a[2]` passed to a scalar parameter gets "int arrays cannot be
+🚽 passed where a scalar/string is expected".
+🚽
+🚽 The same rejection covers the native-call path (a declared
+🚽 STDROT_STRUCT parameter), which additionally reports it at analysis
+🚽 time -- see tests/test_brainrot.py's struct_array_for_by_value case.
+gang Point {
+    chad x;
+    chad y;
+};
+
+chad len2(gang Point p) {
+    bussin p.x * p.x + p.y * p.y;
+}
+
+skibidi main {
+    gang Point pts[2];
+    pts[0].x = 3.0;
+    pts[0].y = 4.0;
+    len2(pts);
+    bussin 0;
+}

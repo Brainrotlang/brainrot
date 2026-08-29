@@ -1359,10 +1359,12 @@ per keyword, and default to "library function" when in doubt.
      pinned version moves.
    - **The C adapters the generator emits are derived, and are not
      committed.** They are `lang.tab.c` by another name: produced into the
-     build tree by the `brainray` target only, gitignored, never hand-edited,
-     and excluded from `make format-check` exactly as the Bison/Flex output
-     already is (a generator that has to satisfy clang-format is a generator
-     nobody wants to change).
+     build tree (`brainray/generated/`) by the `brainray-gen-sources` and
+     `brainray-gen` targets only -- NOT by `brainray`, which builds Road A's
+     hand-written module and never runs the generator -- gitignored, never
+     hand-edited, and excluded from `make format-check` exactly as the
+     Bison/Flex output already is (a generator that has to satisfy
+     clang-format is a generator nobody wants to change).
 
    So the answer to "does raylib become a build dependency?" is: no more than
    it already is. `make brainray` has required a pkg-config-visible raylib

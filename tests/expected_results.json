@@ -393,5 +393,6 @@
     "array_of_structs_unknown_type_fail": "Error: Unknown struct/union type 'Nope' at line 3\nParsing failed",
     "array_of_structs_oob_fail": "Error: Array index out of bounds: dimension 1 (index=5, size=2) at line 11",
     "array_of_structs_scalar_member_fail": "Error: Member access on non-struct/union value at line 7",
-    "semantic_error_struct_access_call_base": "Error: Member access on non-struct/union value at line 19"
+    "semantic_error_struct_access_call_base": "Error: Member access on non-struct/union value at line 19",
+    "struct_array_by_value_arg_fail": "Error: Expected a by-value struct/union value, got an array (index it, e.g. `arr[0]`) at line 31"
 }

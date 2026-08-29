@@ -706,6 +706,22 @@ NATIVE_STRUCT_REJECTION_CASES = [
         "native by-value struct return types are not marshalled yet",
         '',
         id="struct_return"),
+    # PR #307 review, finding 1. An ARRAY of structs passed where a single
+    # by-value struct is declared used to be accepted silently, handing the
+    # native element 0 of something the caller plainly wrote as an array --
+    # while `rizz a[2]` passed to a scalar parameter had always produced a
+    # clean diagnostic. infer_expression_type() reports an array
+    # identifier's ELEMENT type, so `gang Vec2 arr[4]` looked exactly like a
+    # `gang Vec2` to both the type check and the tag check.
+    pytest.param(
+        '    gang Vec2 arr[4];\n'
+        '    arr[0].x = 3.0;\n'
+        '    arr[0].y = 4.0;\n'
+        '    yapping("%.1f", vec2_len2(arr));\n',
+        "struct arrays cannot be passed where a by-value struct 'Vec2' is "
+        "expected",
+        '',
+        id="struct_array_for_by_value"),
 ]
 
 
@@ -735,6 +751,33 @@ def test_native_struct_arg_rejections(body, expected_message, extra_decls,
         f"Expected {expected_message!r}\n"
         f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
     )
+
+
+def test_native_struct_array_element_still_accepted(tmp_path):
+    """The array REJECTION above must not take the array-element form with
+    it: `arr[0]` is a perfectly good by-value struct source and has to keep
+    working, or the fix would have traded a silent wrong answer for a
+    false rejection."""
+    _assert_nativemodules_built("structnative.so")
+
+    result = _run_with_native_modules(
+        STRUCT_ABI_PRELUDE +
+        'skibidi main {\n'
+        '    gang Vec2 arr[3];\n'
+        '    arr[0].x = 3.0;\n'
+        '    arr[0].y = 4.0;\n'
+        '    arr[1].x = 6.0;\n'
+        '    arr[1].y = 8.0;\n'
+        '    yapping("%.1f", vec2_len2(arr[0]));\n'
+        '    yapping("%.1f", vec2_len2(arr[1]));\n'
+        '    bussin 0;\n'
+        '}\n', tmp_path)
+
+    assert result.returncode == 0, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert result.stdout == "25.0\n100.0\n", (
+        f"Actual stdout:\n{result.stdout}")
 
 
 def test_native_module_duplicate_with_core(tmp_path):

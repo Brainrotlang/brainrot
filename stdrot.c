@@ -1119,40 +1119,6 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
             out->type = STDROT_INT;
             out->val.i = var->value.ivalue;
             return;
-        case VAR_STRUCT:
-        {
-            /* Borrowed here, copied later: this points straight at the
-               live variable's own blob, and coerce_arg_to_param() is
-               what turns it into the adapter-owned copy the ABI actually
-               promises a native (STDROT_STRUCT's comment, stdrot_api.h).
-               Splitting it that way keeps the copy on the same code path
-               as STDROT_CSTRING's -- one place that allocates argument
-               scratch, one place that frees it -- instead of giving this
-               function, which has no ownership tracking of its own, a
-               heap allocation to leak on every path that abandons the
-               value.
-
-               An array of structs is deliberately NOT handled:
-               var->value.array_data would be the whole array, and
-               .blob.size the single-element size, so the native would
-               silently receive element 0 of something the caller wrote
-               as an array. is_unmarshallable_array_arg()
-               (semantic_analyzer.c) already rejects that statically for
-               every other type; leaving out->type at STDROT_NONE here
-               makes it a loud runtime failure too, rather than a quiet
-               half-read. */
-            if (var->desc.is_array || !var->value.array_data ||
-                !var->desc.struct_name.data)
-                return;
-            StructDef *def = get_struct_def(var->desc.struct_name);
-            if (!def || def->total_size == 0)
-                return;
-            out->type = STDROT_STRUCT;
-            out->val.blob.type_name = var->desc.struct_name.data;
-            out->val.blob.data = var->value.array_data;
-            out->val.blob.size = def->total_size;
-            return;
-        }
         default:
             return;
         }
@@ -2107,42 +2073,6 @@ NativeResult execute_native_call(const String func_name, ArgumentList *args,
             {
                 apply_variadic_promotion(&arg_values[arg_count]);
             }
-        }
-
-        /* Replace the borrowed pointer into the caller's live struct
-           variable (ast_expr_to_stdrot_value()'s VAR_STRUCT case) with
-           the independent copy STDROT_STRUCT's contract promises, and
-           hand the copy to this frame's cleanup. Done here, after both
-           branches above rather than inside the typed one, so it covers
-           a struct that reaches an unchecked variadic/legacy tail too:
-           such an argument has no StdrotParam to coerce against, but it
-           is exactly as capable of letting a native mutate (or outlive)
-           the caller's variable, and "the tail is unchecked" is a
-           statement about types, not about memory safety.
-
-           A zero-size or data-less blob cannot occur -- ast_expr_to_
-           stdrot_value() leaves out->type at STDROT_NONE rather than
-           emitting one -- so failing to allocate is the only way here,
-           and it is fatal rather than silently passing the borrowed
-           pointer through: continuing would hand the native the caller's
-           own storage under a contract that promises a copy. */
-        if (arg_values[arg_count].type == STDROT_STRUCT)
-        {
-            StdrotValue *sv = &arg_values[arg_count];
-            void *copy = SAFE_MALLOC_ARRAY(char, sv->val.blob.size);
-            if (!copy)
-            {
-                fprintf(stderr,
-                        "Error: stdrot: native '%s' argument %d: out of "
-                        "memory copying a %zu-byte '%s' struct argument\n",
-                        func_name.data, arg_count + 1, sv->val.blob.size,
-                        sv->val.blob.type_name ? sv->val.blob.type_name
-                                               : "(unknown)");
-                exit(1);
-            }
-            memcpy(copy, sv->val.blob.data, sv->val.blob.size);
-            sv->val.blob.data = copy;
-            owned_blob_bufs[arg_count] = copy;
         }
 
         arg_count++;

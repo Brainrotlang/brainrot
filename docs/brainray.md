@@ -298,7 +298,7 @@ checked:
 | Pair | Where |
 | --- | --- |
 | generator's model ↔ real raylib headers | `raylibgen_abi_check.c` — `_Static_assert` on `sizeof`, `_Alignof`, and every `offsetof`. Building it *is* the check. |
-| generator's model ↔ Brainrot's `compute_struct_layout()` | `tests/test_brainray_gen.py` — runs the interpreter, compares `maxxing()` per type. Needs no raylib. |
+| generator's model ↔ Brainrot's `compute_struct_layout()` | `tests/test_brainray_gen.py` — runs the interpreter and compares both each type's total size **and** its interior padding, the latter via prefix probes with a trailing sentinel byte. Needs no raylib. Strong but indirect: Brainrot cannot observe a field's address, so offsets are compared through prefix sizes rather than read off directly. |
 | generator's model ↔ known-good constants | `tests/test_brainray_gen.py` — hardcoded raylib layouts, so a generator bug can't agree with itself. |
 
 ### What it deliberately leaves out

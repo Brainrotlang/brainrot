@@ -14,12 +14,24 @@ target:
 What IS covered without raylib is the more interesting half of the layout
 story anyway: that the generator's own layout model agrees with Brainrot's
 compute_struct_layout(). Those are two independent implementations of C's
-struct rules -- one in Python here, one in ast.c -- and
-test_generated_gang_layouts_match_brainrot() makes the interpreter itself
-report maxxing() for every generated `gang` and compares. With the
-raylib-side check in the generated ABI translation unit, the three-way
-agreement (generator model / Brainrot runtime / real C headers) is complete;
-each pair is checked somewhere.
+struct rules -- one in Python here, one in ast.c -- compared by making the
+interpreter itself report sizes, in two steps that are both needed:
+
+  * ..._gang_layouts_match_brainrot() compares each type's TOTAL size.
+  * ..._gang_field_offsets_match_brainrot() compares INTERIOR padding, via
+    prefix probes with a trailing 1-byte sentinel. Total size alone is not
+    enough and that is not hypothetical: a `RayCollision` with no interior
+    padding whatsoever still totals 32 bytes, so the first test passes on a
+    layout with every field in the wrong place (PR #307 review, finding 3).
+
+Be precise about the strength of each edge, because an earlier version of
+this docstring was not. The generated ABI translation unit compares the
+generator's model to real raylib headers EXACTLY -- `sizeof`, `_Alignof`, and
+every single `offsetof`. The generator↔Brainrot comparison here is strong but
+indirect: Brainrot exposes no way to observe a field's address, so offsets are
+compared through the sizes of prefix structs rather than read off directly. It
+is sensitive to any interior-padding disagreement (verified by mutation), not
+to literally every conceivable byte-level divergence.
 """
 
 import json
@@ -327,3 +339,107 @@ def test_generated_gang_layouts_match_brainrot(generated, tmp_path):
     assert not mismatches, (
         "generator layout model disagrees with Brainrot's "
         f"compute_struct_layout(): {mismatches}")
+
+
+def _field_spelling(ctype, fname):
+    """How the prelude declares one field -- a Brainrot scalar keyword, or
+    `gang <Tag>` for a nested by-value struct. Mirrors emit_prelude()."""
+    if ctype in gen.SCALARS:
+        return f"{gen.SCALARS[ctype][1]} {fname};"
+    return f"gang {ctype} {fname};"
+
+
+def test_generated_gang_field_offsets_match_brainrot(generated, model,
+                                                     tmp_path):
+    """The interior half of the generator↔Brainrot layout comparison.
+
+    test_generated_gang_layouts_match_brainrot() above compares total size,
+    which is necessary but genuinely not sufficient: `RayCollision` is
+    `{cap; chad; gang Vector3; gang Vector3;}`, and a layout that applied NO
+    interior padding at all would put its fields at 0/1/5/17 and still total
+    32 bytes after rounding to alignment 4 -- identical `maxxing()`, every
+    offset wrong, and `DrawRay`-shaped calls quietly reading garbage
+    (PR #307 review, finding 3). `BR_READ_STRUCT` checks size too, so it
+    cannot catch it either.
+
+    Comparing offsets directly would need a way to observe an address from
+    Brainrot. Instead this compares the two algorithms at every interior
+    step, which is the same information: for each struct it declares a
+    PREFIX gang holding just the first k fields and asks the interpreter for
+    its size. That size is a direct function of the padding decisions
+    between exactly those fields, so if the generator and
+    compute_struct_layout() agree on every prefix of every struct, they agree
+    about where each field lands. On the packed-RayCollision hypothetical the
+    prefix `{cap; chad;}` is 8 bytes correctly padded and 5 packed -- caught.
+    """
+    brainrot = os.path.join(repo_root, "brainrot")
+    assert os.path.exists(brainrot), "run `make` first"
+
+    prelude = (generated / "raylibgen.brainrot").read_text(encoding="utf-8")
+    types_only = "\n".join(l for l in prelude.splitlines()
+                           if not l.startswith("#cooked"))
+
+    # (probe gang name -> size the GENERATOR computes for that field list)
+    expected = {}
+    decls = []
+    for name in model.emittable:
+        _, _, fields = model.layouts[name]
+        if len(fields) < 2:
+            continue  # a one-field struct has no interior to disagree about
+        for k in range(1, len(fields)):
+            prefix = fields[:k]
+            probe = f"Pfx{name}{k}"
+            # A trailing 1-byte sentinel is what makes this probe see
+            # INTERIOR padding at all. Without it the struct's size is
+            # rounded up to its own max alignment, which hides the very
+            # thing being measured: a packed RayCollision prefix
+            # `{cap; chad;}` ends at 5 and a correctly padded one at 8,
+            # but both round to 8. Appending `yap` (size 1, align 1)
+            # places a field at exactly the prefix's end, so the size
+            # becomes a function of that end rather than of the rounding.
+            fields_with_sentinel = [{"name": fname, "type": ctype}
+                                    for fname, _, ctype in prefix]
+            fields_with_sentinel.append({"name": "probe_end",
+                                         "type": "char"})
+            layout = model._try_layout({"fields": fields_with_sentinel})
+            assert layout is not None, f"{probe} should be computable"
+            expected[probe] = layout[0]
+            decls.append(f"gang {probe} {{")
+            decls.extend("    " + _field_spelling(ctype, fname)
+                         for fname, _, ctype in prefix)
+            decls.append("    yap probe_end;")
+            decls.append("};")
+
+    assert len(expected) >= 20, (
+        f"only built {len(expected)} prefix probes -- expected the 16 "
+        "generated structs to yield many more")
+
+    probes = sorted(expected)
+    body = ["skibidi main {"]
+    for i, probe in enumerate(probes):
+        body.append(f"    gang {probe} v{i};")
+        body.append(f'    yapping("{probe} %lu", maxxing(v{i}));')
+    body.append("    bussin 0;")
+    body.append("}")
+
+    program = tmp_path / "offset_probe.brainrot"
+    program.write_text(
+        types_only + "\n" + "\n".join(decls) + "\n" + "\n".join(body) + "\n",
+        encoding="utf-8")
+
+    result = subprocess.run([brainrot, str(program)], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
+    assert result.returncode == 0, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
+
+    actual = {}
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+            actual[parts[0]] = int(parts[1])
+
+    mismatches = {p: (expected[p], actual.get(p)) for p in probes
+                  if actual.get(p) != expected[p]}
+    assert not mismatches, (
+        "generator and compute_struct_layout() disagree about interior "
+        f"padding (probe: (generator, brainrot)): {mismatches}")

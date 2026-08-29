@@ -1486,6 +1486,19 @@ static bool is_unmarshallable_array_arg(ASTNode *expr,
  * a variadic consumer with no fixed parameter to have rejected this
  * argument earlier) nothing downstream would otherwise notice.
  *
+ * That absence is deliberate and load-bearing, not an oversight waiting
+ * to be filled in. #208 briefly added such a branch, on the theory that
+ * a struct reaching an unchecked variadic/legacy tail should marshal
+ * rather than vanish -- but THIS function rejects a struct argument
+ * before any tail is reached, on every route (a plain `yapping("%d",
+ * v)`, a legacy STDROT_EXPORT export, a member access), so that branch
+ * was unreachable and was removed again. A by-value struct argument
+ * reaches a native through exactly one path: a declared STDROT_STRUCT
+ * parameter, marshalled by marshal_struct_argument() (stdrot.c). If you
+ * are about to add a VAR_STRUCT case to ast_expr_to_stdrot_value(),
+ * first write the program that reaches it -- and if one exists, this
+ * function is what's wrong, not that one.
+ *
  * A pointer-level expression is NOT flagged here, unlike STDROT_ANY's
  * own additional pointer rejection (semantic_check_native_call()'s
  * STDROT_ANY branch) -- a pointer marshals honestly as STDROT_PTR, a
@@ -1849,6 +1862,32 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
                          param->type_name ? param->type_name : "?",
                          vartype_to_string(actual_type),
                          actual_pl > 0 ? " pointer" : "");
+                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                   STRING_LITERAL(error_msg), line);
+                continue;
+            }
+
+            /* An array of structs passes BOTH checks above --
+               infer_expression_type() reports an array identifier's
+               ELEMENT type, so `gang Color pal[4]` looks exactly like a
+               `gang Color` here, at pointer level 0, with the matching
+               tag. Without this the call is approved and the native
+               silently receives pal[0] (PR #307 review, finding 1).
+               resolve_by_value_struct_source() (ast.c) now rejects it at
+               the runtime boundary too, which is what closes the same
+               hole for Brainrot-defined struct parameters; this check
+               exists so a native call reports it at ANALYSIS time, the
+               way every other parameter type already does via the same
+               helper (see the STDROT_ANY and fixed-scalar branches
+               below, which have called it all along). */
+            if (is_unmarshallable_array_arg(cur->expr, analyzer))
+            {
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: struct arrays cannot be passed "
+                         "where a by-value struct '%s' is expected",
+                         func_name.data, i + 1,
+                         param->type_name ? param->type_name : "?");
                 add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
                                    STRING_LITERAL(error_msg), line);
                 continue;

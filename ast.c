@@ -1113,6 +1113,32 @@ bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
                         "pointer");
             return false;
         }
+        /* An ARRAY of structs is not a struct value either, and this is
+           the one shape that fails silently rather than loudly if it
+           isn't caught: `gang Point pts[4]` stores the whole array in
+           the same value.array_data slot a single struct uses, so every
+           caller below would happily copy total_size bytes out of it and
+           get element 0 -- the user writes `len2(pts)` or
+           `rl_color_to_int(pal)`, the callee receives pts[0], and
+           nothing anywhere says a word. Every other type already
+           rejects this (is_unmarshallable_array_arg(),
+           semantic_analyzer.c, gives `rizz a[2]` passed to a scalar
+           parameter a clean "int arrays cannot be passed where a
+           scalar/string is expected"); structs got silence because that
+           helper is only consulted on the scalar paths.
+           Rejecting it HERE rather than only in the native-call analyzer
+           closes it for every consumer of this function at once --
+           native STDROT_STRUCT parameters, Brainrot-defined struct
+           parameters (enter_function_scope()), struct returns, and
+           struct copy-initializers -- since they all resolve their
+           source through this one place (PR #307 review, finding 1). */
+        if (src->desc.is_array)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union value, got an "
+                        "array (index it, e.g. `arr[0]`)");
+            return false;
+        }
         *blob_out = src->value.array_data;
         *tag_out = src->desc.struct_name;
         return true;
