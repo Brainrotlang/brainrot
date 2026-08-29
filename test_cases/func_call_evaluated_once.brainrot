@@ -17,6 +17,13 @@
 🚽 it for its side effect.
 skibidi void_ret(rizz *n) { bussin bump(n) + 0; }
 
+🚽 The mirror hazard. ast_accept()'s pre-visit DOES evaluate an array access,
+🚽 so the void arm must not evaluate this a second time.
+skibidi void_arr(rizz *n) { rizz a[3] = {7, 8, 9}; bussin a[bump(n)]; }
+
+gang Pt { rizz x; };
+gang Pt make_pt(rizz *n) { gang Pt p; p.x = bump(n); bussin p; }
+
 rizz bump(rizz *n) {
     *n = *n + 1;
     bussin *n;
@@ -82,6 +89,23 @@ skibidi main {
     calls = 0;
     void_ret(&calls);
     yapping("void bussin %d", calls);
+
+    🚽 A discarded field read off a call result. evaluate_expression()
+    🚽 cannot resolve a member access whose base is a call, so the statement
+    🚽 path runs the call and drops the read -- the call's side effect is the
+    🚽 whole observable point of the statement.
+    calls = 0;
+    make_pt(&calls).x;
+    yapping("field stmt  %d", calls);
+
+    🚽 An array access inside a void `bussin`. The pre-visit already ran it,
+    🚽 so the void arm must not. Deliberately AFTER the struct case above:
+    🚽 a `bussin arr[f()]` in a void function followed by a struct-returning
+    🚽 call segfaults in free_pending_return_value(), which reproduces on
+    🚽 origin/main untouched and is not this change's to fix.
+    calls = 0;
+    void_arr(&calls);
+    yapping("void arr    %d", calls);
 
     🚽 And the two the visitor DOES evaluate, which must not now run twice.
     rizz i = 0;

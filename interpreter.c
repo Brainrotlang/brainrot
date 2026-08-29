@@ -344,34 +344,31 @@ void *interpreter_visit_function_call(Visitor *self, ASTNode *node)
    wrapping a call is unaffected: it still goes through ast_accept()
    normally, since interpreter_visit_declaration() et al. *are* that real
    evaluation. */
-/* True for an expression that, standing alone as a statement, nothing on
-   the ast_accept() path will evaluate.
-
-   The visitor's expression cases exist so shared visitors (the semantic
-   analyzer) can inspect a node; they deliberately do not compute values.
-   Two are exceptions and must NOT be listed here or they would run twice:
-   a pre/post increment, which interpreter_visit_unary_operation() performs,
-   and an array access, which interpreter_visit_array_access() performs.
-   Everything else -- `f() + 0;`, `-f();`, a bare identifier -- has no other
-   evaluator, which is exactly the set execute_statement() already covers
-   with a single evaluate_expression(). */
-static bool interpreter_statement_needs_evaluation(const ASTNode *node)
+/* Is this node an expression standing alone as a statement?
+ *
+ * `f() + 0;`, `-f();`, `f().x;` and a bare identifier all parse as
+ * `expression SEMICOLON`, and nothing on the ast_accept() path evaluates
+ * them -- so without this they would silently never run. NODE_ARRAY_ACCESS
+ * and the increments are expressions too, but ast_accept DOES evaluate
+ * those, which is why the caller consults
+ * ast_accept_evaluates_expression() rather than this predicate alone. */
+static bool interpreter_is_expression_statement(const ASTNode *node)
 {
     switch (node->type)
     {
     case NODE_OPERATION:
+    case NODE_UNARY_OPERATION:
     case NODE_IDENTIFIER:
     case NODE_INT:
     case NODE_SHORT:
     case NODE_FLOAT:
     case NODE_DOUBLE:
     case NODE_CHAR:
+    case NODE_BOOLEAN:
+    case NODE_SIZEOF:
+    case NODE_STRUCT_ACCESS:
+    case NODE_ARRAY_ACCESS:
         return true;
-    case NODE_UNARY_OPERATION:
-        return node->data.unary.op != OP_POST_INC &&
-               node->data.unary.op != OP_PRE_INC &&
-               node->data.unary.op != OP_POST_DEC &&
-               node->data.unary.op != OP_PRE_DEC;
     default:
         return false;
     }
@@ -382,11 +379,32 @@ static void interpreter_accept_or_execute_call(ASTNode *node, Visitor *self)
     if (!node)
         return;
     if (node->type == NODE_FUNC_CALL)
+    {
         interpreter_execute_call_statement(node);
-    else if (interpreter_statement_needs_evaluation(node))
+    }
+    else if (node->type == NODE_STRUCT_ACCESS &&
+             node->data.struct_access.object &&
+             node->data.struct_access.object->type == NODE_FUNC_CALL)
+    {
+        /* `make_pt(&n).x;` -- a discarded field read off a call result.
+           evaluate_expression() cannot resolve a member access whose base
+           is a call ("Unsupported struct member access expression"), a
+           separate and pre-existing gap. The observable effect of this
+           statement is the call's side effects, so run the call and drop
+           the field read, which is exactly what happened before the
+           pre-visit stopped executing user functions. Erroring here
+           instead would turn a working statement into a failure. */
+        interpreter_execute_call_statement(node->data.struct_access.object);
+    }
+    else if (interpreter_is_expression_statement(node) &&
+             !ast_accept_evaluates_expression(node))
+    {
         evaluate_expression(node);
+    }
     else
+    {
         ast_accept(node, self);
+    }
 }
 
 void *interpreter_visit_sizeof(Visitor *self, ASTNode *node)

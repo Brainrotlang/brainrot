@@ -5275,6 +5275,39 @@ void execute_assignment(ASTNode *node)
                            value_node, mods, packed_storage);
 }
 
+/* Does ast_accept()'s own walk compute this expression's value?
+ *
+ * The visitor's expression cases exist so a shared visitor -- the semantic
+ * analyzer -- can inspect a node; they deliberately do not evaluate. Exactly
+ * two are exceptions: interpreter_visit_unary_operation() performs a pre/post
+ * increment, and interpreter_visit_array_access() performs the access.
+ *
+ * Both places that have to decide "has this already run, or must I run it?"
+ * ask HERE rather than keeping their own list. They had separate lists for
+ * one revision and immediately disagreed: the statement path excluded
+ * increments and array accesses to avoid running them twice, while the void
+ * `bussin` arm did not, so `bussin arr[f()];` in a skibidi function ran f
+ * twice -- the exact mirror of the bug the statement list was written to
+ * avoid. */
+bool ast_accept_evaluates_expression(const ASTNode *node)
+{
+    if (!node)
+    {
+        return false;
+    }
+    if (node->type == NODE_ARRAY_ACCESS)
+    {
+        return true;
+    }
+    if (node->type == NODE_UNARY_OPERATION)
+    {
+        OperatorType op = node->data.unary.op;
+        return op == OP_POST_INC || op == OP_PRE_INC || op == OP_POST_DEC ||
+               op == OP_PRE_DEC;
+    }
+    return false;
+}
+
 void execute_statement(ASTNode *node)
 {
     if (!node)
@@ -6601,14 +6634,34 @@ void handle_return_statement(ASTNode *expr)
             }
             else if (expr)
             {
-                /* A discarded expression that is not a bare call still has
-                   to run. `bussin f() + 0;` in a skibidi function has no
-                   other evaluator -- ast_accept()'s pre-visit deliberately
-                   does not execute the return expression (see visitor.c's
-                   NODE_RETURN case), and the value-bearing arms above are
-                   the only other place anything gets evaluated. Without
-                   this the side effect is silently dropped. */
-                evaluate_expression(expr);
+                /* Anything else discarded by a void `bussin`.
+                 *
+                 * Evaluate it only if ast_accept()'s pre-visit did not
+                 * already -- it does evaluate an increment and an array
+                 * access, and running those twice is the mirror of the bug
+                 * the statement path avoids.
+                 *
+                 * Then clear the pending-return slot either way. If the
+                 * expression contained a call, that call's result is still
+                 * sitting in the shared slot with nothing coming to consume
+                 * it, and the NEXT call's cleanup frees it a second time:
+                 * `bussin f() + 0;` or `bussin arr[f()];` in a skibidi
+                 * function segfaulted the following struct-returning call
+                 * in free_pending_return_value() exactly that way. */
+                if (!ast_accept_evaluates_expression(expr))
+                {
+                    evaluate_expression(expr);
+                }
+                free_pending_return_value();
+                /* And blank the value itself. current_return_value.value is
+                 * a UNION, so the discarded expression's integer result is
+                 * still sitting in the same bytes as .pvalue. Leaving it
+                 * there and setting the type to NONE hands the next return
+                 * a slot whose "pointer" is a small integer -- freed later
+                 * as though it were heap, which is the SEGV at
+                 * 0xfffffffffffffff1. */
+                current_return_value.value.pvalue = 0;
+                current_return_value.has_value = false;
             }
             current_return_value.desc.type = declared_type;
             current_return_value.desc.pointer_level = 0;

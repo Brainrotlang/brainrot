@@ -689,6 +689,7 @@ int evaluate_expression_int(ASTNode *node);
 short evaluate_expression_short(ASTNode *node);
 bool evaluate_expression_bool(ASTNode *node);
 int evaluate_expression(ASTNode *node);
+bool ast_accept_evaluates_expression(const ASTNode *node);
 /* Zero-extends `raw` to what a scalar VAR_CHAR Variable's own 4-byte
    union slot (value.ivalue -- there is no dedicated 1-byte member)
    must always hold: upper 3 bytes zero, regardless of `raw`'s actual
