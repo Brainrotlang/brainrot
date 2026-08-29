@@ -4828,16 +4828,19 @@ static void marshal_native_return_value(ASTNode *node)
         break;
     case STDROT_CSTRING:
     case STDROT_HANDLE:
+    case STDROT_STRUCT:
         /* semantic_check_native_call() rejects any call to a native whose
-           return_type.type is STDROT_CSTRING or STDROT_HANDLE outright
-           (CSTRING has no return-side marshalling implemented -- this
-           switch has no case that would populate strvalue for it; HANDLE
-           needs a resource-ownership model Phase 2 hasn't designed yet,
-           see roadmap Appendix B Q6) -- so a Brainrot program can never
-           reach this call with result.type equal to either, structurally
-           unreachable here. Add real marshalling (and remove the
-           semantic-analyzer rejection) once a builtin actually needs to
-           return one. */
+           return_type.type is STDROT_CSTRING, STDROT_HANDLE or
+           STDROT_STRUCT outright (CSTRING has no return-side marshalling
+           implemented -- this switch has no case that would populate
+           strvalue for it; HANDLE needs a resource-ownership model Phase
+           2 hasn't designed yet, see roadmap Appendix B Q6; STRUCT is
+           argument-direction-only for the same ownership reason, see
+           STDROT_STRUCT's own comment in stdrot_api.h) -- so a Brainrot
+           program can never reach this call with result.type equal to any
+           of them, structurally unreachable here. Add real marshalling
+           (and remove the semantic-analyzer rejection) once a builtin
+           actually needs to return one. */
     case STDROT_ANY:
         /* STDROT_ANY is a descriptor placeholder ("type genuinely
            unknown" or "identity-polymorphic", see StdrotEntry's own

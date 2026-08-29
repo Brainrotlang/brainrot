@@ -357,7 +357,7 @@ stdrot/     brainray/     brainsql/     braincurl/
 ```
 
 ```c
-StdrotAPI brainrot_module_init(void);
+StdrotAPI brainrot_module_init_v3(void);
 ```
 
 Then `#cooked <raylib>`, currently listed as unimplemented in the README, means:
@@ -373,10 +373,10 @@ by whether the running executable (resolved via
 `/proc/self/exe`/`_NSGetExecutablePath`, not `argv[0]`) is itself the
 installed binary (Appendix B Q11's resolution has the full reasoning). A
 resolved `.so` is `dlopen`'d and must export `StdrotAPI
-brainrot_module_init(void)` (`stdrot_load_module()`, `stdrot.c`) — the exact
+brainrot_module_init_v3(void)` (`stdrot_load_module()`, `stdrot.c`) — the exact
 signature this phase originally specified, given a collision-free exported
 name of its own (see `stdrot/registry.c`'s own comment: a naive same-named
-wrapper calling `stdrot_get_api_v2()` from inside a module is silently
+wrapper calling `stdrot_get_api_v3()` from inside a module is silently
 interposed by the always-loaded core library's own copy of that symbol).
 Its functions are registered alongside the core library's and any other
 already-cooked module's, with a load-time error on any name collision
@@ -392,7 +392,7 @@ nothing in-tree needs more than that yet — see
 
 ## Phase 5 — Bindings and the first cursed game
 
-**Status: Road A shipped (#208) · Road B not started · Priority: P1**
+**Status: Road A shipped (#208) · Road B in progress — ABI groundwork landed · Priority: P1**
 
 There are two roads here and we should walk both, in order.
 
@@ -451,7 +451,20 @@ static StdrotValue br_LoadTexture(StdrotValue *args, int argc)
 Generated C is compile-time correct and vastly easier to reason about than a
 dynamic call machine. Once this works, raylib is merely the first client: SDL,
 SQLite, libcurl, OpenSSL, PortAudio, Lua, FFmpeg, and libgit2 are the same
-problem. Phase 11's `gamba()` is **not** that generated OpenSSL binding — it is
+problem.
+
+**Landed so far (#208):** the by-value aggregate ABI the sketch above assumes
+— `STDROT_STRUCT` (`stdrot/stdrot_api.h`), ABI v3. A native parameter
+declared `{STDROT_STRUCT, "Vector2", 0}` receives the `gang`'s C-ABI byte
+image, tag-checked both statically and at the runtime boundary, copied so the
+call is genuinely by value. That is the *argument* direction only. The sketch
+above is still not implementable as written, and deliberately so: its
+`stdrot_struct("Texture2D", &tex, sizeof(tex))` returns the address of a local
+that dies with the call, and struct returns are rejected until Appendix B Q6
+(ownership of native resources) has an answer. **Still open:** the generator
+itself, type/constant registration in `StdrotAPI` (it carries a function table
+and nothing else), `raylib_api.json` vendoring, and raylib-shaped entries in
+`tests/abi/struct_layout_abi_check.c`. Phase 11's `gamba()` is **not** that generated OpenSSL binding — it is
 a thin, hand-written `RAND_bytes` wrapper that ships earlier, the same way
 Road A ships a cursed game before Road B generates `brainray`.
 
@@ -1301,10 +1314,45 @@ per keyword, and default to "library function" when in doubt.
 6. **Ownership of native resources.** Textures, sockets, and map entries all
    outlive statements. Brainrot has no destructors and no GC. Handles sidestep
    this by keeping ownership in C — is that the general answer?
-7. **Generated code in-tree or built?** `raylib_api.json` output could be
+7. **Generated code in-tree or built?** ~~`raylib_api.json` output could be
    committed or generated at build time. `AGENTS.md` forbids committing
    generated files; does that rule extend to bindings, and if so, does raylib
-   become a build dependency?
+   become a build dependency?~~ **Resolved (#208):** the rule extends to
+   bindings — generator *output* is never committed — but the question
+   conflates two artifacts that get opposite answers, and separating them
+   dissolves most of the dependency worry.
+   - **`raylib_api.json` is a committed source input, not generated output.**
+     It is raylib's own published description of its API, vendored and pinned
+     to a specific raylib version, the same way a schema or a `.proto` is
+     vendored. Nothing in this repo derives it; it is regenerated upstream by
+     raylib's `tools/rlparser`, which we deliberately do not want to run at
+     build time. Committing it is what makes the generator's output
+     reproducible from a clean checkout and reviewable as a diff when the
+     pinned version moves.
+   - **The C adapters the generator emits are derived, and are not
+     committed.** They are `lang.tab.c` by another name: produced into the
+     build tree by the `brainray` target only, gitignored, never hand-edited,
+     and excluded from `make format-check` exactly as the Bison/Flex output
+     already is (a generator that has to satisfy clang-format is a generator
+     nobody wants to change).
+
+   So the answer to "does raylib become a build dependency?" is: no more than
+   it already is. `make brainray` has required a pkg-config-visible raylib
+   since Road A, and Road B does not widen that — it needs raylib's *headers*
+   at adapter-compile time, which any installed raylib already provides, and
+   the pinned JSON for the generation step, which is in-tree. `make`, `make
+   test`, `make valgrind`, and `make format-check` continue to neither run the
+   generator nor require raylib, which is the constraint that actually matters
+   and is a Road B definition-of-done item in its own right.
+
+   Rejected alternatives: committing the adapters (option 1) buys a
+   raylib-free `brainray` build that cannot exist anyway — the adapters
+   `#include <raylib.h>` and link against it — in exchange for carving a
+   permanent exception into a rule whose whole value is being absolute.
+   Generating in CI and committing nothing at all, not even the JSON (option
+   3 as originally sketched), makes a clean checkout unable to build
+   `brainray` without network access and turns every upstream API change into
+   an invisible, unreviewable build-time surprise.
 8. **Should `npc` be its own phase (Phase 9b)?** Function references are a
    language feature that Phases 5, 6, and 8 all want for callbacks, and they are
    the largest item inside a phase otherwise made of library code. Leaving them

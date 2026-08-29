@@ -1,6 +1,6 @@
 /* tests/nativemodules/no_module_init.c – A structurally valid native .so
- * that exports stdrot_get_api_v2() (via registry.c, same as every other
- * fixture in this directory) but deliberately has NO brainrot_module_init()
+ * that exports stdrot_get_api_v3() (via registry.c, same as every other
+ * fixture in this directory) but deliberately has NO brainrot_module_init_v3()
  * of its own -- proves stdrot_load_module() (stdrot.c) fails loudly on a
  * missing entrypoint instead of silently loading nothing, the same
  * dlsym-failure posture stdrot_load() already has for a pre-ABI-versioning

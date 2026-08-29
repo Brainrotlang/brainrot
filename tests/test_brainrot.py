@@ -122,6 +122,8 @@ REGISTRY_REJECTION_CASES = [
      "params[0].pointer_level (1) must be 0 when params[0].type isn't STDROT_PTR"),
     ("none_typed_param.so",
      "params[0].type must not be STDROT_NONE"),
+    ("struct_param_without_type_name.so",
+     "params[0].type is STDROT_STRUCT but type_name is missing"),
     ("invalid_return_type.so",
      "return_type.type (999) is not a valid StdrotType"),
     ("invalid_param_type.so",
@@ -162,7 +164,7 @@ def test_bad_registry_rejected_at_load(bad_lib, expected_message):
 
 # Round-16 review finding #1: tests/old_abi_sim/fake_pre_v2_registry.so
 # (built by `make old-abi-sim`) simulates a libstdrot.so built before
-# STDROT_ABI_VERSION/stdrot_get_api_v2() existed -- it exports only the
+# STDROT_ABI_VERSION/stdrot_get_api_v3() existed -- it exports only the
 # OLD "stdrot_get_api" symbol, under the OLD {name, fn} layout. Proves
 # stdrot_load() (stdrot.c) detects the missing versioned symbol and fails
 # loudly instead of reinterpreting this .so's actual memory as the
@@ -187,7 +189,7 @@ def test_old_abi_rejected_at_load():
         f"1, got {result.returncode}\nStdout:\n{result.stdout}\n"
         f"Stderr:\n{result.stderr}"
     )
-    assert "stdrot_get_api_v2" in result.stderr, (
+    assert "stdrot_get_api_v3" in result.stderr, (
         f"Expected stderr to name the missing versioned entrypoint\n"
         f"Actual stderr:\n{result.stderr}"
     )
@@ -440,7 +442,7 @@ def test_module_install_dir_used_when_installed(tmp_path):
 # ── Native modules: #cooked <name> resolving to a ".so" (stdrot_load_module,
 # stdrot.c) ──────────────────────────────────────────────────────────────
 # tests/nativemodules/*.c (built by `make nativemodules`) are real modules
-# with a genuine brainrot_module_init() entrypoint -- unlike
+# with a genuine brainrot_module_init_v3() entrypoint -- unlike
 # tests/badnatives/*.so above (which simulate a malformed CORE
 # libstdrot.so, loaded via STDROT_LIB_PATH to exercise stdrot_load()),
 # these exercise the #cooked <name>-to-native-module path specifically.
@@ -514,6 +516,227 @@ def test_native_module_two_modules_loaded_at_once(tmp_path):
     assert result.stdout == "6\n5\n", f"Actual stdout:\n{result.stdout}"
 
 
+# ── STDROT_STRUCT: by-value aggregates across the native ABI (#208 Road B)
+# tests/nativemodules/structnative.c declares the C structs these `gang`s
+# mirror and _Static_asserts their real C sizes/offsets, so every value
+# below is only correct if compute_struct_layout() (ast.c) agrees with a
+# real C compiler about the layout -- that agreement is the premise the
+# whole generated-binding road rests on.
+STRUCT_ABI_PRELUDE = (
+    '#cooked <structnative>\n'
+    'gang Vec2 {\n'
+    '    chad x;\n'
+    '    chad y;\n'
+    '};\n'
+)
+
+
+def test_native_struct_arg_passed_by_value(tmp_path):
+    """A `gang` reaches a native as a correctly-laid-out byte image, and two
+    struct arguments in one call get independent copies."""
+    _assert_nativemodules_built("structnative.so")
+
+    result = _run_with_native_modules(
+        STRUCT_ABI_PRELUDE +
+        'skibidi main {\n'
+        '    gang Vec2 v;\n'
+        '    v.x = 3.0;\n'
+        '    v.y = 4.0;\n'
+        '    gang Vec2 w;\n'
+        '    w.x = 5.0;\n'
+        '    w.y = 6.0;\n'
+        '    yapping("%.1f", vec2_len2(v));\n'
+        '    yapping("%.1f", vec2_dot(v, w));\n'
+        '    bussin 0;\n'
+        '}\n', tmp_path)
+
+    assert result.returncode == 0, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    # 3*3 + 4*4 = 25; 3*5 + 4*6 = 39 (39 proves the two struct arguments
+    # did NOT share one scratch buffer -- if they had, both would read as
+    # whichever struct was copied last).
+    assert result.stdout == "25.0\n39.0\n", f"Actual stdout:\n{result.stdout}"
+
+
+def test_native_struct_arg_mutation_does_not_reach_caller(tmp_path):
+    """The native receives an adapter-owned COPY, so writing through it
+    leaves the caller's variable untouched -- C by-value semantics, and the
+    same value-copy rule struct assignment already follows. If
+    .val.blob.data ever went back to aliasing the live variable's storage,
+    the read-back below would print the scribbled values instead."""
+    _assert_nativemodules_built("structnative.so")
+
+    result = _run_with_native_modules(
+        STRUCT_ABI_PRELUDE +
+        'skibidi main {\n'
+        '    gang Vec2 v;\n'
+        '    v.x = 3.0;\n'
+        '    v.y = 4.0;\n'
+        '    yapping("%.1f", vec2_scribble(v));\n'
+        '    yapping("%.1f", v.x);\n'
+        '    yapping("%.1f", v.y);\n'
+        '    bussin 0;\n'
+        '}\n', tmp_path)
+
+    assert result.returncode == 0, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    # 111 + 222 = 333 is what the native wrote into its own copy; 3.0/4.0
+    # are the caller's own, unchanged.
+    assert result.stdout == "333.0\n3.0\n4.0\n", (
+        f"Actual stdout:\n{result.stdout}")
+
+
+def test_native_struct_arg_interior_offsets(tmp_path):
+    """A padded, offset-sensitive shape (cap/rizz/gigachad -- the same
+    struct Mixed used as ground truth in tests/abi/struct_layout_abi_
+    check.c) survives the boundary field by field, so a wrong INTERIOR
+    offset shows up as a wrong value, not just a wrong total size."""
+    _assert_nativemodules_built("structnative.so")
+
+    result = _run_with_native_modules(
+        '#cooked <structnative>\n'
+        'gang Mixed {\n'
+        '    cap flag;\n'
+        '    rizz n;\n'
+        '    gigachad d;\n'
+        '};\n'
+        'skibidi main {\n'
+        '    gang Mixed m;\n'
+        '    m.flag = W;\n'
+        '    m.n = 1234;\n'
+        '    m.d = 2.75;\n'
+        '    yapping("%d", mixed_probe(m));\n'
+        '    bussin 0;\n'
+        '}\n', tmp_path)
+
+    assert result.returncode == 0, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    # 1000000 (flag) + 1234 (n) + 2 ((int)2.75) -- every field read at its
+    # own C-correct offset.
+    assert result.stdout == "1001236\n", f"Actual stdout:\n{result.stdout}"
+
+
+def test_native_struct_arg_source_expressions(tmp_path):
+    """A native's struct parameter accepts the same source expressions a
+    Brainrot function's struct parameter does -- a plain variable, a
+    by-value member access of a nested struct, a struct-returning call,
+    and a member access ON a call result -- not just a bare identifier.
+
+    The bare-call form additionally proves the argument is evaluated
+    exactly ONCE ("called" appears a single time): routing a call-shaped
+    struct argument through the ordinary scalar marshaller would evaluate
+    it, then evaluate it again to get the blob, which is the
+    double-execution bug class of #303.
+
+    `make_body().pos` is the one form where resolve_by_value_struct_
+    source() reports it allocated the blob itself, and it is allocated
+    with plain calloc() while this call's own scratch is released with
+    SAFE_FREE -- so it specifically covers the allocator pairing in
+    marshal_struct_argument()."""
+    _assert_nativemodules_built("structnative.so")
+
+    result = _run_with_native_modules(
+        STRUCT_ABI_PRELUDE +
+        'gang Body {\n'
+        '    gang Vec2 pos;\n'
+        '    rizz id;\n'
+        '};\n'
+        'gang Vec2 make_vec() {\n'
+        '    yapping("called");\n'
+        '    gang Vec2 r;\n'
+        '    r.x = 3.0;\n'
+        '    r.y = 4.0;\n'
+        '    bussin r;\n'
+        '}\n'
+        'gang Body make_body() {\n'
+        '    gang Body mb;\n'
+        '    mb.pos.x = 6.0;\n'
+        '    mb.pos.y = 8.0;\n'
+        '    mb.id = 9;\n'
+        '    bussin mb;\n'
+        '}\n'
+        'skibidi main {\n'
+        '    gang Body b;\n'
+        '    b.pos.x = 3.0;\n'
+        '    b.pos.y = 4.0;\n'
+        '    b.id = 7;\n'
+        '    yapping("%.1f", vec2_len2(b.pos));\n'
+        '    yapping("%.1f", vec2_len2(make_vec()));\n'
+        '    yapping("%.1f", vec2_len2(make_body().pos));\n'
+        '    bussin 0;\n'
+        '}\n', tmp_path)
+
+    assert result.returncode == 0, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    # 3,4 -> 25; make_vec 3,4 -> 25; make_body 6,8 -> 100.
+    assert result.stdout == "25.0\ncalled\n25.0\n100.0\n", (
+        f"Actual stdout:\n{result.stdout}")
+
+
+NATIVE_STRUCT_REJECTION_CASES = [
+    pytest.param(
+        '    gang Other o;\n'
+        '    o.a = 1.0;\n'
+        '    o.b = 2.0;\n'
+        '    yapping("%.1f", vec2_len2(o));\n',
+        "expected struct 'Vec2', got struct 'Other'",
+        'gang Other {\n    chad a;\n    chad b;\n};\n',
+        id="tag_mismatch"),
+    pytest.param(
+        '    rizz n = 5;\n'
+        '    yapping("%.1f", vec2_len2(n));\n',
+        "expected struct 'Vec2' by value, got int",
+        '',
+        id="scalar_for_struct"),
+    pytest.param(
+        '    gang Vec2 v;\n'
+        '    v.x = 1.0;\n'
+        '    v.y = 2.0;\n'
+        '    gang Vec2 *p = &v;\n'
+        '    yapping("%.1f", vec2_len2(p));\n',
+        "expected struct 'Vec2' by value, got struct pointer",
+        '',
+        id="pointer_for_by_value"),
+    pytest.param(
+        '    gang Vec2 v = vec2_make();\n',
+        "native by-value struct return types are not marshalled yet",
+        '',
+        id="struct_return"),
+]
+
+
+@pytest.mark.parametrize("body,expected_message,extra_decls",
+                         NATIVE_STRUCT_REJECTION_CASES)
+def test_native_struct_arg_rejections(body, expected_message, extra_decls,
+                                      tmp_path):
+    """Static rejections around STDROT_STRUCT. The tag check is the one
+    check_type_compatibility_ex() structurally cannot make (every `gang` is
+    VAR_STRUCT), and the pointer case matters because STDROT_STRUCT carries
+    a byte image -- passing a pointer would copy the POINTER's bytes. The
+    struct-RETURN case pins the deliberate, documented gap: it is rejected
+    until an ownership model exists, not silently half-marshalled."""
+    _assert_nativemodules_built("structnative.so")
+
+    result = _run_with_native_modules(
+        STRUCT_ABI_PRELUDE + extra_decls +
+        'skibidi main {\n' + body +
+        '    bussin 0;\n'
+        '}\n', tmp_path)
+
+    assert result.returncode == 1, (
+        f"Expected a semantic error (exit 1), got {result.returncode}\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert expected_message in result.stdout + result.stderr, (
+        f"Expected {expected_message!r}\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+
+
 def test_native_module_duplicate_with_core(tmp_path):
     """A module exporting a name the core library already provides ('bet')
     must be rejected, naming the core library as the existing source."""
@@ -549,8 +772,8 @@ def test_native_module_duplicate_with_module(tmp_path):
     )
 
 
-def test_native_module_missing_brainrot_module_init(tmp_path):
-    """A structurally valid .so with no brainrot_module_init() at all must
+def test_native_module_missing_brainrot_module_init_v3(tmp_path):
+    """A structurally valid .so with no brainrot_module_init_v3() at all must
     fail loudly and specifically, the same dlsym-failure posture
     stdrot_load() already has for a pre-ABI-versioning libstdrot.so (see
     test_old_abi_rejected_at_load above)."""
@@ -563,7 +786,7 @@ def test_native_module_missing_brainrot_module_init(tmp_path):
     assert result.returncode == 1, (
         f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
     )
-    assert "does not export brainrot_module_init()" in result.stderr, (
+    assert "does not export brainrot_module_init_v3()" in result.stderr, (
         f"Actual stderr:\n{result.stderr}"
     )
 
@@ -609,7 +832,7 @@ def _raylib_available():
 def test_brainray_module_loads_when_raylib_present(tmp_path):
     """When raylib IS present, `make brainray` builds brainray/raylib.so and
     `#cooked <raylib>` loads it end to end. This proves the module exports
-    brainrot_module_init(), the module search path resolves the native `.so`,
+    brainrot_module_init_v3(), the module search path resolves the native `.so`,
     and every rl_* arity/type descriptor passes validate_native_registry() at
     load time. It calls no rl_* function, so it needs no window or display --
     the load itself (dlopen at parse time) is what is under test."""

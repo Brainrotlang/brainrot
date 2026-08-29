@@ -107,7 +107,7 @@ TEST_STDROT_LIB := tests/libstdrot.so
 # Deliberately malformed native registries (see tests/badnatives/ own file
 # comment): each .c file there registers exactly one StdrotEntry that
 # validate_native_registry() (stdrot.c) must reject at stdrot_load() time.
-# Built as one minimal .so per file -- registry.c (stdrot_get_api_v2()) plus
+# Built as one minimal .so per file -- registry.c (stdrot_get_api_v3()) plus
 # that single malformed entry, no production natives -- since these tests
 # only care whether loading aborts before any Brainrot program runs.
 BADNATIVES_DIR := tests/badnatives
@@ -224,11 +224,11 @@ $(BADNATIVES_DIR)/%.so: $(BADNATIVES_DIR)/%.c $(STDROT_DIR)/registry.c
 
 # Two exceptions to the pattern rule above (GNU Make prefers an explicit
 # target rule over a pattern rule for the same file, regardless of
-# ordering): these implement stdrot_get_api_v2() DIRECTLY themselves,
+# ordering): these implement stdrot_get_api_v3() DIRECTLY themselves,
 # returning a hand-crafted malformed StdrotAPI table, rather than going
 # through registry.c's normal linker-section self-registration --
 # linking registry.c alongside them would collide (both would define
-# stdrot_get_api_v2()). See their own file comments.
+# stdrot_get_api_v3()). See their own file comments.
 $(BADNATIVES_DIR)/bad_api_table_negative_count.so: \
 	$(BADNATIVES_DIR)/bad_api_table_negative_count.c
 	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $< $(SO_LDFLAGS)
@@ -243,26 +243,26 @@ badnatives: $(BADNATIVES_LIBS)
 
 # Native module fixtures ($(NATIVEMODULES_LIBS)): same registry.c-per-file
 # pattern as $(BADNATIVES_DIR) above, but these are valid modules (real
-# brainrot_module_init() entrypoints, well-formed tables except
+# brainrot_module_init_v3() entrypoints, well-formed tables except
 # testnative_internal_dup.c and no_module_init.c, which are deliberately
 # broken on purpose -- see their own file comments) used to exercise
 # stdrot_load_module() (stdrot.c) end to end, not just its rejection paths.
 #
-# -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init (registry.c's own
+# -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3 (registry.c's own
 # comment has the full reasoning): makes registry.c export
-# brainrot_module_init() directly, under a name no other loaded .so in the
-# process shares, instead of stdrot_get_api_v2() -- the same symbol name
+# brainrot_module_init_v3() directly, under a name no other loaded .so in the
+# process shares, instead of stdrot_get_api_v3() -- the same symbol name
 # the always-loaded core libstdrot.so already exports, which a same-named
 # wrapper calling it from inside a module would silently resolve to
 # instead of the module's own copy.
 $(NATIVEMODULES_DIR)/%.so: $(NATIVEMODULES_DIR)/%.c $(STDROT_DIR)/registry.c
-	$(CC) $(SO_CFLAGS) -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init \
+	$(CC) $(SO_CFLAGS) -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3 \
 		-I. -I$(STDROT_DIR) -o $@ $(STDROT_DIR)/registry.c $< -lm $(SO_LDFLAGS)
 
 # Exception to the pattern rule above (GNU Make prefers an explicit target
 # rule for the same file): deliberately built WITHOUT the entrypoint
 # override, so this is a structurally valid .so that exports
-# stdrot_get_api_v2() but genuinely has no brainrot_module_init() at all --
+# stdrot_get_api_v3() but genuinely has no brainrot_module_init_v3() at all --
 # see this fixture's own file comment for what that proves.
 $(NATIVEMODULES_DIR)/no_module_init.so: $(NATIVEMODULES_DIR)/no_module_init.c \
 	$(STDROT_DIR)/registry.c
@@ -280,9 +280,9 @@ nativemodules: $(NATIVEMODULES_LIBS)
 # from `all`, `test`, `valgrind`, `install`, and `wasm`: raylib is an optional
 # dependency of THIS target only, and the whole test suite stays green without it
 # installed. Built with the same
-# -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init pattern as the nativemodules
+# -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3 pattern as the nativemodules
 # fixtures above (registry.c's own comment has the reasoning), so brainray/raylib.c's
-# STDROT_EXPORT_SIG() entries are exported as brainrot_module_init().
+# STDROT_EXPORT_SIG() entries are exported as brainrot_module_init_v3().
 BRAINRAY_DIR := brainray
 BRAINRAY_LIB := $(BRAINRAY_DIR)/raylib.so
 RAYLIB_CFLAGS := $(shell pkg-config --cflags raylib 2>/dev/null)
@@ -300,7 +300,7 @@ $(BRAINRAY_LIB): $(BRAINRAY_DIR)/raylib.c $(STDROT_DIR)/registry.c
 		echo "macOS: 'brew install raylib'. Verify with: pkg-config --exists raylib"; \
 		exit 1; }
 	$(CC) $(SO_CFLAGS) -Wall -Wextra \
-		-DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init \
+		-DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3 \
 		-I. -I$(STDROT_DIR) $(RAYLIB_CFLAGS) -o $@ \
 		$(STDROT_DIR)/registry.c $< $(RAYLIB_LIBS) -lm $(SO_LDFLAGS)
 	@echo "brainray/raylib.so built. Run the cursed game with:"
@@ -322,7 +322,7 @@ play: $(BRAINRAY_LIB) $(TARGET) ## Build brainray + run the Ohio Engine (needs r
 # comment): built standalone, with no dependency on stdrot_api.h or
 # registry.c, so it genuinely only exports the OLD "stdrot_get_api" symbol
 # under the OLD layout -- proving stdrot_load() (stdrot.c) detects the
-# missing stdrot_get_api_v2() and fails loudly instead of misreading this
+# missing stdrot_get_api_v3() and fails loudly instead of misreading this
 # .so's memory as the current ABI shape.
 OLD_ABI_SIM_DIR := tests/old_abi_sim
 OLD_ABI_SIM_LIB := $(OLD_ABI_SIM_DIR)/fake_pre_v2_registry.so

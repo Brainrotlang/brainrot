@@ -8,9 +8,9 @@
  *     #cooked <raylib>
  *
  * exactly like tests/nativemodules/testnative.c: compiled with
- * -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init (Makefile) so this
+ * -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3 (Makefile) so this
  * file's STDROT_EXPORT_SIG() self-registrations are collected by
- * stdrot/registry.c and exported under the brainrot_module_init() name
+ * stdrot/registry.c and exported under the brainrot_module_init_v3() name
  * stdrot_load_module() (stdrot.c) looks for. raylib is therefore an
  * OPTIONAL dependency of this one target only -- `make` / `make test` /
  * `make valgrind` never build this file and do not need raylib installed.

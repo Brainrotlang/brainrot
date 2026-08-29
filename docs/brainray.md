@@ -239,9 +239,17 @@ scalar arguments and rebuilds them on the C side:
   the index is recycled — don't keep using a handle past its unload, or it will
   silently alias whatever loads into that slot next.
 
-By-value struct passing and a `raylib_api.json`-driven **generated** binding are
-"Road B" — a separate follow-up that needs an ABI extension this module
-deliberately sidesteps.
+A `raylib_api.json`-driven **generated** binding is "Road B" — a separate
+follow-up this module deliberately sidesteps.
+
+By-value struct passing was the ABI extension Road B needed first, and it has
+since landed: a native parameter can be declared `{STDROT_STRUCT, "Vector2",
+0}` and receives the `gang`'s C-ABI byte image directly (see `STDROT_STRUCT`
+in `stdrot/stdrot_api.h`). `brainray` itself does not use it yet — every
+wrapper here still takes the flattened `x, y, r, g, b, a` scalars Road A
+chose, and rewriting them by hand is exactly the work Road B exists to
+generate instead. Struct *returns* remain unimplemented and are rejected at
+semantic-analysis time.
 
 ## Function reference
 
@@ -468,5 +476,5 @@ directly. Common ones:
 `brainray` is one native module built from one hand-written `.c` file linked
 against one C library. Any other C library follows the same recipe: a new
 `brainX/` directory with a `<lib>.c` of `STDROT_EXPORT_SIG` wrappers, a `.so`
-built with `-DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init`, and a
+built with `-DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3`, and a
 `#cooked <lib>`. Road B replaces the hand-written wrappers with generated ones.

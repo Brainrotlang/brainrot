@@ -8,7 +8,7 @@
  * checking. */
 #include "stdrot_api.h"
 
-StdrotAPI stdrot_get_api_v2(void)
+StdrotAPI stdrot_get_api_v3(void)
 {
     StdrotAPI api;
     api.functions = NULL;

@@ -1744,6 +1744,34 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
         return;
     }
 
+    if (entry->return_type.type == STDROT_STRUCT)
+    {
+        /* Argument-direction groundwork only, exactly like STDROT_HANDLE
+           and STDROT_CSTRING above. A by-value aggregate ARGUMENT has a
+           complete, safe story (the adapter copies it, the native gets
+           the copy, the copy dies with the call -- see STDROT_STRUCT's
+           comment in stdrot_api.h); a by-value aggregate RETURN does
+           not. The natural sketch, a native returning a pointer to its
+           own local, dangles the instant it returns, and the
+           deep-copy-immediately trick that rescues STDROT_STRING cannot
+           rescue it: that trick relies on the borrowed storage still
+           being alive at the moment of return, which a dead stack frame
+           is not. marshal_native_return_value() (ast.c) correspondingly
+           has no STDROT_STRUCT case, so approving such a call here would
+           hand the interpreter a struct-typed value nothing ever
+           constructed. Reject it outright rather than guess at an
+           ownership design that hasn't been made (roadmap Appendix B
+           Q6). */
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "'%s': native by-value struct return types are not "
+                 "marshalled yet",
+                 func_name.data);
+        add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                           STRING_LITERAL(error_msg), line);
+        return;
+    }
+
     cur = node->data.func_call.arguments;
     for (int i = 0; i < entry->param_count && cur; i++, cur = cur->next)
     {
@@ -1759,7 +1787,7 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
            checks below run, so they see the desugared 1-argument call
            like any other. A no-op for anything that isn't such a call. */
         if (param->type != STDROT_ANY && param->type != STDROT_PTR &&
-            param->type != STDROT_HANDLE)
+            param->type != STDROT_HANDLE && param->type != STDROT_STRUCT)
         {
             propagate_contextual_call_type(cur->expr,
                                            stdrot_type_to_vartype(param->type),
@@ -1795,6 +1823,56 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
                      func_name.data, i + 1);
             add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
                                STRING_LITERAL(error_msg), line);
+            continue;
+        }
+
+        if (param->type == STDROT_STRUCT)
+        {
+            /* Two things have to hold, and VarType alone expresses
+               neither: the argument must be a by-value aggregate (not a
+               pointer to one -- STDROT_STRUCT carries a byte image, so
+               `gang Point *p` passed here would copy the POINTER's
+               bytes, not the struct's), and its tag must match, since
+               every `gang` is VAR_STRUCT and check_type_compatibility_ex()
+               has no struct_name parameter to tell two of them apart (the
+               same gap check_pointer_struct_tag_match() exists to cover
+               on the pointer side). */
+            int actual_pl = infer_expression_pointer_level(cur->expr, analyzer);
+            VarType actual_type = infer_expression_type(cur->expr, analyzer);
+            if (actual_pl != 0 || actual_type != VAR_STRUCT)
+            {
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: expected struct '%s' by value, "
+                         "got %s%s",
+                         func_name.data, i + 1,
+                         param->type_name ? param->type_name : "?",
+                         vartype_to_string(actual_type),
+                         actual_pl > 0 ? " pointer" : "");
+                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                   STRING_LITERAL(error_msg), line);
+                continue;
+            }
+
+            /* Fail-open on an unknowable tag, matching check_pointer_
+               struct_tag_match()'s documented convention -- the runtime
+               boundary (enforce_arg_type(), stdrot.c) re-checks the tag
+               against the value that actually shows up, so a static
+               "don't know" costs a late diagnostic, not a wrong call. */
+            String actual_tag =
+                infer_expression_struct_name(cur->expr, analyzer);
+            if (param->type_name && actual_tag.data &&
+                strcmp(param->type_name, actual_tag.data) != 0)
+            {
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: expected struct '%s', got "
+                         "struct '%s'",
+                         func_name.data, i + 1, param->type_name,
+                         actual_tag.data);
+                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                   STRING_LITERAL(error_msg), line);
+            }
             continue;
         }
 

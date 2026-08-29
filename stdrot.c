@@ -9,7 +9,7 @@
  *     the stdrot sources are compiled into libstdrot.so and dlopen'd at
  *     runtime.
  *     1. Dynamic loader (stdrot_load/unload) that opens libstdrot.so and
- *        discovers all functions via stdrot_get_api_v2()
+ *        discovers all functions via stdrot_get_api_v3()
  *     2. Thin varargs stubs (yapping/yappin/baka) and per-type slorp/
  *        ragequit/chill stubs that dlsym their real implementation by name
  *        on first use
@@ -18,7 +18,7 @@
  *     the stdrot sources are compiled directly into the same binary —
  *     there is no .so and no dlopen surface at all (wasm has no dynamic
  *     loader worth using for a single-artifact build). stdrot_load() calls
- *     stdrot_get_api_v2() directly, and ragequit/chill/slorp_* are provided
+ *     stdrot_get_api_v3() directly, and ragequit/chill/slorp_* are provided
  *     solely by their stdrot definitions — this file only keeps the
  *     yapping/yappin/baka varargs stubs, redirecting them straight to
  *     v_yapping/v_yappin/v_baka instead of looking them up by name.
@@ -108,7 +108,7 @@ static void *pending_module_handle = NULL;
 #ifdef STDROT_STATIC
 /* Statically linked in from stdrot/yapping.c and stdrot/baka.c — called
  * directly below instead of going through dlsym-by-name.
- * stdrot_get_api_v2() (statically linked from stdrot/registry.c) is
+ * stdrot_get_api_v3() (statically linked from stdrot/registry.c) is
  * already declared by stdrot_api.h, included transitively via stdrot.h
  * above. */
 extern void v_yapping(const char *fmt, va_list ap);
@@ -190,7 +190,7 @@ static void validate_native_registry(const StdrotEntry *const *functions,
                                      int function_count)
 {
     /* Validate the table itself before ever indexing into it --
-       stdrot_get_api_v2() (registry.c) is trusted to return a StdrotAPI
+       stdrot_get_api_v3() (registry.c) is trusted to return a StdrotAPI
        shaped the way this header currently declares, but "the ABI is
        versioned" only means the STRUCT LAYOUT is trustworthy, not that
        every possible bit pattern inside it is coherent. A negative
@@ -364,6 +364,33 @@ static void validate_native_registry(const StdrotEntry *const *functions,
                         entry->name, p);
                 exit(1);
             }
+            /* A by-value aggregate is only checkable against its tag:
+               `gang Vector2 {chad x, y;}` and `gang Size {chad w, h;}`
+               have identical size and alignment, so a STDROT_STRUCT
+               descriptor with no type_name leaves both static checking
+               (semantic_check_native_call()) and enforce_arg_type() with
+               nothing to compare but a byte count that cannot tell them
+               apart -- the native would silently receive whichever
+               8-byte struct the caller happened to pass. Reject the
+               descriptor at load time rather than certify a parameter
+               nothing downstream can honestly type-check. Empty is
+               rejected alongside NULL: "" matches no `gang` tag, so it
+               is a descriptor that can never accept any argument at
+               all, which is a bug in the binding, not a usable
+               signature. */
+            if (entry->params[p].type == STDROT_STRUCT &&
+                (!entry->params[p].type_name ||
+                 entry->params[p].type_name[0] == '\0'))
+            {
+                fprintf(stderr,
+                        "stdrot: native '%s': params[%d].type is "
+                        "STDROT_STRUCT but type_name is missing -- a "
+                        "by-value struct parameter must name the "
+                        "gang/chungus tag it accepts (size alone cannot "
+                        "distinguish two same-sized structs)\n",
+                        entry->name, p);
+                exit(1);
+            }
         }
         /* return_like_arg (StdrotEntry's own comment, stdrot_api.h): -1
            means "not identity-polymorphic," otherwise it must name a
@@ -441,10 +468,10 @@ void stdrot_load(void)
      * function table is just a direct call away — no loader needed, and
      * no dlsym-based version check either: this is a single statically
      * linked binary, compiled from one copy of stdrot_api.h, so the ABI
-     * mismatch stdrot_get_api_v2()'s naming exists to catch (an old
+     * mismatch stdrot_get_api_v3()'s naming exists to catch (an old
      * libstdrot.so loaded by a new host, see STDROT_ABI_VERSION's own
      * comment) is structurally impossible here. */
-    StdrotAPI api = stdrot_get_api_v2();
+    StdrotAPI api = stdrot_get_api_v3();
     functions = api.functions;
     function_count = api.count;
     validate_native_registry(functions, function_count);
@@ -536,11 +563,11 @@ void stdrot_load(void)
        confusion this rename exists to make structurally impossible to
        reach, not just unlikely. */
     StdrotAPI (*get_api)(void);
-    *(void **)(&get_api) = dlsym(lib_handle, "stdrot_get_api_v2");
+    *(void **)(&get_api) = dlsym(lib_handle, "stdrot_get_api_v3");
     if (!get_api)
     {
         fprintf(stderr,
-                "libstdrot.so is missing stdrot_get_api_v2() -- it was "
+                "libstdrot.so is missing stdrot_get_api_v3() -- it was "
                 "built against an incompatible stdrot ABI (expected "
                 "STDROT_ABI_VERSION %d). Rebuild libstdrot.so from this "
                 "checkout (`make lib`) before running this binary.\n",
@@ -625,7 +652,7 @@ static const char *describe_native_source(const char *func_name)
  * and registers its functions alongside the core library's. `name` is the
  * #cooked <name> the user wrote; `so_path` is the already-resolved absolute
  * path. Exits with a diagnostic on any failure -- dlopen, a missing/
- * incompatible brainrot_module_init, a malformed registry, or a name
+ * incompatible brainrot_module_init_v3, a malformed registry, or a name
  * already provided by the core library or an earlier #cooked module -- the
  * same fail-loud posture stdrot_load() already has for the core library:
  * none of these are something a Brainrot program can trigger or recover
@@ -643,7 +670,7 @@ void stdrot_load_module(const char *name, const char *so_path)
 
     /* RTLD_LOCAL, unlike the core library's own dlopen() above: a cooked
        module is looked up entirely by explicit handle --
-       dlsym(handle, "brainrot_module_init") below searches that specific
+       dlsym(handle, "brainrot_module_init_v3") below searches that specific
        object (and its own dependencies), never the process-wide global
        scope, so RTLD_GLOBAL buys nothing for that lookup. The core
        library needs RTLD_GLOBAL because some of its OWN natives
@@ -651,9 +678,9 @@ void stdrot_load_module(const char *name, const char *so_path)
        by ordinary natives dlsym'ing/linking against main-binary globals
        like g_exec_context; a cooked module has no such need by design.
        Keeping it RTLD_LOCAL also means a module's own exported symbols
-       (including, deliberately, its own brainrot_module_init -- every
+       (including, deliberately, its own brainrot_module_init_v3 -- every
        cooked module built via -DSTDROT_REGISTRY_ENTRYPOINT=
-       brainrot_module_init exports one under that exact same name) never
+       brainrot_module_init_v3 exports one under that exact same name) never
        enter the process-wide symbol scope at all, so two modules sharing
        that name is never a collision to begin with, regardless of load
        order -- not because the name happens to be unique (it isn't). */
@@ -677,24 +704,39 @@ void stdrot_load_module(const char *name, const char *so_path)
        off to cooked_modules[]. */
     pending_module_handle = handle;
 
-    /* Same versioned-entrypoint discipline as stdrot_get_api_v2() above,
+    /* Same versioned-entrypoint discipline as stdrot_get_api_v3() above,
        for the same reason: a module built against a stdrot_api.h whose
-       StdrotAPI/StdrotEntry layout has since changed must fail this
-       dlsym() cleanly, not have its actual memory misread as the current
-       shape. brainrot_module_init has no version suffix of its own
-       because, unlike stdrot_get_api_v2 (which needed a NEW name to
-       distinguish it from the pre-ABI-versioning "stdrot_get_api" some
-       .so out there might still export), there is no prior, differently-
-       shaped "brainrot_module_init" this is disambiguating from -- a
-       future incompatible StdrotAPI change renames THIS symbol the same
-       way stdrot_get_api_v2 itself would be renamed again. */
+       layout has since changed must fail this dlsym() cleanly, not have
+       its actual memory misread as the current shape.
+
+       This symbol carried NO version suffix through ABI v2, on the
+       reasoning that there was no prior, differently-shaped
+       "brainrot_module_init" to disambiguate from -- with the standing
+       caveat that a future incompatible change would have to rename it
+       the same way stdrot_get_api itself was renamed. ABI v3
+       (STDROT_STRUCT, #208) is that change, and it is worth being
+       precise about why, because the usual tell was absent: StdrotAPI,
+       StdrotEntry and StdrotParam all kept their exact v2 layouts, so a
+       stale module's function TABLE would have been read back
+       correctly. What changed is the calling convention on the other
+       side of that table -- StdrotValue gained val.blob and grew from 24
+       to 32 bytes, and StdrotType renumbered STDROT_NONE out from under
+       every v2-compiled switch. A v2 module would therefore have loaded
+       silently and then had every argument and return value passed at
+       the wrong width: memory corruption on the very first call, with no
+       diagnostic anywhere. Renaming to _v3 turns that into the loud
+       dlsym() failure below.
+
+       The lesson for the next bump: this symbol needs renaming whenever
+       ANYTHING crossing it changes shape -- StdrotValue and StdrotType
+       included -- not only when StdrotAPI/StdrotEntry do. */
     StdrotAPI (*module_init)(void);
-    *(void **)(&module_init) = dlsym(handle, "brainrot_module_init");
+    *(void **)(&module_init) = dlsym(handle, "brainrot_module_init_v3");
     if (!module_init)
     {
         fprintf(stderr,
                 "Error: module '%s' (%s) does not export "
-                "brainrot_module_init() -- it was built against an "
+                "brainrot_module_init_v3() -- it was built against an "
                 "incompatible or missing module ABI (expected "
                 "STDROT_ABI_VERSION %d). Rebuild this module against the "
                 "current stdrot_api.h.\n",
@@ -850,6 +892,16 @@ VarType stdrot_type_to_vartype(StdrotType type)
            one. See VAR_VOID's own comment (ast.h) for the full
            reasoning. */
         return VAR_VOID;
+    case STDROT_STRUCT:
+        /* A real, known category, like STDROT_PTR above and unlike
+           STDROT_HANDLE below: an aggregate passed by value has a
+           genuine Brainrot type (VAR_STRUCT) that the analyzer can and
+           must check the argument against. The base VarType alone is
+           not the whole check, though -- two different `gang`s are both
+           VAR_STRUCT -- so semantic_check_native_call() compares the
+           tag (StdrotParam.type_name) separately rather than relying on
+           this mapping to distinguish them. */
+        return VAR_STRUCT;
     case STDROT_ANY:
     case STDROT_HANDLE:
     default:
@@ -1067,6 +1119,40 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
             out->type = STDROT_INT;
             out->val.i = var->value.ivalue;
             return;
+        case VAR_STRUCT:
+        {
+            /* Borrowed here, copied later: this points straight at the
+               live variable's own blob, and coerce_arg_to_param() is
+               what turns it into the adapter-owned copy the ABI actually
+               promises a native (STDROT_STRUCT's comment, stdrot_api.h).
+               Splitting it that way keeps the copy on the same code path
+               as STDROT_CSTRING's -- one place that allocates argument
+               scratch, one place that frees it -- instead of giving this
+               function, which has no ownership tracking of its own, a
+               heap allocation to leak on every path that abandons the
+               value.
+
+               An array of structs is deliberately NOT handled:
+               var->value.array_data would be the whole array, and
+               .blob.size the single-element size, so the native would
+               silently receive element 0 of something the caller wrote
+               as an array. is_unmarshallable_array_arg()
+               (semantic_analyzer.c) already rejects that statically for
+               every other type; leaving out->type at STDROT_NONE here
+               makes it a loud runtime failure too, rather than a quiet
+               half-read. */
+            if (var->desc.is_array || !var->value.array_data ||
+                !var->desc.struct_name.data)
+                return;
+            StructDef *def = get_struct_def(var->desc.struct_name);
+            if (!def || def->total_size == 0)
+                return;
+            out->type = STDROT_STRUCT;
+            out->val.blob.type_name = var->desc.struct_name.data;
+            out->val.blob.data = var->value.array_data;
+            out->val.blob.size = def->total_size;
+            return;
+        }
         default:
             return;
         }
@@ -1279,7 +1365,8 @@ static void enforce_return_type(const String func_name, StdrotValue *result,
            what this expression actually is -- exactly the class of bug
            this whole enforcement function exists to close. */
         if (result->type == STDROT_PTR || result->type == STDROT_HANDLE ||
-            result->type == STDROT_CSTRING || result->type == STDROT_ANY)
+            result->type == STDROT_CSTRING || result->type == STDROT_ANY ||
+            result->type == STDROT_STRUCT)
         {
             const char *actual_name;
             switch (result->type)
@@ -1293,6 +1380,9 @@ static void enforce_return_type(const String func_name, StdrotValue *result,
             case STDROT_CSTRING:
                 actual_name = "STDROT_CSTRING";
                 break;
+            case STDROT_STRUCT:
+                actual_name = "STDROT_STRUCT";
+                break;
             default:
                 actual_name = "STDROT_ANY";
                 break;
@@ -1301,7 +1391,7 @@ static void enforce_return_type(const String func_name, StdrotValue *result,
                     "Error: stdrot: native '%s' is declared to return "
                     "STDROT_ANY (legacy/untyped export or "
                     "identity-polymorphic result) but actually returned a "
-                    "%s -- pointer/handle/cstring results require an "
+                    "%s -- pointer/handle/cstring/struct results require an "
                     "explicit typed signature, and a native must never "
                     "construct a StdrotValue tagged STDROT_ANY itself, "
                     "not the unchecked ANY fallback\n",
@@ -1416,6 +1506,18 @@ static bool coerce_arg_to_param(StdrotValue *value, StdrotType declared)
             return true;
         }
         return false;
+    case STDROT_STRUCT:
+        /* Nothing to coerce INTO a by-value aggregate: no scalar or
+           string has a meaningful conversion to one, and a struct
+           argument already arrives tagged STDROT_STRUCT from
+           ast_expr_to_stdrot_value() (so it returned at the top of this
+           function without reaching here). The defensive copy that
+           STDROT_STRUCT's contract promises is therefore NOT made here
+           -- it happens in execute_native_call(), next to the ownership
+           arrays that have to free it, because this function is only
+           reached when a conversion is actually needed and the copy must
+           happen on every struct argument, converted or not. */
+        return false;
     default:
         /* STDROT_BOOL/STDROT_CHAR/STDROT_STRING/STDROT_ANY/STDROT_PTR/
            STDROT_HANDLE/STDROT_NONE: the semantic checker requires an
@@ -1430,6 +1532,155 @@ static bool coerce_arg_to_param(StdrotValue *value, StdrotType declared)
            still-mismatched value afterward. */
         return false;
     }
+}
+
+/* Marshals one argument for a parameter declared STDROT_STRUCT, producing
+ * the adapter-owned byte image that type's contract promises
+ * (stdrot_api.h) and, via *owned_blob_out, handing the buffer to the
+ * caller's per-call cleanup.
+ *
+ * Deliberately NOT routed through ast_expr_to_stdrot_value(): that
+ * function can only recognize a plain struct *identifier*, so a by-value
+ * member access (`body.pos`) or a struct-returning call (`make_vec()`)
+ * would miss its VAR_STRUCT case and fall through to the general
+ * scalar fallback at its end -- which would both produce a nonsense
+ * STDROT_INT and, for the call form, EVALUATE the call, leaving the real
+ * evaluation below to run it a second time (the double-execution class of
+ * bug #303 fixed). resolve_by_value_struct_source() (ast.c) is the single
+ * shared "get me a by-value struct blob" step every other struct
+ * copy site already goes through -- struct arguments to Brainrot-defined
+ * functions, struct returns, struct copy-initializers -- so a native call
+ * accepts exactly the same set of source expressions those do, rather
+ * than a narrower ad-hoc one.
+ *
+ * Exits (rather than returning a failure the caller must handle) on an
+ * unresolvable source, matching enforce_arg_type()'s own treatment of an
+ * argument that turns out not to satisfy its declared parameter:
+ * resolve_by_value_struct_source() has already emitted exactly one
+ * diagnostic, and the contract this boundary owes the native -- a valid
+ * image of the declared struct -- simply cannot be met. */
+static void marshal_struct_argument(const String func_name, ASTNode *expr,
+                                    int arg_index, StdrotValue *out,
+                                    void **owned_blob_out)
+{
+    void *blob = NULL;
+    String tag = {0};
+    bool resolver_owns_blob = false;
+
+    /* A bare struct-returning call needs the same special case the
+       Brainrot-defined-function struct-parameter path already makes
+       (enter_function_scope(), ast.c): its blob lives in the shared
+       current_return_value slot rather than in any addressable variable,
+       so resolve_by_value_struct_source() cannot reach it -- only a
+       member access ON a call result (`make_outer().inner`) goes through
+       the resolver. Handled here so a native's struct parameter accepts
+       exactly the set of source expressions a Brainrot function's struct
+       parameter does, rather than a narrower one. Restricted to
+       user-defined functions: a native returning a struct is rejected at
+       semantic-analysis time, so a builtin here can only be a type error,
+       and is left to the resolver below to report as one. */
+    if (expr->type == NODE_FUNC_CALL &&
+        !is_builtin_function(expr->data.func_call.function_name))
+    {
+        execute_function_call(expr->data.func_call.function_name,
+                              expr->data.func_call.arguments);
+        if (!current_return_value.has_value ||
+            current_return_value.desc.type != VAR_STRUCT ||
+            current_return_value.desc.pointer_level != 0 ||
+            !current_return_value.desc.struct_name.data ||
+            !current_return_value.value.pvalue)
+        {
+            free_pending_return_value();
+            fprintf(stderr,
+                    "Error: stdrot: native '%s' argument %d: call does not "
+                    "return a by-value struct/union\n",
+                    func_name.data, arg_index + 1);
+            exit(1);
+        }
+        tag = current_return_value.desc.struct_name;
+        StructDef *rdef = get_struct_def(tag);
+        void *copy = rdef && rdef->total_size > 0
+                         ? SAFE_MALLOC_ARRAY(char, rdef->total_size)
+                         : NULL;
+        if (!copy)
+        {
+            /* Reported BEFORE free_pending_return_value(): `tag` borrows
+               current_return_value's own struct_name, which that call
+               frees along with the blob -- printing it afterward would
+               read freed memory on the way out. */
+            fprintf(stderr,
+                    "Error: stdrot: native '%s' argument %d: could not "
+                    "materialize the returned '%s' struct\n",
+                    func_name.data, arg_index + 1, tag.data);
+            free_pending_return_value();
+            exit(1);
+        }
+        memcpy(copy, (void *)current_return_value.value.pvalue,
+               rdef->total_size);
+        /* Copied out, so release the shared slot immediately: a LATER
+           argument's own call would otherwise overwrite (and free) the
+           blob this one is still pointing at -- the same hazard
+           enter_function_scope()'s owned-temporary handling exists for.
+           tag is re-read from the fresh StructDef below rather than kept
+           pointing into the slot this just freed. */
+        free_pending_return_value();
+        out->type = STDROT_STRUCT;
+        out->val.blob.type_name = rdef->name.data;
+        out->val.blob.data = copy;
+        out->val.blob.size = rdef->total_size;
+        *owned_blob_out = copy;
+        return;
+    }
+
+    if (!resolve_by_value_struct_source(expr, &blob, &tag, &resolver_owns_blob,
+                                        true) ||
+        !blob || !tag.data)
+    {
+        exit(1);
+    }
+
+    StructDef *def = get_struct_def(tag);
+    /* Copy unconditionally, even when resolve_by_value_struct_source()
+       reports it already allocated one (`make_outer().inner`). Adopting
+       that allocation would look like it saves a copy, but the two sides
+       do not agree on an allocator: the resolver hands back plain
+       calloc() memory (ast.c, freed there with plain free()), while
+       everything this call frees goes through SAFE_FREE, which reads a
+       safe_malloc() header block that a calloc'd pointer simply does not
+       have -- it would reject the pointer as corrupt and leak it, after
+       reading in front of the allocation to decide that. Copying into a
+       SAFE_MALLOC_ARRAY buffer and releasing the resolver's own with the
+       allocator it actually came from keeps each allocation paired with
+       its matching free. */
+    void *copy = (def && def->total_size > 0)
+                     ? SAFE_MALLOC_ARRAY(char, def->total_size)
+                     : NULL;
+    if (!copy)
+    {
+        if (resolver_owns_blob)
+        {
+            free(blob);
+        }
+        fprintf(stderr,
+                "Error: stdrot: native '%s' argument %d: could not "
+                "materialize a '%s' struct argument\n",
+                func_name.data, arg_index + 1, tag.data);
+        exit(1);
+    }
+    memcpy(copy, blob, def->total_size);
+    if (resolver_owns_blob)
+    {
+        free(blob);
+    }
+
+    out->type = STDROT_STRUCT;
+    /* def->name, not the caller's `tag`: when the resolver owned the
+       blob, tag borrowed from storage that was just released above. The
+       registered StructDef outlives every call. */
+    out->val.blob.type_name = def->name.data;
+    out->val.blob.data = copy;
+    out->val.blob.size = def->total_size;
+    *owned_blob_out = copy;
 }
 
 /* Makes the native's declared param type authoritative for what
@@ -1471,7 +1722,34 @@ static void enforce_arg_type(const String func_name, int arg_index,
     }
     else if (value->type == param->type)
     {
-        return;
+        /* Matching StdrotType is sufficient for every other type, but
+           not for an aggregate: every `gang` is STDROT_STRUCT, so the
+           tags have to agree too or a native declaring `Vector2` would
+           accept any same-shaped struct (and, worse, any DIFFERENTLY
+           shaped one -- nothing above compares sizes either). The
+           semantic analyzer already rejects a tag mismatch statically;
+           this is the same fail-open case enforce_arg_type() exists for
+           in general (an argument whose static type was NONE), applied
+           to the one property that makes a struct argument meaningful.
+           validate_native_registry() guarantees param->type_name is
+           non-NULL for STDROT_STRUCT, and ast_expr_to_stdrot_value()
+           only ever produces a STDROT_STRUCT value with a non-NULL tag,
+           so neither side needs a NULL guard beyond this. */
+        if (param->type != STDROT_STRUCT ||
+            (value->val.blob.type_name && param->type_name &&
+             strcmp(value->val.blob.type_name, param->type_name) == 0))
+        {
+            return;
+        }
+
+        fprintf(stderr,
+                "Error: stdrot: native '%s' argument %d: declared to accept "
+                "struct '%s' but the actual argument is struct '%s'\n",
+                func_name.data, arg_index + 1,
+                param->type_name ? param->type_name : "(none)",
+                value->val.blob.type_name ? value->val.blob.type_name
+                                          : "(none)");
+        exit(1);
     }
 
     fprintf(stderr,
@@ -1512,6 +1790,13 @@ typedef struct PendingNativeCallArgs
     StdrotValue *arg_values;
     char **owned_string_bufs;
     const char **owned_cstring_bufs;
+    /* The by-value copy made for each STDROT_STRUCT argument
+       (STDROT_STRUCT's contract, stdrot_api.h). A third array rather
+       than a reuse of owned_cstring_bufs for the same reason those two
+       are already separate: the buffer pointer lives in a different
+       StdrotValue union member, and one slot can legitimately own
+       several kinds of scratch at once. */
+    void **owned_blob_bufs;
     int arg_count;
     struct PendingNativeCallArgs *next;
 } PendingNativeCallArgs;
@@ -1534,10 +1819,15 @@ static void free_pending_native_call_args(void)
             {
                 stdrot_release_cstring(frame->owned_cstring_bufs[i]);
             }
+            if (frame->owned_blob_bufs && frame->owned_blob_bufs[i])
+            {
+                SAFE_FREE(frame->owned_blob_bufs[i]);
+            }
         }
         SAFE_FREE(frame->arg_values);
         SAFE_FREE(frame->owned_string_bufs);
         SAFE_FREE(frame->owned_cstring_bufs);
+        SAFE_FREE(frame->owned_blob_bufs);
     }
     pending_native_call_stack = NULL;
 }
@@ -1684,11 +1974,14 @@ NativeResult execute_native_call(const String func_name, ArgumentList *args,
     char **owned_string_bufs = SAFE_MALLOC_ARRAY(char *, total_args);
     const char **owned_cstring_bufs =
         SAFE_MALLOC_ARRAY(const char *, total_args);
-    if (!arg_values || !owned_string_bufs || !owned_cstring_bufs)
+    void **owned_blob_bufs = SAFE_MALLOC_ARRAY(void *, total_args);
+    if (!arg_values || !owned_string_bufs || !owned_cstring_bufs ||
+        !owned_blob_bufs)
     {
         SAFE_FREE(arg_values);
         SAFE_FREE(owned_string_bufs);
         SAFE_FREE(owned_cstring_bufs);
+        SAFE_FREE(owned_blob_bufs);
         yyerror("Out of memory marshalling native call arguments");
         return (NativeResult){{STDROT_NONE, {0}}, false};
     }
@@ -1701,6 +1994,7 @@ NativeResult execute_native_call(const String func_name, ArgumentList *args,
     PendingNativeCallArgs frame = {.arg_values = arg_values,
                                    .owned_string_bufs = owned_string_bufs,
                                    .owned_cstring_bufs = owned_cstring_bufs,
+                                   .owned_blob_bufs = owned_blob_bufs,
                                    .arg_count = total_args,
                                    .next = pending_native_call_stack};
     pending_native_call_stack = &frame;
@@ -1710,14 +2004,38 @@ NativeResult execute_native_call(const String func_name, ArgumentList *args,
     while (cur && cur->expr && arg_count < total_args)
     {
         ASTNode *expr = cur->expr;
+        const StdrotParam *declared_param =
+            (arg_count < entry->param_count && entry->params)
+                ? &entry->params[arg_count]
+                : NULL;
+
+        owned_string_bufs[arg_count] = NULL;
+        owned_cstring_bufs[arg_count] = NULL;
+        owned_blob_bufs[arg_count] = NULL;
+
+        /* A declared by-value struct parameter takes its own marshalling
+           path, chosen BEFORE the argument expression is evaluated at
+           all -- see marshal_struct_argument()'s own comment for why
+           routing it through ast_expr_to_stdrot_value() first would both
+           mistype it and double-evaluate a call-shaped argument. */
+        if (declared_param && declared_param->type == STDROT_STRUCT)
+        {
+            marshal_struct_argument(func_name, expr, arg_count,
+                                    &arg_values[arg_count],
+                                    &owned_blob_bufs[arg_count]);
+            enforce_arg_type(func_name, arg_count, &arg_values[arg_count],
+                             declared_param);
+            arg_count++;
+            cur = cur->next;
+            continue;
+        }
 
         ast_expr_to_stdrot_value(expr, &arg_values[arg_count]);
-        owned_string_bufs[arg_count] =
-            (expr->type == NODE_FUNC_CALL &&
-             arg_values[arg_count].type == STDROT_STRING)
-                ? arg_values[arg_count].val.str.data
-                : NULL;
-        owned_cstring_bufs[arg_count] = NULL;
+        if (expr->type == NODE_FUNC_CALL &&
+            arg_values[arg_count].type == STDROT_STRING)
+        {
+            owned_string_bufs[arg_count] = arg_values[arg_count].val.str.data;
+        }
 
         /* Convert to whatever entry->params[arg_count] actually declared
            -- see coerce_arg_to_param()'s comment for why this has to
@@ -1787,6 +2105,42 @@ NativeResult execute_native_call(const String func_name, ArgumentList *args,
             {
                 apply_variadic_promotion(&arg_values[arg_count]);
             }
+        }
+
+        /* Replace the borrowed pointer into the caller's live struct
+           variable (ast_expr_to_stdrot_value()'s VAR_STRUCT case) with
+           the independent copy STDROT_STRUCT's contract promises, and
+           hand the copy to this frame's cleanup. Done here, after both
+           branches above rather than inside the typed one, so it covers
+           a struct that reaches an unchecked variadic/legacy tail too:
+           such an argument has no StdrotParam to coerce against, but it
+           is exactly as capable of letting a native mutate (or outlive)
+           the caller's variable, and "the tail is unchecked" is a
+           statement about types, not about memory safety.
+
+           A zero-size or data-less blob cannot occur -- ast_expr_to_
+           stdrot_value() leaves out->type at STDROT_NONE rather than
+           emitting one -- so failing to allocate is the only way here,
+           and it is fatal rather than silently passing the borrowed
+           pointer through: continuing would hand the native the caller's
+           own storage under a contract that promises a copy. */
+        if (arg_values[arg_count].type == STDROT_STRUCT)
+        {
+            StdrotValue *sv = &arg_values[arg_count];
+            void *copy = SAFE_MALLOC_ARRAY(char, sv->val.blob.size);
+            if (!copy)
+            {
+                fprintf(stderr,
+                        "Error: stdrot: native '%s' argument %d: out of "
+                        "memory copying a %zu-byte '%s' struct argument\n",
+                        func_name.data, arg_count + 1, sv->val.blob.size,
+                        sv->val.blob.type_name ? sv->val.blob.type_name
+                                               : "(unknown)");
+                exit(1);
+            }
+            memcpy(copy, sv->val.blob.data, sv->val.blob.size);
+            sv->val.blob.data = copy;
+            owned_blob_bufs[arg_count] = copy;
         }
 
         arg_count++;
@@ -1879,11 +2233,16 @@ NativeResult execute_native_call(const String func_name, ArgumentList *args,
         {
             stdrot_release_cstring(owned_cstring_bufs[i]);
         }
+        if (owned_blob_bufs[i])
+        {
+            SAFE_FREE(owned_blob_bufs[i]);
+        }
     }
 
     SAFE_FREE(arg_values);
     SAFE_FREE(owned_string_bufs);
     SAFE_FREE(owned_cstring_bufs);
+    SAFE_FREE(owned_blob_bufs);
 
     return (NativeResult){result, owns_string};
 }

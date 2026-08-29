@@ -915,11 +915,11 @@ exactly one `main`; splicing in a second one is a parse error.)
 
 A `#cooked <name>` that resolves to a native `.so` instead is dlopen'd
 (`RTLD_LOCAL`, not the core library's `RTLD_GLOBAL`) and must export a
-`StdrotAPI brainrot_module_init(void)` entrypoint — the native counterpart
-of the core standard library's own `stdrot_get_api_v2()`, built the exact
+`StdrotAPI brainrot_module_init_v3(void)` entrypoint — the native counterpart
+of the core standard library's own `stdrot_get_api_v3()`, built the exact
 same way (`stdrot/registry.c`'s linker-section collection of every
 `STDROT_EXPORT_SIG()` in the module, exported under the module-specific name
-instead via `-DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init` — see
+instead via `-DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3` — see
 `tests/nativemodules/testnative.c` for a minimal example). Every cooked
 module exports that *same* entrypoint name; that's fine because it's always
 looked up by that specific module's own `dlopen` handle (never a
@@ -930,7 +930,7 @@ opposed to this handle-scoped lookup) is the actual hazard this design
 avoids. Its exported functions become callable alongside the core
 library's and any other already-cooked module's; a name colliding with
 either is a load-time error naming the existing source.
-Missing or ABI-incompatible `brainrot_module_init()`, and a malformed
+Missing or ABI-incompatible `brainrot_module_init_v3()`, and a malformed
 function table, are both load-time errors for the same reason a
 `libstdrot.so` built against an incompatible ABI is (see `stdrot_load()`,
 `stdrot.c`) — a native module is exactly as fragile as the core library.

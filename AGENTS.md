@@ -75,4 +75,9 @@ Issue, Type of Change, Checklist) — fill it in, don't strip it out.
 - **Ask first**: changing existing keyword syntax/semantics in `lang.l`/`lang.y`
   (README's keyword table is a public compatibility surface).
 - **Never**: commit generated files (`lang.tab.*`, `lex.yy.c`, `brainrot`,
-  `libstdrot.so`) or disable `-Werror`/sanitizers to silence a warning.
+  `libstdrot.so`) or disable `-Werror`/sanitizers to silence a warning. This
+  covers generated *bindings* too (Appendix B Q7 in `docs/ROADMAP.md`): a
+  binding generator's C output is derived and stays out of the repo, while a
+  vendored, pinned API description it reads *in* (e.g. raylib's
+  `raylib_api.json`) is an ordinary committed source file, not generated
+  output.
