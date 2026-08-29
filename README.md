@@ -218,6 +218,7 @@ Check out the [examples](examples/README.md):
 - [Modules (`#cooked`)](examples/modules.brainrot)
 - [Named modules (`#cooked <name>`)](examples/modules_named.brainrot)
 - [Ohio Engine — the first cursed game (raylib)](examples/raylib/ohio_engine.brainrot)
+- [Ohio Engine II — the same loop through a *generated* binding](examples/raylib/ohio_engine_gen.brainrot)
 
 ### 🎮 The first cursed game
 
@@ -241,6 +242,44 @@ BRAINROT_PATH=brainray ./brainrot examples/raylib/ohio_engine.brainrot
 `make play` does the last two steps in one. See
 [`docs/brainray.md`](docs/brainray.md) for the full raylib setup guide (Ubuntu
 PPA vs. source build, macOS, the two-library model) and the binding reference.
+
+### 🤖 …and the generated binding
+
+The hand-written module above wraps about 20 raylib primitives and flattens
+everything into scalars (`rl_draw_circle(640, 360, 100.0, 255, 0, 255, 255)`).
+raylib has **617** functions, and hand-writing that many wrappers is not a
+plan — so `brainray/brainray_gen.py` generates them from raylib's own published
+API description:
+
+```text
+brainray/raylib_api.json → brainray-gen → { C adapters + ABI descriptors,
+                                            a Brainrot prelude of gang types
+                                            and gyatt constants, ABI tests }
+```
+
+That yields **378 functions and 16 struct types**, and the calls take real
+aggregates by value instead of loose scalars:
+
+```c
+#cooked <raylibgen>
+
+gang Vector2 pos;
+gang Color orb;
+rl_draw_circle_v(pos, 60.0, orb);   🚽 raylib's own DrawCircleV(Vector2, float, Color)
+```
+
+```bash
+make brainray-gen-sources   # generate the binding (raylib NOT required)
+make brainray-gen           # + compile it and run its ABI drift check
+make play-gen               # + run examples/raylib/ohio_engine_gen.brainrot
+```
+
+Generating needs only Python and the pinned JSON; only *compiling* the result
+needs raylib. Every generated `gang` has its size, alignment, and every field
+offset `_Static_assert`ed against the real raylib headers, so a layout
+disagreement is a build failure rather than a runtime corruption. What it
+deliberately leaves out — struct returns most of all — is counted and reported
+on every run; see [`docs/brainray.md`](docs/brainray.md).
 
 ## 🗪 Community
 

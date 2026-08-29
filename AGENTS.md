@@ -17,6 +17,15 @@ make cppcheck   # static analysis (what CI's `static-analysis` job runs); needs 
 make clean      # remove build artifacts (does NOT touch source)
 ```
 
+Optional raylib bindings — never needed by `make`, `make test`, or
+`make valgrind`, and only the last two lines require raylib installed:
+
+```bash
+make brainray-gen-sources # generate the raylib binding; needs NO raylib
+make brainray             # hand-written module (Road A); needs raylib
+make brainray-gen         # compile the generated binding + ABI drift check
+```
+
 Run a single program: `./brainrot path/to/file.brainrot`.
 Run one pytest case: `cd tests && pytest -v -k <test_case_name>`.
 

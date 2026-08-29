@@ -474,6 +474,64 @@ not require raylib.
 
 ---
 
+## 9b. Ohio Engine II — the same loop, generated (raylib)
+
+**File Name:** `raylib/ohio_engine_gen.brainrot`
+
+```c
+#cooked <raylibgen>
+
+skibidi main {
+    rl_init_window(640, 360, "Ohio Engine II: Generated Boogaloo");
+
+    gang Vector2 pos;
+    pos.x = 320.0;
+    pos.y = 180.0;
+
+    gang Color orb;
+    orb.r = 255;
+    orb.g = 0;
+    orb.b = 255;
+    orb.a = 255;
+
+    🚽 ... loop ...
+    rl_draw_circle_v(pos, 60.0, orb);
+}
+```
+
+**Description:** The same game loop as above, but through a binding nobody
+wrote by hand.
+
+The difference is the point. Road A's `rl_draw_circle(640, 360, 100.0, 255, 0,
+255, 255)` flattens a position and a colour into seven loose scalars, because
+that was all hand-written wrappers could carry. Here the same call passes real
+aggregates by value — a `gang Vector2` and a `gang Color` — straight into
+raylib's own `DrawCircleV(Vector2, float, Color)`.
+
+Every function it calls is a generated adapter, and every `gang` it uses is a
+generated declaration whose byte layout is `_Static_assert`ed against the real
+raylib headers. It closes itself after 30 frames so it can run unattended.
+
+```bash
+make brainray-gen   # generate + compile the binding, then verify its ABI
+make play-gen       # ... and run this example
+```
+
+**Key Concepts:**
+
+- By-value struct arguments across the native ABI (`STDROT_STRUCT`).
+- `#cooked <raylibgen>` resolves a generated *prelude*, which declares the
+  `gang` types and `gyatt` constants and itself cooks the native module — so
+  types and constants need no ABI support at all.
+- Generating the binding needs only Python and the pinned
+  `brainray/raylib_api.json`; only compiling it needs raylib.
+
+See [`docs/brainray.md`](../docs/brainray.md#road-b--the-generated-binding) for
+what the generator covers (378 of raylib's 617 functions) and what it
+deliberately skips.
+
+---
+
 ## 10. Array of Structs
 
 **File Name:** `array_of_structs.brainrot`

@@ -392,7 +392,7 @@ nothing in-tree needs more than that yet — see
 
 ## Phase 5 — Bindings and the first cursed game
 
-**Status: Road A shipped (#208) · Road B in progress — ABI groundwork landed · Priority: P1**
+**Status: Road A shipped (#208) · Road B shipped (#208) · Priority: P1**
 
 There are two roads here and we should walk both, in order.
 
@@ -453,18 +453,46 @@ dynamic call machine. Once this works, raylib is merely the first client: SDL,
 SQLite, libcurl, OpenSSL, PortAudio, Lua, FFmpeg, and libgit2 are the same
 problem.
 
-**Landed so far (#208):** the by-value aggregate ABI the sketch above assumes
-— `STDROT_STRUCT` (`stdrot/stdrot_api.h`), ABI v3. A native parameter
-declared `{STDROT_STRUCT, "Vector2", 0}` receives the `gang`'s C-ABI byte
-image, tag-checked both statically and at the runtime boundary, copied so the
-call is genuinely by value. That is the *argument* direction only. The sketch
-above is still not implementable as written, and deliberately so: its
+**Delivered (#208).** In two parts.
+
+*The ABI.* `STDROT_STRUCT` (`stdrot/stdrot_api.h`), ABI v3 — the by-value
+aggregate the sketch above assumes. A parameter declared
+`{STDROT_STRUCT, "Vector2", 0}` receives the `gang`'s C-ABI byte image,
+tag-checked both statically and at the runtime boundary, copied so the call is
+genuinely by value. **Argument direction only**, and the sketch above is
+deliberately still not implementable as written: its
 `stdrot_struct("Texture2D", &tex, sizeof(tex))` returns the address of a local
-that dies with the call, and struct returns are rejected until Appendix B Q6
-(ownership of native resources) has an answer. **Still open:** the generator
-itself, type/constant registration in `StdrotAPI` (it carries a function table
-and nothing else), `raylib_api.json` vendoring, and raylib-shaped entries in
-`tests/abi/struct_layout_abi_check.c`. Phase 11's `gamba()` is **not** that generated OpenSSL binding — it is
+that dies with the call. Struct returns stay rejected until Appendix B Q6
+(ownership of native resources) has an answer.
+
+*The generator.* `brainray/brainray_gen.py`, reading a vendored
+`brainray/raylib_api.json` pinned by upstream commit SHA, emitting **378 of
+617 functions, 16 of 35 struct types, 305 constants** — plus an
+`_Static_assert`/`offsetof` translation unit whose compilation *is* the ABI
+drift check against real raylib headers. `make brainray-gen-sources`
+(generate; raylib not required) and `make brainray-gen` (also compile and
+verify) are opt-in and never prerequisites of `all`/`test`/`valgrind`.
+Demonstrated by `examples/raylib/ohio_engine_gen.brainrot`, which runs a real
+game loop passing `gang Vector2`/`gang Color`/`gang Rectangle` by value — the
+non-handle-hack demo this phase's DoD asked for.
+
+Two design notes worth carrying forward:
+
+- **Type/constant registration in `StdrotAPI` turned out to be unnecessary**,
+  which is why this phase shipped without it despite the DoD implying it. A
+  module name resolves a `<name>.brainrot` prelude *before* a `<name>.so`, and
+  a prelude may itself `#cooked` a native module — so the generator emits
+  types and constants as ordinary Brainrot source (`gang Vector2 { chad x;
+  chad y; }`, `gyatt KeyboardKey { KEY_SPACE = 32, ... }`) and only functions
+  go through the C ABI. Phase 4's deferral of that registration
+  ([#207](https://github.com/Brainrotlang/brainrot/issues/207)) cost nothing.
+- **Struct returns are the dominant coverage cost**, quantified: 113 of the
+  239 skipped functions. Answering Appendix B Q6 is the single highest-value
+  follow-up for this binding, worth more than the other five skip categories
+  combined.
+
+Road A's hand-written `brainray/raylib.so` is untouched and still works;
+the generated binding is a separate module (`#cooked <raylibgen>`). Phase 11's `gamba()` is **not** that generated OpenSSL binding — it is
 a thin, hand-written `RAND_bytes` wrapper that ships earlier, the same way
 Road A ships a cursed game before Road B generates `brainray`.
 
