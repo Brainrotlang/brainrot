@@ -6599,6 +6599,17 @@ void handle_return_statement(ASTNode *expr)
                     free_pending_return_value();
                 }
             }
+            else if (expr)
+            {
+                /* A discarded expression that is not a bare call still has
+                   to run. `bussin f() + 0;` in a skibidi function has no
+                   other evaluator -- ast_accept()'s pre-visit deliberately
+                   does not execute the return expression (see visitor.c's
+                   NODE_RETURN case), and the value-bearing arms above are
+                   the only other place anything gets evaluated. Without
+                   this the side effect is silently dropped. */
+                evaluate_expression(expr);
+            }
             current_return_value.desc.type = declared_type;
             current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;

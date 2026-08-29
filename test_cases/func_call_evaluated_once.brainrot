@@ -12,6 +12,11 @@
 🚽 whether it did something returns the SECOND attempt's answer -- the one
 🚽 that found the work already done and declined -- so the side effect
 🚽 happens exactly once while the report says it did not happen at all.
+🚽 A void function whose `bussin` expression is discarded: the value-bearing
+🚽 return arms never see it, so the void arm is the only thing that can run
+🚽 it for its side effect.
+skibidi void_ret(rizz *n) { bussin bump(n) + 0; }
+
 rizz bump(rizz *n) {
     *n = *n + 1;
     bussin *n;
@@ -56,6 +61,33 @@ skibidi main {
     rizz done = 0;
     cap fired = try_once(&done);
     yapping("reported    %b (must be W)", fired);
+
+    🚽 Exactly once, not zero. These are the shapes where nothing on the
+    🚽 ast_accept() path evaluates the expression, so making the pre-visit a
+    🚽 no-op removed their ONLY evaluator rather than their second one. A
+    🚽 bare call is special-cased elsewhere; a call inside any larger
+    🚽 expression in statement position is not.
+    calls = 0;
+    bump(&calls) + 0;
+    yapping("expr stmt   %d", calls);
+
+    calls = 0;
+    0 - bump(&calls);
+    yapping("unary stmt  %d", calls);
+
+    calls = 0;
+    flex (rizz k = 0; k < 2; bump(&calls) + 0) { k = k + 1; }
+    yapping("for-incr    %d", calls);
+
+    calls = 0;
+    void_ret(&calls);
+    yapping("void bussin %d", calls);
+
+    🚽 And the two the visitor DOES evaluate, which must not now run twice.
+    rizz i = 0;
+    i++;
+    ++i;
+    yapping("inc stmts   %d", i);
 
     bussin 0;
 }

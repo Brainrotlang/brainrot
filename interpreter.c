@@ -344,12 +344,47 @@ void *interpreter_visit_function_call(Visitor *self, ASTNode *node)
    wrapping a call is unaffected: it still goes through ast_accept()
    normally, since interpreter_visit_declaration() et al. *are* that real
    evaluation. */
+/* True for an expression that, standing alone as a statement, nothing on
+   the ast_accept() path will evaluate.
+
+   The visitor's expression cases exist so shared visitors (the semantic
+   analyzer) can inspect a node; they deliberately do not compute values.
+   Two are exceptions and must NOT be listed here or they would run twice:
+   a pre/post increment, which interpreter_visit_unary_operation() performs,
+   and an array access, which interpreter_visit_array_access() performs.
+   Everything else -- `f() + 0;`, `-f();`, a bare identifier -- has no other
+   evaluator, which is exactly the set execute_statement() already covers
+   with a single evaluate_expression(). */
+static bool interpreter_statement_needs_evaluation(const ASTNode *node)
+{
+    switch (node->type)
+    {
+    case NODE_OPERATION:
+    case NODE_IDENTIFIER:
+    case NODE_INT:
+    case NODE_SHORT:
+    case NODE_FLOAT:
+    case NODE_DOUBLE:
+    case NODE_CHAR:
+        return true;
+    case NODE_UNARY_OPERATION:
+        return node->data.unary.op != OP_POST_INC &&
+               node->data.unary.op != OP_PRE_INC &&
+               node->data.unary.op != OP_POST_DEC &&
+               node->data.unary.op != OP_PRE_DEC;
+    default:
+        return false;
+    }
+}
+
 static void interpreter_accept_or_execute_call(ASTNode *node, Visitor *self)
 {
     if (!node)
         return;
     if (node->type == NODE_FUNC_CALL)
         interpreter_execute_call_statement(node);
+    else if (interpreter_statement_needs_evaluation(node))
+        evaluate_expression(node);
     else
         ast_accept(node, self);
 }
