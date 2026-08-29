@@ -1,0 +1,61 @@
+🚽 Test case: a user-defined function call must run exactly once, whatever
+🚽 syntactic position it appears in.
+🚽
+🚽 ast_accept()'s generic pre-visit used to execute user-defined calls, and
+🚽 the statement's own visitor then evaluated the same node again for real.
+🚽 So a declaration, an assignment, or a call buried in a right-hand
+🚽 expression ran the body TWICE and kept the second result. Pure functions
+🚽 were unaffected, which is why it survived; anything with a side effect
+🚽 was not. Loading a resource loaded it twice.
+🚽
+🚽 The sharpest version is the last case here. A function that reports
+🚽 whether it did something returns the SECOND attempt's answer -- the one
+🚽 that found the work already done and declined -- so the side effect
+🚽 happens exactly once while the report says it did not happen at all.
+rizz bump(rizz *n) {
+    *n = *n + 1;
+    bussin *n;
+}
+
+🚽 `rizz` rather than `cap` for the flag, because dereferencing a cap
+🚽 pointer is rejected. And the parameter is `flag`, not `done`: if it
+🚽 shares a name with the CALLER's local, `*flag` inside here resolves
+🚽 against the caller's non-pointer variable and the call is rejected --
+🚽 a separate scoping bug, avoided here rather than exercised.
+cap try_once(rizz *flag) {
+    edgy (*flag != 0) { bussin L; }
+    *flag = 1;
+    bussin W;
+}
+
+skibidi main {
+    rizz calls = 0;
+    rizz a = bump(&calls);
+    yapping("declaration %d %d", calls, a);
+
+    calls = 0;
+    rizz b = 0;
+    b = bump(&calls);
+    yapping("assignment  %d %d", calls, b);
+
+    calls = 0;
+    rizz c = bump(&calls) + 0;
+    yapping("expression  %d %d", calls, c);
+
+    calls = 0;
+    yapping("argument    %d", bump(&calls) * 0 + calls);
+
+    calls = 0;
+    bump(&calls);
+    yapping("statement   %d", calls);
+
+    calls = 0;
+    edgy (bump(&calls) > 0) { }
+    yapping("condition   %d", calls);
+
+    rizz done = 0;
+    cap fired = try_once(&done);
+    yapping("reported    %b (must be W)", fired);
+
+    bussin 0;
+}

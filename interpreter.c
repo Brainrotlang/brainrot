@@ -313,22 +313,25 @@ static void interpreter_execute_call_statement(ASTNode *node)
    downstream evaluate_expression_*() call populate the memo cache itself,
    at the right time. (Bare statement-position and for-loop init/incr
    calls never reach here at all -- see interpreter_execute_call_statement()
-   above.) User-defined functions have no such cache and are still invoked
-   from both places -- a pre-existing gap, not introduced here, tracked
-   separately from native-call support. */
+   above.)
+
+   The same reasoning applies to a USER-DEFINED function, which is why this
+   no longer executes one either. It used to, and the effect was that
+   `rizz a = f();` ran f's body twice and kept the second result: harmless
+   for a pure function, silently wrong for one that does anything. Loading a
+   resource loaded it twice; advancing a generator advanced it twice; and a
+   function reporting whether it had acted -- `cap fired = try_fire(&p);` --
+   returned the answer for the SECOND attempt, the one that found the work
+   already done and declined. That shape is the dangerous one, because the
+   side effect still happens exactly once and only the report is wrong.
+
+   User functions have no memo cache, so unlike a native there is nothing
+   here to warm: the downstream evaluate_expression_* / handle_function_call
+   is the real and only invocation. */
 void *interpreter_visit_function_call(Visitor *self, ASTNode *node)
 {
     (void)self;
-    if (!node)
-        return NULL;
-
-    if (!is_builtin_function(node->data.func_call.function_name))
-    {
-        execute_function_call(node->data.func_call.function_name,
-                              node->data.func_call.arguments);
-        free_pending_return_value();
-    }
-
+    (void)node;
     return NULL;
 }
 
