@@ -601,6 +601,21 @@ static StructDef *infer_struct_def_static(ASTNode *expr,
         return get_struct_def(sym->struct_name);
     }
 
+    if (expr->type == NODE_FUNC_CALL)
+    {
+        /* `f().x`, and as a base for a chain, `f().inner.x`. The return
+           type is declared, so this is answerable statically without
+           running anything -- which matters, because this is the analyzer.
+           A pointer-to-struct return is excluded for the same reason a
+           multi-level pointer field is below: `.` does not follow it. */
+        Function *func = get_function(expr->data.func_call.function_name);
+        if (!func || func->return_desc.type != VAR_STRUCT ||
+            func->return_desc.pointer_level != 0 ||
+            !func->return_desc.struct_name.data)
+            return NULL;
+        return get_struct_def(func->return_desc.struct_name);
+    }
+
     if (expr->type == NODE_STRUCT_ACCESS)
     {
         StructDef *parent_def =

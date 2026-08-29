@@ -902,6 +902,49 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
             parent_base = element_addr;
         }
     }
+    else if (obj->type == NODE_FUNC_CALL)
+    {
+        /* `f().x`, and by recursion `f().inner.x`.
+         *
+         * Executing the call HERE rather than in one caller's special case
+         * is what makes every shape share an owner: a bare statement, a
+         * larger expression (`f().x + 0`), a `bussin f().x`, and a nested
+         * field all arrive through this branch instead of each needing
+         * their own arm.
+         *
+         * Gated on report_errors because create_struct_access_node()
+         * resolves eagerly at PARSE time with report_errors = false, purely
+         * to precompute var_type/struct_name. Running a user function there
+         * would execute the program while it is still being read. That flag
+         * is the only thing separating the two, so it is load-bearing
+         * rather than cosmetic. */
+        if (!report_errors)
+        {
+            return false;
+        }
+        handle_function_call(obj);
+        if (current_return_value.desc.type != VAR_STRUCT ||
+            current_return_value.desc.pointer_level != 0 ||
+            !current_return_value.value.pvalue)
+        {
+            /* Silent: resolve_by_value_struct_source() probes expressions
+               through here with report_errors set, so a hard error would
+               fire on shapes that are merely being asked about rather than
+               used. The caller reports its own failure. */
+            return false;
+        }
+        parent_def = get_struct_def(current_return_value.desc.struct_name);
+        if (!parent_def)
+        {
+            return false;
+        }
+        /* Borrowed: the blob stays owned by the pending-return slot and is
+           released by the next free_pending_return_value(). The caller reads
+           its field immediately on return, before anything else can run, so
+           it does not need a copy -- unlike a by-value struct ARGUMENT,
+           which outlives the binding and is copied for that reason. */
+        parent_base = (void *)current_return_value.value.pvalue;
+    }
     else
     {
         if (report_errors)
@@ -5295,17 +5338,23 @@ bool ast_accept_evaluates_expression(const ASTNode *node)
     {
         return false;
     }
-    if (node->type == NODE_ARRAY_ACCESS)
+    switch (node->type)
     {
+    case NODE_ARRAY_ACCESS: /* interpreter_visit_array_access */
+    case NODE_ASSIGNMENT:   /* interpreter_visit_assignment performs
+                               the write */
+    case NODE_SIZEOF:       /* interpreter_visit_sizeof */
         return true;
-    }
-    if (node->type == NODE_UNARY_OPERATION)
+    case NODE_UNARY_OPERATION: /* only the increments; OP_NEG and friends
+                                  are inspected, not computed */
     {
         OperatorType op = node->data.unary.op;
         return op == OP_POST_INC || op == OP_PRE_INC || op == OP_POST_DEC ||
                op == OP_PRE_DEC;
     }
-    return false;
+    default:
+        return false;
+    }
 }
 
 void execute_statement(ASTNode *node)

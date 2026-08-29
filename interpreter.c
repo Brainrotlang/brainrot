@@ -382,20 +382,6 @@ static void interpreter_accept_or_execute_call(ASTNode *node, Visitor *self)
     {
         interpreter_execute_call_statement(node);
     }
-    else if (node->type == NODE_STRUCT_ACCESS &&
-             node->data.struct_access.object &&
-             node->data.struct_access.object->type == NODE_FUNC_CALL)
-    {
-        /* `make_pt(&n).x;` -- a discarded field read off a call result.
-           evaluate_expression() cannot resolve a member access whose base
-           is a call ("Unsupported struct member access expression"), a
-           separate and pre-existing gap. The observable effect of this
-           statement is the call's side effects, so run the call and drop
-           the field read, which is exactly what happened before the
-           pre-visit stopped executing user functions. Erroring here
-           instead would turn a working statement into a failure. */
-        interpreter_execute_call_statement(node->data.struct_access.object);
-    }
     else if (interpreter_is_expression_statement(node) &&
              !ast_accept_evaluates_expression(node))
     {

@@ -24,6 +24,13 @@ skibidi void_arr(rizz *n) { rizz a[3] = {7, 8, 9}; bussin a[bump(n)]; }
 gang Pt { rizz x; };
 gang Pt make_pt(rizz *n) { gang Pt p; p.x = bump(n); bussin p; }
 
+🚽 A void `bussin` of a field read off a call, and of an ASSIGNMENT.
+🚽 ast_accept()'s assignment visitor already performs the write, so the void
+🚽 arm must not evaluate it again -- that is the third visitor exception,
+🚽 alongside the increments and array access.
+skibidi v_field(rizz *n) { bussin make_pt(n).x; }
+skibidi v_assign(rizz *n) { rizz x = 0; bussin x = bump(n); }
+
 rizz bump(rizz *n) {
     *n = *n + 1;
     bussin *n;
@@ -90,13 +97,30 @@ skibidi main {
     void_ret(&calls);
     yapping("void bussin %d", calls);
 
-    🚽 A discarded field read off a call result. evaluate_expression()
-    🚽 cannot resolve a member access whose base is a call, so the statement
-    🚽 path runs the call and drops the read -- the call's side effect is the
-    🚽 whole observable point of the statement.
+    🚽 A field read off a call result, in every position that reaches the
+    🚽 same owner. resolve_struct_access() executes the call itself, so a
+    🚽 bare statement, a larger expression and a void `bussin` all work
+    🚽 through one path rather than one special case each.
+    🚽
+    🚽 Nested -- `f().inner.x` -- is still rejected, and deliberately not
+    🚽 pinned here: typing it needs the parse-time eager resolve, which
+    🚽 cannot run a call, so it stays a known limitation rather than a
+    🚽 claim.
     calls = 0;
     make_pt(&calls).x;
     yapping("field stmt  %d", calls);
+
+    calls = 0;
+    make_pt(&calls).x + 0;
+    yapping("field expr  %d", calls);
+
+    calls = 0;
+    v_field(&calls);
+    yapping("field bussin %d", calls);
+
+    calls = 0;
+    v_assign(&calls);
+    yapping("void assign %d", calls);
 
     🚽 An array access inside a void `bussin`. The pre-visit already ran it,
     🚽 so the void arm must not. Deliberately AFTER the struct case above:
