@@ -918,5 +918,124 @@ def test_brainray_draw_texture_rec_handle_contract(tmp_path):
         f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
 
 
+def _write_sine_wav(path, seconds=3, rate=22050, freq=440.0):
+    """Write a small mono 16-bit PCM WAV.
+
+    The audio tests need a real decodable file, and hand-rolling a RIFF
+    header is cheaper than adding an encoder dependency or checking a binary
+    into the tree. raylib loads WAV for both Sound and Music."""
+    import math
+    frames = int(rate * seconds)
+    pcm = bytearray()
+    for i in range(frames):
+        v = int(12000 * math.sin(2.0 * math.pi * freq * i / rate))
+        pcm += struct.pack("<h", v)
+    hdr = b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt "
+    hdr += struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+    hdr += b"data" + struct.pack("<I", len(pcm))
+    with open(path, "wb") as f:
+        f.write(hdr + bytes(pcm))
+
+
+@pytest.mark.skipif(
+    not _raylib_available(),
+    reason="needs raylib; brainray is an optional dependency")
+def test_brainray_audio_stream_advances_only_when_pumped(tmp_path):
+    """The one audio contract a caller can actually get wrong.
+
+    rl_update_music() refills the decode buffer, and raylib reports nothing
+    if you never call it -- the track plays for a fraction of a second and
+    stops, silently. So this does not assert that updating is required; it
+    measures it. Two identical streams over the same wall-clock interval,
+    one pumped and one not, and their reported playback positions must
+    differ.
+
+    Also pinned here: a missing file loads to -1 (the documented sentinel),
+    an out-of-range handle and a handle used after unload both do nothing
+    rather than reaching raylib with a freed stream, and the whole sequence
+    exits clean under ASan.
+
+    Skips when no audio device is available, which is the normal case on a
+    headless runner -- rl_is_audio_device_ready() exists precisely so a
+    program can tell that apart from silence."""
+    build = subprocess.run(
+        ["make", "brainray"], cwd=REPO_ROOT,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert build.returncode == 0, f"`make brainray` failed:\n{build.stdout}"
+
+    wav = tmp_path / "tone.wav"
+    _write_sine_wav(str(wav))
+
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    source_path = tmp_path / "audio.brainrot"
+    source_path.write_text(
+        "#cooked <raylib>\n"
+        "skibidi main {\n"
+        "    rl_init_audio_device();\n"
+        "    cap ready = rl_is_audio_device_ready();\n"
+        "    yapping(\"ready %b\", ready);\n"
+        "    edgy (!ready) { rl_close_audio_device(); bussin 0; }\n"
+        f"    rizz missing = rl_load_music(\"{tmp_path}/nope.wav\");\n"
+        "    yapping(\"missing %d\", missing);\n"
+        f"    rizz a = rl_load_music(\"{wav}\");\n"
+        "    cap loaded = a >= 0;\n"
+        "    bet(loaded, \"generated wav must load\");\n"
+        "    rl_play_music(a);\n"
+        "    flex (rizz i = 0; i < 2; i = i + 1) {\n"
+        "        rl_update_music(a); chill(1); rl_update_music(a);\n"
+        "    }\n"
+        "    chad pumped = rl_music_time_played(a);\n"
+        "    rl_unload_music(a);\n"
+        f"    rizz b = rl_load_music(\"{wav}\");\n"
+        "    rl_play_music(b);\n"
+        "    flex (rizz i = 0; i < 2; i = i + 1) { chill(1); }\n"
+        "    chad idle = rl_music_time_played(b);\n"
+        "    rl_unload_music(b);\n"
+        "    yapping(\"pumped %.2f idle %.2f\", pumped, idle);\n"
+        # guards: bad handle, and a handle used after unload
+        "    rl_play_music(999);\n"
+        "    rl_update_music(0 - 1);\n"
+        "    rl_play_music(b);\n"
+        f"    rizz s = rl_load_sound(\"{wav}\");\n"
+        "    cap sloaded = s >= 0;\n"
+        "    bet(sloaded, \"generated wav must load as a sound too\");\n"
+        "    rl_set_sound_volume(s, 0.0);\n"
+        "    rl_play_sound(s);\n"
+        "    rl_unload_sound(s);\n"
+        "    rl_close_audio_device();\n"
+        "    yapping(\"audio ok\");\n"
+        "    bussin 0;\n"
+        "}\n")
+
+    env = dict(os.environ, BRAINROT_PATH=BRAINRAY_DIR)
+    result = subprocess.run(
+        [brainrot_path, str(source_path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+        timeout=120)
+
+    assert "LeakSanitizer" not in result.stderr, (
+        f"LeakSanitizer reported leaks:\n{result.stderr}")
+    assert result.returncode == 0, (
+        f"Nonzero exit {result.returncode}\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
+
+    if "ready W" not in result.stdout:
+        pytest.skip("no audio device available on this machine")
+
+    assert "missing -1" in result.stdout, (
+        f"a missing file must load to -1:\n{result.stdout}")
+    assert "audio ok" in result.stdout, (
+        f"program did not reach the end; a bet() fired\n{result.stdout}")
+
+    line = [x for x in result.stdout.splitlines() if x.startswith("pumped ")][0]
+    pumped, idle = float(line.split()[1]), float(line.split()[3])
+    assert idle == 0.0, (
+        f"an unpumped stream reported {idle}s of playback; if this is no "
+        f"longer 0 then rl_update_music() is not what advances a stream and "
+        f"this test proves nothing")
+    assert pumped > 0.2, (
+        f"a pumped stream only advanced {pumped}s over ~2s of wall clock")
+
+
 if __name__ == "__main__":
     pytest.main(["-v", os.path.abspath(__file__)])
