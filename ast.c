@@ -3213,6 +3213,34 @@ static bool expression_is_truthy(ASTNode *expr)
 void *handle_unary_expression(ASTNode *node, void *operand_value,
                               int operand_type)
 {
+    
+    if (node->data.unary.op == OP_PRE_INC || node->data.unary.op == OP_PRE_DEC ||
+        node->data.unary.op == OP_POST_INC ||
+        node->data.unary.op == OP_POST_DEC)
+    {
+        ASTNode *operand = node->data.unary.operand;
+        bool valid_lvalue =
+            operand && (operand->type == NODE_IDENTIFIER ||
+                       operand->type == NODE_ARRAY_ACCESS ||
+                       operand->type == NODE_STRUCT_ACCESS ||
+                       (operand->type == NODE_UNARY_OPERATION &&
+                        operand->data.unary.op == OP_DEREFERENCE));
+        if (!valid_lvalue)
+        {
+            yyerror("Increment/decrement requires a modifiable lvalue "
+                   "(identifier, array element, struct field, or "
+                   "dereferenced pointer)");
+            ragequit(1);
+        }
+        if (operand->type != NODE_IDENTIFIER)
+        {
+            yyerror("Increment/decrement of array elements, struct "
+                   "fields, or dereferenced pointers is not yet "
+                   "supported");
+            ragequit(1);
+        }
+    }
+    
     switch (node->data.unary.op)
     {
     case OP_NEG:
