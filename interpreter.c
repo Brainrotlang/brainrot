@@ -293,41 +293,26 @@ static void interpreter_execute_call_statement(ASTNode *node)
     }
 }
 
-/* ast_accept()'s generic pre-visit runs this on a NODE_FUNC_CALL reached as
-   part of a declaration/assignment/return/print/error statement's
-   right-hand expression, or (via visitor.c's NODE_DO_WHILE_STATEMENT case)
-   a do-while condition -- in every one of those cases, the statement's own
-   dedicated visitor (interpreter_visit_declaration et al., or this
-   interpreter's own per-iteration evaluate_expression_int() condition
-   check) is about to evaluate this exact node for real via
-   evaluate_expression_* / handle_function_call. That pre-visit exists so
-   shared visitors (e.g. the semantic analyzer, validating the call exists)
-   get a chance to look at it; it is not itself a place where executing the
-   call is correct. Doing so anyway is actively wrong, not just redundant:
-   for a self-referential declaration like `rizz n = slorp(n);`, the
-   pre-visit runs before interpreter_visit_declaration has created `n`, so
-   the argument silently evaluates to nothing and the (wrong) result gets
-   cached; for a do-while condition, the pre-visit runs before the loop
-   body has executed even once, so the first real check reads a stale
-   pre-loop value instead of re-evaluating. Do nothing here and let the
-   downstream evaluate_expression_*() call populate the memo cache itself,
-   at the right time. (Bare statement-position and for-loop init/incr
-   calls never reach here at all -- see interpreter_execute_call_statement()
-   above.)
-
-   The same reasoning applies to a USER-DEFINED function, which is why this
-   no longer executes one either. It used to, and the effect was that
-   `rizz a = f();` ran f's body twice and kept the second result: harmless
-   for a pure function, silently wrong for one that does anything. Loading a
-   resource loaded it twice; advancing a generator advanced it twice; and a
-   function reporting whether it had acted -- `cap fired = try_fire(&p);` --
-   returned the answer for the SECOND attempt, the one that found the work
-   already done and declined. That shape is the dangerous one, because the
-   side effect still happens exactly once and only the report is wrong.
-
-   User functions have no memo cache, so unlike a native there is nothing
-   here to warm: the downstream evaluate_expression_* / handle_function_call
-   is the real and only invocation. */
+/* INVARIANT: a pre-visit must not execute the call.
+ *
+ * ast_accept() reaches a NODE_FUNC_CALL as part of a declaration /
+ * assignment / return / print statement's right-hand expression, or a
+ * do-while condition. In every one of those the statement's own visitor
+ * (interpreter_visit_declaration et al., or the per-iteration condition
+ * check) evaluates this exact node for real afterwards, so executing here
+ * would run it twice. The pre-visit exists only so shared visitors -- the
+ * semantic analyzer -- get a look at the node.
+ *
+ * Twice is not merely wasteful, because the second result is the one that
+ * survives: `cap fired = try_fire(&p);` would report the attempt that
+ * found the work already done. And a pre-visit runs at the wrong time --
+ * before interpreter_visit_declaration creates `n` in `rizz n = slorp(n);`,
+ * and before a do-while body has run once.
+ *
+ * Natives are no different: the downstream evaluate_expression_* populates
+ * their memo cache itself, at the right time. Bare statement-position and
+ * for-loop init/incr calls never reach here -- see
+ * interpreter_execute_call_statement() above. */
 void *interpreter_visit_function_call(Visitor *self, ASTNode *node)
 {
     (void)self;
@@ -540,8 +525,9 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
                        variable). */
                     void *msrc_blob = NULL;
                     String msrc_tag = {0};
-                    if (resolve_by_value_struct_source(src_expr, &msrc_blob,
-                                                       &msrc_tag, true))
+                    bool msrc_owned = false;
+                    if (resolve_by_value_struct_source(
+                            src_expr, &msrc_blob, &msrc_tag, &msrc_owned, true))
                     {
                         if (msrc_tag.data && sv->value.array_data &&
                             strcmp(msrc_tag.data, struct_type.data) == 0)
@@ -555,6 +541,11 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
                             yyerror("Cannot copy-initialize from a struct/"
                                     "union value of a different type");
                         }
+                        /* `gang Inner c = make_outer().inner;` -- the blob
+                           is our copy of a call result whose own storage
+                           the helper already released. */
+                        if (msrc_owned)
+                            free(msrc_blob);
                     }
                 }
             }

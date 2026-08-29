@@ -970,58 +970,61 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
     }
     else if (obj && obj->type == NODE_FUNC_CALL)
     {
-        /* `f().x`, and by recursion `f().inner.x`.
+        /* `f().x`, and by recursion `f().inner.x`. Executing the call here
+         * rather than in each caller is what lets a bare statement, a
+         * larger expression (`f().x + 0`), a `bussin f().x` and a nested
+         * field share one implementation.
          *
-         * Executing the call HERE rather than in one caller's special case
-         * is what makes every shape share an owner: a bare statement, a
-         * larger expression (`f().x + 0`), a `bussin f().x`, and a nested
-         * field all arrive through this branch instead of each needing
-         * their own arm.
-         *
-         * Gated on report_errors because create_struct_access_node()
-         * resolves eagerly at PARSE time with report_errors = false, purely
-         * to precompute var_type/struct_name. Running a user function there
-         * would execute the program while it is still being read. That flag
-         * is the only thing separating the two, so it is load-bearing
-         * rather than cosmetic. */
+         * INVARIANT: report_errors == false means "do not execute". That
+         * flag is the only thing separating this from the eager parse-time
+         * resolve in create_struct_access_node() and the type probes in
+         * get_expression_type() and friends, which must answer from
+         * declared types alone (static_struct_field) -- running a user
+         * function from any of them would execute the program out of
+         * order, or while it is still being parsed. */
         if (!report_errors)
         {
             return false;
         }
-        /* execute_function_call(), NOT handle_function_call(). The latter's
-           VAR_STRUCT case is discard-and-free: it exists precisely so a
-           struct return does not sit in the shared slot, so by the time it
-           returns pvalue is 0 and there is no field left to read. Using it
-           here ran the call -- the side effect looked right, and a test that
-           only counted calls could not tell -- while every read of the field
-           silently produced 0. */
         if (is_builtin_function(obj->data.func_call.function_name))
         {
             /* No native can return a struct across the Road A ABI. */
+            yyerror("Member access on the result of a built-in function");
             return false;
         }
+        /* execute_function_call(), NOT handle_function_call(): the latter's
+           VAR_STRUCT case is discard-and-free, so by the time it returns
+           pvalue is 0 and there is no field left to read. */
         execute_function_call(obj->data.func_call.function_name,
                               obj->data.func_call.arguments);
         if (current_return_value.desc.type != VAR_STRUCT ||
             current_return_value.desc.pointer_level != 0 ||
             !current_return_value.value.pvalue)
         {
-            /* Silent: resolve_by_value_struct_source() probes expressions
-               through here with report_errors set, so a hard error would
-               fire on shapes that are merely being asked about rather than
-               used. The caller reports its own failure. */
+            /* Every other failure path here reports, and no caller adds a
+               second diagnostic -- they all assume this one spoke. Staying
+               silent let `rizz x = not_a_struct().nope;` run the call,
+               yield 0 and exit 0. Semantic analysis does not catch it
+               either, so this is the only check. */
+            yyerror("Member access on a call that does not return a "
+                    "by-value struct or union");
+            free_pending_return_value();
             return false;
         }
         parent_def = get_struct_def(current_return_value.desc.struct_name);
         if (!parent_def)
         {
+            yyerror("Unknown struct or union type");
+            free_pending_return_value();
             return false;
         }
-        /* Borrowed: the blob stays owned by the pending-return slot and is
-           released by the next free_pending_return_value(). The caller reads
-           its field immediately on return, before anything else can run, so
-           it does not need a copy -- unlike a by-value struct ARGUMENT,
-           which outlives the binding and is copied for that reason. */
+        /* BORROWED from the pending-return slot, which the next call's
+           free_pending_return_value() releases. That is safe only for a
+           caller that reads the field before anything else runs -- a scalar
+           `f().x` load. A caller that keeps the blob past that point must
+           copy it out and drop the slot itself; see
+           struct_access_executes_call() in resolve_by_value_struct_source(),
+           which is the one such caller. */
         parent_base = (void *)current_return_value.value.pvalue;
     }
     else
@@ -1043,6 +1046,14 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                      member.data);
             yyerror(msg);
         }
+        /* `f().nope`. The call arm above left its result in the pending
+           slot for the caller to read a field out of, and there is no
+           field -- so nothing downstream will consume it. Semantic
+           analysis rejects this shape before it runs whenever the callee
+           is resolvable, which is why no test reaches here; free it
+           anyway rather than depend on that. */
+        if (obj && obj->type == NODE_FUNC_CALL)
+            free_pending_return_value();
         return false;
     }
 
@@ -1052,9 +1063,26 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
     return true;
 }
 
-bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
-                                    String *tag_out, bool report_errors)
+/* Does resolving this member access run a user function -- i.e. does its
+ * base chain bottom out in a call? If so, resolve_struct_access() hands
+ * back a base that points INTO the pending-return slot's blob, and the
+ * blob dies at the next free_pending_return_value(). Every caller of
+ * resolve_by_value_struct_source() keeps the pointer past that point, so
+ * they need an owned copy instead of the borrow. */
+static bool struct_access_executes_call(const ASTNode *node)
 {
+    while (node && node->type == NODE_STRUCT_ACCESS)
+    {
+        node = node->data.struct_access.object;
+    }
+    return node && node->type == NODE_FUNC_CALL;
+}
+
+bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
+                                    String *tag_out, bool *owned_out,
+                                    bool report_errors)
+{
+    *owned_out = false;
     if (!expr)
     {
         if (report_errors)
@@ -1101,7 +1129,42 @@ bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
         {
             if (report_errors)
                 yyerror("Expected a by-value struct/union field");
+            if (struct_access_executes_call(expr))
+                free_pending_return_value();
             return false;
+        }
+        if (struct_access_executes_call(expr))
+        {
+            /* `make_outer().inner`. Copy the field out of the pending-return
+               blob and release the blob now, before returning a pointer the
+               caller will still be holding when the next call reuses that
+               slot. Leaving it borrowed made `take(make_outer().inner, g())`
+               a heap-use-after-free -- g()'s cleanup freed the Outer, then
+               the bind loop copied from it -- and made `bussin
+               make_outer().inner;` leak the Outer, because that path
+               overwrites value.pvalue with its own fresh blob. */
+            StructDef *fdef = get_struct_def(fld->desc.struct_name);
+            if (!fdef)
+            {
+                if (report_errors)
+                    yyerror("Unknown struct or union type");
+                free_pending_return_value();
+                return false;
+            }
+            void *owned = calloc(1, fdef->total_size);
+            if (!owned)
+            {
+                if (report_errors)
+                    yyerror("Out of memory for struct/union value");
+                free_pending_return_value();
+                return false;
+            }
+            memcpy(owned, (char *)base + fld->offset, fdef->total_size);
+            free_pending_return_value();
+            *blob_out = owned;
+            *tag_out = fld->desc.struct_name;
+            *owned_out = true;
+            return true;
         }
         *blob_out = (char *)base + fld->offset;
         *tag_out = fld->desc.struct_name;
@@ -2117,7 +2180,6 @@ int get_expression_pointer_level(ASTNode *node)
                 return node->pointer_level;
         }
         return fld->desc.pointer_level;
-        return fld->desc.pointer_level;
     }
     default:
         return node->pointer_level;
@@ -2288,7 +2350,6 @@ VarType get_expression_type(ASTNode *node)
             if (!fld)
                 return node->var_type;
         }
-        return fld->desc.type;
         return fld->desc.type;
     }
     default:
@@ -6496,6 +6557,16 @@ void execute_function_call(const String name, ArgumentList *args)
     current_return_value.desc.type = func->return_desc.type;
     current_return_value.desc.pointer_level = func->return_desc.pointer_level;
     current_return_value.has_value = false;
+    /* INVARIANT: never leave a value behind under a type it does not
+       belong to. current_return_value.value is a UNION, and the line above
+       has just declared it VAR_STRUCT for a struct-returning callee while
+       the bytes still hold the PREVIOUS call's integer. The first nested
+       call inside the body then frees that integer as a heap pointer:
+       `take(v, bump(&n)); gang Outer o = make_outer(&n);` is a SEGV on
+       origin/main for exactly this reason -- bump's int, retyped as
+       make_outer's blob pointer. Same hazard the void `bussin` arm in
+       handle_return_statement() blanks for. */
+    current_return_value.value.pvalue = 0;
 
     if (!enter_function_scope(func, args))
     {
@@ -6805,30 +6876,23 @@ void handle_return_statement(ASTNode *expr)
             {
                 /* Anything else discarded by a void `bussin`.
                  *
-                 * Evaluate it only if ast_accept()'s pre-visit did not
-                 * already -- it does evaluate an increment and an array
-                 * access, and running those twice is the mirror of the bug
-                 * the statement path avoids.
-                 *
-                 * Then clear the pending-return slot either way. If the
-                 * expression contained a call, that call's result is still
-                 * sitting in the shared slot with nothing coming to consume
-                 * it, and the NEXT call's cleanup frees it a second time:
-                 * `bussin f() + 0;` or `bussin arr[f()];` in a skibidi
-                 * function segfaulted the following struct-returning call
-                 * in free_pending_return_value() exactly that way. */
+                 * INVARIANT: do not evaluate a node ast_accept() has
+                 * already evaluated. Its pre-visit does compute an
+                 * increment and an array access, so this must ask rather
+                 * than assume. */
                 if (!ast_accept_evaluates_expression(expr))
                 {
                     evaluate_expression(expr);
                 }
+                /* If the expression contained a call, its result is left in
+                 * the shared slot with nothing coming to consume it, and
+                 * the next call's cleanup would free it a second time. */
                 free_pending_return_value();
-                /* And blank the value itself. current_return_value.value is
-                 * a UNION, so the discarded expression's integer result is
-                 * still sitting in the same bytes as .pvalue. Leaving it
-                 * there and setting the type to NONE hands the next return
-                 * a slot whose "pointer" is a small integer -- freed later
-                 * as though it were heap, which is the SEGV at
-                 * 0xfffffffffffffff1. */
+                /* INVARIANT: leave no live value behind either.
+                 * current_return_value.value is a UNION, so a discarded
+                 * integer result occupies the same bytes as .pvalue --
+                 * handing the next return a "pointer" that is really a
+                 * small integer, freed later as though it were heap. */
                 current_return_value.value.pvalue = 0;
                 current_return_value.has_value = false;
             }
@@ -6906,8 +6970,9 @@ void handle_return_statement(ASTNode *expr)
                findings 1 & 2). */
             void *src_blob = NULL;
             String src_tag = {0};
+            bool src_owned = false;
             if (!resolve_by_value_struct_source(expr, &src_blob, &src_tag,
-                                                true))
+                                                &src_owned, true))
             {
                 /* The helper already reported the specific failure; add no
                    second diagnostic. value.pvalue may hold a stale bit
@@ -6931,6 +6996,8 @@ void handle_return_statement(ASTNode *expr)
                 yyerror("Return expression type does not match declared "
                         "return type");
                 current_return_value.has_value = false;
+                if (src_owned)
+                    free(src_blob);
                 break;
             }
             StructDef *def = get_struct_def(src_tag);
@@ -6942,6 +7009,12 @@ void handle_return_statement(ASTNode *expr)
                 current_return_value.value.pvalue = (uintptr_t)blob;
                 current_return_value.desc.struct_name = safe_strdup(&src_tag);
             }
+            /* `bussin make_outer().inner;` -- the helper already released
+               the call's own blob and handed us a copy to own. Assigning
+               value.pvalue above would otherwise have been the only
+               reference to it. */
+            if (src_owned)
+                free(src_blob);
             break;
         }
         default:
@@ -7252,6 +7325,7 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                (see free_owned_struct_arg_blobs). */
             void *src_blob = NULL;
             String src_tag = {0};
+            bool src_owned = false;
             if (curr_arg->expr->type == NODE_FUNC_CALL)
             {
                 execute_function_call(
@@ -7293,7 +7367,7 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                 break;
             }
             if (!resolve_by_value_struct_source(curr_arg->expr, &src_blob,
-                                                &src_tag, true))
+                                                &src_tag, &src_owned, true))
             {
                 free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
                                             arg_count);
@@ -7303,11 +7377,20 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                 strcmp(src_tag.data, curr_param->desc.struct_name.data) != 0)
             {
                 yyerror("Struct argument type does not match parameter type");
+                if (src_owned)
+                    free(src_blob);
                 free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
                                             arg_count);
                 return false;
             }
+            /* `take(make_outer().inner, ...)` resolves to an OWNED copy for
+               the same reason the bare-call arm above allocates one: the
+               deep copy into the parameter happens in the binding loop
+               below, and a later argument's call would have freed the
+               original first. Recording it here hands it to
+               free_owned_struct_arg_blobs() along with the rest. */
             arg_values[arg_count].pvalue = (uintptr_t)src_blob;
+            arg_owns_blob[arg_count] = src_owned;
             break;
         }
         case VAR_PTR:

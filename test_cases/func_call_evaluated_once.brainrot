@@ -50,6 +50,21 @@ gang Pt make_pt(rizz *n) { gang Pt p; p.x = bump(n) + 6; bussin p; }
 skibidi v_field(rizz *n) { bussin make_pt(n).x; }
 skibidi v_assign(rizz *n) { rizz x = 0; bussin x = bump(n); }
 
+🚽 A by-value struct SOURCE read off a call -- `make_outer(n).inner` where a
+🚽 whole struct value is expected, not a scalar field. All three of these
+🚽 keep the blob past the read: the argument binder copies into the
+🚽 parameter later, in its bind loop; the return arm copies into a fresh
+🚽 slot; the declaration copies into the variable's storage. But the call's
+🚽 own blob lives in the shared pending-return slot, which the NEXT call
+🚽 releases. So `take_pt(make_outer(&n).inner, bump(&n))` read freed memory
+🚽 -- bump's cleanup freed the Outer, then the bind loop copied out of it --
+🚽 and `bussin make_outer(n).inner;` leaked it, because that arm overwrites
+🚽 the slot's pointer with its own fresh blob. The resolver hands back an
+🚽 OWNED copy for this shape now; the scalar `f().x` reads above still
+🚽 borrow, which is safe because they read before anything else runs.
+skibidi take_pt(gang Pt v, rizz k) { yapping("field arg    %d %d", v.x, k); }
+gang Pt pass_inner(rizz *n) { bussin make_outer(n).inner; }
+
 rizz bump(rizz *n) {
     *n = *n + 1;
     bussin *n;
@@ -173,6 +188,17 @@ skibidi main {
     yapping("field layout %d", maxxing(make_outer(&calls).inner));
 
     calls = 0;
+    take_pt(make_outer(&calls).inner, bump(&calls));
+
+    calls = 0;
+    gang Pt pc = make_outer(&calls).inner;
+    yapping("field copy   %d %d", calls, pc.x);
+
+    calls = 0;
+    gang Pt pr = pass_inner(&calls);
+    yapping("field return %d %d", calls, pr.x);
+
+    calls = 0;
     v_assign(&calls);
     yapping("void assign %d", calls);
 
@@ -187,6 +213,22 @@ skibidi main {
     calls = 0;
     void_arr(&calls);
     yapping("void arr    %d", calls);
+
+    🚽 The array mirror of the declaration/assignment double-eval. The
+    🚽 pre-visit evaluates an array access, and the declaration's own visitor
+    🚽 then evaluated the initializer again -- so the INDEX call ran twice and
+    🚽 `arr[bump(&n) - 1]` read arr[1] instead of arr[0]. Fixing only the void
+    🚽 `bussin` arm would have left this, which is why the declaration and
+    🚽 assignment pre-visits consult the same predicate.
+    calls = 0;
+    rizz arr[3] = {7, 8, 9};
+    rizz ai = arr[bump(&calls) - 1];
+    yapping("array decl   %d %d", calls, ai);
+
+    calls = 0;
+    rizz aa = 0;
+    aa = arr[bump(&calls) - 1];
+    yapping("array assign %d %d", calls, aa);
 
     🚽 And the two the visitor DOES evaluate, which must not now run twice.
     rizz i = 0;

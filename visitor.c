@@ -121,23 +121,16 @@ void ast_accept(ASTNode *node, Visitor *visitor)
 
     case NODE_DECLARATION:
     {
-        // For declarations with side-effect operations on the right, skip
-        // auto-visit to prevent double evaluation
-        bool skip_decl_right_visit = false;
+        /* Pre-visit the initializer -- but only where doing so does not
+           evaluate it. visit_declaration evaluates the initializer for
+           real straight afterwards, so any node this walk computes gets
+           computed twice: `rizz x = a[f()]` ran f() twice that way, and
+           an increment initializer stepped twice.
+           ast_accept_evaluates_expression() is the authoritative list of
+           the shapes this walk computes; it replaced an inc/dec-only check
+           here that missed array access and nested assignment. */
         if (node->data.op.right &&
-            node->data.op.right->type == NODE_UNARY_OPERATION)
-        {
-            OperatorType op = node->data.op.right->data.unary.op;
-            if (op == OP_POST_INC || op == OP_PRE_INC || op == OP_POST_DEC ||
-                op == OP_PRE_DEC)
-            {
-                skip_decl_right_visit = true;
-            }
-        }
-
-        // Visit the initializer expression first (unless it's a side-effect
-        // operation)
-        if (!skip_decl_right_visit && node->data.op.right)
+            !ast_accept_evaluates_expression(node->data.op.right))
             ast_accept(node->data.op.right, visitor);
         if (visitor->visit_declaration)
             visitor->visit_declaration(visitor, node);
@@ -146,22 +139,11 @@ void ast_accept(ASTNode *node, Visitor *visitor)
 
     case NODE_ASSIGNMENT:
     {
-        // For assignments with side-effect operations on the right, skip
-        // auto-visit to prevent double evaluation
-        bool skip_right_visit = false;
+        /* Same rule as NODE_DECLARATION above: visit_assignment evaluates
+           the right-hand side for real, so skip the pre-visit for every
+           shape this walk would evaluate itself. */
         if (node->data.op.right &&
-            node->data.op.right->type == NODE_UNARY_OPERATION)
-        {
-            OperatorType op = node->data.op.right->data.unary.op;
-            if (op == OP_POST_INC || op == OP_PRE_INC || op == OP_POST_DEC ||
-                op == OP_PRE_DEC)
-            {
-                skip_right_visit = true;
-            }
-        }
-
-        // Visit right side first (unless it's a side-effect operation)
-        if (!skip_right_visit && node->data.op.right)
+            !ast_accept_evaluates_expression(node->data.op.right))
             ast_accept(node->data.op.right, visitor);
         if (visitor->visit_assignment)
             visitor->visit_assignment(visitor, node);
