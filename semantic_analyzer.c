@@ -3970,6 +3970,51 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
             if (parent_is_struct_typed)
                 parent_def = get_struct_def(obj_struct_name);
         }
+        else if (obj && obj->type == NODE_ARRAY_ACCESS && obj->data.array.base)
+        {
+            /* `b.pts[i].field`: the object is an element of a struct-typed
+               ARRAY FIELD (#311/#315). Without this arm the whole shape
+               fell through to `break` and then to "Member access on
+               non-struct/union value" -- which is not merely unhelpful but
+               wrong, because the value IS a struct.
+
+               The symptom was that the field form worked for one hop and
+               died on the second: `b.pts[0].y` resolved (the runtime
+               resolver in ast.c handles it), while `b.pts[0].core.v` was
+               rejected here at analysis time, leaving the new field form
+               strictly less capable than the `arr[0].core.v` name-based
+               form it was modelled on (PR #315 review).
+
+               infer_struct_def_static() already answers "what struct does
+               this member-access base denote", and for an array field it
+               returns the ELEMENT's definition -- a field's struct_name is
+               its element type whether or not is_array is set -- which is
+               exactly the tag an indexed element has. The is_array check
+               below is still needed: without it `b.solo[0].v` on a
+               non-array struct field would be accepted here. */
+            StructDef *elem_def =
+                infer_struct_def_static(obj->data.array.base, analyzer);
+            if (!elem_def)
+                break;
+
+            StructDef *outer_def = infer_struct_def_static(
+                obj->data.array.base->type == NODE_STRUCT_ACCESS
+                    ? obj->data.array.base->data.struct_access.object
+                    : NULL,
+                analyzer);
+            if (outer_def && obj->data.array.base->type == NODE_STRUCT_ACCESS)
+            {
+                StructField *arr_fld = find_struct_field(
+                    outer_def,
+                    obj->data.array.base->data.struct_access.member_name);
+                if (!arr_fld || !arr_fld->desc.is_array ||
+                    arr_fld->desc.pointer_level != 0)
+                    break;
+            }
+
+            parent_is_struct_typed = true;
+            parent_def = elem_def;
+        }
         else if (obj && obj->type == NODE_FUNC_CALL)
         {
             /* `f().x`, and as the base of `f().inner.x`. The return type is

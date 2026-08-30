@@ -1251,13 +1251,31 @@ static bool struct_access_executes_call(const ASTNode *node)
     return node && node->type == NODE_FUNC_CALL;
 }
 
-/* ── TWO DISPATCHES, ONE SET OF EXPRESSION SHAPES ───────────────────────
- * resolve_by_value_struct_source() (below) and resolve_struct_access()
- * (above) both dispatch on the same three node types -- NODE_IDENTIFIER,
+/* ── THREE DISPATCHES, ONE SET OF EXPRESSION SHAPES ─────────────────────
+ * Three functions dispatch on the same node types -- NODE_IDENTIFIER,
  * NODE_STRUCT_ACCESS, NODE_ARRAY_ACCESS -- for the same set of
- * struct-valued expressions, but answer different questions:
- * resolve_struct_access() finds the struct a MEMBER is being read out of;
- * this one finds a by-value struct VALUE to copy.
+ * struct-valued expressions, and each answers a different question:
+ *
+ *   resolve_struct_access()            (above, ast.c)
+ *       which struct is this MEMBER being read out of, and at what
+ *       address? Runtime.
+ *   resolve_by_value_struct_source()   (below, ast.c)
+ *       where is a by-value struct VALUE to copy, and who owns it?
+ *       Runtime.
+ *   the NODE_STRUCT_ACCESS case of semantic_analyze_with_scope_tracking()
+ *                                      (semantic_analyzer.c)
+ *       is this expression struct-typed AT ALL, and does the member
+ *       exist? Static -- it must answer without running anything.
+ *
+ * This comment said TWO for one revision, and the missing third is what
+ * that revision then got wrong: #315 taught both ast.c dispatches about
+ * struct-typed array fields and not the analyzer, so `b.pts[0].y` worked
+ * while `b.pts[0].core.v` was rejected as "Member access on
+ * non-struct/union value" -- a diagnostic that was not merely unhelpful
+ * but false, and which made the new field form strictly less capable
+ * than the `arr[0].core.v` shape it was modelled on. One hop worked
+ * because that hop is answered at runtime; the second needed the static
+ * dispatch that had not been updated (PR #315 review).
  *
  * Every divergence between those two lists has been a bug. #307: the
  * array-variable guard was added to one arm and not its sibling. #309:
@@ -1268,9 +1286,11 @@ static bool struct_access_executes_call(const ASTNode *node)
  * illegitimate `f(b.pts)` silently passed element 0.
  *
  * So: if you are adding an expression shape that can denote a struct,
- * there are TWO lists to update, not one -- and a fixture that only reads
- * a field out of the new shape will not notice the other. Pass one
- * somewhere too.
+ * there are THREE lists to update -- and two of them live in this file,
+ * which is exactly why the third gets missed. A fixture that only reads
+ * ONE hop out of the new shape will not notice the analyzer; one that
+ * only reads a field out of it will not notice the value/ownership
+ * dispatch. Chain a second hop, and pass one somewhere.
  *
  * And what has to be copied across is not just the ADDRESS ARITHMETIC.
  * #315's first attempt mirrored resolve_struct_access()'s arithmetic

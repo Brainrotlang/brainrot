@@ -186,9 +186,14 @@ _Static_assert(offsetof(struct Grid, tag) == 24, "struct Grid.tag offset");
  * field of the SAME element type -- so a regression that confused the two
  * (treating `one` as an array or `many` as a single element) changes the
  * total size. */
+struct Deep
+{
+    float z;
+};
 struct Inner
 {
     float a;
+    struct Deep deep;
 };
 struct Mid
 {
@@ -200,10 +205,12 @@ struct Outer
     struct Mid m;
     int tag;
 };
-_Static_assert(sizeof(struct Mid) == 12, "struct Mid size (4 + 2*4)");
-_Static_assert(offsetof(struct Mid, many) == 4, "struct Mid.many offset");
-_Static_assert(sizeof(struct Outer) == 16, "struct Outer size (12 + 4)");
-_Static_assert(offsetof(struct Outer, tag) == 12, "struct Outer.tag offset");
+_Static_assert(sizeof(struct Inner) == 8, "struct Inner size (4 + 4)");
+_Static_assert(offsetof(struct Inner, deep) == 4, "struct Inner.deep offset");
+_Static_assert(sizeof(struct Mid) == 24, "struct Mid size (8 + 2*8)");
+_Static_assert(offsetof(struct Mid, many) == 8, "struct Mid.many offset");
+_Static_assert(sizeof(struct Outer) == 28, "struct Outer size (24 + 4)");
+_Static_assert(offsetof(struct Outer, tag) == 24, "struct Outer.tag offset");
 
 int main(void)
 {
