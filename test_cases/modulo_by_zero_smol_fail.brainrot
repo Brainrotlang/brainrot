@@ -1,0 +1,26 @@
+🚽 Test case: issue #271 -- `smol % 0` had no zero-divisor guard at all
+🚽 and crashed the interpreter with SIGFPE.
+🚽
+🚽 handle_binary_operation()'s OP_MOD branch guarded VAR_INT, and OP_DIVIDE
+🚽 guarded both VAR_INT and VAR_SHORT -- but OP_MOD's VAR_SHORT arm went
+🚽 straight to the modulo. So `smol / 0` reported "Division by zero"
+🚽 cleanly while `smol % 0`, one operator away, took down the process.
+🚽
+🚽 The result is printed rather than discarded so this pins the fallback
+🚽 value too, not just the message: an implementation that reported the
+🚽 error and then left the slot uninitialized would still fail here.
+🚽
+🚽 Both the int and short forms are exercised, so the fixture also pins
+🚽 that they agree -- reporting the same diagnostic and the same fallback
+🚽 is the property that was missing, and one guard existing without the
+🚽 other is exactly the shape of the bug.
+skibidi main {
+    rizz ia = 7;
+    rizz ib = 0;
+    yapping("rizz: %d", ia % ib);
+
+    smol sa = 7;
+    smol sb = 0;
+    yapping("smol: %d", sa % sb);
+    bussin 0;
+}

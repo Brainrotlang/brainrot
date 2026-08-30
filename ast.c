@@ -2875,6 +2875,21 @@ void *handle_binary_operation(ASTNode *node)
                 *(int *)result =
                     0; // Define a fallback behavior for int division by zero
             }
+            /* The OTHER trapping case, and the one a zero check alone
+               misses: INT_MIN / -1. The mathematical result (2147483648)
+               is not representable in int, C leaves it undefined, and on
+               x86-64 `idiv` raises #DE for it exactly as it does for a
+               zero divisor -- so this crashed the interpreter with SIGFPE
+               rather than producing a value or a diagnostic (#272/#273).
+               Handled like division by zero, since the situation is the
+               same one: there is no correct int to return, so say so
+               instead of trapping. */
+            else if (*(int *)left_value == INT_MIN && *(int *)right_value == -1)
+            {
+                yyerror("Division overflow: the most negative rizz divided "
+                        "by -1 has no representable result");
+                *(int *)result = 0;
+            }
             else
             {
                 *(int *)result = *(int *)left_value / *(int *)right_value;
@@ -2920,6 +2935,21 @@ void *handle_binary_operation(ASTNode *node)
                 unsigned int ur = (unsigned int)right;
                 *(int *)result = (int)(ul % ur);
             }
+            /* INT_MIN % -1 traps on x86-64 for the same reason INT_MIN /
+               -1 does -- `idiv` computes quotient and remainder together,
+               so the unrepresentable QUOTIENT faults even though only the
+               remainder was asked for (#272/#273). Unlike the division
+               case there is a correct answer to give: the remainder is
+               mathematically 0, exactly representable, so this returns it
+               rather than reporting an error. Nothing is lost and nothing
+               needs diagnosing; the trap was purely an artifact of how the
+               hardware computes it. Checked AFTER the is_unsigned branch
+               because unsigned arithmetic has no such case -- there is no
+               negative operand for it to arise from. */
+            else if (left == INT_MIN && right == -1)
+            {
+                *(int *)result = 0;
+            }
             else
             {
                 *(int *)result = left % right;
@@ -2937,7 +2967,28 @@ void *handle_binary_operation(ASTNode *node)
         }
         else if (promoted_type == VAR_SHORT)
         {
-            *(short *)result = *(short *)left_value % *(short *)right_value;
+            /* The zero guard OP_DIVIDE's own VAR_SHORT branch has always
+               had, and this one was missing entirely: `smol a = 7, b = 0;
+               a % b` went straight to the modulo and crashed with SIGFPE
+               (#271). Mirrors the VAR_INT case above and the VAR_SHORT
+               division case, message included.
+
+               No INT_MIN-style overflow guard is needed here, unlike
+               VAR_INT: C's usual arithmetic conversions promote both
+               shorts to int before the operation, so the worst case
+               (-32768 % -1) is computed as ints, where both the quotient
+               and the remainder are representable. The trap is specific to
+               operands that are already the widest type the division is
+               performed in. */
+            if (*(short *)right_value == 0)
+            {
+                yyerror("Modulo by zero");
+                *(short *)result = 0;
+            }
+            else
+            {
+                *(short *)result = *(short *)left_value % *(short *)right_value;
+            }
         }
         break;
     case OP_LT:

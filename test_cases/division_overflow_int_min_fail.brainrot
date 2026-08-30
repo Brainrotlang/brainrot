@@ -1,0 +1,44 @@
+🚽 Test case: issues #272/#273 -- INT_MIN / -1 and INT_MIN % -1 crashed
+🚽 with SIGFPE.
+🚽
+🚽 A zero-divisor check alone does not cover integer division: on x86-64
+🚽 `idiv` raises #DE for INT_MIN / -1 too, because the mathematical
+🚽 quotient (2147483648) is not representable in int. C leaves it
+🚽 undefined; the hardware traps.
+🚽
+🚽 The modulo form traps for the same reason even though its own answer is
+🚽 fine -- `idiv` produces quotient and remainder together, so the
+🚽 unrepresentable QUOTIENT faults even when only the remainder was asked
+🚽 for.
+🚽
+🚽 ── The two cases are deliberately handled differently ────────────────
+🚽 Division reports an error and falls back to 0, matching how division by
+🚽 zero has always behaved here: there is no correct int to return, so
+🚽 saying so is the honest answer.
+🚽
+🚽 Modulo returns 0 with NO error, because 0 is the mathematically correct
+🚽 remainder and it is exactly representable. Nothing is lost, so there is
+🚽 nothing to diagnose -- the trap was purely an artifact of how the
+🚽 hardware computes it. A fixture that expected an error here would be
+🚽 pinning a worse implementation.
+🚽
+🚽 INT_MIN is built by subtraction rather than written as a literal
+🚽 because every integer literal is lexed with atoi() into an int
+🚽 (lang.l), so -2147483648 cannot be spelled directly -- see #282.
+🚽
+🚽 smol is NOT affected and is included to pin that: C's usual arithmetic
+🚽 conversions promote both shorts to int before dividing, so -32768 / -1
+🚽 is computed where the result IS representable and never traps.
+skibidi main {
+    rizz lo = 0 - 2147483647;
+    lo = lo - 1;
+    rizz neg = 0 - 1;
+
+    yapping("div: %d", lo / neg);
+    yapping("mod: %d", lo % neg);
+
+    smol slo = 0 - 32768;
+    smol sneg = 0 - 1;
+    yapping("smol mod: %d", slo % sneg);
+    bussin 0;
+}
