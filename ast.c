@@ -1234,9 +1234,19 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
  * they need an owned copy instead of the borrow. */
 static bool struct_access_executes_call(const ASTNode *node)
 {
-    while (node && node->type == NODE_STRUCT_ACCESS)
+    /* Steps through ARRAY-ACCESS links as well as member-access ones, so
+       `make_bag().pts[0]` answers true. It walked NODE_STRUCT_ACCESS
+       only until #315 gave a NODE_ARRAY_ACCESS a base to have -- and
+       since this is the shared "does resolving this run a call"
+       predicate, teaching it the new link is better than making one
+       caller pass expr->data.array.base: every future shape wants the
+       same answer from the same place. */
+    while (node && (node->type == NODE_STRUCT_ACCESS ||
+                    (node->type == NODE_ARRAY_ACCESS && node->data.array.base)))
     {
-        node = node->data.struct_access.object;
+        node = node->type == NODE_STRUCT_ACCESS
+                   ? node->data.struct_access.object
+                   : node->data.array.base;
     }
     return node && node->type == NODE_FUNC_CALL;
 }
@@ -1260,7 +1270,30 @@ static bool struct_access_executes_call(const ASTNode *node)
  * So: if you are adding an expression shape that can denote a struct,
  * there are TWO lists to update, not one -- and a fixture that only reads
  * a field out of the new shape will not notice the other. Pass one
- * somewhere too. */
+ * somewhere too.
+ *
+ * And what has to be copied across is not just the ADDRESS ARITHMETIC.
+ * #315's first attempt mirrored resolve_struct_access()'s arithmetic
+ * exactly and was correct about every byte it computed -- then handed the
+ * result back borrowed, because that function has no ownership story to
+ * copy: it only ever gives its base to an immediate field read. The arm
+ * that does have one is NODE_STRUCT_ACCESS, right here, with its
+ * struct_access_executes_call() handling. A base chain that bottoms out
+ * in a call points into the pending-return slot, and every caller of
+ * THIS function keeps the pointer past the next
+ * free_pending_return_value(). Getting that wrong is a
+ * heap-use-after-free with two arguments and a leak with one -- not a
+ * wrong value, so no amount of checking printed output finds it. Only the
+ * SUCCESS path needs the copy; the early returns are reached by the
+ * enclosing call's own cleanup.
+ *
+ * The four consumers, for the "single choke point" argument to be
+ * checkable: enter_function_scope() (Brainrot struct parameters),
+ * marshal_struct_argument() (native STDROT_STRUCT parameters, stdrot.c),
+ * interpreter_visit_declaration() (copy-initializers), and
+ * handle_return_statement() (struct returns). Struct copy-ASSIGNMENT is
+ * not among them -- `e = s;` between two struct variables is
+ * "Unsupported assignment type" everywhere in the language. */
 bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
                                     String *tag_out, bool *owned_out,
                                     bool report_errors)
@@ -1468,10 +1501,51 @@ bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
         size_t offset = calculate_array_offset(
             true, &arr_fld->desc.array_dimensions, indices, num_indices);
         void *element_base = (char *)outer_base + arr_fld->offset;
-        *blob_out = array_element_address(
+        void *element_addr = array_element_address(
             element_base, offset, arr_fld->desc.type,
             arr_fld->desc.pointer_level, arr_fld->desc.modifiers,
             arr_fld->desc.struct_name);
+
+        /* `make_bag().pts[0]`. When the base chain bottoms out in a call,
+           outer_base -- and so element_addr -- points INTO the
+           pending-return slot's blob, which dies at the next
+           free_pending_return_value(). Handing that back borrowed is the
+           bug the NODE_STRUCT_ACCESS arm above already fixed for its own
+           shape, and it reproduced here verbatim: a two-argument call
+           (`dot(make_bag().pts[0], mk())`) had argument 2's own call free
+           the blob before the bind loop copied from it -- a
+           heap-use-after-free -- and the single-argument, return and
+           copy-init forms leaked it instead (PR #315 review).
+
+           Copy the element out and release the slot NOW, before returning
+           a pointer the caller holds past that point. calloc(), not
+           SAFE_MALLOC, to match the sibling arm and because
+           free_owned_struct_arg_blobs() (enter_function_scope()) releases
+           these with plain free().
+
+           SUCCESS PATH ONLY. The early returns above do not need this:
+           the enclosing call's own cleanup reaches the slot on those
+           paths, so adding it there would double-free. This is the one
+           place the pointer outlives the function. */
+        if (struct_access_executes_call(expr))
+        {
+            void *owned = calloc(1, elem_def->total_size);
+            if (!owned)
+            {
+                if (report_errors)
+                    yyerror("Out of memory for struct/union value");
+                free_pending_return_value();
+                return false;
+            }
+            memcpy(owned, element_addr, elem_def->total_size);
+            free_pending_return_value();
+            *blob_out = owned;
+            *tag_out = elem_def->name;
+            *owned_out = true;
+            return true;
+        }
+
+        *blob_out = element_addr;
         *tag_out = arr_fld->desc.struct_name;
         return true;
     }

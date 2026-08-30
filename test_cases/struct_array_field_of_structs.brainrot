@@ -85,6 +85,32 @@ chad len2(gang Entity e) {
     bussin e.x * e.x + e.y * e.y;
 }
 
+🚽 Two by-value struct parameters, so the two-argument UAF shape has
+🚽 somewhere to land: with a call base, argument 2's own call is what
+🚽 frees the blob argument 1 still points into.
+chad dot(gang Entity a, gang Entity b) {
+    bussin a.x * b.x + a.y * b.y;
+}
+
+🚽 A pool whose elements are distinguishable, returned BY VALUE so a
+🚽 `make_pool().es[i]` base resolves through the pending-return slot.
+gang Pool make_pool() {
+    gang Pool t;
+    t.es[0].x = 3.0;
+    t.es[0].y = 4.0;
+    t.es[1].x = 6.0;
+    t.es[1].y = 8.0;
+    t.count = 2;
+    t.speed = 0.5;
+    bussin t;
+}
+
+🚽 The return form: a struct-array-field element returned out of a
+🚽 function whose own base was a call.
+gang Entity grab() {
+    bussin make_pool().es[1];
+}
+
 skibidi main {
     gang Pool pool;
     yapping("sizeof Pool: %lu", maxxing(pool));
@@ -115,9 +141,12 @@ skibidi main {
     yapping("grid %d %d tag=%d", g.cells[0][0].v, g.cells[1][2].v, g.tag);
 
     🚽 An ELEMENT of a struct-array field is a by-value struct value
-    🚽 anywhere one is accepted: as an argument, and by extension as a
-    🚽 return value and a copy-initializer (all three go through
-    🚽 resolve_by_value_struct_source()).
+    🚽 anywhere one is accepted. All such sites go through
+    🚽 resolve_by_value_struct_source(), but they arrive with DIFFERENT
+    🚽 LIFETIMES, so "by extension" is not a safe thing to assert -- an
+    🚽 earlier version of this comment did, and the forms it waved at were
+    🚽 exactly the ones that were broken (PR #315 review). Each is
+    🚽 exercised explicitly below instead.
     pool.es[0].x = 3.0;
     pool.es[0].y = 4.0;
     yapping("len2 element: %.1f", len2(pool.es[0]));
@@ -126,6 +155,24 @@ skibidi main {
     🚽 silently passed es[0] again would go unnoticed -- it would print
     🚽 25.0 here instead of being refused.
     yapping("len2 whole:   %.1f", len2(pool.es));
+
+    🚽 ── A CALL BASE: the shape where the lifetimes diverge ────────────
+    🚽 `make_pool().es[0]` resolves through a base that points INTO the
+    🚽 pending-return slot, which dies at the next
+    🚽 free_pending_return_value(). Handing that back borrowed was a
+    🚽 heap-use-after-free with two arguments (the second argument's own
+    🚽 call freed the blob before the bind loop copied from it) and a leak
+    🚽 with one. The plain-variable base above cannot catch it, because its
+    🚽 blob lives in an ordinary variable that nothing frees mid-call.
+    🚽
+    🚽 All three consumer shapes are exercised, since it is precisely here
+    🚽 that they stop being interchangeable: argument, two-argument
+    🚽 (the UAF form), copy-initializer, and return.
+    yapping("call arg:     %.1f", len2(make_pool().es[0]));
+    yapping("call 2-arg:   %.1f", dot(make_pool().es[0], make_pool().es[1]));
+    gang Entity ce = make_pool().es[1];
+    yapping("call copyinit: %.1f", ce.x);
+    yapping("call return:   %.1f", grab().x);
 
     🚽 The intersection with #316 (struct pointer arithmetic, which landed
     🚽 first): a pointer taken INTO a struct-array field, then walked. Each
