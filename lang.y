@@ -1991,8 +1991,10 @@ error_statement:
     ;
 
 return_statement:
-    BUSSIN expression
+      BUSSIN expression
         { $$ = create_return_node($2); }
+    | BUSSIN
+        { $$ = create_return_node(NULL); }
     ;
 
 expression:

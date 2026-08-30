@@ -1,0 +1,64 @@
+🚽 Test case: issue #283 -- bare `bussin;` (void return with no value)
+🚽 was a parse error in the grammar.
+🚽
+🚽 return_statement in lang.y only accepted `BUSSIN expression`, preventing
+🚽 skibidi (void) functions from returning early with `bussin;`.
+🚽
+🚽 This fixture tests:
+🚽 1. Bare `bussin;` in a noop void function.
+🚽 2. Conditional early return from a void function (`edgy (...) { bussin; }`).
+🚽 3. Recursive void function using `bussin;` for base case termination.
+🚽 4. Scope and local variable cleanup when `bussin;` exits early.
+🚽 5. Bare `bussin;` at the end of `skibidi main`.
+
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+skibidi noop() {
+    bussin;
+}
+
+skibidi check_positive(rizz n) {
+    edgy (n <= 0) {
+        bussin;
+    }
+    yapping("positive: %d", n);
+}
+
+skibidi countdown(rizz n) {
+    edgy (n <= 0) {
+        yapping("liftoff");
+        bussin;
+    }
+    yapping("count: %d", n);
+    countdown(n - 1);
+    bussin;
+}
+
+skibidi early_exit_locals() {
+    gang Point p;
+    p.x = 42;
+    p.y = 100;
+    rizz arr[4];
+    arr[0] = 7;
+    bussin;
+    yapping("unreachable locals");
+}
+
+skibidi main {
+    noop();
+    yapping("noop passed");
+
+    check_positive(-5);
+    check_positive(10);
+    check_positive(0);
+
+    countdown(3);
+
+    early_exit_locals();
+    yapping("locals exit passed");
+
+    bussin;
+}
