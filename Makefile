@@ -441,6 +441,19 @@ $(ABI_CHECK_BIN): tests/abi/struct_layout_abi_check.c
 abi-check: $(ABI_CHECK_BIN) ## Run the struct/union ABI layout oracle (host sizeof/offsetof). No bytes left behind, no cap.
 	./$(ABI_CHECK_BIN)
 
+# Host C unit test for arena allocator and arena_reset() (issue #286):
+# tests that arena_reset() preserves allocated regions with zeroed counts,
+# avoids dangling pointer UAF on arena_free(), reuses regions on realloc,
+# and handles empty / repeated resets safely under ASan/UBSan.
+ARENA_CHECK_BIN := tests/arena/arena_check
+
+$(ARENA_CHECK_BIN): tests/arena/arena_check.c $(SRC_DIR)/arena.c $(SRC_DIR)/mem.c
+	$(CC) $(CFLAGS) -I. -o $@ $^
+
+.PHONY: arena-check
+arena-check: $(ARENA_CHECK_BIN) ## Run the arena allocator unit tests (host reset/reuse under sanitizers). Clean memory, no cap.
+	./$(ARENA_CHECK_BIN)
+
 # Main executable build
 $(TARGET): $(ALL_SRCS) $(STDROT_LIB) $(STDROT_ABI_HDR)
 	$(CC) $(CFLAGS) -o $@ $(ALL_SRCS) $(LDFLAGS)
@@ -486,7 +499,7 @@ $(FLEX_OUTPUT): lang.l
 
 # Run tests
 .PHONY: test
-test: $(TARGET) $(TEST_STDROT_LIB) badnatives nativemodules old-abi-sim abi-check ## Build, then run the pytest suite. Huggy Wuggy approves.
+test: $(TARGET) $(TEST_STDROT_LIB) badnatives nativemodules old-abi-sim abi-check arena-check ## Build, then run the pytest suite. Huggy Wuggy approves.
 	STDROT_LIB_PATH=$(CURDIR)/$(TEST_STDROT_LIB) $(PYTHON) -m pytest -v
 	@echo "Tests ran bussin', no cap."
 
@@ -501,6 +514,7 @@ clean: ## Remove all build artifacts (never touches source). Amogus sussy impost
 	rm -f $(BRAINRAY_LIB)
 	rm -f $(OLD_ABI_SIM_LIB)
 	rm -f $(ABI_CHECK_BIN)
+	rm -f $(ARENA_CHECK_BIN)
 	rm -f *.o
 	@echo "Blud cleaned up the mess like a true sigma coder."
 

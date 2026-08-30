@@ -119,20 +119,24 @@ String arena_strdup(Arena *arena, String str)
 }
 
 /*
- * @brief reset the arena.
- * @param arena The arena to reset.
+ * @brief Reset the arena for reuse.
+ * Frees nothing: every region stays allocated with count = 0, and end is
+ * rewound to start, so the arena refills without reallocating and remains
+ * safe to arena_free(). Safe on NULL and on a never-allocated arena.
+ * @param arena The arena to reset (may be NULL).
  */
-
 void arena_reset(Arena *arena)
 {
-    arena->end = arena->start;
-    while (arena->end->next != NULL)
+    if (arena == NULL)
     {
-        Region *next = arena->end->next;
-        region_free(arena->end);
-        arena->end = next;
+        return;
     }
-    arena->end->count = 0;
+
+    for (Region *r = arena->start; r != NULL; r = r->next)
+    {
+        r->count = 0;
+    }
+    arena->end = arena->start;
 }
 
 /*

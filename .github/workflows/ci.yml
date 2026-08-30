@@ -241,6 +241,10 @@ jobs:
       - name: Build native module test libraries
         run: make nativemodules
 
+      # Host C unit tests for the arena allocator under ASan/UBSan (issue #286)
+      - name: Run host C arena tests
+        run: make arena-check
+
       # Collect every test module in tests/, not just test_brainrot.py. Naming
       # one file meant test_docs_consistency.py never ran on the merge gate,
       # even though `make test` (plain `pytest -v` from the repo root) has
