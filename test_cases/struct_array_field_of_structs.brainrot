@@ -127,6 +127,16 @@ skibidi main {
     🚽 25.0 here instead of being refused.
     yapping("len2 whole:   %.1f", len2(pool.es));
 
+    🚽 The intersection with #316 (struct pointer arithmetic, which landed
+    🚽 first): a pointer taken INTO a struct-array field, then walked. Each
+    🚽 feature is tested on its own elsewhere; this is the shape neither
+    🚽 fixture covers, and it is the one a real pool-walking helper writes.
+    gang Entity *ep = &pool.es[0];
+    yapping("ep    x=%.1f", ep.x);
+    ep = ep + 2;
+    yapping("ep+2  x=%.1f", ep.x);
+    yapping("ep[0] x=%.1f", ep[0].x);
+
     🚽 a struct-array field nested two levels down, beside a by-value
     🚽 struct field of the same element type
     gang Outer o;
