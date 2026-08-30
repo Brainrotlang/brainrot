@@ -584,6 +584,12 @@ skibidi main {
   copy-initialization or per-field assignment instead.
 - A brace initializer for an array of structs (`gang Point pts[2] = {{1,
   2}, {3, 4}};`) is not yet supported; declare the array and assign elements.
+- A field may itself be an array of structs/unions (`gang Pool { gang Entity
+  es[8]; };`, including multi-dimensional), and its elements are accessed and
+  assigned per field like any other (`pool.es[i].x = 1.0;`). The element type
+  must already be defined, and a struct cannot contain an array of *itself*
+  by value for the same reason it cannot contain one of itself directly — an
+  array of pointers to itself (`gang Node *kids[2];`) is fine.
 - Chained access follows a single-level pointer field per hop (`a.next.val`);
   a multi-level pointer field (`gang Node **next`) is not followed and must
   be dereferenced explicitly.

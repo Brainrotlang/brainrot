@@ -906,6 +906,93 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
             parent_base = outer_field_addr;
         }
     }
+    else if (obj && obj->type == NODE_ARRAY_ACCESS && obj->data.array.base)
+    {
+        /* Member access on an element of a struct/union-typed ARRAY FIELD
+           (`pool.es[i].x`, #311). The sibling branch below handles the
+           name-based form (`pts[i].x`) and its own comment used to record
+           this shape as unsupported; this is the branch that supports it.
+
+           Deliberately NOT routed through evaluate_struct_field_array_
+           access(), which computes exactly this address and is used for a
+           scalar element (`foo.nums[i]`): that function reports via
+           yyerror() and exit()s on every failure, which is right for an
+           evaluation context but wrong here -- resolve_struct_access() is
+           also called speculatively with report_errors == false (see
+           create_struct_field_array_access_node(), infer_expression_
+           struct_name()), and a speculative probe of a malformed access
+           must return false, not terminate the interpreter. The address
+           arithmetic below is the same, through the same two helpers, so
+           bounds checking (calculate_array_offset()) and struct-aware
+           striding (array_element_address() via get_array_element_
+           stride()) are inherited rather than reimplemented. */
+        StructDef *outer_def = NULL;
+        void *outer_base = NULL;
+        StructField *arr_fld = NULL;
+        if (!resolve_struct_access(obj->data.array.base, &outer_def,
+                                   &outer_base, &arr_fld, report_errors))
+            return false;
+
+        if (!arr_fld->desc.is_array || arr_fld->desc.type != VAR_STRUCT ||
+            arr_fld->desc.pointer_level != 0)
+        {
+            if (report_errors)
+                yyerror("Member access on a non-struct/union array element");
+            return false;
+        }
+
+        parent_def = get_struct_def(arr_fld->desc.struct_name);
+        if (!parent_def)
+        {
+            if (report_errors)
+                yyerror("Unknown struct or union type");
+            return false;
+        }
+
+        /* Same rank check evaluate_struct_field_array_access() makes, and
+           for the same reason: an array field lives inline in the
+           enclosing struct's single blob, so calculate_array_offset()'s
+           lenient dimension-mismatch fallback would resolve into a
+           NEIGHBORING field's bytes rather than merely misindexing its
+           own array. */
+        int num_indices = obj->data.array.num_dimensions;
+        if (num_indices <= 0 ||
+            num_indices != arr_fld->desc.array_dimensions.num_dimensions)
+        {
+            if (report_errors)
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg),
+                         "Struct/union field '%.100s' expects %d array "
+                         "index/indices, got %d",
+                         arr_fld->name.data ? arr_fld->name.data : "?",
+                         arr_fld->desc.array_dimensions.num_dimensions,
+                         num_indices);
+                yyerror(msg);
+            }
+            return false;
+        }
+
+        int indices[MAX_DIMENSIONS] = {0};
+        for (int i = 0; i < num_indices; i++)
+        {
+            if (!obj->data.array.indices[i])
+            {
+                if (report_errors)
+                    yyerror("Missing array index in struct field access");
+                return false;
+            }
+            indices[i] = evaluate_expression_int(obj->data.array.indices[i]);
+        }
+
+        size_t offset = calculate_array_offset(
+            true, &arr_fld->desc.array_dimensions, indices, num_indices);
+        void *element_base = (char *)outer_base + arr_fld->offset;
+        parent_base = array_element_address(
+            element_base, offset, arr_fld->desc.type,
+            arr_fld->desc.pointer_level, arr_fld->desc.modifiers,
+            arr_fld->desc.struct_name);
+    }
     else if (obj && obj->type == NODE_ARRAY_ACCESS && obj->data.array.name.data)
     {
         /* Member access on an element of an array of struct/union values or
@@ -913,14 +1000,10 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
            POINTER (`p[i].x`, #311 -- see the pointer branch below).
 
            The struct-field array form (`foo.arr[i].x`,
-           obj->data.array.base set) is NOT handled here and falls through
-           to the error at the end of this chain. That is a separate gap
-           with its own change in flight (#315, which adds a branch for it
-           above this one); this comment deliberately does not claim such a
-           branch exists, because on this branch it does not (PR #316
-           review). If #315 has landed by the time you read this, the
-           branch is there and this paragraph is stale in the harmless
-           direction. */
+           obj->data.array.base set) is handled by its own branch above,
+           added by #315 -- which landed after this one, so an earlier
+           revision of this comment correctly said the form was
+           unsupported here. It is supported now. */
         Variable *var = get_variable(obj->data.array.name);
         if (!var || var->desc.type != VAR_STRUCT)
         {
@@ -1151,13 +1234,86 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
  * they need an owned copy instead of the borrow. */
 static bool struct_access_executes_call(const ASTNode *node)
 {
-    while (node && node->type == NODE_STRUCT_ACCESS)
+    /* Steps through ARRAY-ACCESS links as well as member-access ones, so
+       `make_bag().pts[0]` answers true. It walked NODE_STRUCT_ACCESS
+       only until #315 gave a NODE_ARRAY_ACCESS a base to have -- and
+       since this is the shared "does resolving this run a call"
+       predicate, teaching it the new link is better than making one
+       caller pass expr->data.array.base: every future shape wants the
+       same answer from the same place. */
+    while (node && (node->type == NODE_STRUCT_ACCESS ||
+                    (node->type == NODE_ARRAY_ACCESS && node->data.array.base)))
     {
-        node = node->data.struct_access.object;
+        node = node->type == NODE_STRUCT_ACCESS
+                   ? node->data.struct_access.object
+                   : node->data.array.base;
     }
     return node && node->type == NODE_FUNC_CALL;
 }
 
+/* ── THREE DISPATCHES, ONE SET OF EXPRESSION SHAPES ─────────────────────
+ * Three functions dispatch on the same node types -- NODE_IDENTIFIER,
+ * NODE_STRUCT_ACCESS, NODE_ARRAY_ACCESS -- for the same set of
+ * struct-valued expressions, and each answers a different question:
+ *
+ *   resolve_struct_access()            (above, ast.c)
+ *       which struct is this MEMBER being read out of, and at what
+ *       address? Runtime.
+ *   resolve_by_value_struct_source()   (below, ast.c)
+ *       where is a by-value struct VALUE to copy, and who owns it?
+ *       Runtime.
+ *   the NODE_STRUCT_ACCESS case of semantic_analyze_with_scope_tracking()
+ *                                      (semantic_analyzer.c)
+ *       is this expression struct-typed AT ALL, and does the member
+ *       exist? Static -- it must answer without running anything.
+ *
+ * This comment said TWO for one revision, and the missing third is what
+ * that revision then got wrong: #315 taught both ast.c dispatches about
+ * struct-typed array fields and not the analyzer, so `b.pts[0].y` worked
+ * while `b.pts[0].core.v` was rejected as "Member access on
+ * non-struct/union value" -- a diagnostic that was not merely unhelpful
+ * but false, and which made the new field form strictly less capable
+ * than the `arr[0].core.v` shape it was modelled on. One hop worked
+ * because that hop is answered at runtime; the second needed the static
+ * dispatch that had not been updated (PR #315 review).
+ *
+ * Every divergence between those two lists has been a bug. #307: the
+ * array-variable guard was added to one arm and not its sibling. #309:
+ * the static array check covered NODE_IDENTIFIER only. #315: a new
+ * expression shape (struct-typed array fields) was taught to
+ * resolve_struct_access() and not to this function, which inverted the
+ * polarity outright -- the legitimate `f(b.pts[0])` was refused while the
+ * illegitimate `f(b.pts)` silently passed element 0.
+ *
+ * So: if you are adding an expression shape that can denote a struct,
+ * there are THREE lists to update -- and two of them live in this file,
+ * which is exactly why the third gets missed. A fixture that only reads
+ * ONE hop out of the new shape will not notice the analyzer; one that
+ * only reads a field out of it will not notice the value/ownership
+ * dispatch. Chain a second hop, and pass one somewhere.
+ *
+ * And what has to be copied across is not just the ADDRESS ARITHMETIC.
+ * #315's first attempt mirrored resolve_struct_access()'s arithmetic
+ * exactly and was correct about every byte it computed -- then handed the
+ * result back borrowed, because that function has no ownership story to
+ * copy: it only ever gives its base to an immediate field read. The arm
+ * that does have one is NODE_STRUCT_ACCESS, right here, with its
+ * struct_access_executes_call() handling. A base chain that bottoms out
+ * in a call points into the pending-return slot, and every caller of
+ * THIS function keeps the pointer past the next
+ * free_pending_return_value(). Getting that wrong is a
+ * heap-use-after-free with two arguments and a leak with one -- not a
+ * wrong value, so no amount of checking printed output finds it. Only the
+ * SUCCESS path needs the copy; the early returns are reached by the
+ * enclosing call's own cleanup.
+ *
+ * The four consumers, for the "single choke point" argument to be
+ * checkable: enter_function_scope() (Brainrot struct parameters),
+ * marshal_struct_argument() (native STDROT_STRUCT parameters, stdrot.c),
+ * interpreter_visit_declaration() (copy-initializers), and
+ * handle_return_statement() (struct returns). Struct copy-ASSIGNMENT is
+ * not among them -- `e = s;` between two struct variables is
+ * "Unsupported assignment type" everywhere in the language. */
 bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
                                     String *tag_out, bool *owned_out,
                                     bool report_errors)
@@ -1239,6 +1395,26 @@ bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
                 free_pending_return_value();
             return false;
         }
+        /* An ARRAY field is not a by-value struct value, for exactly the
+           reason the NODE_IDENTIFIER arm above says an array VARIABLE
+           isn't: the field's bytes are the whole array, so copying
+           total_size out of it silently yields element 0 -- `len2(b.pts)`
+           hands the callee `b.pts[0]` and nothing objects.
+           That guard was added above by #307 and NOT here, because a
+           struct-typed array field could not be declared at the time.
+           This change is what makes it declarable, so the same guard is
+           needed on this arm too. #309's static check does not cover it
+           either: array_identifier_symbol() is NODE_IDENTIFIER-only, and
+           `b.pts` is a NODE_STRUCT_ACCESS (PR #315 review). */
+        if (fld->desc.is_array)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union value, got an "
+                        "array (index it, e.g. `arr[0]`)");
+            if (struct_access_executes_call(expr))
+                free_pending_return_value();
+            return false;
+        }
         if (struct_access_executes_call(expr))
         {
             /* `make_outer().inner`. Copy the field out of the pending-return
@@ -1274,6 +1450,123 @@ bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
         }
         *blob_out = (char *)base + fld->offset;
         *tag_out = fld->desc.struct_name;
+        return true;
+    }
+
+    if (expr->type == NODE_ARRAY_ACCESS && expr->data.array.base)
+    {
+        /* An element of a struct-typed ARRAY FIELD (`b.pts[i]`) used as a
+           by-value struct value -- passing it to a function, returning it,
+           copy-initializing from it (PR #315 review).
+           This is the field form of the name-based arm below, and it needs
+           its own dispatch for the same reason resolve_struct_access() does:
+           `b.pts[i]` is a NODE_ARRAY_ACCESS whose data.array.base is set and
+           whose data.array.name is NOT, so it fell straight past that arm's
+           `name.data` requirement into the catch-all error -- meaning
+           `len2(b.pts[0])`, the natural thing to write once `b.pts[0].x`
+           works, was refused while `len2(b.pts)` (the whole array) was
+           quietly accepted.
+           The address arithmetic mirrors resolve_struct_access()'s
+           equivalent branch exactly, through the same two helpers, so
+           bounds checking and struct-aware striding are inherited. */
+        StructDef *outer_def = NULL;
+        void *outer_base = NULL;
+        StructField *arr_fld = NULL;
+        if (!resolve_struct_access(expr->data.array.base, &outer_def,
+                                   &outer_base, &arr_fld, report_errors))
+            return false;
+
+        if (!arr_fld->desc.is_array || arr_fld->desc.type != VAR_STRUCT ||
+            arr_fld->desc.pointer_level != 0)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union value");
+            return false;
+        }
+
+        StructDef *elem_def = get_struct_def(arr_fld->desc.struct_name);
+        if (!elem_def)
+        {
+            if (report_errors)
+                yyerror("Unknown struct or union type");
+            return false;
+        }
+
+        /* Same rank check resolve_struct_access() makes on this shape: an
+           array field is inline in the enclosing blob, so a dimension
+           mismatch would resolve into a NEIGHBOURING field's bytes rather
+           than merely misindexing its own array. */
+        int num_indices = expr->data.array.num_dimensions;
+        if (num_indices <= 0 ||
+            num_indices != arr_fld->desc.array_dimensions.num_dimensions)
+        {
+            if (report_errors)
+                yyerror("Wrong number of array indices for a struct/union "
+                        "array field");
+            return false;
+        }
+
+        int indices[MAX_DIMENSIONS] = {0};
+        for (int i = 0; i < num_indices; i++)
+        {
+            if (!expr->data.array.indices[i])
+            {
+                if (report_errors)
+                    yyerror("Missing array index in struct field access");
+                return false;
+            }
+            indices[i] = evaluate_expression_int(expr->data.array.indices[i]);
+        }
+
+        size_t offset = calculate_array_offset(
+            true, &arr_fld->desc.array_dimensions, indices, num_indices);
+        void *element_base = (char *)outer_base + arr_fld->offset;
+        void *element_addr = array_element_address(
+            element_base, offset, arr_fld->desc.type,
+            arr_fld->desc.pointer_level, arr_fld->desc.modifiers,
+            arr_fld->desc.struct_name);
+
+        /* `make_bag().pts[0]`. When the base chain bottoms out in a call,
+           outer_base -- and so element_addr -- points INTO the
+           pending-return slot's blob, which dies at the next
+           free_pending_return_value(). Handing that back borrowed is the
+           bug the NODE_STRUCT_ACCESS arm above already fixed for its own
+           shape, and it reproduced here verbatim: a two-argument call
+           (`dot(make_bag().pts[0], mk())`) had argument 2's own call free
+           the blob before the bind loop copied from it -- a
+           heap-use-after-free -- and the single-argument, return and
+           copy-init forms leaked it instead (PR #315 review).
+
+           Copy the element out and release the slot NOW, before returning
+           a pointer the caller holds past that point. calloc(), not
+           SAFE_MALLOC, to match the sibling arm and because
+           free_owned_struct_arg_blobs() (enter_function_scope()) releases
+           these with plain free().
+
+           SUCCESS PATH ONLY. The early returns above do not need this:
+           the enclosing call's own cleanup reaches the slot on those
+           paths, so adding it there would double-free. This is the one
+           place the pointer outlives the function. */
+        if (struct_access_executes_call(expr))
+        {
+            void *owned = calloc(1, elem_def->total_size);
+            if (!owned)
+            {
+                if (report_errors)
+                    yyerror("Out of memory for struct/union value");
+                free_pending_return_value();
+                return false;
+            }
+            memcpy(owned, element_addr, elem_def->total_size);
+            free_pending_return_value();
+            *blob_out = owned;
+            *tag_out = elem_def->name;
+            *owned_out = true;
+            return true;
+        }
+
+        *blob_out = element_addr;
+        *tag_out = arr_fld->desc.struct_name;
         return true;
     }
 

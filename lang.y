@@ -879,6 +879,58 @@ struct_field
             SAFE_FREE($3.name);
             SAFE_FREE($2);
         }
+    | struct_or_union name_token declarator dimensions SEMICOLON
+        {
+            /* An ARRAY of a nested struct/union, e.g.
+               `gang Pool { gang Entity es[8]; };` (#311). The scalar
+               array-field production above notes that a struct/union
+               element "can't reach here at all" because that rule only
+               sees a primitive `type`; this is the production that gives
+               it somewhere to go.
+
+               No new layout code was needed: get_struct_field_size()
+               (ast.c) already takes a VAR_STRUCT field's element size
+               from the nested definition's total_size and multiplies by
+               the dimension product when is_array is set, and
+               get_struct_field_alignment() already returns the nested
+               alignment while deliberately ignoring is_array (a C array
+               needs no more alignment than its element). Both were
+               written for the separate cases -- nested struct fields, and
+               scalar array fields -- and their intersection was already
+               correct; only the grammar was missing.
+
+               The two checks below are the same ones the by-value nested
+               field performs, for the same reasons, and BOTH still apply
+               to an array: `gang S { gang S kids[2]; }` is exactly as
+               infinitely-sized as a single self-embedded field, and an
+               array of an undefined tag has no element size to compute.
+               A self-referential POINTER array (`gang S *kids[2];`) is
+               fine and is not rejected -- its elements are pointers,
+               whose size doesn't depend on the pointee being complete. */
+            bool is_self = current_struct_def_name.data &&
+                          strcmp($2.data, current_struct_def_name.data) == 0;
+            if (is_self && $3.pointer_level == 0)
+            {
+                yyerror("A struct/union cannot contain itself by value "
+                       "(use a pointer field instead)");
+                struct_def_had_error = true;
+            }
+            else if (!is_self && !get_struct_def($2))
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg),
+                         "Unknown struct/union type '%s'", $2.data);
+                yyerror(msg);
+                struct_def_had_error = true;
+            }
+            $$ = create_parameter_ex($3.name, VAR_STRUCT, $3.pointer_level,
+                                     NULL, (TypeModifiers){0});
+            $$->desc.struct_name = ARENA_STRDUP($2);
+            $$->desc.is_array = true;
+            $$->desc.array_dimensions = $4;
+            SAFE_FREE($3.name);
+            SAFE_FREE($2);
+        }
     | ENUM name_token declarator SEMICOLON
         {
             /* Nested enum field (e.g. `gang Foo { gyatt Color c; };`) --

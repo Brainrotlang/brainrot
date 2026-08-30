@@ -254,7 +254,10 @@ All five sub-items landed; the sections below are kept as the design record.
   access `.` precedence bug, surfaced by this work, fixed in #257.)
 - **3e** remaining C field types: unsigned/fixed-width scalars, pointer
   fields, nested struct fields, fixed arrays in structs (incl. `lit`-alias
-  element types with correct stride), struct aliases — #247, #256.
+  element types with correct stride), struct aliases — #247, #256. "Fixed
+  arrays in structs" meant SCALAR element types only until #311; a
+  struct/union-typed array field (`gang Pool { gang Entity es[8]; };`) was
+  a parse error, and is now supported.
 
 Struct assignment is value-copy (C semantics), decided and tested. Arrays
 of by-value structs as standalone declarations, and arrays as by-value
