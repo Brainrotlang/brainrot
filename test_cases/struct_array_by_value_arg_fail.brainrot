@@ -1,50 +1,36 @@
-🚽 Test case: PR #307 review, finding 1 -- an ARRAY of structs is not a
-🚽 by-value struct value, and passing one where a struct parameter is
-🚽 declared must say so rather than silently hand over element 0.
+🚽 Test case: an ARRAY of structs is not a by-value struct value, and
+🚽 passing one where a struct parameter is declared must say so rather than
+🚽 silently hand over element 0.
 🚽
 🚽 `gang Point pts[2]` keeps the whole array in the same Variable slot a
 🚽 single struct uses, so resolve_by_value_struct_source() (ast.c) would
 🚽 otherwise copy total_size bytes out of it and pass pts[0] -- the caller
 🚽 writes `len2(pts)`, the callee receives pts[0], and nothing anywhere
-🚽 objects. Every other type already rejected this shape:
-🚽 `rizz a[2]` passed to a scalar parameter gets "int arrays cannot be
-🚽 passed where a scalar/string is expected".
+🚽 objects.
 🚽
-🚽 ── What this fixture pins, and why it prints the result ──────────────
-🚽 The call's result is PRINTED rather than discarded on purpose. Pinning
-🚽 only the diagnostic would leave an implementation that reports the
-🚽 error and then binds garbage passing this fixture -- the failed call
-🚽 has to yield something, and what it yields is part of the contract
-🚽 (PR #307 review, round 2). The parameter is left zeroed, so this
-🚽 prints 0.0; if a regression ever went back to quietly binding pts[0],
-🚽 this line would print 25.0 and the fixture would catch it even if the
-🚽 diagnostic were still emitted.
+🚽 ── Two rejections cover this, at different layers ────────────────────
+🚽 This fixture pins the STATIC one (#308): semantic_visit_function_call()
+🚽 rejects any array identifier passed to a user-defined function, so the
+🚽 program never runs and the process exits 1. That check covers every
+🚽 element type, not just structs -- `rizz a[2]` passed to a `rizz`
+🚽 parameter used to print the array's own address reinterpreted as an int,
+🚽 and a `cap` array was undefined behavior outright (UBSan: "load of value
+🚽 144, which is not a valid value for type '_Bool'").
 🚽
-🚽 ── Two known-wrong things this fixture deliberately bakes in ─────────
-🚽 Both are PRE-EXISTING behavior of this whole family of runtime
-🚽 yyerror() diagnostics, not something this rejection introduced -- but
-🚽 a fixture is where wrong behavior becomes *expected* behavior, so
-🚽 neither should be read as correct:
+🚽 The RUNTIME rejection added by #307 in resolve_by_value_struct_source()
+🚽 is still load-bearing and still tested -- see
+🚽 struct_array_copy_init_fail.brainrot. It covers the by-value struct
+🚽 sources the analyzer's call-argument check does not see: copy
+🚽 initialization (`gang Point a = pts;`) and struct returns
+🚽 (`bussin pts;`). The two layers are deliberately both present; neither
+🚽 subsumes the other.
 🚽
-🚽   1. The reported line is 63 -- main's closing brace -- not 61, where
-🚽      the offending `len2(pts)` actually is. These runtime errors report
-🚽      wherever the lexer's line counter finished rather than the call
-🚽      site's own line; `len2(*p)` misattributes identically on main.
-🚽   2. Execution CONTINUES after the error and the process exits 0. A
-🚽      Brainrot program that hits one of these does not abort.
-🚽
-🚽 ── Why the native path is stricter ───────────────────────────────────
-🚽 The same rejection covers a native call taking a declared
-🚽 STDROT_STRUCT parameter, but there it is reported at ANALYSIS time and
-🚽 exits 1 (see tests/test_brainrot.py's struct_array_for_by_value case).
-🚽 The asymmetry is not arbitrary: semantic_check_native_call() has a
-🚽 StdrotParam that names the expected tag, so the mismatch is knowable
-🚽 before anything runs, and refusing to run at all is the only safe
-🚽 answer when the alternative is memcpy'ing bytes into a C struct inside
-🚽 someone else's library. A Brainrot-defined callee has no such
-🚽 descriptor at this call site, so the check necessarily happens while
-🚽 evaluating the argument -- by which point the interpreter is already
-🚽 running and this family's convention is to report and carry on.
+🚽 ── What this fixture would catch ─────────────────────────────────────
+🚽 An implementation that reports nothing and quietly binds pts[0]: the
+🚽 call's result is printed, so that regression would print 25.0 here
+🚽 instead of failing. It would also catch a regression that reported the
+🚽 error but carried on, since main never reaching its output at all is
+🚽 part of what is pinned.
 gang Point {
     chad x;
     chad y;

@@ -394,5 +394,7 @@
     "array_of_structs_oob_fail": "Error: Array index out of bounds: dimension 1 (index=5, size=2) at line 11",
     "array_of_structs_scalar_member_fail": "Error: Member access on non-struct/union value at line 7",
     "semantic_error_struct_access_call_base": "Error: Member access on non-struct/union value at line 19",
-    "struct_array_by_value_arg_fail": "0.0\nStderr:\nError: Expected a by-value struct/union value, got an array (index it, e.g. `arr[0]`) at line 63"
+    "struct_array_by_value_arg_fail": "Error: 'len2' argument 1: struct arrays cannot be passed to a function -- pass an element (`pts[0]`) or its address (`&pts[0]`) at line 47",
+    "struct_array_copy_init_fail": "0.0\nStderr:\nError: Expected a by-value struct/union value, got an array (index it, e.g. `arr[0]`) at line 34",
+    "array_arg_scalar_param_fail": "Error: 'pick' argument 1: char arrays cannot be passed to a function -- pass an element (`ca[0]`) or its address (`&ca[0]`) at line 52\nError: 'flip' argument 1: bool arrays cannot be passed to a function -- pass an element (`ba[0]`) or its address (`&ba[0]`) at line 51\nError: 'half' argument 1: float arrays cannot be passed to a function -- pass an element (`fa[0]`) or its address (`&fa[0]`) at line 50\nError: 'twice' argument 1: int arrays cannot be passed to a function -- pass an element (`ia[0]`) or its address (`&ia[0]`) at line 49"
 }

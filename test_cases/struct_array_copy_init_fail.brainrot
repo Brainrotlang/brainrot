@@ -1,0 +1,34 @@
+🚽 Test case: the RUNTIME half of the struct-array rejection (#307), for
+🚽 the by-value struct sources the analyzer's call-argument check (#308)
+🚽 does not see.
+🚽
+🚽 resolve_by_value_struct_source() (ast.c) is the single choke point every
+🚽 by-value struct source goes through -- call arguments, copy
+🚽 initialization, struct returns, and struct copy-assignment. #308 added a
+🚽 static rejection for the call-argument case only (see
+🚽 struct_array_by_value_arg_fail.brainrot), which is why THIS fixture uses
+🚽 copy initialization instead: `gang Point a = pts;` reaches the runtime
+🚽 check with no static check in front of it, so it is what keeps that
+🚽 check honest. Delete the runtime check and this fixture starts printing
+🚽 3.0 -- the silently-bound pts[0] -- instead of the error.
+🚽
+🚽 Known-wrong behavior this necessarily bakes in, both PRE-EXISTING for
+🚽 this whole family of runtime yyerror() diagnostics and neither to be
+🚽 read as correct:
+🚽   1. the reported line is main's closing brace, not the offending line;
+🚽   2. execution CONTINUES after the error and the process exits 0.
+🚽 The value is printed rather than discarded so the contract -- what the
+🚽 failed initialization leaves behind -- is pinned, not just the message.
+gang Point {
+    chad x;
+    chad y;
+};
+
+skibidi main {
+    gang Point pts[2];
+    pts[0].x = 3.0;
+    pts[0].y = 4.0;
+    gang Point a = pts;
+    yapping("%.1f", a.x);
+    bussin 0;
+}
