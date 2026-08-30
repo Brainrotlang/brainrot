@@ -45,7 +45,7 @@ typedef enum
 {
     MODULE_ARTIFACT_PRELUDE, /* a .brainrot file, spliced in like a #cooked
                                 "path" include */
-    MODULE_ARTIFACT_NATIVE,  /* a .so, dlopen'd via brainrot_module_init()
+    MODULE_ARTIFACT_NATIVE,  /* a .so, dlopen'd via brainrot_module_init_v3()
                                 (native builds only -- see module_path.c) */
 } ModuleArtifactKind;
 

@@ -1,0 +1,76 @@
+🚽 Ohio Engine II: Generated Boogaloo -- the Road B counterpart to
+🚽 ohio_engine.brainrot (issue #208, Phase 5).
+🚽
+🚽 The difference from Road A's version is the whole point of Road B. Road A
+🚽 flattens everything into scalars because that was all its hand-written
+🚽 wrappers could carry:
+🚽
+🚽     rl_draw_circle(640, 360, 100.0, 255, 0, 255, 255);
+🚽
+🚽 Here the same call passes REAL aggregates by value -- a `gang Vector2` for
+🚽 the position and a `gang Color` for the colour -- straight into raylib's
+🚽 own DrawCircleV(Vector2, float, Color):
+🚽
+🚽     rl_draw_circle_v(pos, 60.0, orb);
+🚽
+🚽 Nothing in this file's binding was written by hand. Every function it calls
+🚽 is a generated adapter, and every `gang` it uses is a generated declaration
+🚽 whose byte layout is _Static_assert'ed against the real raylib headers.
+🚽
+🚽 Requires raylib and a display:
+🚽     make brainray-gen && make play-gen
+🚽 or:
+🚽     BRAINROT_PATH=brainray/generated ./brainrot examples/raylib/ohio_engine_gen.brainrot
+🚽
+🚽 It closes itself after 30 frames so it can run unattended in a test.
+
+#cooked <raylibgen>
+
+skibidi main {
+    rl_init_window(640, 360, "Ohio Engine II: Generated Boogaloo");
+    rl_set_target_fps(60);
+
+    gang Vector2 pos;
+    pos.x = 320.0;
+    pos.y = 180.0;
+
+    gang Color bg;
+    bg.r = 20;
+    bg.g = 20;
+    bg.b = 30;
+    bg.a = 255;
+
+    gang Color orb;
+    orb.r = 255;
+    orb.g = 0;
+    orb.b = 255;
+    orb.a = 255;
+
+    gang Rectangle bar;
+    bar.x = 20.0;
+    bar.y = 20.0;
+    bar.width = 120.0;
+    bar.height = 12.0;
+
+    gang Color barcol;
+    barcol.r = 0;
+    barcol.g = 255;
+    barcol.b = 120;
+    barcol.a = 255;
+
+    rizz frames = 0;
+    goon (frames < 30) {
+        rl_begin_drawing();
+        rl_clear_background(bg);
+        rl_draw_circle_v(pos, 60.0, orb);
+        rl_draw_rectangle_rec(bar, barcol);
+        rl_draw_text("GENERATED CINEMA", 180, 300, 22, barcol);
+        rl_end_drawing();
+        pos.x = pos.x + 2.0;
+        frames = frames + 1;
+    }
+
+    yapping("ran %d frames, orb ended at x=%.1f", frames, pos.x);
+    rl_close_window();
+    bussin 0;
+}

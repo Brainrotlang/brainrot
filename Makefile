@@ -82,6 +82,17 @@ STDROT_DIR := stdrot
 STDROT_SRCS := $(wildcard $(STDROT_DIR)/*.c) $(SRC_DIR)/input.c
 STDROT_LIB := libstdrot.so
 
+# The ABI contract shared by the main binary and EVERY .so built from it.
+# Listed as an explicit prerequisite of all of those below, because nothing
+# else makes an edit to it rebuild them: an ABI change (STDROT_ABI_VERSION,
+# StdrotValue's layout, StdrotType's numbering) that leaves a stale .so in
+# place produces a module the loader then rejects at runtime -- correctly and
+# loudly, but the developer's `make` said there was nothing to do. Rules that
+# expand $^ into their compiler command line must filter it back out (see
+# $(STDROT_LIB) below); rules that name their sources explicitly, or use $<,
+# are unaffected.
+STDROT_ABI_HDR := $(STDROT_DIR)/stdrot_api.h
+
 # Sources scanned by cppcheck: the same translation units `all` builds, minus
 # the generated Flex/Bison output (never scan or hand-edit lang.tab.c /
 # lex.yy.c). tests/ is deliberately excluded: tests/badnatives/*.c are
@@ -107,7 +118,7 @@ TEST_STDROT_LIB := tests/libstdrot.so
 # Deliberately malformed native registries (see tests/badnatives/ own file
 # comment): each .c file there registers exactly one StdrotEntry that
 # validate_native_registry() (stdrot.c) must reject at stdrot_load() time.
-# Built as one minimal .so per file -- registry.c (stdrot_get_api_v2()) plus
+# Built as one minimal .so per file -- registry.c (stdrot_get_api_v3()) plus
 # that single malformed entry, no production natives -- since these tests
 # only care whether loading aborts before any Brainrot program runs.
 BADNATIVES_DIR := tests/badnatives
@@ -203,38 +214,38 @@ release: clean all ## Sanitizer-free rpath build for shipped binaries. Certified
 	@echo "Release build: $(TARGET) + $(STDROT_LIB) (no sanitizers)."
 
 # stdrot shared library build
-$(STDROT_LIB): $(STDROT_SRCS)
-	$(CC) $(SO_CFLAGS) $(CRYPTO_CFLAGS) -I. -o $@ $^ -lm $(CRYPTO_LIBS) $(SO_LDFLAGS)
+$(STDROT_LIB): $(STDROT_SRCS) $(STDROT_ABI_HDR)
+	$(CC) $(SO_CFLAGS) $(CRYPTO_CFLAGS) -I. -o $@ $(filter %.c,$^) -lm $(CRYPTO_LIBS) $(SO_LDFLAGS)
 	@echo "libstdrot.so compiled with max rizz."
 
 # Test-only stdrot shared library build (production natives + tests/stdrot/
 # test-only natives). -I$(STDROT_DIR) so tests/stdrot/*.c can #include
 # "stdrot_api.h" the same bare way every production stdrot/*.c file already
 # does, despite living in a different directory.
-$(TEST_STDROT_LIB): $(STDROT_SRCS) $(TEST_STDROT_SRCS)
-	$(CC) $(SO_CFLAGS) $(CRYPTO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $^ -lm $(CRYPTO_LIBS) $(SO_LDFLAGS)
+$(TEST_STDROT_LIB): $(STDROT_SRCS) $(TEST_STDROT_SRCS) $(STDROT_ABI_HDR)
+	$(CC) $(SO_CFLAGS) $(CRYPTO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $(filter %.c,$^) -lm $(CRYPTO_LIBS) $(SO_LDFLAGS)
 	@echo "tests/libstdrot.so (production + test-only natives) compiled."
 
 # Malformed-registry .so's: one per tests/badnatives/*.c, each linked
 # against only registry.c (never the rest of $(STDROT_SRCS) -- these don't
 # need, and shouldn't get, any production natives alongside the one
 # deliberately broken entry).
-$(BADNATIVES_DIR)/%.so: $(BADNATIVES_DIR)/%.c $(STDROT_DIR)/registry.c
+$(BADNATIVES_DIR)/%.so: $(BADNATIVES_DIR)/%.c $(STDROT_DIR)/registry.c $(STDROT_ABI_HDR)
 	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $(STDROT_DIR)/registry.c $< -lm $(SO_LDFLAGS)
 
 # Two exceptions to the pattern rule above (GNU Make prefers an explicit
 # target rule over a pattern rule for the same file, regardless of
-# ordering): these implement stdrot_get_api_v2() DIRECTLY themselves,
+# ordering): these implement stdrot_get_api_v3() DIRECTLY themselves,
 # returning a hand-crafted malformed StdrotAPI table, rather than going
 # through registry.c's normal linker-section self-registration --
 # linking registry.c alongside them would collide (both would define
-# stdrot_get_api_v2()). See their own file comments.
+# stdrot_get_api_v3()). See their own file comments.
 $(BADNATIVES_DIR)/bad_api_table_negative_count.so: \
-	$(BADNATIVES_DIR)/bad_api_table_negative_count.c
+	$(BADNATIVES_DIR)/bad_api_table_negative_count.c $(STDROT_ABI_HDR)
 	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $< $(SO_LDFLAGS)
 
 $(BADNATIVES_DIR)/bad_api_table_null_functions.so: \
-	$(BADNATIVES_DIR)/bad_api_table_null_functions.c
+	$(BADNATIVES_DIR)/bad_api_table_null_functions.c $(STDROT_ABI_HDR)
 	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $< $(SO_LDFLAGS)
 
 .PHONY: badnatives
@@ -243,29 +254,29 @@ badnatives: $(BADNATIVES_LIBS)
 
 # Native module fixtures ($(NATIVEMODULES_LIBS)): same registry.c-per-file
 # pattern as $(BADNATIVES_DIR) above, but these are valid modules (real
-# brainrot_module_init() entrypoints, well-formed tables except
+# brainrot_module_init_v3() entrypoints, well-formed tables except
 # testnative_internal_dup.c and no_module_init.c, which are deliberately
 # broken on purpose -- see their own file comments) used to exercise
 # stdrot_load_module() (stdrot.c) end to end, not just its rejection paths.
 #
-# -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init (registry.c's own
+# -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3 (registry.c's own
 # comment has the full reasoning): makes registry.c export
-# brainrot_module_init() directly, under a name no other loaded .so in the
-# process shares, instead of stdrot_get_api_v2() -- the same symbol name
+# brainrot_module_init_v3() directly, under a name no other loaded .so in the
+# process shares, instead of stdrot_get_api_v3() -- the same symbol name
 # the always-loaded core libstdrot.so already exports, which a same-named
 # wrapper calling it from inside a module would silently resolve to
 # instead of the module's own copy.
-$(NATIVEMODULES_DIR)/%.so: $(NATIVEMODULES_DIR)/%.c $(STDROT_DIR)/registry.c
-	$(CC) $(SO_CFLAGS) -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init \
+$(NATIVEMODULES_DIR)/%.so: $(NATIVEMODULES_DIR)/%.c $(STDROT_DIR)/registry.c $(STDROT_ABI_HDR)
+	$(CC) $(SO_CFLAGS) -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3 \
 		-I. -I$(STDROT_DIR) -o $@ $(STDROT_DIR)/registry.c $< -lm $(SO_LDFLAGS)
 
 # Exception to the pattern rule above (GNU Make prefers an explicit target
 # rule for the same file): deliberately built WITHOUT the entrypoint
 # override, so this is a structurally valid .so that exports
-# stdrot_get_api_v2() but genuinely has no brainrot_module_init() at all --
+# stdrot_get_api_v3() but genuinely has no brainrot_module_init_v3() at all --
 # see this fixture's own file comment for what that proves.
 $(NATIVEMODULES_DIR)/no_module_init.so: $(NATIVEMODULES_DIR)/no_module_init.c \
-	$(STDROT_DIR)/registry.c
+	$(STDROT_DIR)/registry.c $(STDROT_ABI_HDR)
 	$(CC) $(SO_CFLAGS) -I. -I$(STDROT_DIR) -o $@ $(STDROT_DIR)/registry.c $< \
 		-lm $(SO_LDFLAGS)
 
@@ -280,9 +291,9 @@ nativemodules: $(NATIVEMODULES_LIBS)
 # from `all`, `test`, `valgrind`, `install`, and `wasm`: raylib is an optional
 # dependency of THIS target only, and the whole test suite stays green without it
 # installed. Built with the same
-# -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init pattern as the nativemodules
+# -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3 pattern as the nativemodules
 # fixtures above (registry.c's own comment has the reasoning), so brainray/raylib.c's
-# STDROT_EXPORT_SIG() entries are exported as brainrot_module_init().
+# STDROT_EXPORT_SIG() entries are exported as brainrot_module_init_v3().
 BRAINRAY_DIR := brainray
 BRAINRAY_LIB := $(BRAINRAY_DIR)/raylib.so
 RAYLIB_CFLAGS := $(shell pkg-config --cflags raylib 2>/dev/null)
@@ -291,7 +302,7 @@ RAYLIB_LIBS := $(shell pkg-config --libs raylib 2>/dev/null)
 .PHONY: brainray
 brainray: $(BRAINRAY_LIB) ## Build the optional raylib binding brainray/raylib.so (needs raylib; docs/brainray.md). Cursed game unlocked.
 
-$(BRAINRAY_LIB): $(BRAINRAY_DIR)/raylib.c $(STDROT_DIR)/registry.c
+$(BRAINRAY_LIB): $(BRAINRAY_DIR)/raylib.c $(STDROT_DIR)/registry.c $(STDROT_ABI_HDR)
 	@pkg-config --exists raylib || { \
 		echo "Error: raylib not found via pkg-config (pkg-config --exists raylib failed)."; \
 		echo "raylib is an OPTIONAL dependency, needed only for 'make brainray'."; \
@@ -300,7 +311,7 @@ $(BRAINRAY_LIB): $(BRAINRAY_DIR)/raylib.c $(STDROT_DIR)/registry.c
 		echo "macOS: 'brew install raylib'. Verify with: pkg-config --exists raylib"; \
 		exit 1; }
 	$(CC) $(SO_CFLAGS) -Wall -Wextra \
-		-DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init \
+		-DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3 \
 		-I. -I$(STDROT_DIR) $(RAYLIB_CFLAGS) -o $@ \
 		$(STDROT_DIR)/registry.c $< $(RAYLIB_LIBS) -lm $(SO_LDFLAGS)
 	@echo "brainray/raylib.so built. Run the cursed game with:"
@@ -318,11 +329,88 @@ $(BRAINRAY_LIB): $(BRAINRAY_DIR)/raylib.c $(STDROT_DIR)/registry.c
 play: $(BRAINRAY_LIB) $(TARGET) ## Build brainray + run the Ohio Engine (needs raylib + a display). It's giving cinema.
 	BRAINROT_PATH=$(BRAINRAY_DIR) ./$(TARGET) examples/raylib/ohio_engine.brainrot
 
+# ── Generated raylib binding: Road B (Issue #208, Phase 5 Road B)
+# brainray/brainray_gen.py turns the vendored, pinned brainray/raylib_api.json
+# into a full binding -- C adapters, a Brainrot prelude of `gang` types and
+# `gyatt` constants, and an ABI-drift translation unit. Road A's hand-written
+# brainray/raylib.so stays exactly as it was; this is a separate, larger
+# artifact under a separate module name (`raylibgen`), so the two never
+# collide and Road A keeps working if this is never built.
+#
+# The split into TWO steps is the whole reason `make test` stays raylib-free:
+#   `brainray-gen-sources`  python + the pinned JSON only. No raylib, no C
+#                           compiler. This is what CI can run everywhere, and
+#                           --strict makes an upstream schema change a build
+#                           failure rather than a quietly smaller binding.
+#   `brainray-gen`          additionally COMPILES the generated C, which needs
+#                           raylib's headers -- so it is opt-in, exactly like
+#                           `brainray`, and is never a prerequisite of `all`,
+#                           `test`, `valgrind`, `install`, or `wasm`.
+BRAINRAY_GEN := $(BRAINRAY_DIR)/brainray_gen.py
+BRAINRAY_API := $(BRAINRAY_DIR)/raylib_api.json
+BRAINRAY_GEN_DIR := $(BRAINRAY_DIR)/generated
+BRAINRAY_GEN_MODULE := raylibgen
+BRAINRAY_GEN_NATIVE_C := $(BRAINRAY_GEN_DIR)/$(BRAINRAY_GEN_MODULE)_native.c
+BRAINRAY_GEN_PRELUDE := $(BRAINRAY_GEN_DIR)/$(BRAINRAY_GEN_MODULE).brainrot
+BRAINRAY_GEN_ABI_C := $(BRAINRAY_GEN_DIR)/$(BRAINRAY_GEN_MODULE)_abi_check.c
+BRAINRAY_GEN_LIB := $(BRAINRAY_GEN_DIR)/$(BRAINRAY_GEN_MODULE)_native.so
+BRAINRAY_GEN_ABI_BIN := $(BRAINRAY_GEN_DIR)/$(BRAINRAY_GEN_MODULE)_abi_check
+
+# One recipe produces all three files; naming the .c as the rule target and
+# the others as order-only-style siblings would race under -j, so this uses
+# the "all outputs depend on a stamp" shape via the first target only.
+$(BRAINRAY_GEN_NATIVE_C): $(BRAINRAY_GEN) $(BRAINRAY_API)
+	$(PYTHON) $(BRAINRAY_GEN) --api $(BRAINRAY_API) \
+		--outdir $(BRAINRAY_GEN_DIR) --strict
+$(BRAINRAY_GEN_PRELUDE) $(BRAINRAY_GEN_ABI_C): $(BRAINRAY_GEN_NATIVE_C)
+	@test -f $@ || { $(PYTHON) $(BRAINRAY_GEN) --api $(BRAINRAY_API) \
+		--outdir $(BRAINRAY_GEN_DIR) --strict; }
+
+.PHONY: brainray-gen-sources
+brainray-gen-sources: $(BRAINRAY_GEN_NATIVE_C) $(BRAINRAY_GEN_PRELUDE) $(BRAINRAY_GEN_ABI_C) ## Generate the raylib binding sources from the pinned JSON (no raylib needed).
+	@echo "Generated binding sources in $(BRAINRAY_GEN_DIR) (raylib not required)."
+
+# Compiling the generated adapters needs raylib's headers, same pkg-config
+# gate (and same error message) as the hand-written `brainray` target.
+$(BRAINRAY_GEN_LIB): $(BRAINRAY_GEN_NATIVE_C) $(STDROT_DIR)/registry.c $(STDROT_ABI_HDR)
+	@pkg-config --exists raylib || { \
+		echo "Error: raylib not found via pkg-config (pkg-config --exists raylib failed)."; \
+		echo "raylib is an OPTIONAL dependency, needed only to COMPILE the"; \
+		echo "generated binding. 'make brainray-gen-sources' works without it."; \
+		echo "Setup guide: docs/brainray.md"; \
+		exit 1; \
+	}
+	$(CC) $(SO_CFLAGS) -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3 \
+		-I. -I$(STDROT_DIR) $(RAYLIB_CFLAGS) -o $@ \
+		$(STDROT_DIR)/registry.c $(BRAINRAY_GEN_NATIVE_C) \
+		$(RAYLIB_LIBS) -lm $(SO_LDFLAGS)
+
+# Building this IS the ABI check: every size/offset the generator computed is
+# a _Static_assert against the real raylib headers, so a mismatch fails to
+# compile. Running it just prints what it verified.
+$(BRAINRAY_GEN_ABI_BIN): $(BRAINRAY_GEN_ABI_C)
+	@pkg-config --exists raylib || { \
+		echo "Error: raylib not found via pkg-config -- needed for the ABI check."; \
+		echo "Setup guide: docs/brainray.md"; \
+		exit 1; \
+	}
+	$(CC) -Wall -Wextra -Werror $(RAYLIB_CFLAGS) -o $@ $(BRAINRAY_GEN_ABI_C)
+
+.PHONY: brainray-gen
+brainray-gen: $(BRAINRAY_GEN_LIB) $(BRAINRAY_GEN_ABI_BIN) $(BRAINRAY_GEN_PRELUDE) ## Generate AND build the raylib binding + run its ABI drift check (needs raylib).
+	./$(BRAINRAY_GEN_ABI_BIN)
+	@echo "Generated binding built. Run the generated cursed game with:"
+	@echo "  BRAINROT_PATH=$(BRAINRAY_GEN_DIR) ./brainrot examples/raylib/ohio_engine_gen.brainrot"
+
+.PHONY: play-gen
+play-gen: $(BRAINRAY_GEN_LIB) $(BRAINRAY_GEN_PRELUDE) $(TARGET) ## Build the generated binding + run Ohio Engine II (needs raylib + a display).
+	BRAINROT_PATH=$(BRAINRAY_GEN_DIR) ./$(TARGET) examples/raylib/ohio_engine_gen.brainrot
+
 # Simulated pre-ABI-versioning libstdrot.so (see tests/old_abi_sim/ own file
 # comment): built standalone, with no dependency on stdrot_api.h or
 # registry.c, so it genuinely only exports the OLD "stdrot_get_api" symbol
 # under the OLD layout -- proving stdrot_load() (stdrot.c) detects the
-# missing stdrot_get_api_v2() and fails loudly instead of misreading this
+# missing stdrot_get_api_v3() and fails loudly instead of misreading this
 # .so's memory as the current ABI shape.
 OLD_ABI_SIM_DIR := tests/old_abi_sim
 OLD_ABI_SIM_LIB := $(OLD_ABI_SIM_DIR)/fake_pre_v2_registry.so
@@ -354,7 +442,7 @@ abi-check: $(ABI_CHECK_BIN) ## Run the struct/union ABI layout oracle (host size
 	./$(ABI_CHECK_BIN)
 
 # Main executable build
-$(TARGET): $(ALL_SRCS) $(STDROT_LIB)
+$(TARGET): $(ALL_SRCS) $(STDROT_LIB) $(STDROT_ABI_HDR)
 	$(CC) $(CFLAGS) -o $@ $(ALL_SRCS) $(LDFLAGS)
 	@echo "Skibidi toilet: $(TARGET) compiled with max gyatt."
 
@@ -466,8 +554,12 @@ rebuild: clean all ## Clean and re-grind the whole project from scratch. Turbule
 # Files formatted by clang-format: every tracked .c/.h, minus generated
 # Flex/Bison output (lang.tab.c, lang.tab.h, lex.yy.c are gitignored and
 # regenerated by `make` — never hand-format or commit them).
+# Generated translation units are excluded for the same reason the Bison/Flex
+# output is: they are derived, gitignored, and a generator that has to satisfy
+# clang-format is a generator nobody wants to change (roadmap Appendix B Q7).
 FORMAT_FILES := $(shell find . -name "*.c" -o -name "*.h" | \
-	grep -v -E '^\./(lang\.tab\.c|lang\.tab\.h|lex\.yy\.c)$$')
+	grep -v -E '^\./(lang\.tab\.c|lang\.tab\.h|lex\.yy\.c)$$' | \
+	grep -v -E '^\./brainray/generated/')
 
 CLANG_FORMAT ?= clang-format-15
 

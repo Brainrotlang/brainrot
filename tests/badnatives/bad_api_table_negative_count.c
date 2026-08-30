@@ -4,13 +4,13 @@
  * silently accepting a nonsensical table as if it legitimately exported
  * no natives at all. Deliberately does NOT go through the normal
  * registry.c/linker-section self-registration mechanism -- this directly
- * implements stdrot_get_api_v2() to return a hand-crafted, deliberately
+ * implements stdrot_get_api_v3() to return a hand-crafted, deliberately
  * invalid StdrotAPI, exactly the kind of "v2-shaped but internally
  * nonsensical" table a hostile or corrupt third-party library could
  * return. */
 #include "stdrot_api.h"
 
-StdrotAPI stdrot_get_api_v2(void)
+StdrotAPI stdrot_get_api_v3(void)
 {
     StdrotAPI api;
     api.functions = NULL;

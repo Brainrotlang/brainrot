@@ -267,17 +267,17 @@
     "native_return_type_numeric_coercion": "42.000000",
     "native_return_type_abi_violation_incompatible": "Error: stdrot: native 'lying_bool' declared to return a fixed type but actually returned an incompatible StdrotType (7 instead of 5) -- this is a bug in the native binding's C implementation, not the Brainrot program",
     "native_return_type_abi_violation_ptr_mismatch": "Error: stdrot: native 'lying_ptr_return' declared to return a fixed type but actually returned an incompatible StdrotType (1 instead of 9) -- this is a bug in the native binding's C implementation, not the Brainrot program",
-    "native_return_type_abi_violation_any_pointer_leak": "Error: stdrot: native 'legacy_ptr_leak' is declared to return STDROT_ANY (legacy/untyped export or identity-polymorphic result) but actually returned a STDROT_PTR -- pointer/handle/cstring results require an explicit typed signature, and a native must never construct a StdrotValue tagged STDROT_ANY itself, not the unchecked ANY fallback",
+    "native_return_type_abi_violation_any_pointer_leak": "Error: stdrot: native 'legacy_ptr_leak' is declared to return STDROT_ANY (legacy/untyped export or identity-polymorphic result) but actually returned a STDROT_PTR -- pointer/handle/cstring/struct results require an explicit typed signature, and a native must never construct a StdrotValue tagged STDROT_ANY itself, not the unchecked ANY fallback",
     "semantic_error_native_cstring_return": "Error: 'cstring_return': native CSTRING return types are not marshalled yet at line 9",
     "native_return_type_any_numeric_coercion": "42.000000",
     "native_return_type_any_incompatible_context": "Error: Native call result (string) cannot be used in a double context at line 13",
     "native_return_type_any_bool_context": "Error: Native call result (int) cannot be used in a bool context at line 9",
-    "native_return_type_any_cstring_leak": "Error: stdrot: native 'legacy_cstring' is declared to return STDROT_ANY (legacy/untyped export or identity-polymorphic result) but actually returned a STDROT_CSTRING -- pointer/handle/cstring results require an explicit typed signature, and a native must never construct a StdrotValue tagged STDROT_ANY itself, not the unchecked ANY fallback",
+    "native_return_type_any_cstring_leak": "Error: stdrot: native 'legacy_cstring' is declared to return STDROT_ANY (legacy/untyped export or identity-polymorphic result) but actually returned a STDROT_CSTRING -- pointer/handle/cstring/struct results require an explicit typed signature, and a native must never construct a StdrotValue tagged STDROT_ANY itself, not the unchecked ANY fallback",
     "semantic_error_native_any_struct": "Error: 'slorp' argument 1: struct is not a scalar/string type this native can accept at line 11",
     "semantic_error_native_any_int_array": "Error: 'slorp' argument 1: int arrays cannot be passed where a scalar/string is expected at line 10",
     "native_return_type_any_void_value_context": "Error: Native call result (void) cannot be used in a double context at line 12",
     "native_return_type_any_void_statement": "ok",
-    "native_return_type_abi_violation_any_tag": "Error: stdrot: native 'legacy_returns_any_tag' is declared to return STDROT_ANY (legacy/untyped export or identity-polymorphic result) but actually returned a STDROT_ANY -- pointer/handle/cstring results require an explicit typed signature, and a native must never construct a StdrotValue tagged STDROT_ANY itself, not the unchecked ANY fallback",
+    "native_return_type_abi_violation_any_tag": "Error: stdrot: native 'legacy_returns_any_tag' is declared to return STDROT_ANY (legacy/untyped export or identity-polymorphic result) but actually returned a STDROT_ANY -- pointer/handle/cstring/struct results require an explicit typed signature, and a native must never construct a StdrotValue tagged STDROT_ANY itself, not the unchecked ANY fallback",
     "native_typed_param_from_legacy_any": "Error: stdrot: native 'bet' argument 1: declared to accept StdrotType 5 but the actual argument is StdrotType 7, even after attempted coercion -- static type checking approved this call without knowing the argument's real type (see semantic_check_native_call()'s NONE fallthrough), and the runtime value doesn't satisfy the declared parameter after all",
     "semantic_error_native_ptr_dest_from_legacy_any": "Error: Type mismatch in initialization of 'p': expected a pointer (level 1), got pointer level 0 at line 1",
     "slorp_identity_char_array": "hello",
@@ -393,5 +393,6 @@
     "array_of_structs_unknown_type_fail": "Error: Unknown struct/union type 'Nope' at line 3\nParsing failed",
     "array_of_structs_oob_fail": "Error: Array index out of bounds: dimension 1 (index=5, size=2) at line 11",
     "array_of_structs_scalar_member_fail": "Error: Member access on non-struct/union value at line 7",
-    "semantic_error_struct_access_call_base": "Error: Member access on non-struct/union value at line 19"
+    "semantic_error_struct_access_call_base": "Error: Member access on non-struct/union value at line 19",
+    "struct_array_by_value_arg_fail": "0.0\nStderr:\nError: Expected a by-value struct/union value, got an array (index it, e.g. `arr[0]`) at line 63"
 }

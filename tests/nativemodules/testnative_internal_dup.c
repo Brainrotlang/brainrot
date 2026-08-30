@@ -3,7 +3,7 @@
  * stdrot_load_module() (stdrot.c) actually runs validate_native_registry()
  * on a cooked module's table (rejecting it exactly like it already rejects
  * a malformed core libstdrot.so, see tests/badnatives/duplicate_name.c),
- * not just trusting whatever brainrot_module_init() hands back.
+ * not just trusting whatever brainrot_module_init_v3() hands back.
  */
 #include "stdrot_api.h"
 

@@ -239,9 +239,110 @@ scalar arguments and rebuilds them on the C side:
   the index is recycled — don't keep using a handle past its unload, or it will
   silently alias whatever loads into that slot next.
 
-By-value struct passing and a `raylib_api.json`-driven **generated** binding are
-"Road B" — a separate follow-up that needs an ABI extension this module
-deliberately sidesteps.
+This module keeps that flattened, hand-written shape on purpose. The
+`raylib_api.json`-driven **generated** binding is Road B, and it lives
+alongside rather than replacing it — see the next section.
+
+## Road B — the generated binding
+
+Everything above is Road A: ~20 wrappers, written by hand, scalars only.
+raylib has **617** functions. Writing that many by hand is how this project
+dies, so `brainray/brainray_gen.py` writes them instead:
+
+```text
+brainray/raylib_api.json → brainray-gen → { raylibgen_native.c    C adapters + descriptors
+                                            raylibgen.brainrot    gang types + gyatt constants
+                                            raylibgen_abi_check.c _Static_assert layout tests }
+```
+
+```bash
+make brainray-gen-sources   # generate (Python + the pinned JSON; no raylib)
+make brainray-gen           # + compile, and run the ABI drift check
+make play-gen               # + run examples/raylib/ohio_engine_gen.brainrot
+```
+
+Current output: **378 of 617 functions, 16 of 35 struct types, 305
+constants.**
+
+### It coexists with Road A
+
+Road B's binding is a *separate module under a separate name*
+(`#cooked <raylibgen>`, in `brainray/generated/`), so Road A's
+`brainray/raylib.so` and its `#cooked <raylib>` keep working untouched. Both
+export `rl_`-prefixed names, so loading both at once would be rejected as a
+duplicate export — use one or the other.
+
+### Two halves, and why there's no new ABI for types
+
+`#cooked <raylibgen>` resolves to the generated **prelude**, not to a `.so`: a
+`<name>.brainrot` wins over a `<name>.so` in the same directory
+(`module_path_resolve()`), and a prelude may itself `#cooked` a native module.
+So the binding is split in two:
+
+| Half | Artifact | Carries |
+| --- | --- | --- |
+| Types + constants | `raylibgen.brainrot` (prelude) | `gang Vector2 { chad x; chad y; }`, `gyatt KeyboardKey { KEY_SPACE = 32, ... }` |
+| Functions | `raylibgen_native.so` | 378 `STDROT_EXPORT_SIG` adapters |
+
+That split is why Road B needed **no** ABI extension for types or constants.
+`StdrotAPI` carries a function table and nothing else, and Phase 4 left
+type/constant registration deliberately undesigned — the prelude sidesteps the
+question entirely by shipping them as ordinary generated Brainrot source.
+
+### Layout correctness is testable, so it's tested
+
+The binding memcpy's Brainrot `gang` bytes straight into real C structs, which
+is only sound if three independent things agree about layout. Each pair is
+checked:
+
+| Pair | Where |
+| --- | --- |
+| generator's model ↔ real raylib headers | `raylibgen_abi_check.c` — `_Static_assert` on `sizeof`, `_Alignof`, and every `offsetof`. Building it *is* the check. |
+| generator's model ↔ Brainrot's `compute_struct_layout()` | `tests/test_brainray_gen.py` — runs the interpreter and compares both each type's total size **and** its interior padding, the latter via prefix probes with a trailing sentinel byte. Needs no raylib. Strong but indirect: Brainrot cannot observe a field's address, so offsets are compared through prefix sizes rather than read off directly. |
+| generator's model ↔ known-good constants | `tests/test_brainray_gen.py` — hardcoded raylib layouts, so a generator bug can't agree with itself. |
+
+### What it deliberately leaves out
+
+Every skip is counted and printed on each run, and `--strict` (which
+`make brainray-gen-sources` uses) fails the build on any skip reason that
+isn't one of these known gaps — so an upstream schema change is a red build,
+not a quietly smaller binding.
+
+| Skipped | Count | Why |
+| --- | --- | --- |
+| struct returns | 113 | `STDROT_STRUCT` is argument-direction only; returning an aggregate needs an ownership model (roadmap Appendix B Q6). This is the single biggest cost — it drops every `Vector2 GetMousePosition(void)`-shaped function. |
+| unsupported param types | 102 | Mostly `Image`/`Font`/`Model`/`Sound`/`Shader` — structs that own or point at memory, i.e. resource handles in disguise (Q6 again). |
+| structs with pointer/array fields | 19 | Same reason; not emitted as by-value `gang`s. |
+| `const char *` returns | 14 | No return-side marshalling exists for a C string. |
+| callback params | 7 | Function pointers aren't expressible in the ABI yet (`npc`, Phase 9b). |
+| varargs | 2 | `TraceLog`, `TextFormat`. |
+
+### Known fidelity note: unsigned bytes
+
+Brainrot has no unsigned struct-field spelling (`nonut yap r;` is a parse
+error), so `Color`'s `unsigned char` components are emitted as signed `yap`.
+The **bytes are correct** — that's what crosses the ABI, and raylib sees
+exactly what you set — but reading a component back in Brainrot shows the
+signed interpretation: `col.r = 200;` then printing `col.r` gives `-56`.
+Widening the field to `rizz` would fix the display and break the layout, so
+this is documented rather than worked around.
+
+### Pointing the generator at a different library
+
+`brainray_gen.py` has no raylib-specific logic beyond its CLI defaults. It
+needs a JSON description with `functions` (`name`/`returnType`/`params`),
+`structs` (`name`/`fields`), `enums` (`name`/`values`), and optionally
+`aliases`/`callbacks` — then:
+
+```bash
+python3 brainray/brainray_gen.py --api path/to/sdl_api.json \
+    --outdir brainsdl/generated --header SDL3/SDL.h \
+    --module-name sdlgen --library SDL3 --strict
+```
+
+The pieces you should not need to touch are the scalar map, the layout
+computation, the emitters, and the skip bookkeeping. If a new library forces a
+change there, that's a bug in the abstraction, not in the library.
 
 ## Function reference
 
@@ -468,5 +569,10 @@ directly. Common ones:
 `brainray` is one native module built from one hand-written `.c` file linked
 against one C library. Any other C library follows the same recipe: a new
 `brainX/` directory with a `<lib>.c` of `STDROT_EXPORT_SIG` wrappers, a `.so`
-built with `-DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init`, and a
-`#cooked <lib>`. Road B replaces the hand-written wrappers with generated ones.
+built with `-DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3`, and a
+`#cooked <lib>`. That is the Road A recipe, and it is the right one for a
+handful of primitives.
+
+For anything larger, generate instead — see "Pointing the generator at a
+different library" above. The generator is the reusable part of this whole
+directory; `raylib_api.json` is just its first input.
