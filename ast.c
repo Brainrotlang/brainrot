@@ -4229,6 +4229,23 @@ static void free_native_result_box(void *raw, VarType actual)
  * polymorphic one (slorp): `actual` always already matches what's
  * expected there, since the semantic analyzer genuinely knows the
  * static type in both cases. */
+/* "Native" or "User-defined", for a call-result diagnostic.
+ *
+ * These messages are shared between the native and user-defined call
+ * paths, and said "Native call result" unconditionally -- so a `cap`
+ * function twelve lines up in the same file produced an error pointing
+ * the reader at their #cooked modules (#313). The distinction is
+ * knowable right here: the node is the call. */
+static const char *native_call_qualifier(const ASTNode *node)
+{
+    if (node && node->type == NODE_FUNC_CALL &&
+        is_builtin_function(node->data.func_call.function_name))
+    {
+        return "Native";
+    }
+    return "User-defined";
+}
+
 static bool unbox_native_numeric_result(void *raw, VarType actual, double *out)
 {
     switch (actual)
@@ -4248,6 +4265,19 @@ static bool unbox_native_numeric_result(void *raw, VarType actual, double *out)
         return true;
     case VAR_CHAR:
         *out = (double)*(char *)raw;
+        return true;
+    case VAR_BOOL:
+        /* `cap` was the one scalar type missing here, so a cap-returning
+           call could not be used where an integer is wanted -- including
+           an `edgy`/`goon` CONDITION, which is the shape that matters
+           (#313). It failed OPEN: the condition evaluated to 0, so
+           `edgy (f())` silently took the false branch, and a program
+           ignoring stderr just quietly did the wrong thing.
+           handle_function_call() boxes a bool result as SAFE_MALLOC(bool)
+           and writes it through a `bool *`, so that is how it is read
+           back. In an integer context a `cap` is 0 or 1, matching what
+           `!0` already produces. */
+        *out = (double)*(bool *)raw;
         return true;
     default:
         return false;
@@ -5029,8 +5059,9 @@ short evaluate_expression_short(ASTNode *node)
         {
             char error_msg[MAX_BUFFER_LEN];
             snprintf(error_msg, sizeof(error_msg),
-                     "Native call result (%s) cannot be used in an "
+                     "%s call result (%s) cannot be used in an "
                      "integer context",
+                     native_call_qualifier(node),
                      vartype_to_string(current_return_value.desc.type));
             yyerror(error_msg);
             free_native_result_box(raw, current_return_value.desc.type);
@@ -5249,8 +5280,9 @@ int evaluate_expression_int(ASTNode *node)
         {
             char error_msg[MAX_BUFFER_LEN];
             snprintf(error_msg, sizeof(error_msg),
-                     "Native call result (%s) cannot be used in an "
+                     "%s call result (%s) cannot be used in an "
                      "integer context",
+                     native_call_qualifier(node),
                      vartype_to_string(current_return_value.desc.type));
             yyerror(error_msg);
             free_native_result_box(raw, current_return_value.desc.type);
