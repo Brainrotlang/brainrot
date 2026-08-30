@@ -1469,6 +1469,37 @@ static bool is_unmarshallable_array_arg(ASTNode *expr,
     return sym && sym->is_array && sym->type != VAR_CHAR;
 }
 
+/* The same "is this argument an array identifier" question as
+ * is_unmarshallable_array_arg() above, WITHOUT its VAR_CHAR exemption, for
+ * callers where that exemption does not apply (issue #308).
+ *
+ * That exemption is correct where it lives: a `yap buf[32]` handed to a
+ * NATIVE has a real representation -- ast_expr_to_stdrot_value()'s
+ * VAR_CHAR/is_array case produces a STDROT_STRING, and coerce_arg_to_param()
+ * can convert that to a STDROT_CSTRING -- so a char array is genuinely
+ * marshallable there and must not be rejected.
+ *
+ * A Brainrot-defined callee has no equivalent. enter_function_scope()
+ * (ast.c) rejects VAR_STRING parameters outright, and its VAR_CHAR case
+ * reads `arg_values[i].ivalue` like every other scalar -- which, for an
+ * array, is the union slot the backing pointer occupies. So `yap buf[4]`
+ * passed to a `yap` parameter yields the low byte of an address, exactly
+ * like `rizz a[2]` to a `rizz` parameter does. Sharing the native helper
+ * here would have let precisely that one case through.
+ *
+ * Returns the symbol (so the caller can name the element type in its
+ * diagnostic) or NULL.
+ */
+static SymbolEntry *array_identifier_symbol(ASTNode *expr,
+                                            SemanticAnalyzer *analyzer)
+{
+    if (!expr || expr->type != NODE_IDENTIFIER)
+        return NULL;
+
+    SymbolEntry *sym = find_symbol(analyzer, expr->data.name);
+    return (sym && sym->is_array) ? sym : NULL;
+}
+
 /* True when `expr` has NO valid StdrotValue representation ast_expr_to_
  * stdrot_value() (stdrot.c) can honestly construct for it -- generalizes
  * is_unmarshallable_array_arg() from "one specific representation bug"
@@ -2468,6 +2499,56 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
                 {
                     propagate_contextual_call_type(arg->expr, param->desc.type,
                                                    param->desc.pointer_level);
+
+                    /* An ARRAY argument (issue #308). A parameter can never
+                       itself be an array -- `rizz sum(rizz a[2])` is a
+                       syntax error (#194) -- and array-to-pointer decay
+                       isn't implemented either (`first(a)` for a `rizz *p`
+                       parameter already reports "Expression is not a
+                       pointer"), so there is no shape where passing an
+                       array identifier here is meaningful. What happened
+                       instead was silence: enter_function_scope() (ast.c)
+                       binds a scalar parameter from `arg_values[i].ivalue`
+                       / `.fvalue` / `.bvalue`, and Variable's value union
+                       aliases those with `array_data`, so the callee
+                       received the array's backing POINTER reinterpreted
+                       as its declared type. `twice(a)` printed 1984 -- the
+                       low bits of a heap address, changing between builds.
+
+                       For a `cap` parameter that is undefined behavior
+                       outright, not merely a wrong number: UBSan reports
+                       "load of value 144, which is not a valid value for
+                       type '_Bool'".
+
+                       Reported here rather than at the runtime binding site
+                       so the diagnostic matches what a native call has
+                       always produced for the identical mistake (see
+                       is_unmarshallable_array_arg()'s use in
+                       semantic_check_native_call()) -- that helper existed
+                       and was correct; it was simply never wired into this
+                       path. */
+                    SymbolEntry *arr_sym =
+                        array_identifier_symbol(arg->expr, analyzer);
+                    if (arr_sym)
+                    {
+                        int line =
+                            node->line_number > 0 ? node->line_number : 1;
+                        char error_msg[MAX_BUFFER_LEN];
+                        snprintf(error_msg, sizeof(error_msg),
+                                 "'%s' argument %d: %s arrays cannot be "
+                                 "passed to a function -- pass an element "
+                                 "(`%s[0]`) or its address (`&%s[0]`)",
+                                 func_name.data, arg_index,
+                                 vartype_to_string(arr_sym->type),
+                                 arg->expr->data.name.data,
+                                 arg->expr->data.name.data);
+                        add_semantic_error(analyzer,
+                                           SEMANTIC_ERROR_TYPE_MISMATCH,
+                                           STRING_LITERAL(error_msg), line);
+                        arg = arg->next;
+                        continue;
+                    }
+
                     /* Struct/union pointer parameters: this analyzer does
                        not type-check user-defined call arguments against
                        their parameters at all otherwise (a separate,
