@@ -1,0 +1,78 @@
+🚽 Test case: issue #251 -- what the v1 string builtins do with a `yap[N]`
+🚽 CHARACTER BUFFER, as opposed to a `rant`.
+🚽
+🚽 They disagree about what "length" means, and this fixture pins the
+🚽 disagreement rather than hiding it (PR #327 review).
+🚽
+🚽 ── The mechanism ─────────────────────────────────────────────────────
+🚽 ast_expr_to_stdrot_value() (stdrot.c) marshals a VAR_CHAR array as
+🚽 STDROT_STRING with
+🚽
+🚽     out->val.str.len = (size_t)var->array_length;
+🚽
+🚽 -- the DECLARED CAPACITY, not the length of the text in it. A `rant`
+🚽 carries a real length; a `yap[N]` always reports N. These four builtins
+🚽 are the first to read `.len` instead of treating the bytes as a C string,
+🚽 so they are the first place that distinction produces wrong answers
+🚽 rather than harmless slack.
+🚽
+🚽 ── Why this matters more than a normal edge case ─────────────────────
+🚽 `yap buf[N]; slorp(buf);` is THE documented way to read input, so
+🚽 "measure / compare / join what the user just typed" is the first thing
+🚽 anyone will point this library at -- and it is the one shape that
+🚽 misbehaves. Both sources are covered below: a slorp-filled buffer and a
+🚽 hand-filled one, because the capacity behaviour comes from the
+🚽 declaration, not from how the bytes got there.
+🚽
+🚽 ── What each line pins, and which are WRONG ──────────────────────────
+🚽 Marked honestly, because three of these are the bug and one is fine:
+🚽
+🚽   slorp len 32   WRONG -- capacity, not the 2 bytes typed.
+🚽   slorp cmp 1    WRONG -- says buf > "hi" because it is 32 long.
+🚽   slorp idx 1    correct -- a bounded scan finds "i" at 1 either way.
+🚽   fixed len 8    WRONG, same reason, with no input involved.
+🚽
+🚽 The `cat` line is the worst of the four and needs explaining, because it
+🚽 looks RIGHT: `yapcat(buf, "!")` builds a genuinely 33-byte string --
+🚽 32 buffer bytes, NULs and all, then "!". It prints as `[hi]` because
+🚽 yapping stops at the first NUL, so the "!" is really sitting 31 bytes
+🚽 past it. `cat len 33` on the next line is what exposes that; without it
+🚽 this fixture would look like it was pinning correct behaviour.
+🚽
+🚽 The `rant` lines are the control: a real `rant` reports the length you
+🚽 expect, which is what makes the buffer numbers identifiably wrong rather
+🚽 than just unfamiliar.
+🚽
+🚽 ── This fixture pins CURRENT behaviour, not desired behaviour ─────────
+🚽 It is expected to change, and should. The honest fix is a NUL-scan for
+🚽 the is_array case in ast_expr_to_stdrot_value(), but that redefines
+🚽 `.len` for every existing native that takes a string, so it is its own
+🚽 change with its own blast radius -- deliberately not folded into #251.
+🚽 Until then, this file is what stops the answers moving silently.
+skibidi main {
+    yap buf[32];
+    slorp(buf);
+
+    yapping("slorp len %d", yaplen(buf));
+    yapping("slorp cmp %d", yapcmp(buf, "hi"));
+    yapping("slorp idx %d", yapidx(buf, "i"));
+
+    rant joined = yapcat(buf, "!");
+    yapping("cat       [%s]", joined);
+    yapping("cat len   %d", yaplen(joined));
+
+    🚽 Same capacity behaviour with no input at all -- it comes from the
+    🚽 declaration, not from slorp.
+    yap fixed[8];
+    fixed[0] = 104;
+    fixed[1] = 105;
+    fixed[2] = 0;
+    yapping("fixed len %d", yaplen(fixed));
+    yapping("fixed str [%s]", fixed);
+
+    🚽 Control: a real rant measures its actual contents.
+    rant real = "hi";
+    yapping("rant len  %d", yaplen(real));
+    yapping("rant cmp  %d", yapcmp(real, "hi"));
+    bussin 0;
+}

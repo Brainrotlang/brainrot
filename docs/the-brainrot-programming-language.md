@@ -33,6 +33,7 @@ A Meme-Fueled Journey into Compiler Design, Internet Slang, and Skibidi Toilets
    - 8.6. `slorp`
    - 8.7. `bet`
    - 8.8. `gamba`
+   - 8.9. Strings: `yaplen`, `yapcat`, `yapcmp`, `yapidx`
 9. **Limitations**
 10. **Known Issues**
 11. **Cultural Context: The Rise of ‘Brain Rot’**
@@ -304,6 +305,11 @@ Brainrot supports common arithmetic and logical operators:
 - **`chill`**: sleep for a integer number of seconds.
 - **`slorp`**: reads user input, similar to `scanf` but safe.
 - **`gamba`**: cryptographically safe random integers (OpenSSL `RAND_bytes`).
+- **`yaplen`**: length of a `rant`, in bytes.
+- **`yapcat`**: joins two `rant`s into a new one.
+- **`yapcmp`**: lexicographic comparison, returning `-1`, `0` or `1`.
+- **`yapidx`**: byte index of the first occurrence of one `rant` in another,
+  or `-1`.
 
 ---
 
@@ -1279,6 +1285,107 @@ skibidi main {
     bussin 0;
 }
 ```
+
+---
+
+### 8.9. Strings: `yaplen`, `yapcat`, `yapcmp`, `yapidx`
+
+```c
+rizz yaplen(rant s);                  /* length in BYTES                    */
+rant yapcat(rant a, rant b);          /* a joined to b, as a new string     */
+rizz yapcmp(rant a, rant b);          /* -1 if a < b, 0 if equal, 1 if a > b */
+rizz yapidx(rant hay, rant needle);   /* byte index of needle, or -1        */
+```
+
+The v1 string library. All four are standard-library builtins -- no `#cooked`,
+no keyword -- and all of them take and return ordinary `rant` and `rizz`
+values.
+
+**Everything is bytes, not characters.** A `rant` is a length-prefixed byte
+buffer, so `yaplen("é")` is `2`, not `1`: that is two bytes of UTF-8.
+Comparison and searching are byte-wise for the same reason. Codepoint-aware
+variants are not part of v1.
+
+Bytes compare as **unsigned**, which is what C's `strcmp` and Go's
+`strings.Compare` do. Every non-ASCII byte therefore sorts *after* every ASCII
+one.
+
+> ### ⚠️ A `yap[N]` buffer always has length `N`
+>
+> This is the neighbouring gotcha, and it bites harder than the byte/character
+> one. A `rant` carries a real length. A `yap[N]` character buffer — the thing
+> [`slorp`](#86-slorp) fills, and the usual way a program reads input —
+> reports its **declared capacity**, not the length of the text in it.
+>
+> ```c
+> yap buf[32];
+> slorp(buf);                        🚽 user types "hi"
+>
+> yaplen(buf)          🚽 32, not 2
+> yapcmp(buf, "hi")    🚽 1  -- "buf is greater", because it is 32 long
+> yapidx(buf, "i")     🚽 1  -- correct
+> yapcat(buf, "!")     🚽 a real 33-byte string; prints as "hi" because
+>                      🚽 yapping stops at the first NUL, so the "!" is
+>                      🚽 sitting 31 bytes past it
+> ```
+>
+> So measure, compare and join a **`rant`**, not a raw buffer — and note there
+> is currently no way to convert one into the other: `rant r = buf;` is
+> rejected outright with *"Type mismatch in initialization of 'r': expected
+> string, got char"*. A `yap[N]` stays a `yap[N]`.
+>
+> `yapidx` is the one that still behaves, because a bounded scan finds the
+> needle at the same offset whether or not the trailing bytes are counted. If
+> you only need "where is it" or "does it contain it", it works on a buffer.
+>
+> This is a property of how character arrays are passed to builtins, not of
+> these four functions; they are simply the first to read the stored length
+> rather than treating the bytes as a C string. Pinned by
+> `test_cases/string_stdlib_char_buffer.brainrot`, and expected to change.
+
+**Strings are immutable; `yapcat` returns a new one.** Neither argument is
+modified, and the result is independent of both -- storing it and then calling
+`yapcat` again leaves the first result untouched.
+
+- `yaplen` reads the stored length, so it is O(1) and is correct for a string
+  containing an embedded NUL. It is not `strlen`.
+- `yapcat("", s)` and `yapcat(s, "")` both equal `s`.
+- `yapcmp` returns exactly `-1`, `0` or `1` -- never some other nonzero number
+  -- so `yapcmp(a, b) == -1` is safe to write. When one string is a prefix of
+  the other, the **shorter sorts first**: `yapcmp("app", "apple")` is `-1`.
+- `yapidx` returns the index of the *first* match. A needle that is not present
+  gives `-1`, and an **empty needle gives `0`**, matching Go's
+  `strings.Index` -- so `yapidx(h, n) >= 0` is a correct "contains" test for
+  every needle, including an empty one.
+
+> **Not in v1:** there is no substring, slice, split, replace, or case
+> conversion yet, and no indexing syntax such as `s[i]`. Those are tracked
+> separately; v1 is the measure/join/compare/search core that the rest builds
+> on.
+
+**Example**:
+
+```c
+skibidi main {
+    rant name = yapcat(yapcat("Big", " "), "Chungus");
+
+    yapping("%s", name);              🚽 Big Chungus
+    yapping("%d", yaplen(name));      🚽 11
+    yapping("%d", yapidx(name, " ")); 🚽 3
+
+    edgy (yapidx(name, "Chungus") >= 0) {
+        yapping("certified");
+    }
+
+    edgy (yapcmp("Chad", "Chadwick") < 0) {
+        yapping("Chad sorts first");
+    }
+    bussin 0;
+}
+```
+
+See [`examples/string_toolkit.brainrot`](../examples/string_toolkit.brainrot)
+for a longer worked example.
 
 ---
 

@@ -18,6 +18,7 @@ for f in test_cases/*.brainrot; do
         native_char_param_scalar)              input="c" ;;
         identity_string_use_after_free)        input="hello" ;;
         identity_ownership_nonstring_result)   input="hello" ;;
+        string_stdlib_char_buffer)             input="hi" ;;
         *)            input="" ;;
     esac
 
