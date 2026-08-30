@@ -7487,11 +7487,32 @@ static void free_owned_struct_arg_blobs(const Value *arg_values,
             free((void *)arg_values[k].pvalue);
 }
 
+/* The same job for `rant` arguments (#311). evaluate_expression_string()
+ * always hands back a safe_strdup'd buffer the caller owns -- a literal, a
+ * variable's contents, a call result, all of them -- and the binding loop
+ * then ARENA_STRDUPs it into the parameter, so the intermediate has to be
+ * released or every string argument leaks one buffer per call.
+ *
+ * Kept as a separate array from arg_owns_blob rather than folded into it,
+ * even though a slot can only ever be one or the other (the two live in
+ * the same Value union, so a slot holding a blob pointer cannot also hold
+ * a String): the two are freed with different allocators -- plain free()
+ * for the calloc'd struct temporaries, SAFE_FREE for safe_malloc'd string
+ * buffers -- and a single flag could not say which. */
+static void free_owned_string_args(Value *arg_values, const bool *owns,
+                                   int count)
+{
+    for (int k = 0; k < count; k++)
+        if (owns[k])
+            SAFE_FREE(arg_values[k].strvalue.data);
+}
+
 bool enter_function_scope(Function *func, ArgumentList *args)
 {
     ArgumentList *curr_arg = args;
     Value arg_values[MAX_ARGUMENTS];
     bool arg_owns_blob[MAX_ARGUMENTS] = {false};
+    bool arg_owns_string[MAX_ARGUMENTS] = {false};
     int arg_count = 0;
 
     /* Snapshot the parameters in call order into a local array. The parser
@@ -7555,9 +7576,24 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                 evaluate_expression_short(curr_arg->expr);
             break;
         case VAR_STRING:
-            yyerror("String parameters are not supported");
-            free_owned_struct_arg_blobs(arg_values, arg_owns_blob, arg_count);
-            return false;
+            /* `rant s` parameters (#311). Natives have always taken
+               strings; this was the user-function gap.
+
+               evaluate_expression_string() returns a safe_strdup'd buffer
+               this frame owns, so it is recorded for release below --
+               NOT aliased into the parameter. Aliasing the caller's
+               buffer would be the C `const char *` semantic the issue
+               proposed, but it is unsafe here for a reason C does not
+               have: exit_scope() tears down the callee's scope, and a
+               parameter pointing into the caller's storage would make
+               that teardown's ownership depend on where the argument
+               came from. Copying makes the parameter an ordinary local
+               `rant` -- indistinguishable from one the callee declared
+               itself -- which is also what makes assigning to it safe. */
+            arg_values[arg_count].strvalue =
+                evaluate_expression_string(curr_arg->expr);
+            arg_owns_string[arg_count] = true;
+            break;
         case VAR_STRUCT:
         {
             /* By-value struct argument. Resolve the source blob now, while
@@ -7597,6 +7633,8 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                     free_pending_return_value();
                     free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
                                                 arg_count);
+                    free_owned_string_args(arg_values, arg_owns_string,
+                                           arg_count);
                     return false;
                 }
                 if (!current_return_value.desc.struct_name.data ||
@@ -7609,6 +7647,8 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                     free_pending_return_value();
                     free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
                                                 arg_count);
+                    free_owned_string_args(arg_values, arg_owns_string,
+                                           arg_count);
                     return false;
                 }
                 StructDef *cdef = get_struct_def(curr_param->desc.struct_name);
@@ -7629,6 +7669,7 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             {
                 free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
                                             arg_count);
+                free_owned_string_args(arg_values, arg_owns_string, arg_count);
                 return false;
             }
             if (!src_tag.data || !curr_param->desc.struct_name.data ||
@@ -7639,6 +7680,7 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                     free(src_blob);
                 free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
                                             arg_count);
+                free_owned_string_args(arg_values, arg_owns_string, arg_count);
                 return false;
             }
             /* `take(make_outer().inner, ...)` resolves to an OWNED copy for
@@ -7670,6 +7712,7 @@ bool enter_function_scope(Function *func, ArgumentList *args)
     {
         yyerror("Mismatched number of arguments and parameters");
         free_owned_struct_arg_blobs(arg_values, arg_owns_blob, arg_count);
+        free_owned_string_args(arg_values, arg_owns_string, arg_count);
         return false;
     }
 
@@ -7753,10 +7796,39 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             set_short_variable(curr_param->name, arg_values[i].svalue, mods);
             break;
         case VAR_STRING:
-            yyerror("String parameters are not supported");
-            free_owned_struct_arg_blobs(arg_values, arg_owns_blob, arg_count);
-            exit_scope();
-            return false;
+        {
+            /* Hand the frame's own safe_strdup'd buffer straight to the
+               parameter and drop this frame's claim on it, rather than
+               copying again and freeing the original.
+               initialize_variable_from_expr() (ast.c) binds a `rant`
+               LOCAL exactly this way -- `var->value.strvalue =
+               evaluate_expression_string(expr)` -- so a `rant` parameter
+               ends up the same shape as one the callee declared itself,
+               which is the property that makes scope teardown correct.
+
+               That is load-bearing, and NOT interchangeable with
+               set_string_variable(): hm_free() (lib/hm.c) releases a
+               VAR_STRING variable with SAFE_FREE, which is right for a
+               safe_malloc'd buffer and wrong for set_variable()'s
+               ARENA_STRDUP. Routing this through set_string_variable()
+               produced "Attempt to free invalid/corrupted pointer" at
+               every scope exit. That allocator mismatch is pre-existing
+               in set_variable()'s own VAR_STRING case and is left alone
+               here; this path simply does not go through it. */
+            Variable *bound = get_variable(curr_param->name);
+            if (bound)
+            {
+                bound->desc.type = VAR_STRING;
+                bound->desc.modifiers = mods;
+                bound->value.strvalue = arg_values[i].strvalue;
+                /* Ownership transferred -- free_owned_string_args() must
+                   not also release it. If `bound` were ever NULL the flag
+                   stays set, so this frame frees the buffer rather than
+                   leaking it. */
+                arg_owns_string[i] = false;
+            }
+            break;
+        }
         case VAR_STRUCT:
         {
             /* Deep-copy: give the parameter its own blob (C struct-by-value
@@ -7805,6 +7877,7 @@ bool enter_function_scope(Function *func, ArgumentList *args)
        func->parameters was already restored to its stored order right
        after the snapshot above, so nothing to un-reverse here. */
     free_owned_struct_arg_blobs(arg_values, arg_owns_blob, arg_count);
+    free_owned_string_args(arg_values, arg_owns_string, arg_count);
     return true;
 }
 
