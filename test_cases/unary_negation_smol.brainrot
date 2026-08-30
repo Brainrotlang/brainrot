@@ -1,0 +1,39 @@
+🚽 Test case: issue #278 -- unary arithmetic negation of a smol (short)
+🚽 computed logical NOT instead of arithmetic negation.
+🚽
+🚽 In handle_unary_expression() (ast.c), the OP_NEG case had a copy-paste error
+🚽 in the VAR_SHORT arm using `!` instead of `-`. Consequently, -x collapsed to
+🚽 0 for any non-zero value and 1 for 0.
+🚽
+🚽 This fixture tests:
+🚽 1. Negation of positive smol: -5
+🚽 2. Negation of zero smol: 0 (not 1)
+🚽 3. Negation of negative smol: 5
+🚽 4. Double negation: -(-5) = 5
+🚽 5. Boundary value (SHRT_MAX = 32767): -32767
+🚽 6. Assignment of negated smol to smol variable: -5
+🚽 7. Parity with rizz (int) negation: -5
+
+skibidi main {
+    smol a = 5;
+    yapping("%d", -a);
+
+    smol c = 0;
+    yapping("%d", -c);
+
+    smol neg = -5;
+    yapping("%d", -neg);
+
+    yapping("%d", -(-a));
+
+    smol max_val = 32767;
+    yapping("%d", -max_val);
+
+    smol res = -a;
+    yapping("%d", res);
+
+    rizz r = 5;
+    yapping("%d", -r);
+
+    bussin 0;
+}
