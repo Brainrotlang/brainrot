@@ -906,6 +906,93 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
             parent_base = outer_field_addr;
         }
     }
+    else if (obj && obj->type == NODE_ARRAY_ACCESS && obj->data.array.base)
+    {
+        /* Member access on an element of a struct/union-typed ARRAY FIELD
+           (`pool.es[i].x`, #311). The sibling branch below handles the
+           name-based form (`pts[i].x`) and its own comment used to record
+           this shape as unsupported; this is the branch that supports it.
+
+           Deliberately NOT routed through evaluate_struct_field_array_
+           access(), which computes exactly this address and is used for a
+           scalar element (`foo.nums[i]`): that function reports via
+           yyerror() and exit()s on every failure, which is right for an
+           evaluation context but wrong here -- resolve_struct_access() is
+           also called speculatively with report_errors == false (see
+           create_struct_field_array_access_node(), infer_expression_
+           struct_name()), and a speculative probe of a malformed access
+           must return false, not terminate the interpreter. The address
+           arithmetic below is the same, through the same two helpers, so
+           bounds checking (calculate_array_offset()) and struct-aware
+           striding (array_element_address() via get_array_element_
+           stride()) are inherited rather than reimplemented. */
+        StructDef *outer_def = NULL;
+        void *outer_base = NULL;
+        StructField *arr_fld = NULL;
+        if (!resolve_struct_access(obj->data.array.base, &outer_def,
+                                   &outer_base, &arr_fld, report_errors))
+            return false;
+
+        if (!arr_fld->desc.is_array || arr_fld->desc.type != VAR_STRUCT ||
+            arr_fld->desc.pointer_level != 0)
+        {
+            if (report_errors)
+                yyerror("Member access on a non-struct/union array element");
+            return false;
+        }
+
+        parent_def = get_struct_def(arr_fld->desc.struct_name);
+        if (!parent_def)
+        {
+            if (report_errors)
+                yyerror("Unknown struct or union type");
+            return false;
+        }
+
+        /* Same rank check evaluate_struct_field_array_access() makes, and
+           for the same reason: an array field lives inline in the
+           enclosing struct's single blob, so calculate_array_offset()'s
+           lenient dimension-mismatch fallback would resolve into a
+           NEIGHBORING field's bytes rather than merely misindexing its
+           own array. */
+        int num_indices = obj->data.array.num_dimensions;
+        if (num_indices <= 0 ||
+            num_indices != arr_fld->desc.array_dimensions.num_dimensions)
+        {
+            if (report_errors)
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg),
+                         "Struct/union field '%.100s' expects %d array "
+                         "index/indices, got %d",
+                         arr_fld->name.data ? arr_fld->name.data : "?",
+                         arr_fld->desc.array_dimensions.num_dimensions,
+                         num_indices);
+                yyerror(msg);
+            }
+            return false;
+        }
+
+        int indices[MAX_DIMENSIONS] = {0};
+        for (int i = 0; i < num_indices; i++)
+        {
+            if (!obj->data.array.indices[i])
+            {
+                if (report_errors)
+                    yyerror("Missing array index in struct field access");
+                return false;
+            }
+            indices[i] = evaluate_expression_int(obj->data.array.indices[i]);
+        }
+
+        size_t offset = calculate_array_offset(
+            true, &arr_fld->desc.array_dimensions, indices, num_indices);
+        void *element_base = (char *)outer_base + arr_fld->offset;
+        parent_base = array_element_address(
+            element_base, offset, arr_fld->desc.type,
+            arr_fld->desc.pointer_level, arr_fld->desc.modifiers,
+            arr_fld->desc.struct_name);
+    }
     else if (obj && obj->type == NODE_ARRAY_ACCESS && obj->data.array.name.data)
     {
         /* Member access on an element of an array of struct/union values or

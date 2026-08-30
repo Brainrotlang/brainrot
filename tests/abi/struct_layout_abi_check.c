@@ -132,6 +132,79 @@ _Static_assert(sizeof(struct CharInt) == 8,
                "ever wrongly computed as 1");
 _Static_assert(offsetof(struct CharInt, b) == 4, "struct CharInt.b offset");
 
+/* The struct-array-field shapes from struct_array_field.brainrot (#311):
+ * a struct/union-typed ARRAY field, which was a parse error before that
+ * change. These are the C ground truth for that fixture's maxxing() calls.
+ *
+ * Each keeps a scalar field AFTER its array on purpose: an array field
+ * lives inline in the enclosing struct's blob, so a wrong element stride
+ * corrupts the following field rather than merely misindexing the array,
+ * and the trailing field is what makes the total size sensitive to it.
+ */
+
+/* gang Entity { chad x; chad y; cap alive; }; */
+struct Entity
+{
+    float x;
+    float y;
+    _Bool alive;
+};
+_Static_assert(sizeof(struct Entity) == 12,
+               "struct Entity size -- 4+4+1 padded up to alignment 4");
+
+/* gang Pool { gang Entity es[3]; rizz count; chad speed; }; */
+struct Pool
+{
+    struct Entity es[3];
+    int count;
+    float speed;
+};
+_Static_assert(sizeof(struct Pool) == 44, "struct Pool size (3*12 + 4 + 4)");
+_Static_assert(offsetof(struct Pool, count) == 36,
+               "struct Pool.count offset -- immediately after the array");
+_Static_assert(offsetof(struct Pool, speed) == 40, "struct Pool.speed offset");
+
+/* gang Cell { rizz v; }; gang Grid { gang Cell cells[2][3]; rizz tag; }; */
+struct Cell
+{
+    int v;
+};
+struct Grid
+{
+    struct Cell cells[2][3];
+    int tag;
+};
+_Static_assert(sizeof(struct Grid) == 28,
+               "struct Grid size -- 2*3*4 for the two-dimensional struct "
+               "array field, plus the trailing int");
+_Static_assert(offsetof(struct Grid, tag) == 24, "struct Grid.tag offset");
+
+/* gang Inner { chad a; };
+ * gang Mid { gang Inner one; gang Inner many[2]; };
+ * gang Outer { gang Mid m; rizz tag; };
+ * A struct-array field nested two levels down, beside a by-value struct
+ * field of the SAME element type -- so a regression that confused the two
+ * (treating `one` as an array or `many` as a single element) changes the
+ * total size. */
+struct Inner
+{
+    float a;
+};
+struct Mid
+{
+    struct Inner one;
+    struct Inner many[2];
+};
+struct Outer
+{
+    struct Mid m;
+    int tag;
+};
+_Static_assert(sizeof(struct Mid) == 12, "struct Mid size (4 + 2*4)");
+_Static_assert(offsetof(struct Mid, many) == 4, "struct Mid.many offset");
+_Static_assert(sizeof(struct Outer) == 16, "struct Outer size (12 + 4)");
+_Static_assert(offsetof(struct Outer, tag) == 12, "struct Outer.tag offset");
+
 int main(void)
 {
     printf("struct Mixed:  sizeof=%zu offsetof(n)=%zu offsetof(d)=%zu\n",
@@ -144,5 +217,11 @@ int main(void)
            sizeof(struct Distance), offsetof(struct Distance, value));
     printf("struct CharInt: sizeof=%zu offsetof(b)=%zu\n",
            sizeof(struct CharInt), offsetof(struct CharInt, b));
+    printf("struct Pool:   sizeof=%zu offsetof(count)=%zu\n",
+           sizeof(struct Pool), offsetof(struct Pool, count));
+    printf("struct Grid:   sizeof=%zu offsetof(tag)=%zu\n", sizeof(struct Grid),
+           offsetof(struct Grid, tag));
+    printf("struct Outer:  sizeof=%zu offsetof(tag)=%zu\n",
+           sizeof(struct Outer), offsetof(struct Outer, tag));
     return 0;
 }

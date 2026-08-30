@@ -1,0 +1,118 @@
+🚽 Test case: issue #311 -- a struct/union-typed ARRAY field inside a
+🚽 struct (`gang Pool { gang Entity es[8]; };`).
+🚽
+🚽 The SCALAR-element counterpart (`chad params[4];`, #206 3e) lives in
+🚽 struct_array_field.brainrot; this file is the struct-element case, and
+🚽 the two are deliberately separate fixtures rather than one merged file.
+🚽
+🚽 A SCALAR array field (`rizz nums[4];`) and an array of structs as a
+🚽 VARIABLE (`gang Point pts[3];`) each already worked; their intersection
+🚽 was a parse error: "unexpected LBRACKET, expecting SEMICOLON". Only the
+🚽 grammar was missing -- get_struct_field_size() already takes a
+🚽 VAR_STRUCT field's element size from the nested definition's total_size
+🚽 and multiplies by the dimension product when is_array is set, and
+🚽 get_struct_field_alignment() already returns the nested alignment while
+🚽 correctly ignoring is_array (a C array needs no more alignment than its
+🚽 element).
+🚽
+🚽 ── The sizes below are checked against a C compiler ──────────────────
+🚽 Every `gang` here has a matching C struct in
+🚽 tests/abi/struct_layout_abi_check.c, whose _Static_assert/offsetof
+🚽 establish what a real C compiler produces for the same field lists.
+🚽 That file is ground truth for these numbers; this fixture is what
+🚽 proves Brainrot agrees with it.
+🚽
+🚽 ── Why the neighbouring scalar fields matter ─────────────────────────
+🚽 An array field lives inline in the enclosing struct's single blob, so a
+🚽 wrong element stride does not merely misindex its own array -- it
+🚽 reads and writes into whatever field follows. Every struct below keeps
+🚽 a scalar field after its array and checks it, so a striding regression
+🚽 shows up as corruption of that field rather than only as a wrong
+🚽 element value.
+gang Entity {
+    chad x;
+    chad y;
+    cap alive;
+};
+
+gang Pool {
+    gang Entity es[3];
+    rizz count;
+    chad speed;
+};
+
+gang Cell {
+    rizz v;
+};
+
+gang Grid {
+    gang Cell cells[2][3];
+    rizz tag;
+};
+
+gang Inner {
+    chad a;
+};
+
+gang Mid {
+    gang Inner one;
+    gang Inner many[2];
+};
+
+gang Outer {
+    gang Mid m;
+    rizz tag;
+};
+
+🚽 A helper that walks the whole pool -- the thing this feature exists
+🚽 for. Before it, the loop had to be inlined at every call site because
+🚽 there was no struct to hand over.
+skibidi scroll_all(gang Pool *p) {
+    flex (rizz i = 0; i < 3; i = i + 1) {
+        edgy (p.es[i].alive) {
+            p.es[i].x = p.es[i].x - p.speed;
+        }
+    }
+}
+
+skibidi main {
+    gang Pool pool;
+    yapping("sizeof Pool: %lu", maxxing(pool));
+
+    pool.speed = 1.5;
+    pool.count = 3;
+    flex (rizz i = 0; i < 3; i = i + 1) {
+        pool.es[i].x = 10.0;
+        pool.es[i].y = 2.0;
+        pool.es[i].alive = W;
+    }
+    pool.es[1].alive = L;
+
+    scroll_all(&pool);
+    flex (rizz i = 0; i < 3; i = i + 1) {
+        yapping("es[%d] x=%.1f y=%.1f alive=%d",
+                i, pool.es[i].x, pool.es[i].y, pool.es[i].alive);
+    }
+    🚽 neighbours intact after all that element traffic
+    yapping("count=%d speed=%.1f", pool.count, pool.speed);
+
+    🚽 two-dimensional struct array field
+    gang Grid g;
+    g.tag = 42;
+    g.cells[0][0].v = 1;
+    g.cells[1][2].v = 6;
+    yapping("sizeof Grid: %lu", maxxing(g));
+    yapping("grid %d %d tag=%d", g.cells[0][0].v, g.cells[1][2].v, g.tag);
+
+    🚽 a struct-array field nested two levels down, beside a by-value
+    🚽 struct field of the same element type
+    gang Outer o;
+    o.m.one.a = 1.5;
+    o.m.many[0].a = 2.5;
+    o.m.many[1].a = 3.5;
+    o.tag = 7;
+    yapping("sizeof Outer: %lu", maxxing(o));
+    yapping("nested %.1f %.1f %.1f tag=%d",
+            o.m.one.a, o.m.many[0].a, o.m.many[1].a, o.tag);
+    bussin 0;
+}
