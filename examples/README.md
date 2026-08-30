@@ -618,7 +618,52 @@ skibidi main {
   compare and search are the whole toolkit.
 - Ends by printing `yaplen("é")`, which is `2`: lengths count bytes, not
   characters. See
-  [§8.9 of the language reference](../docs/the-brainrot-programming-language.md#89-strings-yaplen-yapcat-yapcmp-yapidx).
+  [§8.9 of the language reference](../docs/the-brainrot-programming-language.md#89-strings-yaplen-yapcat-yapcmp-yapidx-si-sij).
+
+---
+
+## 12. String Parsing (`s[i]` and `s[i:j]`)
+
+**File Name:** `string_parsing.brainrot`
+
+```c
+🚽 Everything up to the first `sep`, or the whole string when it is absent.
+rant field_before(rant s, rant sep) {
+    rizz at = yapidx(s, sep);
+    edgy (at < 0) {
+        bussin s[0:yaplen(s)];
+    }
+    bussin s[0:at];
+}
+
+cap is_digit(yap c) {
+    bussin c >= 48 && c <= 57;
+}
+
+skibidi main {
+    rant record = "name=Chungus";
+    yapping("key   : %s", field_before(record, "="));
+    yapping("first : %c", record[0]);
+    yapping("last  : %c", record[yaplen(record) - 1]);
+    bussin 0;
+}
+```
+
+### What It Does
+
+- Uses the two **syntax** halves of the string library: `s[i]` (a byte, as a
+  `yap`) and `s[i:j]` (a new `rant` over the half-open range `[i, j)`).
+- Splits a delimited record into key and value — the smallest realistic task
+  that the four builtins **cannot** do alone, since none of them can pull a
+  piece *out* of a string.
+- Pairs slicing with `yapidx`: the `-1` "not found" result becomes the
+  fallback branch, so a record with no separator still yields sensible parts.
+- Shows per-character work (`count_digits`) which simply was not expressible
+  before indexing existed.
+- Ends on the v1 limitation worth knowing: bounds are **bytes**, so a two-byte
+  UTF-8 character is two indices and slicing between them splits it. Both
+  slice bounds are required and there are no negative indices — see
+  [§8.9 of the language reference](../docs/the-brainrot-programming-language.md#89-strings-yaplen-yapcat-yapcmp-yapidx-si-sij).
 
 ---
 

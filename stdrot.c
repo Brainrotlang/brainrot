@@ -1999,7 +1999,21 @@ NativeResult execute_native_call(const String func_name, ArgumentList *args,
         }
 
         ast_expr_to_stdrot_value(expr, &arg_values[arg_count]);
-        if (expr->type == NODE_FUNC_CALL &&
+        /* Which argument shapes hand back a buffer this frame must free.
+           Both of these reach ast_expr_to_stdrot_value()'s generic
+           `is_expression(expr, VAR_STRING)` branch, which calls
+           evaluate_expression_string() -- and that ALWAYS returns a
+           safe_strdup'd buffer the caller owns.
+
+           A plain `rant` identifier is deliberately not in this list: it
+           takes the VAR_STRING case of the identifier path instead, which
+           borrows the Variable's own storage rather than copying it, so
+           freeing it here would destroy a live variable.
+
+           NODE_STRING_SLICE joined NODE_FUNC_CALL when `s[i:j]` was added
+           (#251) -- without it, `yapping("%s", s[0:2])` leaked one buffer
+           per call, which is what LeakSanitizer caught. */
+        if ((expr->type == NODE_FUNC_CALL || expr->type == NODE_STRING_SLICE) &&
             arg_values[arg_count].type == STDROT_STRING)
         {
             owned_string_bufs[arg_count] = arg_values[arg_count].val.str.data;

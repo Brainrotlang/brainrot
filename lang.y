@@ -2114,6 +2114,27 @@ array_access:
             SAFE_FREE($1);
             $$ = node;
         }
+    | IDENTIFIER LBRACKET expression COLON expression RBRACKET
+        {
+            /* `s[i:j]` -- half-open byte slice of a rant (#251).
+               Spelled out here rather than as `expression LBRACKET
+               expression COLON expression RBRACKET` on purpose: that
+               form makes the parser decide, on seeing LBRACKET after an
+               IDENTIFIER, whether to reduce IDENTIFIER to `expression`
+               (slice) or shift into multi_dimension_access (array
+               access) -- a shift/reduce conflict it cannot settle with
+               one token of lookahead, since both continue
+               `IDENTIFIER LBRACKET expression`.
+               Sharing the IDENTIFIER prefix instead defers the decision
+               to the token AFTER that expression, where COLON and
+               RBRACKET separate the two cleanly. Verified conflict-free
+               with `bison -Wcounterexamples` (the Makefile's own flags).
+               The cost is that only a named rant can be sliced, not an
+               arbitrary expression -- see the docs' own note. */
+            ASTNode *node = create_string_slice_node($1, $3, $5);
+            SAFE_FREE($1);
+            $$ = node;
+        }
     | struct_access multi_dimension_access
         {
             /* Indexing into an array-typed struct field, e.g.

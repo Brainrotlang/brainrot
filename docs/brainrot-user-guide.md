@@ -627,7 +627,7 @@ skibidi main {
 
 ---
 
-## 10.9. yaplen, yapcat, yapcmp, yapidx
+## 10.9. yaplen, yapcat, yapcmp, yapidx, s[i], s[i:j]
 
 **Prototypes**
 
@@ -636,6 +636,9 @@ rizz yaplen(rant s);                  /* length in BYTES                     */
 rant yapcat(rant a, rant b);          /* a joined to b, as a new string      */
 rizz yapcmp(rant a, rant b);          /* -1 if a < b, 0 if equal, 1 if a > b */
 rizz yapidx(rant hay, rant needle);   /* byte index of needle, or -1         */
+
+yap  c   = s[i];                      /* one byte, as a yap  -- SYNTAX       */
+rant sub = s[i:j];                    /* half-open [i, j)    -- SYNTAX       */
 ```
 
 **Description**
@@ -656,9 +659,10 @@ rizz yapidx(rant hay, rant needle);   /* byte index of needle, or -1         */
   unaffected. Measure and compare a `rant`, not a buffer — and there is no
   conversion: `rant r = buf;` is a type error. This comes from how character
   arrays are marshalled to builtins, not from these functions.
-- **Strings are immutable.** `yapcat` modifies neither argument and returns a
-  new string that is independent of both, so an earlier result stays valid
-  after later calls.
+- **The builtins never modify their arguments.** `yapcat` touches neither and
+  returns a new string independent of both, so an earlier result stays valid
+  after later calls. A slice is likewise a **copy, not a view**. Note this is
+  narrower than "strings are immutable" -- `s[i] = c` does write in place.
 - `yaplen` reads the stored length rather than scanning, so it is O(1) and
   stays correct for a string containing an embedded NUL.
 - `yapcmp` returns exactly `-1`, `0` or `1`. When one string is a prefix of
@@ -666,8 +670,23 @@ rizz yapidx(rant hay, rant needle);   /* byte index of needle, or -1         */
 - `yapidx` reports the **first** match. A missing needle gives `-1`; an
   **empty** needle gives `0`, so `yapidx(h, n) >= 0` is a correct "contains"
   test for every needle.
-- Not in v1: substring/slice, split, replace, case conversion, and `s[i]`
-  indexing syntax.
+- **`s[i]` yields a `yap`** (the byte at offset `i`) and **`s[i:j]` yields a
+  new `rant`** (the half-open range `[i, j)`, length `j - i`). These are
+  syntax, not builtins.
+  - Index in `[0, len)`; slice bounds `0 <= i <= j <= len`. Out of range is a
+    runtime error, not a clamp.
+  - **`s[i]` is assignable** — `s[0] = 74;` overwrites that byte in place,
+    like `yap buf[0] = 74;`. Writes are bounds-checked the same as reads, and
+    the length never changes. This is the only way to modify a rant's
+    contents; the builtins all return new strings.
+  - **Both slice bounds are required** — no `s[:j]`, `s[i:]` or `s[:]` — and
+    there are **no negative indices**; use `s[yaplen(s) - 1]`.
+  - `s[len]` is an error but `s[len:len]` is legal and empty: a slice's upper
+    bound is exclusive, so `len` is a valid boundary though not a valid index.
+  - Only a **named** rant can be indexed or sliced; `yapcat(a, b)[0:2]` does
+    not parse, so bind it to a variable first.
+- Not in v1: split, replace, trim, case conversion, omitted slice bounds, and
+  negative indices.
 
 ### Example
 
@@ -678,6 +697,9 @@ skibidi main {
     yapping("%s", name);              🚽 Big Chungus
     yapping("%d", yaplen(name));      🚽 11
     yapping("%d", yapidx(name, " ")); 🚽 3
+
+    yapping("%c", name[0]);           🚽 B
+    yapping("%s", name[4:11]);        🚽 Chungus
 
     edgy (yapidx(name, "Chungus") >= 0) {
         yapping("certified");

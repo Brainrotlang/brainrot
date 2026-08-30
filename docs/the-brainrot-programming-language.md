@@ -33,7 +33,7 @@ A Meme-Fueled Journey into Compiler Design, Internet Slang, and Skibidi Toilets
    - 8.6. `slorp`
    - 8.7. `bet`
    - 8.8. `gamba`
-   - 8.9. Strings: `yaplen`, `yapcat`, `yapcmp`, `yapidx`
+   - 8.9. Strings: `yaplen`, `yapcat`, `yapcmp`, `yapidx`, `s[i]`, `s[i:j]`
 9. **Limitations**
 10. **Known Issues**
 11. **Cultural Context: The Rise of ‘Brain Rot’**
@@ -1288,7 +1288,7 @@ skibidi main {
 
 ---
 
-### 8.9. Strings: `yaplen`, `yapcat`, `yapcmp`, `yapidx`
+### 8.9. Strings: `yaplen`, `yapcat`, `yapcmp`, `yapidx`, `s[i]`, `s[i:j]`
 
 ```c
 rizz yaplen(rant s);                  /* length in BYTES                    */
@@ -1343,9 +1343,14 @@ one.
 > rather than treating the bytes as a C string. Pinned by
 > `test_cases/string_stdlib_char_buffer.brainrot`, and expected to change.
 
-**Strings are immutable; `yapcat` returns a new one.** Neither argument is
-modified, and the result is independent of both -- storing it and then calling
-`yapcat` again leaves the first result untouched.
+**The builtins never modify their arguments; `yapcat` returns a new string.**
+Neither argument is touched, and the result is independent of both -- storing
+it and then calling `yapcat` again leaves the first result untouched. The same
+goes for `s[i:j]`: a slice is a **copy, not a view**, so mutating either the
+slice or the string it came from leaves the other alone.
+
+That is a narrower claim than "strings are immutable", and deliberately so --
+`s[i] = c` writes a byte in place (see below).
 
 - `yaplen` reads the stored length, so it is O(1) and is correct for a string
   containing an embedded NUL. It is not `strlen`.
@@ -1358,10 +1363,52 @@ modified, and the result is independent of both -- storing it and then calling
   `strings.Index` -- so `yapidx(h, n) >= 0` is a correct "contains" test for
   every needle, including an empty one.
 
-> **Not in v1:** there is no substring, slice, split, replace, or case
-> conversion yet, and no indexing syntax such as `s[i]`. Those are tracked
-> separately; v1 is the measure/join/compare/search core that the rest builds
-> on.
+#### Indexing and slicing: `s[i]` and `s[i:j]`
+
+These are **syntax**, not builtins — no `#cooked`, no function call.
+
+```c
+rant s = "hello world";
+
+yap  c   = s[0];        🚽 'h'   -- one byte, as a yap
+rant sub = s[0:5];      🚽 "hello" -- a NEW rant
+```
+
+- **`s[i]` yields a `yap`** — the byte at offset `i`. Index in `[0, len)`;
+  anything else is a runtime error.
+- **`s[i]` is assignable**: `s[0] = 74;` writes that byte in place, exactly as
+  `yap buf[0] = 74;` does. Writes are bounds-checked by the same rule as reads,
+  so `s[yaplen(s)] = c` is refused rather than scribbling past the buffer. The
+  string's length never changes — you are overwriting a byte, not splicing.
+  This is the one way a `rant`'s contents can be modified; every builtin
+  returns a new string instead.
+- **`s[i:j]` yields a new `rant`** — the half-open range `[i, j)`, so its
+  length is `j - i`. Requires `0 <= i <= j <= len`.
+- **Both slice bounds are required.** `s[:j]`, `s[i:]` and `s[:]` are not v1
+  syntax.
+- **No negative indices.** `s[-1]` does not mean "the last byte"; it is simply
+  out of range. Use `s[yaplen(s) - 1]`.
+- **Out of range is an error, not a clamp.** The program stops where the
+  mistake is rather than quietly returning something shorter than you asked
+  for.
+- Bounds are **bytes**, exactly as with `yaplen` — so a two-byte UTF-8
+  character is two indices, and slicing between them yields half a character.
+
+Note the deliberate asymmetry: `s[len]` is an error, but `s[len:len]` is
+**legal** and gives the empty string, because a slice's upper bound is
+exclusive and so `len` is a valid *boundary* even though it is not a valid
+*index*. `s[i:i]` is likewise legal and empty, which makes it a usable
+starting value when building a string up in a loop.
+
+Only a **named** `rant` can be indexed or sliced — `s[0:2]` works,
+`yapcat(a, b)[0:2]` does not parse. Bind the intermediate to a variable
+first. (The grammar shares its `IDENTIFIER [` prefix with array access so the
+two stay unambiguous; allowing an arbitrary expression base is a possible
+later change.)
+
+> **Not in v1:** there is no split, replace, trim, or case conversion yet, and
+> no omitted slice bounds or negative indices. Those are tracked separately;
+> v1 is the measure/join/compare/search/index core that the rest builds on.
 
 **Example**:
 
@@ -1385,7 +1432,9 @@ skibidi main {
 ```
 
 See [`examples/string_toolkit.brainrot`](../examples/string_toolkit.brainrot)
-for a longer worked example.
+for a longer worked example of the builtins, and
+[`examples/string_parsing.brainrot`](../examples/string_parsing.brainrot) for
+indexing and slicing used to split a delimited record.
 
 ---
 
