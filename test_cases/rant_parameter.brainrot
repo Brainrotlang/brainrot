@@ -1,0 +1,77 @@
+🚽 Test case: issue #311 -- `rant` (string) parameters on user-defined
+🚽 functions. Previously `skibidi show(rant s)` died on "String parameters
+🚽 are not supported", raised from two sites in enter_function_scope():
+🚽 the argument-evaluation pass and the parameter-binding pass.
+🚽
+🚽 Natives have always taken strings -- `rl_draw_text("...", ...)` works --
+🚽 so this was a user-function gap, not an ABI one. Its cost in the Phase 5
+🚽 game was fifteen near-identical loader functions that differed only in
+🚽 one string literal, because the path could not be a parameter.
+🚽
+🚽 ── Semantics: a copy, not an alias ───────────────────────────────────
+🚽 The parameter takes its own safe_strdup'd buffer, so it behaves as an
+🚽 ordinary local `rant` -- which is exactly how a `rant` declared inside
+🚽 the callee is bound (initialize_variable_from_expr(), ast.c).
+🚽
+🚽 Aliasing the caller's buffer would have been the C `const char *`
+🚽 reading, but it is unsafe here for a reason C does not have --
+🚽 exit_scope() tears down the callee's scope, so a parameter pointing
+🚽 into the caller's storage would make teardown's ownership depend on
+🚽 where the argument came from.
+🚽
+🚽 ── What this fixture does NOT pin, and why ───────────────────────────
+🚽 The one case that would distinguish copy from alias is a callee that
+🚽 ASSIGNS to its parameter and a caller that then reads its own variable
+🚽 back. That case is deliberately absent, and its absence is a real gap
+🚽 rather than an oversight: reassigning ANY `rant` currently leaks the
+🚽 previous buffer (issue #277) -- a plain local does it too
+🚽 (`rant s = "hi"; s = "bye";` leaks 24 bytes on main today) -- so a
+🚽 fixture containing one would fail `make valgrind` for a pre-existing
+🚽 reason unrelated to this feature.
+🚽
+🚽 It was verified by hand instead: with a `mutate(rant s) { s = "x"; }`
+🚽 the caller's variable reads back unchanged, and the only leak is
+🚽 #277's. Add that case here once #277 is fixed.
+🚽
+🚽 What IS pinned below is every leak-free shape: literal arguments,
+🚽 variable arguments, several `rant` parameters in one call alongside a
+🚽 scalar, an empty string, a returned `rant`, and a parameter passed
+🚽 straight through to a recursive call.
+skibidi show(rant s) {
+    yapping("%s", s);
+}
+
+rant pick(rant a, rant b, rizz which) {
+    edgy (which > 0) {
+        bussin a;
+    }
+    bussin b;
+}
+
+skibidi down(rant s, rizz n) {
+    edgy (n > 0) {
+        yapping("%s%d", s, n);
+        down(s, n - 1);
+    }
+}
+
+skibidi main {
+    🚽 literal argument
+    show("literal");
+
+    🚽 variable argument, and the caller's own copy survives
+    rant v = "from var";
+    show(v);
+    yapping("caller: %s", v);
+
+    🚽 several rant parameters in one call, mixed with a scalar
+    yapping("pick: %s", pick("first", "second", 1));
+    yapping("pick: %s", pick("first", "second", 0));
+
+    🚽 empty string
+    show("");
+
+    🚽 a rant parameter passed straight through to another call
+    down("x", 3);
+    bussin 0;
+}
