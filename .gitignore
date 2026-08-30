@@ -4,8 +4,13 @@ lang.tab.c
 lang.tab.h
 lex.yy.c
 lang.gv
-libstdrot.so
-rayrot/raylib.so
+# Every compiled shared object is build output. Listed as a blanket pattern
+# rather than one path per module because a DIRECTORY RENAME silently
+# un-ignores a path-specific entry: #318 renamed brainray/ to rayrot/ and
+# moved this line with it, which left anyone holding a pre-rename
+# brainray/raylib.so with a suddenly-unignored 49KB binary that `git add`
+# swept straight into a commit (caught in review on #324).
+*.so
 # Generated raylib binding (Road B, issue #208): adapters, prelude, ABI check
 # and their build products. Derived from rayrot/raylib_api.json, which IS
 # committed -- see roadmap Appendix B Q7 for why the input is a source file
