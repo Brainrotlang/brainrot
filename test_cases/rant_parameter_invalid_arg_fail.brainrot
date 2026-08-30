@@ -1,0 +1,39 @@
+🚽 Test case: a non-string argument to a `rant` parameter must not bind
+🚽 (PR #314 review).
+🚽
+🚽 evaluate_expression_string() returns {NULL, 0} when the argument is not
+🚽 a string. Binding that produced a `rant` parameter with a NULL buffer --
+🚽 a REPRESENTABLE INVALID STATE, not merely a wrong value. No other path
+🚽 in the language can make one: `rant s = 42;` is a static type error. So
+🚽 binding it would have made a `rant` parameter the one `rant` that can be
+🚽 something an ordinary local cannot, contradicting this feature's own
+🚽 documented "behaves as an ordinary local `rant`" contract.
+🚽
+🚽 It also propagated -- into a nested call's `rant` parameter, and out
+🚽 through `bussin s` -- and printing it is undefined behavior (C11
+🚽 7.21.6.1p8): glibc and BSD libc print "(null)", musl does not, so it
+🚽 looked benign in CI precisely where it was least safe to assume.
+🚽
+🚽 ── What is pinned ────────────────────────────────────────────────────
+🚽 The callee does NOT run: `show`'s own output is absent from the
+🚽 expected result, which is the whole point -- an implementation that
+🚽 reported the error and bound the value anyway would print "got [...]"
+🚽 here and fail.
+🚽
+🚽 ── What is deliberately NOT changed ──────────────────────────────────
+🚽 Execution continues afterwards and the process exits 0. That matches
+🚽 the VAR_STRUCT arm a few lines away in the same switch, which this fix
+🚽 was modelled on: it too refuses the call, leaves the declaration's
+🚽 target zeroed, and carries on (`gang P out = mk(notastruct);` prints
+🚽 `out.v = 0` on main today, verified). Refusing to BIND is this fix;
+🚽 changing what a refused call leaves behind is a separate, wider
+🚽 question about every failed call, not just this one.
+skibidi show(rant s) {
+    yapping("got [%s]", s);
+}
+
+skibidi main {
+    show(42);
+    yapping("survived");
+    bussin 0;
+}

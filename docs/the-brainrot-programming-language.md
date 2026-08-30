@@ -374,7 +374,9 @@ skibidi main {
 - Argument types are only checked against parameter types in specific cases
   (arrays, struct/union tags); a general type check for user-defined calls
   does not exist yet, so passing a `rizz` where a `chad` is declared is not
-  diagnosed.
+  diagnosed. A non-string argument to a `rant` parameter *is* refused, though
+  — the call does not run — because binding one would give the parameter a
+  state no ordinary `rant` can have.
 
 ### 7.8. Pointers and Call by Reference
 

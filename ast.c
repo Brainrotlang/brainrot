@@ -7592,6 +7592,36 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                itself -- which is also what makes assigning to it safe. */
             arg_values[arg_count].strvalue =
                 evaluate_expression_string(curr_arg->expr);
+            /* A NULL buffer means the argument was not a string at all
+               (`show(42)`) or the copy failed. Refuse the call rather
+               than bind it, matching the VAR_STRUCT arm below -- which
+               also frees what it owns and returns false rather than
+               handing the callee something malformed -- instead of this
+               family's looser report-and-continue convention.
+               The distinction is worth the extra check: a NULL-buffered
+               `rant` is a REPRESENTABLE INVALID STATE, not merely a
+               wrong value. No other path in the language can produce
+               one -- `rant s = 42;` is a static type error -- so binding
+               it would make a `rant` parameter the one `rant` that can
+               be something an ordinary local cannot, contradicting this
+               feature's own documented "behaves as an ordinary local
+               `rant`" contract. It also propagates: through a nested
+               call, and out through `bussin s` into a caller's `rant`.
+               And printing it is undefined behavior (C11 7.21.6.1p8) --
+               glibc and BSD libc print "(null)", musl does not, which is
+               exactly the kind of thing that looks benign in CI and
+               isn't (PR #314 review).
+               evaluate_expression_string() has already emitted exactly
+               one diagnostic on both of its NULL paths, so this adds no
+               second error -- the same discipline as the
+               resolve_by_value_struct_source() call below. */
+            if (!arg_values[arg_count].strvalue.data)
+            {
+                free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
+                                            arg_count);
+                free_owned_string_args(arg_values, arg_owns_string, arg_count);
+                return false;
+            }
             arg_owns_string[arg_count] = true;
             break;
         case VAR_STRUCT:
