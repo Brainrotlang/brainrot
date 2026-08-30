@@ -31,13 +31,16 @@ static void test_arena_multi_region_reset_and_free(void)
     assert(p1 != p2);
     assert(p2 != p3);
 
+    /* Write to the full extent of each chunk so ASan validates access. */
+    memset(p1, 0xAA, chunk_size);
+    memset(p2, 0xBB, chunk_size);
+    memset(p3, 0xCC, chunk_size);
+
     /* Verify we have at least 3 regions linked. */
     int region_count = 0;
-    Region *r = arena.start;
-    while (r != NULL)
+    for (Region *r = arena.start; r != NULL; r = r->next)
     {
         region_count++;
-        r = r->next;
     }
     assert(region_count >= 3);
 
@@ -47,12 +50,10 @@ static void test_arena_multi_region_reset_and_free(void)
     assert(arena.end == arena.start);
 
     int reset_region_count = 0;
-    r = arena.start;
-    while (r != NULL)
+    for (Region *r = arena.start; r != NULL; r = r->next)
     {
         assert(r->count == 0);
         reset_region_count++;
-        r = r->next;
     }
     assert(reset_region_count == region_count);
 
@@ -74,6 +75,17 @@ static void test_arena_reset_reuse_allocations(void)
     void *orig_p3 = arena_alloc(&arena, chunk_size);
 
     assert(orig_p1 != NULL && orig_p2 != NULL && orig_p3 != NULL);
+    memset(orig_p1, 0x11, chunk_size);
+    memset(orig_p2, 0x22, chunk_size);
+    memset(orig_p3, 0x33, chunk_size);
+
+    /* Capture region count before reset. */
+    int orig_region_count = 0;
+    for (Region *r = arena.start; r != NULL; r = r->next)
+    {
+        orig_region_count++;
+    }
+    assert(orig_region_count >= 3);
 
     /* Reset. */
     arena_reset(&arena);
@@ -90,15 +102,18 @@ static void test_arena_reset_reuse_allocations(void)
     assert(new_p2 == orig_p2);
     assert(new_p3 == orig_p3);
 
-    /* Confirm no new 4th region was added. */
-    int count = 0;
-    Region *r = arena.start;
-    while (r != NULL)
+    /* Write into refilled chunks to verify memory is valid and usable. */
+    memset(new_p1, 0x44, chunk_size);
+    memset(new_p2, 0x55, chunk_size);
+    memset(new_p3, 0x66, chunk_size);
+
+    /* Confirm no new region was added (exact region count equality). */
+    int new_region_count = 0;
+    for (Region *r = arena.start; r != NULL; r = r->next)
     {
-        count++;
-        r = r->next;
+        new_region_count++;
     }
-    assert(count >= 3);
+    assert(new_region_count == orig_region_count);
     assert(arena.end->next == NULL);
 
     arena_free(&arena);
@@ -126,12 +141,14 @@ static void test_arena_reset_empty_and_repeated(void)
     Arena arena = {0};
     void *p = arena_alloc(&arena, 256);
     assert(p != NULL);
+    memset(p, 0x77, 256);
 
     arena_reset(&arena);
     arena_reset(&arena);
 
     void *p_after = arena_alloc(&arena, 256);
     assert(p_after == p);
+    memset(p_after, 0x88, 256);
 
     arena_free(&arena);
 
@@ -141,6 +158,7 @@ static void test_arena_reset_empty_and_repeated(void)
     {
         void *ptr = arena_alloc(&cycle_arena, 128);
         assert(ptr != NULL);
+        memset(ptr, (int)(i & 0xFF), 128);
         arena_reset(&cycle_arena);
     }
     arena_free(&cycle_arena);
