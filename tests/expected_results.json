@@ -413,5 +413,7 @@
     "cap_returning_call_in_condition": "edgy true\nedgy false\ngoon ran 2\nnegated 0\n",
     "return_from_inside_loop": "for      2\nwhile    30\nnested   102\nswitch   11\nswitch d 99\nbreak    1\ndone",
     "return_from_inside_loop": "for      2\nwhile    30\nnested   102\nswitch   11\nswitch d 99\nbreak    1\ndone",
-    "return_from_inside_loop": "for      2\nwhile    30\nnested   102\nswitch   11\nswitch d 99\nbreak    1\nvisiting 0\nvisiting 1\nstopping at 2\ndone"
+    "return_from_inside_loop": "for      2\nwhile    30\nnested   102\nswitch   11\nswitch d 99\nbreak    1\nvisiting 0\nvisiting 1\nstopping at 2\ndone",
+    "return_from_inside_loop": "for      2\nwhile    30\nnested   102\nswitch   11\nswitch d 99\nbreak    1\nvisiting 0\nvisiting 1\nstopping at 2\ndone",
+    "return_from_inside_loop_in_main_fail": "before\nStderr:\nError: No scope to exit at line 58\n"
 }
