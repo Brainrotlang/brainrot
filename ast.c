@@ -7600,17 +7600,27 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                family's looser report-and-continue convention.
                The distinction is worth the extra check: a NULL-buffered
                `rant` is a REPRESENTABLE INVALID STATE, not merely a
-               wrong value. No other path in the language can produce
-               one -- `rant s = 42;` is a static type error -- so binding
-               it would make a `rant` parameter the one `rant` that can
-               be something an ordinary local cannot, contradicting this
-               feature's own documented "behaves as an ordinary local
-               `rant`" contract. It also propagates: through a nested
-               call, and out through `bussin s` into a caller's `rant`.
-               And printing it is undefined behavior (C11 7.21.6.1p8) --
-               glibc and BSD libc print "(null)", musl does not, which is
+               wrong value. It propagates -- through a nested call, and
+               out through `bussin s` into a caller's `rant` -- and
+               printing it is undefined behavior (C11 7.21.6.1p8): glibc
+               and BSD libc print "(null)", musl does not, which is
                exactly the kind of thing that looks benign in CI and
-               isn't (PR #314 review).
+               isn't.
+               What this check does NOT do is make that state
+               unreachable, and an earlier version of this comment
+               wrongly claimed it did (PR #314 review). A NULL-buffered
+               `rant` is reachable on main today with no `rant` parameter
+               involved at all -- any call REFUSED mid-argument leaves a
+               `rant` declaration target NULL, e.g. `rant r = f(1, 2);`
+               (arity mismatch) or `rant r = g(notastruct);` (the
+               VAR_STRUCT arm below refusing). Both verified. That is a
+               pre-existing property of what a refused call leaves
+               behind, and closing it means changing every failed call,
+               not this one. The correct, narrower justification stands
+               on its own: this feature opened a NEW route to that state
+               -- a bound parameter, which unlike a refused call's
+               leftovers is then USED -- and this closes the route it
+               opened.
                evaluate_expression_string() has already emitted exactly
                one diagnostic on both of its NULL paths, so this adds no
                second error -- the same discipline as the

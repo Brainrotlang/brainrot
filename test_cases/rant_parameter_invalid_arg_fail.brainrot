@@ -3,16 +3,24 @@
 🚽
 🚽 evaluate_expression_string() returns {NULL, 0} when the argument is not
 🚽 a string. Binding that produced a `rant` parameter with a NULL buffer --
-🚽 a REPRESENTABLE INVALID STATE, not merely a wrong value. No other path
-🚽 in the language can make one: `rant s = 42;` is a static type error. So
-🚽 binding it would have made a `rant` parameter the one `rant` that can be
-🚽 something an ordinary local cannot, contradicting this feature's own
-🚽 documented "behaves as an ordinary local `rant`" contract.
+🚽 a REPRESENTABLE INVALID STATE, not merely a wrong value. It propagated
+🚽 (into a nested call's `rant` parameter, and out through `bussin s`), and
+🚽 printing it is undefined behavior (C11 7.21.6.1p8): glibc and BSD libc
+🚽 print "(null)", musl does not, so it looked benign in CI precisely where
+🚽 it was least safe to assume.
 🚽
-🚽 It also propagated -- into a nested call's `rant` parameter, and out
-🚽 through `bussin s` -- and printing it is undefined behavior (C11
-🚽 7.21.6.1p8): glibc and BSD libc print "(null)", musl does not, so it
-🚽 looked benign in CI precisely where it was least safe to assume.
+🚽 ── What this does NOT establish ──────────────────────────────────────
+🚽 It does not make a NULL-buffered `rant` unreachable, and an earlier
+🚽 version of this comment wrongly said it did (PR #314 review). Any call
+🚽 REFUSED mid-argument leaves a `rant` declaration target NULL, with no
+🚽 `rant` parameter involved at all -- `rant r = f(1, 2);` (arity
+🚽 mismatch) and `rant r = g(notastruct);` (a refused struct argument)
+🚽 both do it on main today. Verified.
+🚽
+🚽 The narrower justification is the real one and stands on its own: this
+🚽 feature opened a NEW route to that state -- a BOUND PARAMETER, which
+🚽 unlike a refused call's leftovers is then actually used by the callee --
+🚽 and this fixture pins that the route it opened is closed.
 🚽
 🚽 ── What is pinned ────────────────────────────────────────────────────
 🚽 The callee does NOT run: `show`'s own output is absent from the

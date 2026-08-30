@@ -375,8 +375,10 @@ skibidi main {
   (arrays, struct/union tags); a general type check for user-defined calls
   does not exist yet, so passing a `rizz` where a `chad` is declared is not
   diagnosed. A non-string argument to a `rant` parameter *is* refused, though
-  — the call does not run — because binding one would give the parameter a
-  state no ordinary `rant` can have.
+  — the call does not run — because binding one would hand the callee a `rant`
+  with no buffer, which then gets used. (A refused call can still leave a
+  `rant` *declaration target* empty, e.g. `rant r = f(1, 2);` on an arity
+  mismatch; that is a separate, pre-existing property of failed calls.)
 
 ### 7.8. Pointers and Call by Reference
 
