@@ -602,6 +602,42 @@ ASTNode *create_multi_array_access_node(String name, ASTNode *indices[],
     return node;
 }
 
+/* `s[i:j]` -- builds the half-open byte-slice node (#251). Both bounds are
+ * mandatory; see the `slice` member's own comment in ast.h for why this is a
+ * node type of its own rather than a second shape of NODE_ARRAY_ACCESS.
+ *
+ * var_type is set unconditionally to VAR_STRING rather than copied from the
+ * named Variable the way create_multi_array_access_node() does above. That is
+ * not an oversight: a slice's result type does not depend on what `name`
+ * turns out to be -- it is a rant or the program is wrong -- and at parse
+ * time the variable usually does not exist yet anyway, since get_variable()
+ * looks in the RUNTIME scope. Whether `name` really is a rant is checked
+ * where the answer is knowable: statically in semantic_analyze_with_scope_
+ * tracking() and at runtime in evaluate_string_slice().
+ */
+ASTNode *create_string_slice_node(String name, ASTNode *start, ASTNode *end)
+{
+    ASTNode *node = ARENA_ALLOC_ASTNODE();
+    if (!node)
+    {
+        yyerror("Memory allocation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    node->type = NODE_STRING_SLICE;
+    /* Without this the analyzer's "only a rant can be sliced" diagnostic
+       reports line 1 for every program, since add_semantic_error() takes
+       the line from the node. */
+    node->line_number = yylineno;
+    node->data.slice.name = ARENA_STRDUP(name);
+    node->data.slice.start = start;
+    node->data.slice.end = end;
+    node->var_type = VAR_STRING;
+    node->pointer_level = 0;
+    node->is_array = false;
+    return node;
+}
+
 /* The struct-field counterpart of create_multi_array_access_node(): `base`
    is an already-built struct_access expression (e.g. `foo.arr`), not a
    Variable name -- Array.base (ast.h) is what tells every other consumer
@@ -1877,6 +1913,38 @@ void *evaluate_multi_array_access(ASTNode *node)
         return (char *)ptr_base + idx * (ptrdiff_t)pointee->total_size;
     }
 
+    /* `s[i]` on a `rant` -- byte indexing (#251). The counterpart of
+       resolve_array_access_element()'s VAR_STRING branch, which is what
+       already told the caller to read the result as a VAR_CHAR; this
+       returns the address of the byte to read.
+
+       Bounds are checked against the STORED LENGTH rather than a
+       terminator, because a rant is not NUL-terminated -- s.len is the
+       only correct extent, the same reason yaplen() does not call
+       strlen(). Out of range is a hard error, not a clamp and not UB, so
+       ASan/UBSan stay clean and the program stops where the mistake is. */
+    if (var->desc.type == VAR_STRING && !var->desc.is_array &&
+        var->desc.pointer_level == 0)
+    {
+        if (num_indices != 1 || !node->data.array.indices[0])
+        {
+            yyerror("A rant takes exactly one index");
+            exit(EXIT_FAILURE);
+        }
+        int idx = evaluate_expression_int(node->data.array.indices[0]);
+        size_t len = var->value.strvalue.data ? var->value.strvalue.len : 0;
+        if (idx < 0 || (size_t)idx >= len)
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "String index out of bounds (index=%d, length=%zu)", idx,
+                     len);
+            yyerror(error_msg);
+            exit(EXIT_FAILURE);
+        }
+        return var->value.strvalue.data + idx;
+    }
+
     if (!var->desc.is_array)
     {
         char error_msg[MAX_BUFFER_LEN];
@@ -2516,7 +2584,33 @@ static bool resolve_array_access_element(ASTNode *node, ArrayAccessElement *out)
     }
 
     Variable *var = get_variable(node->data.array.name);
-    if (!var || !var->desc.is_array)
+    if (!var)
+        return false;
+    /* `s[i]` on a `rant` yields a `yap` (#251). A rant is not an array --
+       it is the length-prefixed String of lib/string_value.h -- so the
+       is_array check below would reject it, which is exactly what used to
+       make `s[0]` fail with "Variable 's' is not an array".
+
+       Reported here rather than at each of this function's call sites
+       because this is the single choke point for an array access's ELEMENT
+       type: get_expression_type() and get_expression_pointer_level() both
+       route through it, and so therefore does every scalar evaluator that
+       asks numeric_load() what width to read. Saying VAR_CHAR once here is
+       what makes `yap c = s[0];` and `yapping("%c", s[0])` agree.
+
+       A `yap buf[N]` is VAR_CHAR *and* is_array, so it never reaches this
+       branch -- it stays on the ordinary array path, where the element
+       type is already VAR_CHAR anyway. */
+    if (var->desc.type == VAR_STRING && !var->desc.is_array &&
+        var->desc.pointer_level == 0)
+    {
+        out->type = VAR_CHAR;
+        out->pointer_level = 0;
+        out->modifiers = var->desc.modifiers;
+        out->dimensions = &var->desc.array_dimensions;
+        return true;
+    }
+    if (!var->desc.is_array)
         return false;
     out->type = var->desc.type;
     out->pointer_level = var->desc.pointer_level;
@@ -2664,6 +2758,10 @@ VarType get_expression_type(ASTNode *node)
         return VAR_BOOL;
     case NODE_CHAR:
         return VAR_INT;
+    case NODE_STRING_SLICE:
+        /* `s[i:j]` is a rant, always -- see create_string_slice_node()'s
+           own comment for why the node does not consult the variable. */
+        return VAR_STRING;
     case NODE_ARRAY_ACCESS:
     {
         ArrayAccessElement elem;
@@ -4829,6 +4927,73 @@ size_t handle_sizeof(ASTNode *node)
     }
 }
 
+/* `s[i:j]` -- evaluates a half-open byte slice of a rant into a NEW String
+ * the caller owns (#251).
+ *
+ * Returning a fresh copy rather than a view into the source is the
+ * immutability rule the rest of this string library follows, and here it is
+ * also a lifetime requirement: evaluate_expression_string()'s contract is
+ * that every result is an independently owned buffer its caller frees (see
+ * free_owned_string_args()'s comment), so handing back a pointer into a live
+ * Variable's storage would hand that caller someone else's memory to free.
+ *
+ * Bounds are 0 <= i <= j <= len, checked against the STORED length -- a rant
+ * is not NUL-terminated, so s.len is the only correct extent. Out of range is
+ * a hard error rather than Python-style clamping: silently returning a
+ * shorter string than asked for turns an indexing mistake into wrong output
+ * instead of a stopped program. i == j is legal and yields the empty string,
+ * which is what makes `s[i:i]` a usable base case in a loop.
+ */
+static String evaluate_string_slice(ASTNode *node)
+{
+    const String name = node->data.slice.name;
+    Variable *var = get_variable(name);
+    if (!var)
+    {
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "Variable '%.100s' is not defined", name.data);
+        yyerror(error_msg);
+        exit(EXIT_FAILURE);
+    }
+    if (var->desc.type != VAR_STRING || var->desc.is_array ||
+        var->desc.pointer_level != 0)
+    {
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "Cannot slice '%.100s': only a rant can be sliced", name.data);
+        yyerror(error_msg);
+        exit(EXIT_FAILURE);
+    }
+
+    size_t len = var->value.strvalue.data ? var->value.strvalue.len : 0;
+    int start = evaluate_expression_int(node->data.slice.start);
+    int end = evaluate_expression_int(node->data.slice.end);
+
+    if (start < 0 || end < start || (size_t)end > len)
+    {
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "String slice out of bounds (start=%d, end=%d, length=%zu)",
+                 start, end, len);
+        yyerror(error_msg);
+        exit(EXIT_FAILURE);
+    }
+
+    /* An empty result still returns an owned one-byte buffer rather than
+       {NULL, 0}: safe_strdup() refuses a NULL source even for length 0, and
+       every consumer of a rant expects a real pointer it can free. */
+    if (start == end)
+    {
+        String empty = {.data = "", .len = 0};
+        return safe_strdup(&empty);
+    }
+
+    String view = {.data = var->value.strvalue.data + start,
+                   .len = (size_t)(end - start)};
+    return safe_strdup(&view);
+}
+
 String evaluate_expression_string(ASTNode *node)
 {
     if (!node)
@@ -4839,6 +5004,8 @@ String evaluate_expression_string(ASTNode *node)
     case NODE_STRING_LITERAL:
     case NODE_STRING:
         return safe_strdup(&node->data.strvalue);
+    case NODE_STRING_SLICE:
+        return evaluate_string_slice(node);
     case NODE_IDENTIFIER:
     {
         String error = {.data = "Undefined variable",
@@ -5878,6 +6045,13 @@ bool is_expression(ASTNode *node, VarType type)
 
     switch (node->type)
     {
+    case NODE_STRING_SLICE:
+        /* `s[i:j]` is a rant (#251). Needed here, not just in
+           get_expression_type(), because this is the predicate
+           ast_expr_to_stdrot_value() (stdrot.c) uses to decide a native
+           argument's ABI type -- without it a slice passed straight to
+           yapping() marshalled as "no value at all". */
+        return type == VAR_STRING;
     case NODE_ARRAY_ACCESS:
     {
         ArrayAccessElement elem;

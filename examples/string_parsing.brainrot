@@ -1,0 +1,87 @@
+🚽 String parsing -- what `s[i]` and `s[i:j]` (issue #251) make possible
+🚽 that the four builtins alone could not.
+🚽
+🚽 yaplen/yapcat/yapcmp/yapidx can measure, join, compare and search, but
+🚽 none of them can pull a piece OUT of a string. Indexing and slicing are
+🚽 what close that gap, and splitting a delimited record is the smallest
+🚽 realistic thing that needs them.
+🚽
+🚽 Bounds are bytes and both slice bounds are required: no s[:j], no s[i:],
+🚽 no negative indices in v1.
+
+🚽 Everything up to the first occurrence of `sep`, or the whole string when
+🚽 `sep` is absent -- yapidx returning -1 is what makes that fallback work.
+rant field_before(rant s, rant sep) {
+    rizz at = yapidx(s, sep);
+    edgy (at < 0) {
+        bussin s[0:yaplen(s)];
+    }
+    bussin s[0:at];
+}
+
+🚽 Everything after the first `sep`. The empty string when `sep` is absent,
+🚽 which keeps `before + sep + after` reconstructible in the common case.
+rant field_after(rant s, rant sep) {
+    rizz at = yapidx(s, sep);
+    edgy (at < 0) {
+        bussin s[0:0];
+    }
+    rizz start = at + yaplen(sep);
+    bussin s[start:yaplen(s)];
+}
+
+🚽 A trivial character test, written with s[i] -- this is the shape that
+🚽 was simply not expressible before indexing existed.
+cap is_digit(yap c) {
+    bussin c >= 48 && c <= 57;
+}
+
+rizz count_digits(rant s) {
+    rizz n = 0;
+    rizz i = 0;
+    goon (i < yaplen(s)) {
+        edgy (is_digit(s[i])) {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    bussin n;
+}
+
+skibidi main {
+    rant record = "name=Chungus";
+
+    yapping("record : %s", record);
+    yapping("key    : %s", field_before(record, "="));
+    yapping("value  : %s", field_after(record, "="));
+
+    yapping("");
+
+    🚽 No separator present -- the whole string, and an empty tail.
+    rant plain = "nokeyhere";
+    yapping("plain key   : [%s]", field_before(plain, "="));
+    yapping("plain value : [%s]", field_after(plain, "="));
+
+    yapping("");
+
+    🚽 s[i] for per-character work.
+    rant mixed = "a1b2c33";
+    yapping("digits in %s: %d", mixed, count_digits(mixed));
+    yapping("first char  : %c", mixed[0]);
+    yapping("last char   : %c", mixed[yaplen(mixed) - 1]);
+
+    yapping("");
+
+    🚽 Slices compose with the builtins: reversing the two halves.
+    rant word = "brainrot";
+    rizz half = yaplen(word) / 2;
+    yapping("%s -> %s", word,
+            yapcat(word[half:yaplen(word)], word[0:half]));
+
+    🚽 Bytes, not characters: a two-byte UTF-8 character has length 2, and
+    🚽 slicing it in half gives two meaningless bytes. v1 is byte-oriented
+    🚽 throughout -- this is a limitation to know about, not a bug.
+    rant accented = "é";
+    yapping("bytes in 'é': %d", yaplen(accented));
+    bussin 0;
+}

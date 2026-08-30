@@ -99,6 +99,19 @@ void ast_accept(ASTNode *node, Visitor *visitor)
             visitor->visit_array_access(visitor, node);
         break;
 
+    case NODE_STRING_SLICE:
+        /* `s[i:j]` (#251). Both bound expressions are walked so anything
+           inside them -- most importantly a native call like `s[0:bet(2)]`
+           -- gets the same visiting every other subexpression does. There
+           is no visit_string_slice hook and no base to walk: the sliced
+           rant is named, not an expression, exactly as in the IDENTIFIER
+           form of NODE_ARRAY_ACCESS above. */
+        if (node->data.slice.start)
+            ast_accept(node->data.slice.start, visitor);
+        if (node->data.slice.end)
+            ast_accept(node->data.slice.end, visitor);
+        break;
+
     case NODE_FUNC_CALL:
     {
         if (visitor->visit_function_call)

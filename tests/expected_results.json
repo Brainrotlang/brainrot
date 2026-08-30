@@ -411,10 +411,11 @@
     "string_stdlib_arg_type_fail": "Error: 'yaplen' argument 1: expected string, got int at line 22\n",
     "string_stdlib_char_buffer": "slorp len 32\nslorp cmp 1\nslorp idx 1\ncat       [hi]\ncat len   33\nfixed len 8\nfixed str [hi]\nrant len  2\nrant cmp  0\n",
     "cap_returning_call_in_condition": "edgy true\nedgy false\ngoon ran 2\nnegated 0\n",
-    "return_from_inside_loop": "for      2\nwhile    30\nnested   102\nswitch   11\nswitch d 99\nbreak    1\ndone",
-    "return_from_inside_loop": "for      2\nwhile    30\nnested   102\nswitch   11\nswitch d 99\nbreak    1\ndone",
-    "return_from_inside_loop": "for      2\nwhile    30\nnested   102\nswitch   11\nswitch d 99\nbreak    1\nvisiting 0\nvisiting 1\nstopping at 2\ndone",
     "return_from_inside_loop": "for      2\nwhile    30\nnested   102\nswitch   11\nswitch d 99\nbreak    1\nvisiting 0\nvisiting 1\nstopping at 2\ndone",
     "return_from_inside_loop_in_main_fail": "before\nStderr:\nError: No scope to exit at line 58\n",
-    "param_shadows_main_local": "getx  3.0\nuse   W\ntwice 6\nmine  41 100 1.0"
+    "param_shadows_main_local": "getx  3.0\nuse   W\ntwice 6\nmine  41 100 1.0",
+    "string_indexing": "stored [h]\ninline [d]\nas int 101\nvaridx [o]\nslice  [hello]\nlen    5\ninline [world]\nwhole  [hello world]\none    [o]\nempty  []\nempty at end []\nexpr   [llo]\nagree  [w] [w]\ncat    [hello world]\nrebuilt 0\nidx    1\nutf8 len 2\nutf8 halves -61 -87\n",
+    "string_index_out_of_bounds_fail": "before\nStderr:\nError: String index out of bounds (index=5, length=5) at line 31\n",
+    "string_slice_out_of_bounds_fail": "before\nStderr:\nError: String slice out of bounds (start=-1, end=2, length=5) at line 34\n",
+    "string_slice_non_rant_fail": "Error: Cannot slice 'n': only a rant can be sliced at line 31\n"
 }

@@ -33,7 +33,7 @@ A Meme-Fueled Journey into Compiler Design, Internet Slang, and Skibidi Toilets
    - 8.6. `slorp`
    - 8.7. `bet`
    - 8.8. `gamba`
-   - 8.9. Strings: `yaplen`, `yapcat`, `yapcmp`, `yapidx`
+   - 8.9. Strings: `yaplen`, `yapcat`, `yapcmp`, `yapidx`, `s[i]`, `s[i:j]`
 9. **Limitations**
 10. **Known Issues**
 11. **Cultural Context: The Rise of ‘Brain Rot’**
@@ -1288,7 +1288,7 @@ skibidi main {
 
 ---
 
-### 8.9. Strings: `yaplen`, `yapcat`, `yapcmp`, `yapidx`
+### 8.9. Strings: `yaplen`, `yapcat`, `yapcmp`, `yapidx`, `s[i]`, `s[i:j]`
 
 ```c
 rizz yaplen(rant s);                  /* length in BYTES                    */
@@ -1358,10 +1358,46 @@ modified, and the result is independent of both -- storing it and then calling
   `strings.Index` -- so `yapidx(h, n) >= 0` is a correct "contains" test for
   every needle, including an empty one.
 
-> **Not in v1:** there is no substring, slice, split, replace, or case
-> conversion yet, and no indexing syntax such as `s[i]`. Those are tracked
-> separately; v1 is the measure/join/compare/search core that the rest builds
-> on.
+#### Indexing and slicing: `s[i]` and `s[i:j]`
+
+These are **syntax**, not builtins — no `#cooked`, no function call.
+
+```c
+rant s = "hello world";
+
+yap  c   = s[0];        🚽 'h'   -- one byte, as a yap
+rant sub = s[0:5];      🚽 "hello" -- a NEW rant
+```
+
+- **`s[i]` yields a `yap`** — the byte at offset `i`. Index in `[0, len)`;
+  anything else is a runtime error.
+- **`s[i:j]` yields a new `rant`** — the half-open range `[i, j)`, so its
+  length is `j - i`. Requires `0 <= i <= j <= len`.
+- **Both slice bounds are required.** `s[:j]`, `s[i:]` and `s[:]` are not v1
+  syntax.
+- **No negative indices.** `s[-1]` does not mean "the last byte"; it is simply
+  out of range. Use `s[yaplen(s) - 1]`.
+- **Out of range is an error, not a clamp.** The program stops where the
+  mistake is rather than quietly returning something shorter than you asked
+  for.
+- Bounds are **bytes**, exactly as with `yaplen` — so a two-byte UTF-8
+  character is two indices, and slicing between them yields half a character.
+
+Note the deliberate asymmetry: `s[len]` is an error, but `s[len:len]` is
+**legal** and gives the empty string, because a slice's upper bound is
+exclusive and so `len` is a valid *boundary* even though it is not a valid
+*index*. `s[i:i]` is likewise legal and empty, which makes it a usable
+starting value when building a string up in a loop.
+
+Only a **named** `rant` can be indexed or sliced — `s[0:2]` works,
+`yapcat(a, b)[0:2]` does not parse. Bind the intermediate to a variable
+first. (The grammar shares its `IDENTIFIER [` prefix with array access so the
+two stay unambiguous; allowing an arbitrary expression base is a possible
+later change.)
+
+> **Not in v1:** there is no split, replace, trim, or case conversion yet, and
+> no omitted slice bounds or negative indices. Those are tracked separately;
+> v1 is the measure/join/compare/search/index core that the rest builds on.
 
 **Example**:
 
@@ -1385,7 +1421,9 @@ skibidi main {
 ```
 
 See [`examples/string_toolkit.brainrot`](../examples/string_toolkit.brainrot)
-for a longer worked example.
+for a longer worked example of the builtins, and
+[`examples/string_parsing.brainrot`](../examples/string_parsing.brainrot) for
+indexing and slicing used to split a delimited record.
 
 ---
 

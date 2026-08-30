@@ -418,6 +418,7 @@ typedef enum
     NODE_BREAK_STATEMENT,
     NODE_SIZEOF,
     NODE_ARRAY_ACCESS,
+    NODE_STRING_SLICE,
     NODE_FUNC_CALL,
     NODE_FUNCTION_DEF,
     NODE_RETURN,
@@ -526,6 +527,23 @@ struct ASTNode
         String strvalue;
         String name;
         Array array;
+        /* `s[i:j]` -- a half-open byte slice of a `rant`, yielding a new
+           `rant` (#251). Deliberately NOT folded into Array above: an
+           array access has one-or-more indices selecting an ELEMENT, a
+           slice has exactly two bounds selecting a RANGE, and giving them
+           the same node type would mean every existing NODE_ARRAY_ACCESS
+           site had to start asking which it was holding.
+
+           `name` is the sliced variable; the grammar admits only an
+           identifier base, matching array_access's own IDENTIFIER form.
+           Both bounds are required -- `s[:j]`/`s[i:]`/`s[:]` are not v1
+           syntax (issue #251, open question 1). */
+        struct
+        {
+            String name;
+            ASTNode *start;
+            ASTNode *end;
+        } slice;
         struct
         {
             String struct_name; /* name of the struct type */
@@ -747,6 +765,7 @@ bool set_multi_array_variable(const String name, const int dimensions[],
                               int num_dimensions, TypeModifiers mods,
                               VarType type);
 ASTNode *create_array_access_node_single(String name, ASTNode *index);
+ASTNode *create_string_slice_node(String name, ASTNode *start, ASTNode *end);
 ASTNode *create_multi_array_access_node(String name, ASTNode *indices[],
                                         int num_indices);
 ASTNode *create_struct_field_array_access_node(ASTNode *base,

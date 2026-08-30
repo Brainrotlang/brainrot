@@ -849,6 +849,10 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
         return NONE;
     }
 
+    case NODE_STRING_SLICE:
+        /* `s[i:j]` yields a rant unconditionally (#251). */
+        return VAR_STRING;
+
     case NODE_ARRAY_ACCESS:
     {
         /* Previously missing entirely (fell to `default: return NONE`),
@@ -893,10 +897,23 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
         SymbolEntry *symbol = find_symbol(analyzer, array_name);
         if (symbol && symbol->is_array)
             return symbol->type;
+        /* `s[i]` on a `rant` is a byte index yielding a `yap` (#251). The
+           static mirror of resolve_array_access_element()'s VAR_STRING
+           branch (ast.c) -- that one decides what width the RUNTIME reads,
+           this one is what argument type-checking sees, and the two
+           disagreeing is how a native call silently stops being checked
+           (semantic_check_native_call() fails open on NONE). A rant is not
+           an array, so both is_array tests around this deliberately do not
+           cover it. */
+        if (symbol && symbol->type == VAR_STRING && !symbol->is_array)
+            return VAR_CHAR;
 
         Variable *var = get_variable(array_name);
         if (var && var->desc.is_array)
             return var->desc.type;
+        if (var && var->desc.type == VAR_STRING && !var->desc.is_array &&
+            var->desc.pointer_level == 0)
+            return VAR_CHAR;
 
         return NONE;
     }
@@ -4162,6 +4179,53 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         node->modifiers = fld->desc.modifiers;
         if (fld->desc.type == VAR_STRUCT && fld->desc.struct_name.data)
             node->data.struct_access.struct_name = fld->desc.struct_name;
+        break;
+    }
+
+    case NODE_STRING_SLICE:
+    {
+        /* `s[i:j]` (#251). Two things are checked here, and only one of
+           them is possible at runtime.
+
+           The bounds are ordinary subexpressions, so they get the same
+           analysis and value-expression requirement every subscript gets
+           -- that is what makes `s[0:yapping("x")]` a static error rather
+           than a void value silently used as a length.
+
+           The sliced NAME is checked to be a rant here rather than left
+           entirely to evaluate_string_slice(), because a static answer is
+           strictly better when one is available: `rizz n; n[0:1]` is
+           wrong no matter what the program does, and saying so before it
+           runs beats saying so only if that line is reached. The runtime
+           check stays regardless -- find_symbol() sees only what has been
+           declared so far in this pass, so a genuinely unknown name is
+           left alone here and reported there. */
+        if (node->data.slice.start)
+        {
+            semantic_analyze_with_scope_tracking(analyzer,
+                                                 node->data.slice.start);
+            require_value_expression(analyzer, node->data.slice.start,
+                                     "slice bound");
+        }
+        if (node->data.slice.end)
+        {
+            semantic_analyze_with_scope_tracking(analyzer,
+                                                 node->data.slice.end);
+            require_value_expression(analyzer, node->data.slice.end,
+                                     "slice bound");
+        }
+
+        SymbolEntry *sliced = find_symbol(analyzer, node->data.slice.name);
+        if (sliced && !(sliced->type == VAR_STRING && !sliced->is_array &&
+                        sliced->pointer_level == 0))
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Cannot slice '%.100s': only a rant can be sliced",
+                     node->data.slice.name.data);
+            add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                               STRING_LITERAL(error_msg), node->line_number);
+        }
         break;
     }
 

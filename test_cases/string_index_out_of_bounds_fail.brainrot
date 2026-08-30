@@ -1,0 +1,31 @@
+🚽 Test case: issue #251 -- `s[i]` past the end of a rant is a hard runtime
+🚽 error, not a clamp and not a read past the buffer.
+🚽
+🚽 Bounds are checked against the STORED length, which is the only correct
+🚽 extent: a rant is NOT NUL-terminated, so there is no terminator to stop
+🚽 at, and a strlen-style check would read past the allocation for any
+🚽 string not built with a trailing zero. Same reasoning that makes yaplen
+🚽 read s.len instead of calling strlen.
+🚽
+🚽 ── Why the index here is len exactly, not len + 5 ────────────────────
+🚽 `s[5]` on a 5-byte string is the off-by-one a bounds check is actually
+🚽 for -- the first invalid index, one past the last valid one. A wildly
+🚽 out-of-range index like s[99] would be caught by almost any check,
+🚽 including a wrong one; s[len] is the case that separates `<` from `<=`.
+🚽
+🚽 `before` is printed so the fixture pins that execution reached the
+🚽 indexing at all, and there is no output after it: this must stop the
+🚽 program, not report and carry on with a garbage byte.
+🚽
+🚽 Negative indices are rejected by the same check (there are no
+🚽 Python-style negative indices in v1 -- issue #251, open question 2), and
+🚽 that arm is covered by string_slice_out_of_bounds_fail.brainrot's own
+🚽 negative start rather than duplicated here, since one process can only
+🚽 die once.
+skibidi main {
+    rant s = "hello";
+    yapping("before");
+    yapping("never [%c]", s[5]);
+    yapping("after");
+    bussin 0;
+}
