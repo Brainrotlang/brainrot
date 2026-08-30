@@ -29,6 +29,25 @@
 🚽 smol is NOT affected and is included to pin that: C's usual arithmetic
 🚽 conversions promote both shorts to int before dividing, so -32768 / -1
 🚽 is computed where the result IS representable and never traps.
+🚽
+🚽 ── What each printed line actually pins ──────────────────────────────
+🚽 The two are not equally strong, and it is worth being exact about
+🚽 which is which (PR #310 review).
+🚽
+🚽 `mod: 0` does real work, because what this fixture pins about the
+🚽 modulo case is the ABSENCE of a diagnostic. Make INT_MIN % -1 report
+🚽 an error -- the tempting "consistency" change, since its sibling does
+🚽 -- and stderr gains a line the expected output does not have, so the
+🚽 fixture fails. That is the regression most likely to be attempted
+🚽 here, and it is caught.
+🚽
+🚽 `div: 0` pins the diagnostic and the absence of a crash, but NOT that
+🚽 the fallback was written: `result` comes from SAFE_MALLOC and
+🚽 safe_free() memsets blocks before releasing them, so an
+🚽 uninitialized read yields 0 too. Deleting `*(int *)result = 0;` from
+🚽 the guard leaves this fixture green -- verified by mutation. The
+🚽 shipped code does set it; the fixture simply cannot see the
+🚽 difference, and should not be read as claiming otherwise.
 skibidi main {
     rizz lo = 0 - 2147483647;
     lo = lo - 1;

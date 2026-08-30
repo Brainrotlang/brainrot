@@ -2883,7 +2883,25 @@ void *handle_binary_operation(ASTNode *node)
                rather than producing a value or a diagnostic (#272/#273).
                Handled like division by zero, since the situation is the
                same one: there is no correct int to return, so say so
-               instead of trapping. */
+               instead of trapping.
+
+               Unlike OP_MOD's matching guard below, this one does NOT
+               consider node->modifiers.is_unsigned -- because this arm
+               has no unsigned branch at all to order it against. That
+               asymmetry is deliberate rather than an omission, and it is
+               recorded here because it will matter to whoever wires
+               unsigned arithmetic through: 0x80000000 / 0xFFFFFFFF is
+               perfectly well defined unsigned (and its answer really is
+               0), so once is_unsigned actually reaches a binary-op node
+               this branch would emit a diagnostic about "the most
+               negative rizz" for operands the user declared nonut.
+               Adding a check today would only pair one dead branch with
+               another: is_unsigned is never set on these nodes as things
+               stand -- `nonut rizz a = 0 - 1; a % 3` yields -1, not the
+               unsigned 0 -- so OP_MOD's own unsigned handling is
+               unreachable in that shape too (PR #310 review). Fix the
+               propagation first; then this guard needs the same
+               is_unsigned ordering OP_MOD already has. */
             else if (*(int *)left_value == INT_MIN && *(int *)right_value == -1)
             {
                 yyerror("Division overflow: the most negative rizz divided "

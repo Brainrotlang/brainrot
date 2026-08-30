@@ -6,14 +6,30 @@
 🚽 straight to the modulo. So `smol / 0` reported "Division by zero"
 🚽 cleanly while `smol % 0`, one operator away, took down the process.
 🚽
-🚽 The result is printed rather than discarded so this pins the fallback
-🚽 value too, not just the message: an implementation that reported the
-🚽 error and then left the slot uninitialized would still fail here.
-🚽
-🚽 Both the int and short forms are exercised, so the fixture also pins
-🚽 that they agree -- reporting the same diagnostic and the same fallback
-🚽 is the property that was missing, and one guard existing without the
+🚽 Both the int and short forms are exercised, so the fixture pins that
+🚽 they AGREE -- same diagnostic, same printed value. That agreement is
+🚽 the property that was missing, and one guard existing without the
 🚽 other is exactly the shape of the bug.
+🚽
+🚽 ── What printing the result does NOT prove ───────────────────────────
+🚽 An earlier version of this comment claimed the printed value would
+🚽 catch an implementation that emitted the diagnostic but never wrote
+🚽 the fallback. It would not, and the claim was removed rather than left
+🚽 to be believed (PR #310 review).
+🚽
+🚽 `result` comes from SAFE_MALLOC (handle_binary_operation(), ast.c).
+🚽 safe_malloc() is plain malloc behind a header and does not zero -- but
+🚽 safe_free() memsets every block before releasing it, so a recycled
+🚽 block comes back zeroed, and a page fresh from the OS is zeroed too.
+🚽 An uninitialized read therefore yields the same 0 this fixture
+🚽 expects, and deleting `*(short *)result = 0;` from the guard leaves
+🚽 both fixtures green. Verified by mutation, not assumed.
+🚽
+🚽 So what is pinned here is the diagnostic, the agreement between the
+🚽 two widths, and the absence of a crash -- which is the whole of #271.
+🚽 Making the value distinguishable would mean choosing a fallback that
+🚽 uninitialized memory does not reliably read as, and for a "there is no
+🚽 answer" case that is not an improvement over 0.
 skibidi main {
     rizz ia = 7;
     rizz ib = 0;

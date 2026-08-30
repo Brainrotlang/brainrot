@@ -397,6 +397,6 @@
     "struct_array_by_value_arg_fail": "Error: 'len2' argument 1: struct arrays cannot be passed to a function -- pass an element (`pts[0]`) or its address (`&pts[0]`) at line 47",
     "struct_array_copy_init_fail": "0.0\nStderr:\nError: Expected a by-value struct/union value, got an array (index it, e.g. `arr[0]`) at line 34",
     "array_arg_scalar_param_fail": "Error: 'pick' argument 1: char arrays cannot be passed to a function -- pass an element (`ca[0]`) or its address (`&ca[0]`) at line 52\nError: 'flip' argument 1: bool arrays cannot be passed to a function -- pass an element (`ba[0]`) or its address (`&ba[0]`) at line 51\nError: 'half' argument 1: float arrays cannot be passed to a function -- pass an element (`fa[0]`) or its address (`&fa[0]`) at line 50\nError: 'twice' argument 1: int arrays cannot be passed to a function -- pass an element (`ia[0]`) or its address (`&ia[0]`) at line 49",
-    "modulo_by_zero_smol_fail": "rizz: 0\nsmol: 0\nStderr:\nError: Modulo by zero at line 26\nError: Modulo by zero at line 26",
-    "division_overflow_int_min_fail": "div: 0\nmod: 0\nsmol mod: 0\nStderr:\nError: Division overflow: the most negative rizz divided by -1 has no representable result at line 44"
+    "modulo_by_zero_smol_fail": "rizz: 0\nsmol: 0\nStderr:\nError: Modulo by zero at line 42\nError: Modulo by zero at line 42",
+    "division_overflow_int_min_fail": "div: 0\nmod: 0\nsmol mod: 0\nStderr:\nError: Division overflow: the most negative rizz divided by -1 has no representable result at line 63"
 }
