@@ -30,5 +30,6 @@
   ["native_sizeof_no_execution", "42\n"],
   ["native_call_loop", "1\n2\n3\n"],
   ["native_call_string_arg", "skibidi\nq\n"],
-  ["native_call_do_while", "5\n50\n6\n150\n"]
+  ["native_call_do_while", "5\n50\n6\n150\n"],
+  ["string_stdlib_char_buffer", "hi\n"]
 ]

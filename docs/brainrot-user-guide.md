@@ -647,6 +647,15 @@ rizz yapidx(rant hay, rant needle);   /* byte index of needle, or -1         */
   same reason.
 - Bytes compare as **unsigned**, matching C's `strcmp` and Go's
   `strings.Compare`, so non-ASCII bytes sort after every ASCII one.
+- ⚠️ **A `yap[N]` buffer always reports length `N`.** A `rant` carries a real
+  length, but a character buffer — what `slorp` fills — reports its declared
+  capacity, so with `yap buf[32]; slorp(buf);` and the user typing `hi`:
+  `yaplen(buf)` is `32`, `yapcmp(buf, "hi")` is `1` ("greater", because it is
+  32 long), and `yapcat(buf, "!")` builds a real 33-byte string that merely
+  *prints* as `hi` because output stops at the first NUL. Only `yapidx` is
+  unaffected. Measure and compare a `rant`, not a buffer — and there is no
+  conversion: `rant r = buf;` is a type error. This comes from how character
+  arrays are marshalled to builtins, not from these functions.
 - **Strings are immutable.** `yapcat` modifies neither argument and returns a
   new string that is independent of both, so an earlier result stays valid
   after later calls.

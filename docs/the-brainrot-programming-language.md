@@ -1310,6 +1310,39 @@ Bytes compare as **unsigned**, which is what C's `strcmp` and Go's
 `strings.Compare` do. Every non-ASCII byte therefore sorts *after* every ASCII
 one.
 
+> ### ⚠️ A `yap[N]` buffer always has length `N`
+>
+> This is the neighbouring gotcha, and it bites harder than the byte/character
+> one. A `rant` carries a real length. A `yap[N]` character buffer — the thing
+> [`slorp`](#86-slorp) fills, and the usual way a program reads input —
+> reports its **declared capacity**, not the length of the text in it.
+>
+> ```c
+> yap buf[32];
+> slorp(buf);                        🚽 user types "hi"
+>
+> yaplen(buf)          🚽 32, not 2
+> yapcmp(buf, "hi")    🚽 1  -- "buf is greater", because it is 32 long
+> yapidx(buf, "i")     🚽 1  -- correct
+> yapcat(buf, "!")     🚽 a real 33-byte string; prints as "hi" because
+>                      🚽 yapping stops at the first NUL, so the "!" is
+>                      🚽 sitting 31 bytes past it
+> ```
+>
+> So measure, compare and join a **`rant`**, not a raw buffer — and note there
+> is currently no way to convert one into the other: `rant r = buf;` is
+> rejected outright with *"Type mismatch in initialization of 'r': expected
+> string, got char"*. A `yap[N]` stays a `yap[N]`.
+>
+> `yapidx` is the one that still behaves, because a bounded scan finds the
+> needle at the same offset whether or not the trailing bytes are counted. If
+> you only need "where is it" or "does it contain it", it works on a buffer.
+>
+> This is a property of how character arrays are passed to builtins, not of
+> these four functions; they are simply the first to read the stored length
+> rather than treating the bytes as a C string. Pinned by
+> `test_cases/string_stdlib_char_buffer.brainrot`, and expected to change.
+
 **Strings are immutable; `yapcat` returns a new one.** Neither argument is
 modified, and the result is independent of both -- storing it and then calling
 `yapcat` again leaves the first result untouched.

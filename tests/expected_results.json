@@ -408,5 +408,6 @@
     "bare_bussin_void_return": "noop passed\npositive: 10\ncount: 3\ncount: 2\ncount: 1\nliftoff\nlocals exit passed\n",
     "string_stdlib": "len 5\ncat helloworld\nidx 5\ncmp -1\nempty len 0\ncat empty left [x]\ncat empty right [x]\ncat both empty []\nidx empty needle 0\nidx absent -1\nidx needle longer -1\nidx first 0\nidx at end 2\ncmp equal 0\ncmp prefix -1\ncmp longer 1\ncmp greater 1\ncmp empty 0\nutf8 len 2\ncmp high byte -1\nnested [abc]\nlen of cat 10\n",
     "string_stdlib_result_independence": "first aabb\nsecond ccdd\nthird eeff\nlens 4 4 4\nfirst intact 0\nsecond intact 0\n",
-    "string_stdlib_arg_type_fail": "Error: 'yaplen' argument 1: expected string, got int at line 22\n"
+    "string_stdlib_arg_type_fail": "Error: 'yaplen' argument 1: expected string, got int at line 22\n",
+    "string_stdlib_char_buffer": "slorp len 32\nslorp cmp 1\nslorp idx 1\ncat       [hi]\ncat len   33\nfixed len 8\nfixed str [hi]\nrant len  2\nrant cmp  0\n"
 }
