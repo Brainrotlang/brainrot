@@ -1,0 +1,55 @@
+🚽 Test case: issue #251 -- a string returned by yapcat must be an
+🚽 INDEPENDENT value that survives later yapcat calls.
+🚽
+🚽 This is the fixture that guards the one genuinely risky thing about the
+🚽 shipped implementation. stdrot/yapcat.c has to produce storage the caller
+🚽 did not supply, and the ABI gives it exactly one way to do that without
+🚽 leaking once per call: a single file-static buffer, freed and replaced on
+🚽 every call. Every rant that yapcat ever returned is therefore an alias of
+🚽 the same address, and stays correct only because the host copies out of
+🚽 it before the next call overwrites it.
+🚽
+🚽 string_stdlib.brainrot would not notice if that stopped being true: it
+🚽 consumes each result on the line that produced it, which is exactly the
+🚽 usage pattern a shared buffer still satisfies. Here the three results are
+🚽 deliberately created FIRST and printed AFTER, so a regression prints
+🚽 "eeff" three times or reads freed memory.
+🚽
+🚽 The lengths are printed too, because value equality is not the whole
+🚽 claim: a rant is length-prefixed, so a String whose .data was reused but
+🚽 whose .len was not would still print plausibly while being wrong.
+🚽
+🚽 ── Which copy is actually load-bearing (both were mutation-tested) ────
+🚽 TWO independent copies stand between yapcat's buffer and this fixture,
+🚽 and they are not equally important -- worth being exact, because the
+🚽 first draft of this comment credited the wrong one.
+🚽
+🚽 evaluate_expression_string() (ast.c) is the load-bearing one. It
+🚽 unconditionally safe_strdup()s every string expression -- "a literal, a
+🚽 variable's contents, a call result, all of them" -- so `rant x = <call>`
+🚽 always stores private memory. Replacing that copy with a borrow makes
+🚽 this fixture die with an ASan heap-use-after-free. Verified, not assumed.
+🚽
+🚽 finalize_native_string_result() (stdrot.c) materializes the returned
+🚽 STDROT_STRING as well, but removing THAT copy alone leaves this fixture's
+🚽 output unchanged, because the first copy still covers the stored-variable
+🚽 path. Also verified. So this fixture pins the property, not any one
+🚽 mechanism -- which is the right thing for a fixture to pin, but it should
+🚽 not be read as guarding stdrot.c's materialization specifically.
+skibidi main {
+    rant first = yapcat("aa", "bb");
+    rant second = yapcat("cc", "dd");
+    rant third = yapcat("ee", "ff");
+
+    yapping("first %s", first);
+    yapping("second %s", second);
+    yapping("third %s", third);
+    yapping("lens %d %d %d", yaplen(first), yaplen(second), yaplen(third));
+
+    🚽 The originals must still compare equal to freshly built copies --
+    🚽 the same claim as above, made through yapcmp rather than through
+    🚽 yapping's formatting.
+    yapping("first intact %d", yapcmp(first, "aabb"));
+    yapping("second intact %d", yapcmp(second, "ccdd"));
+    bussin 0;
+}

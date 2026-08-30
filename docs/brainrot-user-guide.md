@@ -376,6 +376,10 @@ Brainrot includes some built-in functions for convenience:
 | **slorp**    | `stdin`     | -            | Reads user input.                                                     |
 | **bet**      | `stderr`    | No           | Tests conditions and terminates with error message if false.          |
 | **gamba**    | -           | -            | Cryptographically safe random integers (OpenSSL `RAND_bytes`).        |
+| **yaplen**   | -           | -            | Length of a `rant`, in bytes.                                         |
+| **yapcat**   | -           | -            | Joins two `rant`s into a new one.                                     |
+| **yapcmp**   | -           | -            | Lexicographic comparison: `-1`, `0` or `1`.                           |
+| **yapidx**   | -           | -            | Byte index of one `rant` inside another, or `-1`.                     |
 
 ## 10.1. yapping
 
@@ -617,6 +621,58 @@ skibidi main {
 
     rizz nonce = gamba();
     yapping("nonce %d", nonce);
+    bussin 0;
+}
+```
+
+---
+
+## 10.9. yaplen, yapcat, yapcmp, yapidx
+
+**Prototypes**
+
+```c
+rizz yaplen(rant s);                  /* length in BYTES                     */
+rant yapcat(rant a, rant b);          /* a joined to b, as a new string      */
+rizz yapcmp(rant a, rant b);          /* -1 if a < b, 0 if equal, 1 if a > b */
+rizz yapidx(rant hay, rant needle);   /* byte index of needle, or -1         */
+```
+
+**Description**
+
+- The v1 string library: measure, join, compare, search. All four are
+  standard-library builtins -- no `#cooked`, no keyword.
+- **Byte-oriented, not character-oriented.** `yaplen("é")` is `2`, because
+  that is two bytes of UTF-8. Comparison and searching work on bytes for the
+  same reason.
+- Bytes compare as **unsigned**, matching C's `strcmp` and Go's
+  `strings.Compare`, so non-ASCII bytes sort after every ASCII one.
+- **Strings are immutable.** `yapcat` modifies neither argument and returns a
+  new string that is independent of both, so an earlier result stays valid
+  after later calls.
+- `yaplen` reads the stored length rather than scanning, so it is O(1) and
+  stays correct for a string containing an embedded NUL.
+- `yapcmp` returns exactly `-1`, `0` or `1`. When one string is a prefix of
+  the other the **shorter sorts first**: `yapcmp("app", "apple")` is `-1`.
+- `yapidx` reports the **first** match. A missing needle gives `-1`; an
+  **empty** needle gives `0`, so `yapidx(h, n) >= 0` is a correct "contains"
+  test for every needle.
+- Not in v1: substring/slice, split, replace, case conversion, and `s[i]`
+  indexing syntax.
+
+### Example
+
+```c
+skibidi main {
+    rant name = yapcat(yapcat("Big", " "), "Chungus");
+
+    yapping("%s", name);              🚽 Big Chungus
+    yapping("%d", yaplen(name));      🚽 11
+    yapping("%d", yapidx(name, " ")); 🚽 3
+
+    edgy (yapidx(name, "Chungus") >= 0) {
+        yapping("certified");
+    }
     bussin 0;
 }
 ```

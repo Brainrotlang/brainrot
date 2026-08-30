@@ -405,5 +405,8 @@
     "rant_parameter_invalid_arg_fail": "survived\nStderr:\nError: Invalid string expression at line 47",
     "struct_array_field_of_structs": "sizeof Pool: 44\nes[0] x=8.5 y=2.0 alive=1\nes[1] x=10.0 y=2.0 alive=0\nes[2] x=8.5 y=2.0 alive=1\ncount=3 speed=1.5\nsizeof Grid: 28\ngrid 1 6 tag=42\nlen2 element: 25.0\nlen2 whole:   0.0\ncall arg:     25.0\ncall 2-arg:   50.0\ncall copyinit: 6.0\ncall return:   6.0\nep    x=3.0\nep+2  x=8.5\nep[0] x=8.5\nsizeof Outer: 28\nnested 1.5 2.5 3.5 tag=7\nsecond hop 1.5 2.5\nStderr:\nError: Expected a by-value struct/union value, got an array (index it, e.g. `arr[0]`) at line 216",
     "unary_negation_smol": "-5\n0\n5\n5\n-32767\n-5\n-5\n",
-    "bare_bussin_void_return": "noop passed\npositive: 10\ncount: 3\ncount: 2\ncount: 1\nliftoff\nlocals exit passed\n"
+    "bare_bussin_void_return": "noop passed\npositive: 10\ncount: 3\ncount: 2\ncount: 1\nliftoff\nlocals exit passed\n",
+    "string_stdlib": "len 5\ncat helloworld\nidx 5\ncmp -1\nempty len 0\ncat empty left [x]\ncat empty right [x]\ncat both empty []\nidx empty needle 0\nidx absent -1\nidx needle longer -1\nidx first 0\nidx at end 2\ncmp equal 0\ncmp prefix -1\ncmp longer 1\ncmp greater 1\ncmp empty 0\nutf8 len 2\ncmp high byte -1\nnested [abc]\nlen of cat 10\n",
+    "string_stdlib_result_independence": "first aabb\nsecond ccdd\nthird eeff\nlens 4 4 4\nfirst intact 0\nsecond intact 0\n",
+    "string_stdlib_arg_type_fail": "Error: 'yaplen' argument 1: expected string, got int at line 22\n"
 }

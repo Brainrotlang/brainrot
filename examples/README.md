@@ -576,4 +576,50 @@ skibidi main {
 
 ---
 
+## 11. String Toolkit
+
+**File Name:** `string_toolkit.brainrot`
+
+```c
+rant full_name(rant first, rant last) {
+    bussin yapcat(yapcat(first, " "), last);
+}
+
+cap contains(rant haystack, rant needle) {
+    bussin yapidx(haystack, needle) >= 0;
+}
+
+skibidi main {
+    rant name = full_name("Big", "Chungus");
+
+    yapping("name:   %s", name);
+    yapping("length: %d", yaplen(name));
+    yapping("space:  %d", yapidx(name, " "));
+
+    yapping("contains 'hung': %d", contains(name, "hung"));
+
+    edgy (yapcmp("Chad", "Chadwick") < 0) {
+        yapping("Chad sorts before Chadwick");
+    }
+    bussin 0;
+}
+```
+
+### What It Does
+
+- Exercises the four v1 string builtins: `yaplen` (length in **bytes**),
+  `yapcat` (join, returning a **new** string), `yapcmp` (`-1`/`0`/`1`
+  ordering) and `yapidx` (byte index, or `-1`).
+- Shows the idiomatic "contains" test, `yapidx(h, n) >= 0` — which stays
+  correct even for an empty needle, because an empty needle returns `0`
+  rather than `-1`.
+- Builds a crude email validator out of nothing but two `yapidx` calls,
+  since v1 has **no substring or slice operation** yet — measure, join,
+  compare and search are the whole toolkit.
+- Ends by printing `yaplen("é")`, which is `2`: lengths count bytes, not
+  characters. See
+  [§8.9 of the language reference](../docs/the-brainrot-programming-language.md#89-strings-yaplen-yapcat-yapcmp-yapidx).
+
+---
+
 Feel free to explore and modify each example to learn more about how this language’s syntax and features work!
