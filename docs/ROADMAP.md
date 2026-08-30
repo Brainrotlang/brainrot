@@ -356,7 +356,7 @@ Today exactly one `.so` is loaded, by hardcoded name. Generalize to a module
 directory, each exporting a discovery entrypoint:
 
 ```
-stdrot/     brainray/     brainsql/     braincurl/
+stdrot/     rayrot/     brainsql/     braincurl/
 ```
 
 ```c
@@ -384,7 +384,7 @@ interposed by the always-loaded core library's own copy of that symbol).
 Its functions are registered alongside the core library's and any other
 already-cooked module's, with a load-time error on any name collision
 between them. The first real native module built on this mechanism is
-`brainray` (raylib), shipped by Phase 5 Road A (#208) — this phase delivered
+`rayrot` (raylib), shipped by Phase 5 Road A (#208) — this phase delivered
 the loader, not a binding, which was never its DoD. Types/constants
 registration is deferred past
 this phase entirely: `StdrotAPI` only carries a function table today, and
@@ -402,14 +402,14 @@ There are two roads here and we should walk both, in order.
 ### Road A — maximum brainrot, immediately (needs only Phase 1)
 
 **Status: shipped (#208).** Delivered as a hand-written raylib native module,
-`brainray/raylib.so`, loaded with `#cooked <raylib>` and built by the optional
-`make brainray` target — *not* linked into `libstdrot.so` as this section
+`rayrot/raylib.so`, loaded with `#cooked <raylib>` and built by the optional
+`make rayrot` target — *not* linked into `libstdrot.so` as this section
 originally proposed, because Phase 4's native-module mechanism (which landed
 after this was written) is the cleaner home and keeps raylib out of the core
 library's build. raylib stays an optional dependency: `make` / `make test` /
 `make valgrind` never build the module and don't need raylib installed. Ships
 ~20 primitive wrappers plus `examples/raylib/ohio_engine.brainrot`; see
-[docs/brainray.md](brainray.md). The original design sketch follows.
+[docs/rayrot.md](rayrot.md). The original design sketch follows.
 
 Hand-write ~20 wrappers over primitives only. Textures become integer handles;
 C owns the `Texture2D textures[]` array and Brainrot holds an ID.
@@ -439,7 +439,7 @@ raylib ships `tools/rlparser/output/raylib_api.json`, a machine-readable
 description of its entire API. Point a generator at it:
 
 ```
-raylib_api.json → brainray-gen → { C adapters, native descriptors,
+raylib_api.json → rayrot-gen → { C adapters, native descriptors,
                                    Brainrot constants/types, docs, ABI tests }
 ```
 
@@ -468,12 +468,12 @@ deliberately still not implementable as written: its
 that dies with the call. Struct returns stay rejected until Appendix B Q6
 (ownership of native resources) has an answer.
 
-*The generator.* `brainray/brainray_gen.py`, reading a vendored
-`brainray/raylib_api.json` pinned by upstream commit SHA, emitting **378 of
+*The generator.* `rayrot/rayrot_gen.py`, reading a vendored
+`rayrot/raylib_api.json` pinned by upstream commit SHA, emitting **378 of
 617 functions, 16 of 35 struct types, 305 constants** — plus an
 `_Static_assert`/`offsetof` translation unit whose compilation *is* the ABI
-drift check against real raylib headers. `make brainray-gen-sources`
-(generate; raylib not required) and `make brainray-gen` (also compile and
+drift check against real raylib headers. `make rayrot-gen-sources`
+(generate; raylib not required) and `make rayrot-gen` (also compile and
 verify) are opt-in and never prerequisites of `all`/`test`/`valgrind`.
 Demonstrated by `examples/raylib/ohio_engine_gen.brainrot`, which runs a real
 game loop passing `gang Vector2`/`gang Color`/`gang Rectangle` by value — the
@@ -494,10 +494,10 @@ Two design notes worth carrying forward:
   follow-up for this binding, worth more than the other five skip categories
   combined.
 
-Road A's hand-written `brainray/raylib.so` is untouched and still works;
+Road A's hand-written `rayrot/raylib.so` is untouched and still works;
 the generated binding is a separate module (`#cooked <raylibgen>`). Phase 11's `gamba()` is **not** that generated OpenSSL binding — it is
 a thin, hand-written `RAND_bytes` wrapper that ships earlier, the same way
-Road A ships a cursed game before Road B generates `brainray`.
+Road A ships a cursed game before Road B generates `rayrot`.
 
 ---
 
@@ -1362,15 +1362,15 @@ per keyword, and default to "library function" when in doubt.
      pinned version moves.
    - **The C adapters the generator emits are derived, and are not
      committed.** They are `lang.tab.c` by another name: produced into the
-     build tree (`brainray/generated/`) by the `brainray-gen-sources` and
-     `brainray-gen` targets only -- NOT by `brainray`, which builds Road A's
+     build tree (`rayrot/generated/`) by the `rayrot-gen-sources` and
+     `rayrot-gen` targets only -- NOT by `rayrot`, which builds Road A's
      hand-written module and never runs the generator -- gitignored, never
      hand-edited, and excluded from `make format-check` exactly as the
      Bison/Flex output already is (a generator that has to satisfy
      clang-format is a generator nobody wants to change).
 
    So the answer to "does raylib become a build dependency?" is: no more than
-   it already is. `make brainray` has required a pkg-config-visible raylib
+   it already is. `make rayrot` has required a pkg-config-visible raylib
    since Road A, and Road B does not widen that — it needs raylib's *headers*
    at adapter-compile time, which any installed raylib already provides, and
    the pinned JSON for the generation step, which is in-tree. `make`, `make
@@ -1379,12 +1379,12 @@ per keyword, and default to "library function" when in doubt.
    and is a Road B definition-of-done item in its own right.
 
    Rejected alternatives: committing the adapters (option 1) buys a
-   raylib-free `brainray` build that cannot exist anyway — the adapters
+   raylib-free `rayrot` build that cannot exist anyway — the adapters
    `#include <raylib.h>` and link against it — in exchange for carving a
    permanent exception into a rule whose whole value is being absolute.
    Generating in CI and committing nothing at all, not even the JSON (option
    3 as originally sketched), makes a clean checkout unable to build
-   `brainray` without network access and turns every upstream API change into
+   `rayrot` without network access and turns every upstream API change into
    an invisible, unreviewable build-time surprise.
 8. **Should `npc` be its own phase (Phase 9b)?** Function references are a
    language feature that Phases 5, 6, and 8 all want for callbacks, and they are

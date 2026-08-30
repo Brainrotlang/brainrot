@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""brainray-gen -- generate a Brainrot native binding from a C library's
+"""rayrot-gen -- generate a Brainrot native binding from a C library's
 machine-readable API description (issue #208, Phase 5 Road B).
 
-    raylib_api.json --> brainray-gen --> { C adapters + StdrotEntry
+    raylib_api.json --> rayrot-gen --> { C adapters + StdrotEntry
                                            descriptors, a Brainrot prelude
                                            of gang types and gyatt
                                            constants, ABI drift tests }
@@ -207,7 +207,7 @@ def load_api(path):
 
 def snake(name):
     """CamelCase -> snake_case, matching the `rl_*` naming Road A
-    established (brainray/raylib.c): DrawCircleV -> draw_circle_v,
+    established (rayrot/raylib.c): DrawCircleV -> draw_circle_v,
     DrawFPS -> draw_fps, LoadImageFromTexture -> load_image_from_texture.
 
     Runs of capitals are treated as one word so acronyms don't explode into
@@ -410,9 +410,9 @@ def build_functions(api, model, skips):
 GEN_BANNER_C = """\
 /* GENERATED FILE -- DO NOT EDIT, DO NOT COMMIT.
  *
- * Produced by brainray/brainray_gen.py from {api_basename}
+ * Produced by rayrot/rayrot_gen.py from {api_basename}
  * ({fn_count} of {fn_total} {library} functions, {struct_count} of
- * {struct_total} structs). Regenerate with `make brainray-gen`; edit the
+ * {struct_total} structs). Regenerate with `make rayrot-gen`; edit the
  * generator, never this file.
  *
  * This is `lang.tab.c` by another name: derived, gitignored, and excluded
@@ -460,7 +460,7 @@ static void br_struct_size_mismatch(const char *type_name, size_t expected,
                                     size_t actual)
 {
     fprintf(stderr,
-            "brainray: struct '%s' is %zu bytes here but the interpreter "
+            "rayrot: struct '%s' is %zu bytes here but the interpreter "
             "passed %zu -- the binding and the interpreter disagree about "
             "layout; rebuild both from the same checkout\\n",
             type_name, expected, actual);
@@ -470,7 +470,7 @@ static void br_struct_size_mismatch(const char *type_name, size_t expected,
 /* LeakSanitizer: disclaiming the graphics stack's globals (issue #267).
  *
  * Same reasoning, and the same weak-symbol mechanism, as the hand-written
- * Road A module (brainray/raylib.c): the library and what it drives allocate
+ * Road A module (rayrot/raylib.c): the library and what it drives allocate
  * process-lifetime global state (a GL context, default font/shader, X11 and
  * font caches) that it never returns to the allocator, and the interpreter is
  * built with -fsanitize=address, so LSan reports all of it at exit.
@@ -602,9 +602,9 @@ def _emit_one_adapter(fn, model):
 GEN_BANNER_BRAINROT = """\
 🚽 GENERATED FILE -- DO NOT EDIT, DO NOT COMMIT.
 🚽
-🚽 Produced by brainray/brainray_gen.py from {api_basename}
+🚽 Produced by rayrot/rayrot_gen.py from {api_basename}
 🚽 ({struct_count} of {struct_total} {library} structs, {const_count}
-🚽 constants). Regenerate with `make brainray-gen`.
+🚽 constants). Regenerate with `make rayrot-gen`.
 🚽
 🚽 This prelude is the types-and-constants half of the binding. It exists
 🚽 because `StdrotAPI` carries a function table and nothing else -- there is
@@ -658,7 +658,7 @@ def emit_prelude(model, consts, opts, stats):
 GEN_BANNER_ABI = """\
 /* GENERATED FILE -- DO NOT EDIT, DO NOT COMMIT.
  *
- * Produced by brainray/brainray_gen.py from {api_basename}.
+ * Produced by rayrot/rayrot_gen.py from {api_basename}.
  *
  * ABI drift detection, and the reason this binding is allowed to memcpy
  * bytes into real C types at all. Every assertion below compares a REAL
@@ -691,18 +691,18 @@ def emit_abi_check(model, opts, stats):
         size, align, fields = model.layouts[name]
         o.append(f"_Static_assert(sizeof({name}) == {size},")
         o.append(f'               "{name}: real size disagrees with the '
-                 f'{size} bytes brainray-gen computed");')
+                 f'{size} bytes rayrot-gen computed");')
         o.append(f"_Static_assert(_Alignof({name}) == {align},")
         o.append(f'               "{name}: real alignment disagrees with the '
-                 f'{align} brainray-gen computed");')
+                 f'{align} rayrot-gen computed");')
         for fname, offset, _ in fields:
             o.append(f"_Static_assert(offsetof({name}, {fname}) == {offset},")
             o.append(f'               "{name}.{fname}: real offset disagrees '
-                     f'with the {offset} brainray-gen computed");')
+                     f'with the {offset} rayrot-gen computed");')
         o.append("")
     o.append("int main(void)")
     o.append("{")
-    o.append(f'    printf("brainray ABI check: {len(model.emittable)} '
+    o.append(f'    printf("rayrot ABI check: {len(model.emittable)} '
              f'{opts.library} structs verified against real headers\\n");')
     for name in model.emittable:
         o.append(f'    printf("  %-18s sizeof=%2zu _Alignof=%zu\\n", "{name}", '
@@ -746,7 +746,7 @@ def report(fns, model, api, skips, consts, repaired, opts, out):
     total_structs = len(model.structs)
     pct = 100.0 * len(fns) / total_fns if total_fns else 0.0
     p = out.append
-    p(f"brainray-gen: {opts.library} <- {opts.api}")
+    p(f"rayrot-gen: {opts.library} <- {opts.api}")
     if repaired:
         p(f"  NOTE: repaired {repaired} malformed `description` value(s) "
           "while parsing (upstream JSON defect; see load_api())")
@@ -828,7 +828,7 @@ def main(argv=None):
 
     unexpected = skips.unexpected()
     if unexpected:
-        msg = ("brainray-gen: UNEXPECTED skip reason(s): "
+        msg = ("rayrot-gen: UNEXPECTED skip reason(s): "
                + ", ".join(unexpected)
                + "\n  These are not known ABI gaps -- the upstream API "
                  "description probably changed shape. Investigate before "

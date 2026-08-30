@@ -1,10 +1,10 @@
-"""Tests for brainray/brainray_gen.py -- the raylib binding generator
+"""Tests for rayrot/rayrot_gen.py -- the raylib binding generator
 (issue #208, Phase 5 Road B).
 
 None of these need raylib installed. That is the point: `make test` must stay
 green on a machine with no raylib, so everything verifiable from the pinned
-brainray/raylib_api.json alone is verified here, and only the two things that
-genuinely require raylib's headers are left to the opt-in `make brainray-gen`
+rayrot/raylib_api.json alone is verified here, and only the two things that
+genuinely require raylib's headers are left to the opt-in `make rayrot-gen`
 target:
 
   * compiling the generated adapters, and
@@ -43,11 +43,11 @@ import pytest
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 repo_root = os.path.dirname(script_dir)
-brainray_dir = os.path.join(repo_root, "brainray")
-API_PATH = os.path.join(brainray_dir, "raylib_api.json")
+rayrot_dir = os.path.join(repo_root, "rayrot")
+API_PATH = os.path.join(rayrot_dir, "raylib_api.json")
 
-sys.path.insert(0, brainray_dir)
-import brainray_gen as gen  # noqa: E402  (needs the path insert above)
+sys.path.insert(0, rayrot_dir)
+import rayrot_gen as gen  # noqa: E402  (needs the path insert above)
 
 
 @pytest.fixture(scope="module")
@@ -193,9 +193,9 @@ def test_by_value_struct_params_get_a_tag(model):
 
 @pytest.fixture(scope="module")
 def generated(tmp_path_factory):
-    """Run the generator exactly as `make brainray-gen-sources` does,
+    """Run the generator exactly as `make rayrot-gen-sources` does,
     including --strict, and hand back the output directory."""
-    out = tmp_path_factory.mktemp("brainray_generated")
+    out = tmp_path_factory.mktemp("rayrot_generated")
     rc = gen.main(["--api", API_PATH, "--outdir", str(out), "--strict"])
     assert rc == 0
     return out

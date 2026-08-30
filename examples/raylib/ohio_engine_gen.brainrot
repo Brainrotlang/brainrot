@@ -18,9 +18,9 @@
 🚽 whose byte layout is _Static_assert'ed against the real raylib headers.
 🚽
 🚽 Requires raylib and a display:
-🚽     make brainray-gen && make play-gen
+🚽     make rayrot-gen && make play-gen
 🚽 or:
-🚽     BRAINROT_PATH=brainray/generated ./brainrot examples/raylib/ohio_engine_gen.brainrot
+🚽     BRAINROT_PATH=rayrot/generated ./brainrot examples/raylib/ohio_engine_gen.brainrot
 🚽
 🚽 It closes itself after 30 frames so it can run unattended in a test.
 

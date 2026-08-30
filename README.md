@@ -223,24 +223,24 @@ Check out the [examples](examples/README.md):
 ### 🎮 The first cursed game
 
 Yes, the joke language runs a real game loop. `examples/raylib/ohio_engine.brainrot`
-calls [raylib](https://www.raylib.com/) through the optional `brainray` native
+calls [raylib](https://www.raylib.com/) through the optional `rayrot` native
 module (`#cooked <raylib>`) to bounce an "ABSOLUTE CINEMA" orb around a window.
 
 raylib is an **optional** dependency (not needed for `make`/`make test`), and
-`#cooked <raylib>` loads the `brainray/raylib.so` wrapper built by `make
-brainray` — **not** the system `libraylib.so` directly. First install a system
+`#cooked <raylib>` loads the `rayrot/raylib.so` wrapper built by `make
+rayrot` — **not** the system `libraylib.so` directly. First install a system
 raylib (on Ubuntu it is **not** `apt-get install libraylib-dev`; that package
 does not exist there — use the raylib PPA or a source build), then:
 
 ```bash
 pkg-config --exists raylib     # confirm raylib is installed
 make                           # build the interpreter
-make brainray                  # build the raylib binding (brainray/raylib.so)
-BRAINROT_PATH=brainray ./brainrot examples/raylib/ohio_engine.brainrot
+make rayrot                  # build the raylib binding (rayrot/raylib.so)
+BRAINROT_PATH=rayrot ./brainrot examples/raylib/ohio_engine.brainrot
 ```
 
 `make play` does the last two steps in one. See
-[`docs/brainray.md`](docs/brainray.md) for the full raylib setup guide (Ubuntu
+[`docs/rayrot.md`](docs/rayrot.md) for the full raylib setup guide (Ubuntu
 PPA vs. source build, macOS, the two-library model) and the binding reference.
 
 ### 🤖 …and the generated binding
@@ -248,11 +248,11 @@ PPA vs. source build, macOS, the two-library model) and the binding reference.
 The hand-written module above wraps about 20 raylib primitives and flattens
 everything into scalars (`rl_draw_circle(640, 360, 100.0, 255, 0, 255, 255)`).
 raylib has **617** functions, and hand-writing that many wrappers is not a
-plan — so `brainray/brainray_gen.py` generates them from raylib's own published
+plan — so `rayrot/rayrot_gen.py` generates them from raylib's own published
 API description:
 
 ```text
-brainray/raylib_api.json → brainray-gen → { C adapters + ABI descriptors,
+rayrot/raylib_api.json → rayrot-gen → { C adapters + ABI descriptors,
                                             a Brainrot prelude of gang types
                                             and gyatt constants, ABI tests }
 ```
@@ -269,8 +269,8 @@ rl_draw_circle_v(pos, 60.0, orb);   🚽 raylib's own DrawCircleV(Vector2, float
 ```
 
 ```bash
-make brainray-gen-sources   # generate the binding (raylib NOT required)
-make brainray-gen           # + compile it and run its ABI drift check
+make rayrot-gen-sources   # generate the binding (raylib NOT required)
+make rayrot-gen           # + compile it and run its ABI drift check
 make play-gen               # + run examples/raylib/ohio_engine_gen.brainrot
 ```
 
@@ -279,7 +279,7 @@ needs raylib. Every generated `gang` has its size, alignment, and every field
 offset `_Static_assert`ed against the real raylib headers, so a layout
 disagreement is a build failure rather than a runtime corruption. What it
 deliberately leaves out — struct returns most of all — is counted and reported
-on every run; see [`docs/brainray.md`](docs/brainray.md).
+on every run; see [`docs/rayrot.md`](docs/rayrot.md).
 
 ## 🗪 Community
 

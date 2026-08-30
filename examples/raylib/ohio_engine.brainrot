@@ -4,11 +4,11 @@
 🚽 orb over a dark background, with live FPS. Move it faster by holding SPACE;
 🚽 quit with ESC or the window's close button.
 🚽
-🚽 raylib bindings come from the OPTIONAL brainray native module, not the core
+🚽 raylib bindings come from the OPTIONAL rayrot native module, not the core
 🚽 library. Build and run it with:
 🚽
-🚽     make brainray
-🚽     BRAINROT_PATH=brainray ./brainrot examples/raylib/ohio_engine.brainrot
+🚽     make rayrot
+🚽     BRAINROT_PATH=rayrot ./brainrot examples/raylib/ohio_engine.brainrot
 🚽
 🚽 Colors are passed as four separate r,g,b,a integers (the ABI does not carry
 🚽 C structs by value yet), and textures would be integer handles — see

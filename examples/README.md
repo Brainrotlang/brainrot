@@ -449,25 +449,25 @@ skibidi main {
 - Runs an actual raylib game loop: a bouncing "ABSOLUTE CINEMA" orb with live
   FPS. Hold **SPACE** to speed it up, **ESC** (or the window's close button)
   to quit.
-- Demonstrates calling a real C library from Brainrot through the `brainray`
+- Demonstrates calling a real C library from Brainrot through the `rayrot`
   native module, loaded with `#cooked <raylib>`.
 - Colors are passed as four separate `r, g, b, a` integers and textures would
   be integer handles — the native ABI does not carry C structs by value yet
   (see [`raylib/README.md`](raylib/README.md) and
-  [`docs/brainray.md`](../docs/brainray.md)).
+  [`docs/rayrot.md`](../docs/rayrot.md)).
 
 **Requires raylib** (an optional dependency). Install a system raylib first —
 on Ubuntu that is **not** `apt-get install libraylib-dev`; see the canonical
-setup guide [`docs/brainray.md`](../docs/brainray.md#installing-raylib) (Ubuntu
+setup guide [`docs/rayrot.md`](../docs/rayrot.md#installing-raylib) (Ubuntu
 PPA / source build, macOS `brew install raylib`). Then build the wrapper module
-`brainray/raylib.so` and run (or just `make play`):
+`rayrot/raylib.so` and run (or just `make play`):
 
 ```bash
-make brainray
-BRAINROT_PATH=brainray ./brainrot examples/raylib/ohio_engine.brainrot
+make rayrot
+BRAINROT_PATH=rayrot ./brainrot examples/raylib/ohio_engine.brainrot
 ```
 
-`#cooked <raylib>` loads `brainray/raylib.so`, not the system `libraylib.so`
+`#cooked <raylib>` loads `rayrot/raylib.so`, not the system `libraylib.so`
 directly, so `BRAINROT_PATH` must point at a directory containing it.
 `make`, `make test`, and `make valgrind` do **not** build this module and do
 not require raylib.
@@ -513,7 +513,7 @@ generated declaration whose byte layout is `_Static_assert`ed against the real
 raylib headers. It closes itself after 30 frames so it can run unattended.
 
 ```bash
-make brainray-gen   # generate + compile the binding, then verify its ABI
+make rayrot-gen   # generate + compile the binding, then verify its ABI
 make play-gen       # ... and run this example
 ```
 
@@ -524,9 +524,9 @@ make play-gen       # ... and run this example
   `gang` types and `gyatt` constants and itself cooks the native module — so
   types and constants need no ABI support at all.
 - Generating the binding needs only Python and the pinned
-  `brainray/raylib_api.json`; only compiling it needs raylib.
+  `rayrot/raylib_api.json`; only compiling it needs raylib.
 
-See [`docs/brainray.md`](../docs/brainray.md#road-b--the-generated-binding) for
+See [`docs/rayrot.md`](../docs/rayrot.md#road-b--the-generated-binding) for
 what the generator covers (378 of raylib's 617 functions) and what it
 deliberately skips.
 

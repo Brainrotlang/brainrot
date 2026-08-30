@@ -1,6 +1,6 @@
-# `brainray` — raylib bindings for Brainrot
+# `rayrot` — raylib bindings for Brainrot
 
-`brainray` is Brainrot's binding to [raylib](https://www.raylib.com/), a simple
+`rayrot` is Brainrot's binding to [raylib](https://www.raylib.com/), a simple
 C library for videogames. It ships the language's first real native-library
 binding and its first cursed game, `examples/raylib/ohio_engine.brainrot`
 (Issue #208, Phase 5 "Road A").
@@ -8,10 +8,10 @@ binding and its first cursed game, `examples/raylib/ohio_engine.brainrot`
 It is a **hand-written native module**, not part of the core standard library.
 raylib is an **optional dependency**: `make`, `make test`, `make valgrind`, and
 `make wasm` neither build the module nor need raylib installed. Only
-`make brainray` (and the `make play` convenience target) require it.
+`make rayrot` (and the `make play` convenience target) require it.
 
 > **This page is the single source of truth for raylib setup.** The README,
-> the Makefile's `brainray` error message, and `examples/raylib/README.md` all
+> the Makefile's `rayrot` error message, and `examples/raylib/README.md` all
 > point here rather than repeating install steps.
 
 ## Two libraries, not one
@@ -22,28 +22,28 @@ interchangeable:
 | File | What it is | Who builds it |
 | --- | --- | --- |
 | `libraylib.so` | The **system raylib** C library | Your OS package / a source build of raylib |
-| `brainray/raylib.so` | Brainrot's **native module** wrapping it | `make brainray` |
+| `rayrot/raylib.so` | Brainrot's **native module** wrapping it | `make rayrot` |
 
 `#cooked <raylib>` does **not** load the system's `libraylib.so` directly.
 Brainrot searches its module path for a `raylib.brainrot` file or a `raylib.so`
-native module — so it needs the wrapper that `make brainray` produces:
+native module — so it needs the wrapper that `make rayrot` produces:
 
 ```text
 examples/raylib/ohio_engine.brainrot
         |  #cooked <raylib>   (Brainrot searches $BRAINROT_PATH for raylib.so)
         v
-brainray/raylib.so            <-- built by `make brainray`
+rayrot/raylib.so            <-- built by `make rayrot`
         |  raylib C API
         v
 libraylib.so                  <-- the system raylib you install below
 ```
 
 Installing `libraylib.so` alone is therefore **not** enough to run the example:
-without `brainray/raylib.so`, `#cooked <raylib>` cannot resolve the module.
+without `rayrot/raylib.so`, `#cooked <raylib>` cannot resolve the module.
 
 ## Installing raylib
 
-`make brainray` finds raylib through **`pkg-config`**, so whatever route you
+`make rayrot` finds raylib through **`pkg-config`**, so whatever route you
 pick must leave a working `raylib.pc`. Verify at any point with:
 
 ```bash
@@ -71,7 +71,7 @@ apt-cache search libraylib            # e.g. libraylib5-dev and/or libraylib6-de
 sudo apt-get install libraylib5-dev   # or libraylib6-dev where available
 ```
 
-brainray only uses long-stable primitives, so any of these series is fine.
+rayrot only uses long-stable primitives, so any of these series is fine.
 
 **Option B — build the latest raylib from source.** Install the build
 dependencies, then build raylib **with CMake** (its CMake install is what
@@ -134,18 +134,18 @@ BSD, and prebuilt release binaries.
 ## Building the binding
 
 Once `pkg-config --exists raylib` passes, build the module (produces
-`brainray/raylib.so`):
+`rayrot/raylib.so`):
 
 ```bash
-make brainray
+make rayrot
 ```
 
-If raylib is not found, `make brainray` fails fast and points back to this page.
+If raylib is not found, `make rayrot` fails fast and points back to this page.
 
 ## Running the cursed game
 
 `#cooked <raylib>` resolves the module through the module search path, so point
-`$BRAINROT_PATH` at the `brainray/` directory. The canonical workflow from a
+`$BRAINROT_PATH` at the `rayrot/` directory. The canonical workflow from a
 source checkout is:
 
 ```bash
@@ -153,9 +153,9 @@ source checkout is:
 pkg-config --exists raylib
 # 2. build the interpreter and the binding
 make
-make brainray
+make rayrot
 # 3. run the example (or just `make play`, which does 2+3)
-BRAINROT_PATH=brainray ./brainrot examples/raylib/ohio_engine.brainrot
+BRAINROT_PATH=rayrot ./brainrot examples/raylib/ohio_engine.brainrot
 ```
 
 A window opens with a bouncing "ABSOLUTE CINEMA" orb and live FPS. Hold
@@ -173,13 +173,13 @@ searches its install module directory, **`/usr/local/lib/brainrot`**. Note that
 that directory and copy the module in yourself:
 
 ```bash
-sudo install -Dm755 brainray/raylib.so /usr/local/lib/brainrot/raylib.so
+sudo install -Dm755 rayrot/raylib.so /usr/local/lib/brainrot/raylib.so
 ```
 
 Or just keep pointing `BRAINROT_PATH` at a directory that holds `raylib.so` so
 `#cooked <raylib>` resolves.
 
-## Memory leaks: what brainray does and doesn't report
+## Memory leaks: what rayrot does and doesn't report
 
 The default `brainrot` is built with `-fsanitize=address`, so LeakSanitizer
 checks for leaks at exit. raylib and the libraries it drives (GLFW, the GL
@@ -187,13 +187,13 @@ driver / Mesa, X11, fontconfig) allocate process-lifetime global state — a GL
 context, the default font and shader, X11 and font caches — that they never
 return to the allocator; the OS reclaims it when the process ends. Reported
 verbatim, that would be a wall of "leaks" ([#267](https://github.com/Brainrotlang/brainrot/issues/267))
-that no application can free and that brainray does not own.
+that no application can free and that rayrot does not own.
 
-So brainray brackets each raylib call with LeakSanitizer's allocator-scoped
-`__lsan_disable()` / `__lsan_enable()` (see `brainray/raylib.c`): allocations
+So rayrot brackets each raylib call with LeakSanitizer's allocator-scoped
+`__lsan_disable()` / `__lsan_enable()` (see `rayrot/raylib.c`): allocations
 made *inside* a raylib call are excluded from the leak report on purpose, as
 unowned graphics-stack state. This is deliberately narrow — **everything
-brainray itself allocates stays fully checked**. The window-title copy and the
+rayrot itself allocates stays fully checked**. The window-title copy and the
 texture table are allocated outside those brackets, so a real leak in the
 binding (say, forgetting to free the title in `rl_close_window`) is still
 reported. The controls are weak symbols, inert when the interpreter carries no
@@ -201,10 +201,10 @@ sanitizer (`make release`), so the module loads either way.
 
 The upshot: running the example — `make play`, or the plain command below —
 exits clean under the default sanitizer build, with leak checking still live for
-brainray's and the interpreter's own memory:
+rayrot's and the interpreter's own memory:
 
 ```bash
-BRAINROT_PATH=brainray ./brainrot examples/raylib/ohio_engine.brainrot
+BRAINROT_PATH=rayrot ./brainrot examples/raylib/ohio_engine.brainrot
 ```
 
 (An LSan *suppression file* is not used here: under the default fast unwind the
@@ -247,17 +247,17 @@ alongside rather than replacing it — see the next section.
 
 Everything above is Road A: ~20 wrappers, written by hand, scalars only.
 raylib has **617** functions. Writing that many by hand is how this project
-dies, so `brainray/brainray_gen.py` writes them instead:
+dies, so `rayrot/rayrot_gen.py` writes them instead:
 
 ```text
-brainray/raylib_api.json → brainray-gen → { raylibgen_native.c    C adapters + descriptors
+rayrot/raylib_api.json → rayrot-gen → { raylibgen_native.c    C adapters + descriptors
                                             raylibgen.brainrot    gang types + gyatt constants
                                             raylibgen_abi_check.c _Static_assert layout tests }
 ```
 
 ```bash
-make brainray-gen-sources   # generate (Python + the pinned JSON; no raylib)
-make brainray-gen           # + compile, and run the ABI drift check
+make rayrot-gen-sources   # generate (Python + the pinned JSON; no raylib)
+make rayrot-gen           # + compile, and run the ABI drift check
 make play-gen               # + run examples/raylib/ohio_engine_gen.brainrot
 ```
 
@@ -267,8 +267,8 @@ constants.**
 ### It coexists with Road A
 
 Road B's binding is a *separate module under a separate name*
-(`#cooked <raylibgen>`, in `brainray/generated/`), so Road A's
-`brainray/raylib.so` and its `#cooked <raylib>` keep working untouched. Both
+(`#cooked <raylibgen>`, in `rayrot/generated/`), so Road A's
+`rayrot/raylib.so` and its `#cooked <raylib>` keep working untouched. Both
 export `rl_`-prefixed names, so loading both at once would be rejected as a
 duplicate export — use one or the other.
 
@@ -298,13 +298,13 @@ checked:
 | Pair | Where |
 | --- | --- |
 | generator's model ↔ real raylib headers | `raylibgen_abi_check.c` — `_Static_assert` on `sizeof`, `_Alignof`, and every `offsetof`. Building it *is* the check. |
-| generator's model ↔ Brainrot's `compute_struct_layout()` | `tests/test_brainray_gen.py` — runs the interpreter and compares both each type's total size **and** its interior padding, the latter via prefix probes with a trailing sentinel byte. Needs no raylib. Strong but indirect: Brainrot cannot observe a field's address, so offsets are compared through prefix sizes rather than read off directly. |
-| generator's model ↔ known-good constants | `tests/test_brainray_gen.py` — hardcoded raylib layouts, so a generator bug can't agree with itself. |
+| generator's model ↔ Brainrot's `compute_struct_layout()` | `tests/test_rayrot_gen.py` — runs the interpreter and compares both each type's total size **and** its interior padding, the latter via prefix probes with a trailing sentinel byte. Needs no raylib. Strong but indirect: Brainrot cannot observe a field's address, so offsets are compared through prefix sizes rather than read off directly. |
+| generator's model ↔ known-good constants | `tests/test_rayrot_gen.py` — hardcoded raylib layouts, so a generator bug can't agree with itself. |
 
 ### What it deliberately leaves out
 
 Every skip is counted and printed on each run, and `--strict` (which
-`make brainray-gen-sources` uses) fails the build on any skip reason that
+`make rayrot-gen-sources` uses) fails the build on any skip reason that
 isn't one of these known gaps — so an upstream schema change is a red build,
 not a quietly smaller binding.
 
@@ -329,13 +329,13 @@ this is documented rather than worked around.
 
 ### Pointing the generator at a different library
 
-`brainray_gen.py` has no raylib-specific logic beyond its CLI defaults. It
+`rayrot_gen.py` has no raylib-specific logic beyond its CLI defaults. It
 needs a JSON description with `functions` (`name`/`returnType`/`params`),
 `structs` (`name`/`fields`), `enums` (`name`/`values`), and optionally
 `aliases`/`callbacks` — then:
 
 ```bash
-python3 brainray/brainray_gen.py --api path/to/sdl_api.json \
+python3 rayrot/rayrot_gen.py --api path/to/sdl_api.json \
     --outdir brainsdl/generated --header SDL3/SDL.h \
     --module-name sdlgen --library SDL3 --strict
 ```
@@ -436,8 +436,8 @@ rl_draw_text_int("FINAL SCORE ", score, 0, cx - w / 2, 320, 36, 245, 200, 90, 25
 Unlike every other wrapper here, these two allocate: they build the joined
 string on the heap and free it before returning. That allocation deliberately
 happens *outside* the LeakSanitizer brackets described above, so a missed
-`free()` here is still reported as brainray's own leak — and
-`test_brainray_windowed_run_is_leak_clean` exercises both functions for exactly
+`free()` here is still reported as rayrot's own leak — and
+`test_rayrot_windowed_run_is_leak_clean` exercises both functions for exactly
 that reason.
 
 ### Sprite atlases and flipping
@@ -473,7 +473,7 @@ rl_draw_texture_rec(atlas, 0.0, 0.0, -64.0, 64.0, px, py, 255, 255, 255, 255);
 Until `DrawTexturePro`'s scaling and rotation are exposed, that is the only way
 to flip a sprite, so it is worth knowing rather than looking like a bug.
 
-The rectangle is passed to raylib unchanged: brainray does **not** clamp it to
+The rectangle is passed to raylib unchanged: rayrot does **not** clamp it to
 the texture, so what happens when it reaches outside the image is raylib's
 behaviour and not a guarantee this binding makes. Handle validation matches
 `rl_draw_texture` — an out-of-range, negative, or already-unloaded handle draws
@@ -512,7 +512,7 @@ goon (running) {
 
 Measured rather than asserted: over the same two seconds of wall clock, a pumped
 stream reported 1.60 s of playback and an unpumped one reported 0.00 s. That
-comparison is `test_brainray_audio_stream_advances_only_when_pumped`.
+comparison is `test_rayrot_audio_stream_advances_only_when_pumped`.
 
 #### Music or Sound is a real choice
 
@@ -566,7 +566,7 @@ directly. Common ones:
 
 ## Pointing it at another library later
 
-`brainray` is one native module built from one hand-written `.c` file linked
+`rayrot` is one native module built from one hand-written `.c` file linked
 against one C library. Any other C library follows the same recipe: a new
 `brainX/` directory with a `<lib>.c` of `STDROT_EXPORT_SIG` wrappers, a `.so`
 built with `-DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3`, and a
