@@ -67,6 +67,21 @@ rizz fromSwitch(rizz k) {
     bussin 0 - 1;
 }
 
+🚽 A BARE `bussin;` (void return, #320) from inside a loop -- the
+🚽 intersection of that change and this one, which neither fixture covered
+🚽 on its own. It must leave the function, not the loop: "NOT REACHED"
+🚽 below is what a `bussin`-as-`break` would print.
+skibidi findAndStop(rizz n) {
+    flex (rizz i = 0; i < n; i = i + 1) {
+        edgy (i == 2) {
+            yapping("stopping at %d", i);
+            bussin;
+        }
+        yapping("visiting %d", i);
+    }
+    yapping("NOT REACHED");
+}
+
 🚽 The control case: `bruh` must still escape exactly one loop.
 rizz stillBreaks(rizz n) {
     rizz total = 0;
@@ -86,6 +101,7 @@ skibidi main {
     yapping("switch   %d", fromSwitch(1));
     yapping("switch d %d", fromSwitch(7));
     yapping("break    %d", stillBreaks(5));
+    findAndStop(5);
     🚽 execution continues past every one of those
     yapping("done");
     bussin 0;
