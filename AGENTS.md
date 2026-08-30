@@ -21,9 +21,9 @@ Optional raylib bindings — never needed by `make`, `make test`, or
 `make valgrind`, and only the last two lines require raylib installed:
 
 ```bash
-make brainray-gen-sources # generate the raylib binding; needs NO raylib
-make brainray             # hand-written module (Road A); needs raylib
-make brainray-gen         # compile the generated binding + ABI drift check
+make rayrot-gen-sources # generate the raylib binding; needs NO raylib
+make rayrot             # hand-written module (Road A); needs raylib
+make rayrot-gen         # compile the generated binding + ABI drift check
 ```
 
 Run a single program: `./brainrot path/to/file.brainrot`.

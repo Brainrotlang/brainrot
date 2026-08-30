@@ -1,8 +1,8 @@
-/* brainray/raylib.c – Hand-written raylib binding for Brainrot (Issue #208,
+/* rayrot/raylib.c – Hand-written raylib binding for Brainrot (Issue #208,
  * Phase 5 "Road A").
  *
  * This is a NATIVE MODULE, not part of the core libstdrot.so. It is built
- * into brainray/raylib.so by the optional `make brainray` target (which
+ * into rayrot/raylib.so by the optional `make rayrot` target (which
  * links against a real raylib via pkg-config) and loaded at runtime by
  *
  *     #cooked <raylib>
@@ -61,10 +61,10 @@
 
 /* ── Texture handle table (C owns the real Texture2D objects) ───────────── */
 
-#define BRAINRAY_MAX_TEXTURES 256
+#define RAYROT_MAX_TEXTURES 256
 
-static Texture2D g_textures[BRAINRAY_MAX_TEXTURES];
-static bool g_texture_used[BRAINRAY_MAX_TEXTURES];
+static Texture2D g_textures[RAYROT_MAX_TEXTURES];
+static bool g_texture_used[RAYROT_MAX_TEXTURES];
 
 /* ── Audio handle tables (C owns the real Music/Sound objects) ──────────── *
  * Same Road A trick as textures: Music and Sound are structs that cannot
@@ -77,13 +77,13 @@ static bool g_texture_used[BRAINRAY_MAX_TEXTURES];
  * 80-second background track as a Sound is tens of megabytes of PCM, and a
  * one-shot hit as a Music is a stream you have to remember to pump. */
 
-#define BRAINRAY_MAX_MUSIC 16
-#define BRAINRAY_MAX_SOUNDS 64
+#define RAYROT_MAX_MUSIC 16
+#define RAYROT_MAX_SOUNDS 64
 
-static Music g_music[BRAINRAY_MAX_MUSIC];
-static bool g_music_used[BRAINRAY_MAX_MUSIC];
-static Sound g_sounds[BRAINRAY_MAX_SOUNDS];
-static bool g_sound_used[BRAINRAY_MAX_SOUNDS];
+static Music g_music[RAYROT_MAX_MUSIC];
+static bool g_music_used[RAYROT_MAX_MUSIC];
+static Sound g_sounds[RAYROT_MAX_SOUNDS];
+static bool g_sound_used[RAYROT_MAX_SOUNDS];
 
 /* Is this handle a slot this module currently owns? Both predicates live
  * here, beside the tables they guard, so every wrapper validates the same
@@ -91,12 +91,12 @@ static bool g_sound_used[BRAINRAY_MAX_SOUNDS];
  * than handing raylib a freed stream. */
 static bool br_music_live(int handle)
 {
-    return handle >= 0 && handle < BRAINRAY_MAX_MUSIC && g_music_used[handle];
+    return handle >= 0 && handle < RAYROT_MAX_MUSIC && g_music_used[handle];
 }
 
 static bool br_sound_live(int handle)
 {
-    return handle >= 0 && handle < BRAINRAY_MAX_SOUNDS && g_sound_used[handle];
+    return handle >= 0 && handle < RAYROT_MAX_SOUNDS && g_sound_used[handle];
 }
 
 /* Module-owned copy of the window title. raylib's InitWindow() retains the
@@ -109,15 +109,15 @@ static char *g_window_title = NULL;
  * raylib and the libraries it drives (GLFW, the GL driver, X11, fontconfig)
  * allocate process-lifetime global state -- a GL context, the default
  * font/shader, X11 and font caches -- that they never return to the allocator;
- * the OS reclaims it at exit. That state is not brainray's to free, but the
+ * the OS reclaims it at exit. That state is not rayrot's to free, but the
  * interpreter is built with -fsanitize=address, so LeakSanitizer reports every
  * one of those allocations when the demo exits (issue #267).
  *
  * Bracket each raylib call with LSan's allocator-scoped disable/enable so
  * allocations made *inside* raylib are excluded from the leak report on
- * purpose, as unowned. This is deliberately narrow: everything brainray itself
+ * purpose, as unowned. This is deliberately narrow: everything rayrot itself
  * allocates -- the window-title copy above, the texture table -- happens
- * OUTSIDE these brackets and stays fully tracked, so a real brainray leak is
+ * OUTSIDE these brackets and stays fully tracked, so a real rayrot leak is
  * still caught (a regression here does not go dark). The pure input/query
  * getters (WindowShouldClose, IsKeyDown, GetScreenWidth, ...) are left
  * unbracketed because they poll rather than allocate persistent state.
@@ -217,7 +217,7 @@ static StdrotValue br_close_window(StdrotValue *args, int argc)
      * module still owns before CloseWindow() destroys the context. Otherwise a
      * later InitWindow() + rl_draw_texture(old_handle) would feed raylib a GPU
      * id from a destroyed context. */
-    for (int i = 0; i < BRAINRAY_MAX_TEXTURES; i++)
+    for (int i = 0; i < RAYROT_MAX_TEXTURES; i++)
     {
         if (g_texture_used[i])
         {
@@ -353,9 +353,9 @@ static StdrotValue br_measure_text(StdrotValue *args, int argc)
  * so a wild `pad` cannot ask for an enormous allocation.
  *
  * Returns freshly allocated storage the caller frees, or NULL if the
- * allocation failed. This is brainray's own memory, deliberately allocated
+ * allocation failed. This is rayrot's own memory, deliberately allocated
  * outside the LSan brackets so a leak here would still be reported. */
-#define BRAINRAY_MAX_PAD 32
+#define RAYROT_MAX_PAD 32
 
 static char *br_format_text_int(const char *text, int value, int pad)
 {
@@ -367,9 +367,9 @@ static char *br_format_text_int(const char *text, int value, int pad)
     {
         pad = 0;
     }
-    else if (pad > BRAINRAY_MAX_PAD)
+    else if (pad > RAYROT_MAX_PAD)
     {
-        pad = BRAINRAY_MAX_PAD;
+        pad = RAYROT_MAX_PAD;
     }
     int n = snprintf(NULL, 0, "%s%0*d", text, pad, value);
     if (n < 0)
@@ -450,7 +450,7 @@ static StdrotValue br_load_texture(StdrotValue *args, int argc)
          * live handle always means a successful load. */
         return (StdrotValue){.type = STDROT_INT, .val = {.i = -1}};
     }
-    for (int i = 0; i < BRAINRAY_MAX_TEXTURES; i++)
+    for (int i = 0; i < RAYROT_MAX_TEXTURES; i++)
     {
         if (!g_texture_used[i])
         {
@@ -468,7 +468,7 @@ static StdrotValue br_draw_texture(StdrotValue *args, int argc)
 {
     (void)argc;
     int handle = args[0].val.i;
-    if (handle >= 0 && handle < BRAINRAY_MAX_TEXTURES && g_texture_used[handle])
+    if (handle >= 0 && handle < RAYROT_MAX_TEXTURES && g_texture_used[handle])
     {
         BR_RAYLIB_VOID(DrawTexture(g_textures[handle], args[1].val.i,
                                    args[2].val.i, make_color(args, 3)));
@@ -495,7 +495,7 @@ static StdrotValue br_draw_texture(StdrotValue *args, int argc)
  * other direction until DrawTexturePro's rotation is exposed, so it is worth
  * knowing about rather than looking like a bug.
  *
- * The rectangle is handed to raylib unchanged: brainray does not clamp it to
+ * The rectangle is handed to raylib unchanged: rayrot does not clamp it to
  * the texture, so sampling outside the image is raylib's business and not a
  * guarantee this wrapper makes. Handle validation matches rl_draw_texture --
  * an out-of-range or already-unloaded handle draws nothing rather than
@@ -504,7 +504,7 @@ static StdrotValue br_draw_texture_rec(StdrotValue *args, int argc)
 {
     (void)argc;
     int handle = args[0].val.i;
-    if (handle >= 0 && handle < BRAINRAY_MAX_TEXTURES && g_texture_used[handle])
+    if (handle >= 0 && handle < RAYROT_MAX_TEXTURES && g_texture_used[handle])
     {
         Rectangle rec = {(float)args[1].val.f, (float)args[2].val.f,
                          (float)args[3].val.f, (float)args[4].val.f};
@@ -519,7 +519,7 @@ static StdrotValue br_unload_texture(StdrotValue *args, int argc)
 {
     (void)argc;
     int handle = args[0].val.i;
-    if (handle >= 0 && handle < BRAINRAY_MAX_TEXTURES && g_texture_used[handle])
+    if (handle >= 0 && handle < RAYROT_MAX_TEXTURES && g_texture_used[handle])
     {
         BR_RAYLIB_VOID(UnloadTexture(g_textures[handle]));
         g_texture_used[handle] = false;
@@ -563,7 +563,7 @@ static StdrotValue br_close_audio_device(StdrotValue *args, int argc)
      * handle implies a live GL context: unload everything this module still
      * owns before the device goes away, or a later init plus a stale handle
      * hands raylib a freed stream. */
-    for (int i = 0; i < BRAINRAY_MAX_MUSIC; i++)
+    for (int i = 0; i < RAYROT_MAX_MUSIC; i++)
     {
         if (g_music_used[i])
         {
@@ -571,7 +571,7 @@ static StdrotValue br_close_audio_device(StdrotValue *args, int argc)
             g_music_used[i] = false;
         }
     }
-    for (int i = 0; i < BRAINRAY_MAX_SOUNDS; i++)
+    for (int i = 0; i < RAYROT_MAX_SOUNDS; i++)
     {
         if (g_sound_used[i])
         {
@@ -613,7 +613,7 @@ static StdrotValue br_load_music(StdrotValue *args, int argc)
         BR_RAYLIB_VOID(UnloadMusicStream(m));
         return (StdrotValue){.type = STDROT_INT, .val = {.i = -1}};
     }
-    for (int i = 0; i < BRAINRAY_MAX_MUSIC; i++)
+    for (int i = 0; i < RAYROT_MAX_MUSIC; i++)
     {
         if (!g_music_used[i])
         {
@@ -756,7 +756,7 @@ static StdrotValue br_load_sound(StdrotValue *args, int argc)
         BR_RAYLIB_VOID(UnloadSound(snd));
         return (StdrotValue){.type = STDROT_INT, .val = {.i = -1}};
     }
-    for (int i = 0; i < BRAINRAY_MAX_SOUNDS; i++)
+    for (int i = 0; i < RAYROT_MAX_SOUNDS; i++)
     {
         if (!g_sound_used[i])
         {

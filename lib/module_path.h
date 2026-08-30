@@ -14,7 +14,7 @@
  *          executable's own directory is the install bin directory, or
  *        - "stdrot/" next to the running executable otherwise (an
  *          uninstalled/source build resolves modules from here, matching
- *          the in-tree source layout stdrot/, brainray/, ... described in
+ *          the in-tree source layout stdrot/, rayrot/, ... described in
  *          docs/ROADMAP.md's Phase 4).
  *
  * "The running executable" is resolved independently of argv[0]: argv[0]

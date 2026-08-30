@@ -854,13 +854,13 @@ def test_native_module_internal_duplicate_rejected(tmp_path):
 
 
 REPO_ROOT = os.path.abspath(os.path.join(script_dir, ".."))
-BRAINRAY_DIR = os.path.join(REPO_ROOT, "brainray")
+RAYROT_DIR = os.path.join(REPO_ROOT, "rayrot")
 
 
 def _raylib_available():
-    """True when pkg-config can find raylib, i.e. `make brainray` can build
+    """True when pkg-config can find raylib, i.e. `make rayrot` can build
     the optional binding. raylib is not a dependency of `make test`, so when
-    it is absent the brainray test below skips (with a reason) rather than
+    it is absent the rayrot test below skips (with a reason) rather than
     failing -- matching #208's "make test does not require raylib"."""
     if shutil.which("pkg-config") is None:
         return False
@@ -871,26 +871,26 @@ def _raylib_available():
 @pytest.mark.skipif(
     not _raylib_available(),
     reason="raylib not installed (pkg-config --exists raylib failed); "
-           "brainray is an optional dependency, not required by make test")
-def test_brainray_module_loads_when_raylib_present(tmp_path):
-    """When raylib IS present, `make brainray` builds brainray/raylib.so and
+           "rayrot is an optional dependency, not required by make test")
+def test_rayrot_module_loads_when_raylib_present(tmp_path):
+    """When raylib IS present, `make rayrot` builds rayrot/raylib.so and
     `#cooked <raylib>` loads it end to end. This proves the module exports
     brainrot_module_init_v3(), the module search path resolves the native `.so`,
     and every rl_* arity/type descriptor passes validate_native_registry() at
     load time. It calls no rl_* function, so it needs no window or display --
     the load itself (dlopen at parse time) is what is under test."""
     build = subprocess.run(
-        ["make", "brainray"], cwd=REPO_ROOT,
+        ["make", "rayrot"], cwd=REPO_ROOT,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    assert build.returncode == 0, f"`make brainray` failed:\n{build.stdout}"
-    assert os.path.exists(os.path.join(BRAINRAY_DIR, "raylib.so")), (
-        "make brainray did not produce brainray/raylib.so")
+    assert build.returncode == 0, f"`make rayrot` failed:\n{build.stdout}"
+    assert os.path.exists(os.path.join(RAYROT_DIR, "raylib.so")), (
+        "make rayrot did not produce rayrot/raylib.so")
 
     brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
     source_path = tmp_path / "prog.brainrot"
     source_path.write_text("#cooked <raylib>\nskibidi main { bussin 0; }\n")
 
-    env = dict(os.environ, BRAINROT_PATH=BRAINRAY_DIR)
+    env = dict(os.environ, BRAINROT_PATH=RAYROT_DIR)
     result = subprocess.run(
         [brainrot_path, str(source_path)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
@@ -903,13 +903,13 @@ def test_brainray_module_loads_when_raylib_present(tmp_path):
     not _raylib_available() or not os.environ.get("DISPLAY"),
     reason="needs raylib AND a display ($DISPLAY): raylib is optional and the "
            "windowed run cannot open a window in headless CI")
-def test_brainray_windowed_run_is_leak_clean(tmp_path):
+def test_rayrot_windowed_run_is_leak_clean(tmp_path):
     """The windowed demo must exit clean under the default (ASan) build --
-    the regression guard for issue #267. brainray brackets raylib's own calls
+    the regression guard for issue #267. rayrot brackets raylib's own calls
     with __lsan_disable/__lsan_enable so the graphics stack's process-lifetime
-    globals are not reported, while brainray's own allocations (the window
+    globals are not reported, while rayrot's own allocations (the window
     title, the texture table) stay tracked. A leak on either side -- a real
-    brainray leak, or the bracketing being removed so raylib's globals surface
+    rayrot leak, or the bracketing being removed so raylib's globals surface
     again -- makes ASan exit nonzero and prints "LeakSanitizer", failing here.
 
     The program calls rl_draw_text_int/rl_measure_text_int on purpose: they are
@@ -921,9 +921,9 @@ def test_brainray_windowed_run_is_leak_clean(tmp_path):
     closed) so the run terminates on its own. Skips without raylib or a
     display, so headless CI never runs it."""
     build = subprocess.run(
-        ["make", "brainray"], cwd=REPO_ROOT,
+        ["make", "rayrot"], cwd=REPO_ROOT,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    assert build.returncode == 0, f"`make brainray` failed:\n{build.stdout}"
+    assert build.returncode == 0, f"`make rayrot` failed:\n{build.stdout}"
 
     brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
     source_path = tmp_path / "leak_smoke.brainrot"
@@ -953,7 +953,7 @@ def test_brainray_windowed_run_is_leak_clean(tmp_path):
 
     # Default env: leak detection stays ON (no ASAN_OPTIONS override). A leak
     # would make ASan exit nonzero; assert the clean exit and no LSan report.
-    env = dict(os.environ, BRAINROT_PATH=BRAINRAY_DIR)
+    env = dict(os.environ, BRAINROT_PATH=RAYROT_DIR)
     result = subprocess.run(
         [brainrot_path, str(source_path)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
@@ -970,7 +970,7 @@ def test_brainray_windowed_run_is_leak_clean(tmp_path):
     not _raylib_available() or not os.environ.get("DISPLAY"),
     reason="needs raylib AND a display ($DISPLAY): MeasureText only reports "
            "real widths once InitWindow has loaded the default font")
-def test_brainray_text_int_formatting_matches_docs(tmp_path):
+def test_rayrot_text_int_formatting_matches_docs(tmp_path):
     """rl_draw_text_int/rl_measure_text_int exist to produce one specific
     string -- prefix, then the number under printf's "%0*d". The leak smoke
     above proves those wrappers allocate and free; it says nothing about what
@@ -978,7 +978,7 @@ def test_brainray_text_int_formatting_matches_docs(tmp_path):
     `pad` and `value` entirely.
 
     So check the rendered width against rl_measure_text() of the exact literals
-    documented in docs/brainray.md's table. Every row is asserted, including
+    documented in docs/rayrot.md's table. Every row is asserted, including
     the negative one, which is the row that pins `pad` as a FIELD WIDTH rather
     than a digit count: -450 at pad 6 is "-00450" (six columns) and not
     "-000450" (six digits plus a sign). Those are different strings and
@@ -1000,9 +1000,9 @@ def test_brainray_text_int_formatting_matches_docs(tmp_path):
     Both wrappers share br_format_text_int(), so measuring one validates the
     formatting of both -- for as long as they keep sharing it."""
     build = subprocess.run(
-        ["make", "brainray"], cwd=REPO_ROOT,
+        ["make", "rayrot"], cwd=REPO_ROOT,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    assert build.returncode == 0, f"`make brainray` failed:\n{build.stdout}"
+    assert build.returncode == 0, f"`make rayrot` failed:\n{build.stdout}"
 
     brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
     source_path = tmp_path / "text_int_format.brainrot"
@@ -1010,7 +1010,7 @@ def test_brainray_text_int_formatting_matches_docs(tmp_path):
         "#cooked <raylib>\n"
         "skibidi main {\n"
         "    rl_init_window(320, 200, \"text_int format\");\n"
-        # Each row of the table in docs/brainray.md, as (call, literal).
+        # Each row of the table in docs/rayrot.md, as (call, literal).
         "    rizz a1 = rl_measure_text_int(\"SCORE \", 450, 6, 16);\n"
         "    rizz a2 = rl_measure_text(\"SCORE 000450\", 16);\n"
         "    cap oka = a1 == a2;\n"
@@ -1040,7 +1040,7 @@ def test_brainray_text_int_formatting_matches_docs(tmp_path):
         "    bussin 0;\n"
         "}\n")
 
-    env = dict(os.environ, BRAINROT_PATH=BRAINRAY_DIR)
+    env = dict(os.environ, BRAINROT_PATH=RAYROT_DIR)
     result = subprocess.run(
         [brainrot_path, str(source_path)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
@@ -1083,7 +1083,7 @@ def _write_rgba_png(path, width, height, pixel):
     not _raylib_available() or not os.environ.get("DISPLAY"),
     reason="needs raylib AND a display ($DISPLAY): loading a texture requires "
            "a live GL context, so this cannot run on a headless runner")
-def test_brainray_draw_texture_rec_handle_contract(tmp_path):
+def test_rayrot_draw_texture_rec_handle_contract(tmp_path):
     """rl_draw_texture_rec's handle contract, and an honest account of what
     this can and cannot establish.
 
@@ -1098,7 +1098,7 @@ def test_brainray_draw_texture_rec_handle_contract(tmp_path):
 
     NOT VERIFIED, and deliberately not claimed:
 
-      - Which pixels landed. brainray cannot read the framebuffer or a texture
+      - Which pixels landed. rayrot cannot read the framebuffer or a texture
         back, so "the source rectangle was respected" is not machine-checkable.
         An implementation ignoring `rec` and blitting the whole texture would
         pass. The sub-rect, the tint and both mirror directions were checked by
@@ -1116,9 +1116,9 @@ def test_brainray_draw_texture_rec_handle_contract(tmp_path):
     wrapper (LoadImageFromTexture / TakeScreenshot) for the first, and
     sanitizer-instrumented shared objects for the second."""
     build = subprocess.run(
-        ["make", "brainray"], cwd=REPO_ROOT,
+        ["make", "rayrot"], cwd=REPO_ROOT,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    assert build.returncode == 0, f"`make brainray` failed:\n{build.stdout}"
+    assert build.returncode == 0, f"`make rayrot` failed:\n{build.stdout}"
 
     atlas = tmp_path / "atlas.png"
     # 8x4 of solid opaque magenta: two 4x4 "frames" side by side, so the
@@ -1168,7 +1168,7 @@ def test_brainray_draw_texture_rec_handle_contract(tmp_path):
         "    bussin 0;\n"
         "}\n")
 
-    env = dict(os.environ, BRAINROT_PATH=BRAINRAY_DIR)
+    env = dict(os.environ, BRAINROT_PATH=RAYROT_DIR)
     result = subprocess.run(
         [brainrot_path, str(source_path)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
@@ -1205,8 +1205,8 @@ def _write_sine_wav(path, seconds=3, rate=22050, freq=440.0):
 
 @pytest.mark.skipif(
     not _raylib_available(),
-    reason="needs raylib; brainray is an optional dependency")
-def test_brainray_audio_handles_and_pump_contract(tmp_path):
+    reason="needs raylib; rayrot is an optional dependency")
+def test_rayrot_audio_handles_and_pump_contract(tmp_path):
     """Audio, in two halves, so that a headless runner still proves something.
 
     WITHOUT a playback device -- the normal case in CI -- both loaders must
@@ -1227,9 +1227,9 @@ def test_brainray_audio_handles_and_pump_contract(tmp_path):
     one pumped and one not. The sound path (load, volume, play, unload) runs
     here too, since B3 is as much about the one-shot as the stream."""
     build = subprocess.run(
-        ["make", "brainray"], cwd=REPO_ROOT,
+        ["make", "rayrot"], cwd=REPO_ROOT,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    assert build.returncode == 0, f"`make brainray` failed:\n{build.stdout}"
+    assert build.returncode == 0, f"`make rayrot` failed:\n{build.stdout}"
 
     wav = tmp_path / "tone.wav"
     _write_sine_wav(str(wav))
@@ -1297,7 +1297,7 @@ def test_brainray_audio_handles_and_pump_contract(tmp_path):
         "    bussin 0;\n"
         "}\n")
 
-    env = dict(os.environ, BRAINROT_PATH=BRAINRAY_DIR)
+    env = dict(os.environ, BRAINROT_PATH=RAYROT_DIR)
     result = subprocess.run(
         [brainrot_path, str(source_path)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,

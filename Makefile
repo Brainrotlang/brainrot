@@ -285,126 +285,126 @@ nativemodules: $(NATIVEMODULES_LIBS)
 	@echo "tests/nativemodules/*.so (native module fixtures) compiled."
 
 # ── Optional raylib binding: the first cursed game (Issue #208, Phase 5 Road A)
-# brainray/raylib.so is a hand-written native module (brainray/raylib.c) wrapping
+# rayrot/raylib.so is a hand-written native module (rayrot/raylib.c) wrapping
 # ~20 raylib primitives, loaded at runtime by `#cooked <raylib>`. It links
 # against a real raylib resolved via pkg-config, so it is DELIBERATELY excluded
 # from `all`, `test`, `valgrind`, `install`, and `wasm`: raylib is an optional
 # dependency of THIS target only, and the whole test suite stays green without it
 # installed. Built with the same
 # -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3 pattern as the nativemodules
-# fixtures above (registry.c's own comment has the reasoning), so brainray/raylib.c's
+# fixtures above (registry.c's own comment has the reasoning), so rayrot/raylib.c's
 # STDROT_EXPORT_SIG() entries are exported as brainrot_module_init_v3().
-BRAINRAY_DIR := brainray
-BRAINRAY_LIB := $(BRAINRAY_DIR)/raylib.so
+RAYROT_DIR := rayrot
+RAYROT_LIB := $(RAYROT_DIR)/raylib.so
 RAYLIB_CFLAGS := $(shell pkg-config --cflags raylib 2>/dev/null)
 RAYLIB_LIBS := $(shell pkg-config --libs raylib 2>/dev/null)
 
-.PHONY: brainray
-brainray: $(BRAINRAY_LIB) ## Build the optional raylib binding brainray/raylib.so (needs raylib; docs/brainray.md). Cursed game unlocked.
+.PHONY: rayrot
+rayrot: $(RAYROT_LIB) ## Build the optional raylib binding rayrot/raylib.so (needs raylib; docs/rayrot.md). Cursed game unlocked.
 
-$(BRAINRAY_LIB): $(BRAINRAY_DIR)/raylib.c $(STDROT_DIR)/registry.c $(STDROT_ABI_HDR)
+$(RAYROT_LIB): $(RAYROT_DIR)/raylib.c $(STDROT_DIR)/registry.c $(STDROT_ABI_HDR)
 	@pkg-config --exists raylib || { \
 		echo "Error: raylib not found via pkg-config (pkg-config --exists raylib failed)."; \
-		echo "raylib is an OPTIONAL dependency, needed only for 'make brainray'."; \
-		echo "Install it, then re-run 'make brainray'. Setup guide (Linux/macOS):"; \
-		echo "  docs/brainray.md"; \
+		echo "raylib is an OPTIONAL dependency, needed only for 'make rayrot'."; \
+		echo "Install it, then re-run 'make rayrot'. Setup guide (Linux/macOS):"; \
+		echo "  docs/rayrot.md"; \
 		echo "macOS: 'brew install raylib'. Verify with: pkg-config --exists raylib"; \
 		exit 1; }
 	$(CC) $(SO_CFLAGS) -Wall -Wextra \
 		-DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3 \
 		-I. -I$(STDROT_DIR) $(RAYLIB_CFLAGS) -o $@ \
 		$(STDROT_DIR)/registry.c $< $(RAYLIB_LIBS) -lm $(SO_LDFLAGS)
-	@echo "brainray/raylib.so built. Run the cursed game with:"
-	@echo "  BRAINROT_PATH=$(BRAINRAY_DIR) ./brainrot examples/raylib/ohio_engine.brainrot"
+	@echo "rayrot/raylib.so built. Run the cursed game with:"
+	@echo "  BRAINROT_PATH=$(RAYROT_DIR) ./brainrot examples/raylib/ohio_engine.brainrot"
 
 # Convenience: build the binding and launch the cursed game in one step. It
-# builds brainray/raylib.so and runs the example, so it needs both raylib and a
+# builds rayrot/raylib.so and runs the example, so it needs both raylib and a
 # display -- with no display the raylib window init fails (it does NOT skip).
-# Still an explicit opt-in like `brainray` -- never a prerequisite of `all`/`test`.
-# No ASAN_OPTIONS override: brainray brackets raylib's own calls with
-# __lsan_disable/enable (issue #267, brainray/raylib.c), so the sanitizer build
-# runs the game cleanly while still checking brainray's and the interpreter's
+# Still an explicit opt-in like `rayrot` -- never a prerequisite of `all`/`test`.
+# No ASAN_OPTIONS override: rayrot brackets raylib's own calls with
+# __lsan_disable/enable (issue #267, rayrot/raylib.c), so the sanitizer build
+# runs the game cleanly while still checking rayrot's and the interpreter's
 # own allocations.
 .PHONY: play
-play: $(BRAINRAY_LIB) $(TARGET) ## Build brainray + run the Ohio Engine (needs raylib + a display). It's giving cinema.
-	BRAINROT_PATH=$(BRAINRAY_DIR) ./$(TARGET) examples/raylib/ohio_engine.brainrot
+play: $(RAYROT_LIB) $(TARGET) ## Build rayrot + run the Ohio Engine (needs raylib + a display). It's giving cinema.
+	BRAINROT_PATH=$(RAYROT_DIR) ./$(TARGET) examples/raylib/ohio_engine.brainrot
 
 # ── Generated raylib binding: Road B (Issue #208, Phase 5 Road B)
-# brainray/brainray_gen.py turns the vendored, pinned brainray/raylib_api.json
+# rayrot/rayrot_gen.py turns the vendored, pinned rayrot/raylib_api.json
 # into a full binding -- C adapters, a Brainrot prelude of `gang` types and
 # `gyatt` constants, and an ABI-drift translation unit. Road A's hand-written
-# brainray/raylib.so stays exactly as it was; this is a separate, larger
+# rayrot/raylib.so stays exactly as it was; this is a separate, larger
 # artifact under a separate module name (`raylibgen`), so the two never
 # collide and Road A keeps working if this is never built.
 #
 # The split into TWO steps is the whole reason `make test` stays raylib-free:
-#   `brainray-gen-sources`  python + the pinned JSON only. No raylib, no C
+#   `rayrot-gen-sources`  python + the pinned JSON only. No raylib, no C
 #                           compiler. This is what CI can run everywhere, and
 #                           --strict makes an upstream schema change a build
 #                           failure rather than a quietly smaller binding.
-#   `brainray-gen`          additionally COMPILES the generated C, which needs
+#   `rayrot-gen`          additionally COMPILES the generated C, which needs
 #                           raylib's headers -- so it is opt-in, exactly like
-#                           `brainray`, and is never a prerequisite of `all`,
+#                           `rayrot`, and is never a prerequisite of `all`,
 #                           `test`, `valgrind`, `install`, or `wasm`.
-BRAINRAY_GEN := $(BRAINRAY_DIR)/brainray_gen.py
-BRAINRAY_API := $(BRAINRAY_DIR)/raylib_api.json
-BRAINRAY_GEN_DIR := $(BRAINRAY_DIR)/generated
-BRAINRAY_GEN_MODULE := raylibgen
-BRAINRAY_GEN_NATIVE_C := $(BRAINRAY_GEN_DIR)/$(BRAINRAY_GEN_MODULE)_native.c
-BRAINRAY_GEN_PRELUDE := $(BRAINRAY_GEN_DIR)/$(BRAINRAY_GEN_MODULE).brainrot
-BRAINRAY_GEN_ABI_C := $(BRAINRAY_GEN_DIR)/$(BRAINRAY_GEN_MODULE)_abi_check.c
-BRAINRAY_GEN_LIB := $(BRAINRAY_GEN_DIR)/$(BRAINRAY_GEN_MODULE)_native.so
-BRAINRAY_GEN_ABI_BIN := $(BRAINRAY_GEN_DIR)/$(BRAINRAY_GEN_MODULE)_abi_check
+RAYROT_GEN := $(RAYROT_DIR)/rayrot_gen.py
+RAYROT_API := $(RAYROT_DIR)/raylib_api.json
+RAYROT_GEN_DIR := $(RAYROT_DIR)/generated
+RAYROT_GEN_MODULE := raylibgen
+RAYROT_GEN_NATIVE_C := $(RAYROT_GEN_DIR)/$(RAYROT_GEN_MODULE)_native.c
+RAYROT_GEN_PRELUDE := $(RAYROT_GEN_DIR)/$(RAYROT_GEN_MODULE).brainrot
+RAYROT_GEN_ABI_C := $(RAYROT_GEN_DIR)/$(RAYROT_GEN_MODULE)_abi_check.c
+RAYROT_GEN_LIB := $(RAYROT_GEN_DIR)/$(RAYROT_GEN_MODULE)_native.so
+RAYROT_GEN_ABI_BIN := $(RAYROT_GEN_DIR)/$(RAYROT_GEN_MODULE)_abi_check
 
 # One recipe produces all three files; naming the .c as the rule target and
 # the others as order-only-style siblings would race under -j, so this uses
 # the "all outputs depend on a stamp" shape via the first target only.
-$(BRAINRAY_GEN_NATIVE_C): $(BRAINRAY_GEN) $(BRAINRAY_API)
-	$(PYTHON) $(BRAINRAY_GEN) --api $(BRAINRAY_API) \
-		--outdir $(BRAINRAY_GEN_DIR) --strict
-$(BRAINRAY_GEN_PRELUDE) $(BRAINRAY_GEN_ABI_C): $(BRAINRAY_GEN_NATIVE_C)
-	@test -f $@ || { $(PYTHON) $(BRAINRAY_GEN) --api $(BRAINRAY_API) \
-		--outdir $(BRAINRAY_GEN_DIR) --strict; }
+$(RAYROT_GEN_NATIVE_C): $(RAYROT_GEN) $(RAYROT_API)
+	$(PYTHON) $(RAYROT_GEN) --api $(RAYROT_API) \
+		--outdir $(RAYROT_GEN_DIR) --strict
+$(RAYROT_GEN_PRELUDE) $(RAYROT_GEN_ABI_C): $(RAYROT_GEN_NATIVE_C)
+	@test -f $@ || { $(PYTHON) $(RAYROT_GEN) --api $(RAYROT_API) \
+		--outdir $(RAYROT_GEN_DIR) --strict; }
 
-.PHONY: brainray-gen-sources
-brainray-gen-sources: $(BRAINRAY_GEN_NATIVE_C) $(BRAINRAY_GEN_PRELUDE) $(BRAINRAY_GEN_ABI_C) ## Generate the raylib binding sources from the pinned JSON (no raylib needed).
-	@echo "Generated binding sources in $(BRAINRAY_GEN_DIR) (raylib not required)."
+.PHONY: rayrot-gen-sources
+rayrot-gen-sources: $(RAYROT_GEN_NATIVE_C) $(RAYROT_GEN_PRELUDE) $(RAYROT_GEN_ABI_C) ## Generate the raylib binding sources from the pinned JSON (no raylib needed).
+	@echo "Generated binding sources in $(RAYROT_GEN_DIR) (raylib not required)."
 
 # Compiling the generated adapters needs raylib's headers, same pkg-config
-# gate (and same error message) as the hand-written `brainray` target.
-$(BRAINRAY_GEN_LIB): $(BRAINRAY_GEN_NATIVE_C) $(STDROT_DIR)/registry.c $(STDROT_ABI_HDR)
+# gate (and same error message) as the hand-written `rayrot` target.
+$(RAYROT_GEN_LIB): $(RAYROT_GEN_NATIVE_C) $(STDROT_DIR)/registry.c $(STDROT_ABI_HDR)
 	@pkg-config --exists raylib || { \
 		echo "Error: raylib not found via pkg-config (pkg-config --exists raylib failed)."; \
 		echo "raylib is an OPTIONAL dependency, needed only to COMPILE the"; \
-		echo "generated binding. 'make brainray-gen-sources' works without it."; \
-		echo "Setup guide: docs/brainray.md"; \
+		echo "generated binding. 'make rayrot-gen-sources' works without it."; \
+		echo "Setup guide: docs/rayrot.md"; \
 		exit 1; \
 	}
 	$(CC) $(SO_CFLAGS) -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3 \
 		-I. -I$(STDROT_DIR) $(RAYLIB_CFLAGS) -o $@ \
-		$(STDROT_DIR)/registry.c $(BRAINRAY_GEN_NATIVE_C) \
+		$(STDROT_DIR)/registry.c $(RAYROT_GEN_NATIVE_C) \
 		$(RAYLIB_LIBS) -lm $(SO_LDFLAGS)
 
 # Building this IS the ABI check: every size/offset the generator computed is
 # a _Static_assert against the real raylib headers, so a mismatch fails to
 # compile. Running it just prints what it verified.
-$(BRAINRAY_GEN_ABI_BIN): $(BRAINRAY_GEN_ABI_C)
+$(RAYROT_GEN_ABI_BIN): $(RAYROT_GEN_ABI_C)
 	@pkg-config --exists raylib || { \
 		echo "Error: raylib not found via pkg-config -- needed for the ABI check."; \
-		echo "Setup guide: docs/brainray.md"; \
+		echo "Setup guide: docs/rayrot.md"; \
 		exit 1; \
 	}
-	$(CC) -Wall -Wextra -Werror $(RAYLIB_CFLAGS) -o $@ $(BRAINRAY_GEN_ABI_C)
+	$(CC) -Wall -Wextra -Werror $(RAYLIB_CFLAGS) -o $@ $(RAYROT_GEN_ABI_C)
 
-.PHONY: brainray-gen
-brainray-gen: $(BRAINRAY_GEN_LIB) $(BRAINRAY_GEN_ABI_BIN) $(BRAINRAY_GEN_PRELUDE) ## Generate AND build the raylib binding + run its ABI drift check (needs raylib).
-	./$(BRAINRAY_GEN_ABI_BIN)
+.PHONY: rayrot-gen
+rayrot-gen: $(RAYROT_GEN_LIB) $(RAYROT_GEN_ABI_BIN) $(RAYROT_GEN_PRELUDE) ## Generate AND build the raylib binding + run its ABI drift check (needs raylib).
+	./$(RAYROT_GEN_ABI_BIN)
 	@echo "Generated binding built. Run the generated cursed game with:"
-	@echo "  BRAINROT_PATH=$(BRAINRAY_GEN_DIR) ./brainrot examples/raylib/ohio_engine_gen.brainrot"
+	@echo "  BRAINROT_PATH=$(RAYROT_GEN_DIR) ./brainrot examples/raylib/ohio_engine_gen.brainrot"
 
 .PHONY: play-gen
-play-gen: $(BRAINRAY_GEN_LIB) $(BRAINRAY_GEN_PRELUDE) $(TARGET) ## Build the generated binding + run Ohio Engine II (needs raylib + a display).
-	BRAINROT_PATH=$(BRAINRAY_GEN_DIR) ./$(TARGET) examples/raylib/ohio_engine_gen.brainrot
+play-gen: $(RAYROT_GEN_LIB) $(RAYROT_GEN_PRELUDE) $(TARGET) ## Build the generated binding + run Ohio Engine II (needs raylib + a display).
+	BRAINROT_PATH=$(RAYROT_GEN_DIR) ./$(TARGET) examples/raylib/ohio_engine_gen.brainrot
 
 # Simulated pre-ABI-versioning libstdrot.so (see tests/old_abi_sim/ own file
 # comment): built standalone, with no dependency on stdrot_api.h or
@@ -511,7 +511,7 @@ clean: ## Remove all build artifacts (never touches source). Amogus sussy impost
 	rm -f tests/brainrot-test.wasm tests/brainrot-test.mjs
 	rm -f $(BADNATIVES_LIBS)
 	rm -f $(NATIVEMODULES_LIBS)
-	rm -f $(BRAINRAY_LIB)
+	rm -f $(RAYROT_LIB)
 	rm -f $(OLD_ABI_SIM_LIB)
 	rm -f $(ABI_CHECK_BIN)
 	rm -f $(ARENA_CHECK_BIN)
@@ -573,7 +573,7 @@ rebuild: clean all ## Clean and re-grind the whole project from scratch. Turbule
 # clang-format is a generator nobody wants to change (roadmap Appendix B Q7).
 FORMAT_FILES := $(shell find . -name "*.c" -o -name "*.h" | \
 	grep -v -E '^\./(lang\.tab\.c|lang\.tab\.h|lex\.yy\.c)$$' | \
-	grep -v -E '^\./brainray/generated/')
+	grep -v -E '^\./rayrot/generated/')
 
 CLANG_FORMAT ?= clang-format-15
 
@@ -656,8 +656,8 @@ help: ## Show this help for n00bs (the list of developer-facing targets).
 		/^[a-zA-Z][a-zA-Z0-9_-]*:.*## / {printf "  %-14s %s\n", $$1, $$2}' \
 		$(MAKEFILE_LIST)
 	@echo ""
-	@echo "raylib is optional and only 'make brainray'/'make play' need it."
-	@echo "raylib setup guide (Ubuntu/macOS/source): docs/brainray.md"
+	@echo "raylib is optional and only 'make rayrot'/'make play' need it."
+	@echo "raylib setup guide (Ubuntu/macOS/source): docs/rayrot.md"
 	@echo ""
 	@echo "Configuration (poggers):"
 	@echo "  CC      = $(CC)"

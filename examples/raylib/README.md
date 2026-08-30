@@ -1,7 +1,7 @@
 # raylib examples
 
 The first cursed game: Brainrot running a real [raylib](https://www.raylib.com/)
-game loop through the optional `brainray` native module (Issue #208, Phase 5
+game loop through the optional `rayrot` native module (Issue #208, Phase 5
 "Road A").
 
 ## `ohio_engine.brainrot`
@@ -18,7 +18,7 @@ You need a system raylib discoverable through `pkg-config`. Installation is
 distribution-dependent (on Ubuntu, `libraylib-dev` is **not** an official
 package — use the raylib PPA or a source build); the full, accurate setup for
 Ubuntu, macOS, and source builds lives in the one canonical guide:
-[`docs/brainray.md`](../../docs/brainray.md#installing-raylib). On macOS it's
+[`docs/rayrot.md`](../../docs/rayrot.md#installing-raylib). On macOS it's
 just `brew install raylib`. Confirm it worked with:
 
 ```bash
@@ -28,32 +28,32 @@ pkg-config --exists raylib
 ## Two libraries, not one
 
 `#cooked <raylib>` does **not** load the system `libraylib.so` directly. It
-loads `brainray/raylib.so` — a Brainrot native module built by `make brainray`
+loads `rayrot/raylib.so` — a Brainrot native module built by `make rayrot`
 that wraps raylib. So installing raylib alone is not enough; you also need the
-`brainray/raylib.so` wrapper on the module path. See
-[`docs/brainray.md`](../../docs/brainray.md#two-libraries-not-one) for the full
+`rayrot/raylib.so` wrapper on the module path. See
+[`docs/rayrot.md`](../../docs/rayrot.md#two-libraries-not-one) for the full
 picture.
 
 ## Build and run
 
 `#cooked <raylib>` resolves the module through the module search path, so point
-`$BRAINROT_PATH` at the `brainray/` directory (or run `make play`, which builds
+`$BRAINROT_PATH` at the `rayrot/` directory (or run `make play`, which builds
 the binding and launches the example in one step):
 
 ```bash
-make brainray
-BRAINROT_PATH=brainray ./brainrot examples/raylib/ohio_engine.brainrot
+make rayrot
+BRAINROT_PATH=rayrot ./brainrot examples/raylib/ohio_engine.brainrot
 ```
 
 Running `brainrot ohio_engine.brainrot` from inside this directory without
 `BRAINROT_PATH` fails: nothing on the default module search path contains
 `raylib.so`.
 
-The example exits clean under the default sanitizer build: brainray brackets
+The example exits clean under the default sanitizer build: rayrot brackets
 raylib's own calls with LeakSanitizer's `__lsan_disable`/`__lsan_enable`, so the
 graphics stack's process-lifetime globals aren't reported as leaks while
-brainray's and the interpreter's own memory stays checked. See
-[`docs/brainray.md`](../../docs/brainray.md#memory-leaks-what-brainray-does-and-doesnt-report).
+rayrot's and the interpreter's own memory stays checked. See
+[`docs/rayrot.md`](../../docs/rayrot.md#memory-leaks-what-rayrot-does-and-doesnt-report).
 
 ## Notes
 
@@ -67,4 +67,4 @@ brainray's and the interpreter's own memory stays checked. See
 
 The full binding reference — every `rl_*` function, the ownership model, and how
 to point the same recipe at another C library — is in
-[`docs/brainray.md`](../../docs/brainray.md).
+[`docs/rayrot.md`](../../docs/rayrot.md).

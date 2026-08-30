@@ -1,4 +1,4 @@
-"""Developer-UX regression guards for the raylib/brainray docs and the
+"""Developer-UX regression guards for the raylib/rayrot docs and the
 Makefile's self-documenting `help` target.
 
 Two things have gone stale before and should not silently regress:
@@ -9,7 +9,7 @@ Two things have gone stale before and should not silently regress:
    asserts the essential set stays represented.
 
 2. `apt[-get] install libraylib-dev` is WRONG *on Ubuntu* (no such official
-   package on 22.04/24.04; see docs/brainray.md). It is *correct* on Debian
+   package on 22.04/24.04; see docs/rayrot.md). It is *correct* on Debian
    testing/unstable, which do ship an official `libraylib-dev`. So the guard is
    scoped to the invariant we actually care about: an **Ubuntu-headed** section
    must never present that command as a fenced install step, and the Makefile
@@ -31,7 +31,7 @@ ESSENTIAL_HELP_TARGETS = [
     "lib",
     "debug",
     "release",
-    "brainray",
+    "rayrot",
     "play",
     "abi-check",
     "wasm",
@@ -124,50 +124,50 @@ def test_no_bad_ubuntu_raylib_command_in_code_blocks():
     assert not offenders, (
         "Found `apt install libraylib-dev` as a fenced install step under an "
         "Ubuntu heading (or in the Makefile). It is not an official Ubuntu "
-        "package on 22.04/24.04; see docs/brainray.md. Offending lines:\n"
+        "package on 22.04/24.04; see docs/rayrot.md. Offending lines:\n"
         + "\n".join(offenders)
     )
 
 
-# Every function brainray exports is spelled `STDROT_EXPORT_SIG("rl_...", ...)`.
-BRAINRAY_EXPORT_PATTERN = re.compile(r'STDROT_EXPORT_SIG\(\s*"(rl_[a-z0-9_]+)"')
+# Every function rayrot exports is spelled `STDROT_EXPORT_SIG("rl_...", ...)`.
+RAYROT_EXPORT_PATTERN = re.compile(r'STDROT_EXPORT_SIG\(\s*"(rl_[a-z0-9_]+)"')
 
-# A row of the function-reference table in docs/brainray.md, e.g.
+# A row of the function-reference table in docs/rayrot.md, e.g.
 #     | `rl_draw_fps(x, y)` | `DrawFPS` | |
 # Anchored to the leading pipe so a passing mention in prose or in a fenced
 # code block cannot satisfy the check -- the point is that the function is
 # *documented in the table*, which is the only place a reader can look it up.
-BRAINRAY_TABLE_ROW_PATTERN = re.compile(
+RAYROT_TABLE_ROW_PATTERN = re.compile(
     r"^\s*\|\s*`(rl_[a-z0-9_]+)\(", re.MULTILINE)
 
 
-def test_brainray_docs_list_every_exported_function():
-    """docs/brainray.md calls itself "the single source of truth" for the
+def test_rayrot_docs_list_every_exported_function():
+    """docs/rayrot.md calls itself "the single source of truth" for the
     binding, and README.md plus examples/raylib/README.md both defer to it
     rather than repeating the function list. That only holds if the table
-    actually keeps up: a wrapper added to brainray/raylib.c without a matching
+    actually keeps up: a wrapper added to rayrot/raylib.c without a matching
     row is undiscoverable, because there is nowhere else to look it up.
 
     Deliberately checks for a *table row*, not merely for the name appearing
     somewhere in the file. A prose mention, a line in a fenced example, or a
     half-deleted row would all satisfy "the name is in the document" while
     leaving the reference table incomplete, which is the failure this guards."""
-    with open(os.path.join(REPO_ROOT, "brainray", "raylib.c")) as f:
-        exported = set(BRAINRAY_EXPORT_PATTERN.findall(f.read()))
-    assert exported, "no STDROT_EXPORT_SIG entries found in brainray/raylib.c"
+    with open(os.path.join(REPO_ROOT, "rayrot", "raylib.c")) as f:
+        exported = set(RAYROT_EXPORT_PATTERN.findall(f.read()))
+    assert exported, "no STDROT_EXPORT_SIG entries found in rayrot/raylib.c"
 
-    with open(os.path.join(REPO_ROOT, "docs", "brainray.md")) as f:
-        documented = set(BRAINRAY_TABLE_ROW_PATTERN.findall(f.read()))
+    with open(os.path.join(REPO_ROOT, "docs", "rayrot.md")) as f:
+        documented = set(RAYROT_TABLE_ROW_PATTERN.findall(f.read()))
     assert documented, (
-        "no function-reference table rows found in docs/brainray.md -- the "
+        "no function-reference table rows found in docs/rayrot.md -- the "
         "table format changed and this guard needs updating with it")
 
     missing = sorted(exported - documented)
     assert not missing, (
-        "brainray exports these functions but docs/brainray.md's function "
+        "rayrot exports these functions but docs/rayrot.md's function "
         "reference table has no row for them:\n  "
         + "\n  ".join(missing)
-        + "\nAdd a row to the table in docs/brainray.md -- it is the only "
+        + "\nAdd a row to the table in docs/rayrot.md -- it is the only "
           "place the binding is documented."
     )
 
@@ -175,8 +175,8 @@ def test_brainray_docs_list_every_exported_function():
     # a reader looking for something that isn't there.
     stale = sorted(documented - exported)
     assert not stale, (
-        "docs/brainray.md's function reference table has rows for functions "
-        "brainray does not export:\n  "
+        "docs/rayrot.md's function reference table has rows for functions "
+        "rayrot does not export:\n  "
         + "\n  ".join(stale)
         + "\nRemove the stale rows, or restore the wrappers."
     )
