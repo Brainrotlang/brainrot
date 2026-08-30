@@ -3036,6 +3036,7 @@ SymbolEntry *find_symbol(SemanticAnalyzer *analyzer, const String name)
         return NULL;
 
     SymbolEntry *entry = analyzer->symbol_table;
+    SymbolEntry *fallback = NULL;
 
     while (entry)
     {
@@ -3059,15 +3060,52 @@ SymbolEntry *find_symbol(SemanticAnalyzer *analyzer, const String name)
                 analyzer->current_function_name.data &&
                 strcmp(entry->function_name.data,
                        analyzer->current_function_name.data) == 0;
-            if (is_global || same_function)
+            if (same_function)
             {
-                return entry; /* Symbol is accessible */
+                /* An entry belonging to the function being analyzed wins
+                   outright: it is the innermost declaration of that name,
+                   and it SHADOWS any global of the same name (#312, #321).
+
+                   This mattered because `skibidi main`'s locals are
+                   globals here. `skibidi_function` (lang.y) reduces to a
+                   bare statement list -- `$$ = $4`, with no function-def
+                   node -- so main's body is analyzed with no
+                   current_function_name, and add_symbol() records its
+                   locals with function_name == {0}, indistinguishable
+                   from a real global. Returning whichever matched first
+                   therefore let `gang P bm;` in main answer a lookup for
+                   the parameter `bm` inside an unrelated function:
+
+                     chad wid(gang P *bm) { ... }   <- pointer_level 1
+                     skibidi main { gang P bm; ... }  <- pointer_level 0
+
+                   which rejected a correct call with "expected pointer to
+                   struct/union 'P' (level 1), got struct pointer level 0",
+                   naming a type that is correct inside the callee; and in
+                   the member-access form gave "Struct 'Bag' has no member
+                   'x'" for a parameter whose own type does have it.
+                   Renaming either variable made both go away, which is the
+                   tell.
+
+                   Preferring the in-function entry is the right rule
+                   regardless of how main is represented -- a parameter or
+                   local shadows a global in any language with lexical
+                   scope -- so this fixes the symptom without depending on
+                   the grammar quirk that exposed it. */
+                return entry;
+            }
+            if (is_global && !fallback)
+            {
+                /* Remember the first global match, but keep looking: an
+                   in-function entry later in the table must still win. */
+                fallback = entry;
             }
         }
         entry = entry->next;
     }
 
-    return NULL; /* Symbol not found or not accessible */
+    /* No in-function declaration of this name -- a global is correct. */
+    return fallback;
 }
 
 void free_symbol_table(SymbolEntry *symbols)
