@@ -56,6 +56,18 @@ typedef struct
 typedef struct JumpBuffer
 {
     jmp_buf data;
+    /* True only for the buffer execute_function_call() pushes around a
+       function body. Every other push -- for/while/do-while/switch -- is a
+       BREAK target.
+       LONGJMP() always jumps to the innermost buffer, which is right for
+       `bruh` and wrong for `bussin`: a return from inside a loop landed in
+       the LOOP's setjmp, which then skipped its body, popped, and fell
+       through to the statement after the loop inside a function that was
+       supposed to have returned -- so `bussin` silently behaved as `break`
+       and the mismatched scope stack killed the process on the next
+       exit_scope() (#319). This flag is what lets handle_return_statement()
+       discard the intervening break targets and reach its own frame. */
+    bool is_function;
     struct JumpBuffer *next;
 } JumpBuffer;
 
@@ -948,10 +960,23 @@ extern Arena arena;
     } while (0)
 
 /* Macros for handling jump buffer */
+/* A BREAK target: for/while/do-while/switch. See JumpBuffer.is_function. */
 #define PUSH_JUMP_BUFFER()                                                     \
     do                                                                         \
     {                                                                          \
         JumpBuffer *jb = SAFE_MALLOC(JumpBuffer);                              \
+        jb->is_function = false;                                               \
+        jb->next = jump_buffer;                                                \
+        jump_buffer = jb;                                                      \
+    } while (0)
+
+/* A RETURN target: the frame execute_function_call() sets up around a
+   function body. Exactly one push site uses this. */
+#define PUSH_FUNCTION_JUMP_BUFFER()                                            \
+    do                                                                         \
+    {                                                                          \
+        JumpBuffer *jb = SAFE_MALLOC(JumpBuffer);                              \
+        jb->is_function = true;                                                \
         jb->next = jump_buffer;                                                \
         jump_buffer = jb;                                                      \
     } while (0)

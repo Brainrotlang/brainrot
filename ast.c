@@ -7159,7 +7159,7 @@ void execute_function_call(const String name, ArgumentList *args)
         return;
     }
 
-    PUSH_JUMP_BUFFER();
+    PUSH_FUNCTION_JUMP_BUFFER();
     if (setjmp(CURRENT_JUMP_BUFFER()) == 0)
     {
         /* Use visitor pattern instead of old AST execution for function bodies
@@ -7609,6 +7609,28 @@ void handle_return_statement(ASTNode *expr)
     while (current_scope && !current_scope->is_function_scope)
     {
         exit_scope();
+    }
+
+    /* Discard any BREAK targets between here and this function's own
+       frame (#319). LONGJMP() goes to the innermost buffer; if a `bussin`
+       fires inside a loop or switch, that is the loop's, not the
+       function's. Landing there made the loop's setjmp return non-zero,
+       so it skipped its body, popped, and fell through to the statement
+       AFTER the loop -- inside a function that was supposed to have
+       returned. `bussin` silently behaved as `break`, and the next
+       exit_scope() then found a NULL scope and exit(1)'d the process
+       before anything was flushed, so a search-and-return loop produced
+       no output at all.
+
+       Popping here rather than teaching each loop to re-throw keeps the
+       knowledge in one place: the loops' setjmp frames are abandoned by
+       the longjmp below and their own POP_JUMP_BUFFER() never runs, which
+       is exactly why their buffers have to be released now instead. The
+       scopes those frames entered are already gone -- the loop above
+       unwound every non-function scope before this point. */
+    while (jump_buffer && !jump_buffer->is_function)
+    {
+        POP_JUMP_BUFFER();
     }
 
     // skibidi main function do not have jump buffer
