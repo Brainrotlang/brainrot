@@ -1,0 +1,93 @@
+🚽 Test case: issue #311 -- pointer arithmetic and indexing on struct
+🚽 pointers. Both forms failed before:
+🚽
+🚽   p = p + 1;   Error: Cannot perform pointer arithmetic on a
+🚽                type-erased pointer -- its pointee size is unknown
+🚽   p[1].x       Error: Member access on a non-struct/union array element
+🚽
+🚽 The cost was that a helper could not walk a pool -- it could only be
+🚽 handed one already-resolved `&pool[i]`, so the loops stayed inlined at
+🚽 every call site.
+🚽
+🚽 ── Where the pointee size comes from ─────────────────────────────────
+🚽 The issue proposed carrying a struct tag on the pointer's descriptor.
+🚽 That turned out to be unnecessary: the tag is already on the Variable.
+🚽 get_type_size_for_descriptor() takes only (VarType, pointer_level,
+🚽 modifiers), so it genuinely cannot tell `gang Vec2 *` from
+🚽 `gang Matrix *` -- both are VAR_STRUCT at pointer_level 1 -- and
+🚽 correctly returns 0 rather than guessing. pointer_arith_scale() (ast.c)
+🚽 does the second lookup that recovers the tag for exactly that case.
+🚽
+🚽 ── Why the sizes below are what they are ─────────────────────────────
+🚽 Entity is {chad x; rizz id;} = 8 bytes, so `p + 1` advances 8 and
+🚽 `p[2]` is 16 bytes in. The struct is deliberately NOT a single field:
+🚽 a stride bug that used sizeof(chad) would still read element 0
+🚽 correctly and only diverge from element 1 onward, which is what the
+🚽 multi-element walks below are for.
+🚽
+🚽 ── Deliberately absent ───────────────────────────────────────────────
+🚽 `(p + 1).x` -- member access directly on a parenthesized expression --
+🚽 is still unsupported, and is a pre-existing general limitation of
+🚽 resolve_struct_access() rather than anything specific to struct
+🚽 pointers: it resolves identifier, member-access, array-access and
+🚽 call bases, not arbitrary operations. Both forms this issue asked for
+🚽 (`p = p + 1` then `p.x`, and `p[i].x`) work without it.
+gang Entity {
+    chad x;
+    rizz id;
+};
+
+🚽 The motivating case: a helper that walks a pool it was handed as a
+🚽 bare pointer, reading every element.
+skibidi walk(gang Entity *p, rizz n) {
+    flex (rizz i = 0; i < n; i = i + 1) {
+        yapping("  [%d] x=%.1f id=%d", i, p[i].x, p[i].id);
+    }
+}
+
+🚽 ... and one that WRITES through the same pointer, so the element
+🚽 addresses are proven to be lvalues, not just readable copies.
+skibidi bump(gang Entity *p, rizz n) {
+    flex (rizz i = 0; i < n; i = i + 1) {
+        p[i].x = p[i].x + 100.0;
+    }
+}
+
+skibidi main {
+    gang Entity pool[3];
+    flex (rizz i = 0; i < 3; i = i + 1) {
+        pool[i].x = i;
+        pool[i].id = i * 10;
+    }
+
+    yapping("walk:");
+    walk(&pool[0], 3);
+
+    bump(&pool[0], 3);
+    yapping("after bump:");
+    walk(&pool[0], 3);
+
+    🚽 the writes landed in the caller's own array, not a copy
+    yapping("caller sees: %.1f %.1f %.1f",
+            pool[0].x, pool[1].x, pool[2].x);
+
+    🚽 arithmetic on the pointer itself, forwards and backwards
+    gang Entity *p = &pool[0];
+    yapping("p    x=%.1f", p.x);
+    p = p + 2;
+    yapping("p+2  x=%.1f", p.x);
+    p = p - 1;
+    yapping("p-1  x=%.1f", p.x);
+
+    🚽 indexing relative to a pointer that is no longer at element 0
+    yapping("p[1] x=%.1f", p[1].x);
+
+    🚽 an ordinary scalar pointer is unaffected by any of this
+    rizz nums[2];
+    nums[0] = 4;
+    nums[1] = 9;
+    rizz *q = &nums[0];
+    q = q + 1;
+    yapping("scalar q=%d", *q);
+    bussin 0;
+}

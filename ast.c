@@ -909,63 +909,135 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
     else if (obj && obj->type == NODE_ARRAY_ACCESS && obj->data.array.name.data)
     {
         /* Member access on an element of an array of struct/union values or
-           pointers (`pts[i].x`, `ptrs[i].x`). Only the name-based array form
-           is an lvalue-addressable struct here; an array-typed struct FIELD
-           element (`foo.arr[i].x`, obj->data.array.base set) is not
-           supported and falls through to the error below. */
+           pointers (`pts[i].x`, `ptrs[i].x`), or on an INDEXED STRUCT
+           POINTER (`p[i].x`, #311 -- see the pointer branch below). The
+           struct-field array form (`foo.arr[i].x`, obj->data.array.base
+           set) is handled by its own branch above. */
         Variable *var = get_variable(obj->data.array.name);
-        if (!var || !var->desc.is_array || var->desc.type != VAR_STRUCT)
+        if (!var || var->desc.type != VAR_STRUCT)
         {
             if (report_errors)
                 yyerror("Member access on a non-struct/union array element");
             return false;
         }
-        parent_def = get_struct_def(var->desc.struct_name);
-        if (!parent_def)
-        {
-            if (report_errors)
-                yyerror("Unknown struct or union type");
-            return false;
-        }
-        /* Same single-level implicit-`->` rule as the variable and nested-
-           field branches above: an array of `gang Foo *` follows one level
-           of indirection, an array of `gang Foo **` needs an explicit
-           dereference and is rejected. */
-        if (var->desc.pointer_level > 1)
-        {
-            if (report_errors)
-                yyerror("Member access via '.' through a multi-level "
-                        "pointer (pointer_level > 1) is not supported");
-            return false;
-        }
 
-        int num_indices = obj->data.array.num_dimensions;
-        int indices[MAX_DIMENSIONS] = {0};
-        for (int i = 0; i < num_indices; i++)
-            indices[i] = evaluate_expression_int(obj->data.array.indices[i]);
-        size_t offset = calculate_array_offset(var->desc.is_array,
-                                               &var->desc.array_dimensions,
-                                               indices, num_indices);
-        void *element_addr =
-            array_element_address(var->value.array_data, offset, var->desc.type,
-                                  var->desc.pointer_level, var->desc.modifiers,
-                                  var->desc.struct_name);
+        /* `p[i].x` where p is a struct POINTER rather than an array
+           (#311). In C these are the same operation -- p[i] is *(p + i) --
+           and that equivalence is what makes a helper able to walk a pool
+           it was handed as a bare pointer, which is the whole point of the
+           feature:
 
-        if (var->desc.pointer_level == 1)
+               skibidi walk(gang E *p, rizz n) {
+                   flex (rizz i = 0; i < n; i = i + 1) { ... p[i].x ... }
+               }
+
+           Split from the array path below rather than folded into it
+           because almost nothing is shared: the base address comes from
+           the pointer's own value instead of array_data, the stride comes
+           from the pointee's StructDef rather than the element descriptor,
+           and -- unavoidably -- there is no bounds check, because a
+           pointer carries no extent. The array path's
+           calculate_array_offset() would also be actively wrong here: it
+           returns 0 whenever is_array is false, silently collapsing
+           `p[5]` to `p[0]`.
+
+           Only single-level pointers and a single index are accepted. A
+           `gang Foo **` needs an explicit dereference (the same rule the
+           variable and nested-field branches enforce), and a second index
+           would be indexing into a struct, which is not an array. */
+        if (!var->desc.is_array && var->desc.pointer_level > 0)
         {
-            uintptr_t target = *(uintptr_t *)element_addr;
-            if (!target)
+            if (var->desc.pointer_level > 1)
             {
                 if (report_errors)
-                    yyerror("Null pointer dereference in struct member "
-                            "access");
+                    yyerror("Indexing a multi-level pointer (pointer_level "
+                            "> 1) is not supported -- dereference it "
+                            "explicitly");
                 return false;
             }
-            parent_base = (void *)target;
+            if (obj->data.array.num_dimensions != 1 ||
+                !obj->data.array.indices[0])
+            {
+                if (report_errors)
+                    yyerror("A struct/union pointer takes exactly one "
+                            "index");
+                return false;
+            }
+            parent_def = get_struct_def(var->desc.struct_name);
+            if (!parent_def || parent_def->total_size == 0)
+            {
+                if (report_errors)
+                    yyerror("Unknown struct or union type");
+                return false;
+            }
+            void *ptr_base = (void *)var->value.pvalue;
+            if (!ptr_base)
+            {
+                if (report_errors)
+                    yyerror("Member access through a null struct/union "
+                            "pointer");
+                return false;
+            }
+            int index = evaluate_expression_int(obj->data.array.indices[0]);
+            parent_base =
+                (char *)ptr_base + (ptrdiff_t)index * parent_def->total_size;
+        }
+        else if (!var->desc.is_array)
+        {
+            if (report_errors)
+                yyerror("Member access on a non-struct/union array element");
+            return false;
         }
         else
         {
-            parent_base = element_addr;
+            parent_def = get_struct_def(var->desc.struct_name);
+            if (!parent_def)
+            {
+                if (report_errors)
+                    yyerror("Unknown struct or union type");
+                return false;
+            }
+            /* Same single-level implicit-`->` rule as the variable and nested-
+               field branches above: an array of `gang Foo *` follows one level
+               of indirection, an array of `gang Foo **` needs an explicit
+               dereference and is rejected. */
+            if (var->desc.pointer_level > 1)
+            {
+                if (report_errors)
+                    yyerror("Member access via '.' through a multi-level "
+                            "pointer (pointer_level > 1) is not supported");
+                return false;
+            }
+
+            int num_indices = obj->data.array.num_dimensions;
+            int indices[MAX_DIMENSIONS] = {0};
+            for (int i = 0; i < num_indices; i++)
+                indices[i] =
+                    evaluate_expression_int(obj->data.array.indices[i]);
+            size_t offset = calculate_array_offset(var->desc.is_array,
+                                                   &var->desc.array_dimensions,
+                                                   indices, num_indices);
+            void *element_addr = array_element_address(
+                var->value.array_data, offset, var->desc.type,
+                var->desc.pointer_level, var->desc.modifiers,
+                var->desc.struct_name);
+
+            if (var->desc.pointer_level == 1)
+            {
+                uintptr_t target = *(uintptr_t *)element_addr;
+                if (!target)
+                {
+                    if (report_errors)
+                        yyerror("Null pointer dereference in struct member "
+                                "access");
+                    return false;
+                }
+                parent_base = (void *)target;
+            }
+            else
+            {
+                parent_base = element_addr;
+            }
         }
     }
     else if (obj && obj->type == NODE_FUNC_CALL)
@@ -1462,6 +1534,48 @@ void *evaluate_multi_array_access(ASTNode *node)
         yyerror(error_msg);
         exit(EXIT_FAILURE);
     }
+    /* Indexing a struct/union POINTER (`p[i]`, #311). In C this is
+       *(p + i), so it is an ordinary element address computation with the
+       pointee's own layout as the stride -- there just is no array to
+       take a base or extent from.
+
+       Handled here, in the shared element-address routine, rather than
+       only where `p[i].x` is resolved: this function is what the
+       interpreter's generic node traversal reaches
+       (interpreter_visit_array_access()), what evaluate_lvalue_address()
+       uses for an assignment target, and what the scalar evaluators use
+       for a value load. Fixing only the member-access resolver left
+       `yapping("%f", p[1].x)` working while `chad t = p[1].x;` died here,
+       because those two arrive by different routes.
+
+       No bounds check is possible and none is attempted -- a pointer
+       carries no extent, exactly as in C. That is also why
+       calculate_array_offset() is not used below: it returns 0 whenever
+       is_array is false, which would silently collapse `p[5]` to `p[0]`. */
+    if (!var->desc.is_array && var->desc.pointer_level == 1 &&
+        var->desc.type == VAR_STRUCT)
+    {
+        StructDef *pointee = get_struct_def(var->desc.struct_name);
+        if (!pointee || pointee->total_size == 0)
+        {
+            yyerror("Cannot index a pointer to an unknown struct/union type");
+            exit(EXIT_FAILURE);
+        }
+        if (num_indices != 1 || !node->data.array.indices[0])
+        {
+            yyerror("A struct/union pointer takes exactly one index");
+            exit(EXIT_FAILURE);
+        }
+        void *ptr_base = (void *)var->value.pvalue;
+        if (!ptr_base)
+        {
+            yyerror("Indexing a null struct/union pointer");
+            exit(EXIT_FAILURE);
+        }
+        ptrdiff_t idx = evaluate_expression_int(node->data.array.indices[0]);
+        return (char *)ptr_base + idx * (ptrdiff_t)pointee->total_size;
+    }
+
     if (!var->desc.is_array)
     {
         char error_msg[MAX_BUFFER_LEN];
@@ -3165,6 +3279,46 @@ void *evaluate_lvalue_address(ASTNode *node)
     return NULL;
 }
 
+/* Byte stride for pointer arithmetic on `expr`, whose pointer level is
+ * `ptr_level` -- i.e. sizeof(*expr), the amount `expr + 1` advances by.
+ *
+ * get_type_size_for_descriptor() answers this for every pointee whose size
+ * follows from (VarType, pointer_level, modifiers) alone, and returns 0 for
+ * the rest. A by-value struct/union pointee is the interesting member of
+ * "the rest": `gang Vec2 *` and `gang Matrix *` are both VAR_STRUCT at
+ * pointer_level 1, so that signature genuinely cannot tell them apart and
+ * correctly refuses to guess.
+ *
+ * The tag it would need is not missing, though -- it is on the Variable,
+ * where get_struct_def_for_expression() can reach it. So struct pointer
+ * arithmetic needed no new field on the pointer's descriptor (#311
+ * proposed one); it needed this second lookup for the case the
+ * size-by-descriptor path structurally cannot serve.
+ *
+ * Returns 0 when the pointee's size is genuinely unknown -- a single-level
+ * opaque VAR_PTR/VAR_VOID pointer -- which callers must still reject
+ * rather than treat as 1 (see their own comments). Only pointer_level 1
+ * consults the struct tag: at level 2+ the pointee is itself a pointer,
+ * whose size get_type_size_for_descriptor() already knows. */
+static size_t pointer_arith_scale(ASTNode *expr, int ptr_level)
+{
+    if (!expr || ptr_level <= 0)
+        return 0;
+
+    size_t scale = get_type_size_for_descriptor(get_expression_type(expr),
+                                                ptr_level - 1, expr->modifiers);
+    if (scale != 0)
+        return scale;
+
+    if (ptr_level == 1 && get_expression_type(expr) == VAR_STRUCT)
+    {
+        StructDef *def = get_struct_def_for_expression(expr);
+        if (def && def->total_size > 0)
+            return def->total_size;
+    }
+    return 0;
+}
+
 uintptr_t evaluate_expression_pointer(ASTNode *node)
 {
     if (!node)
@@ -3248,9 +3402,8 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
                 uintptr_t base =
                     evaluate_expression_pointer(node->data.op.left);
                 ptrdiff_t offset = evaluate_expression_int(node->data.op.right);
-                size_t scale = get_type_size_for_descriptor(
-                    get_expression_type(node->data.op.left), left_ptr - 1,
-                    node->data.op.left->modifiers);
+                size_t scale =
+                    pointer_arith_scale(node->data.op.left, left_ptr);
                 /* Round-23 review, finding #4 -- a scale of 0 means the
                    pointee's size is genuinely unknown (a single-level
                    opaque VAR_PTR/VAR_VOID pointer -- semantic analysis
@@ -3278,9 +3431,8 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
                 uintptr_t base =
                     evaluate_expression_pointer(node->data.op.right);
                 ptrdiff_t offset = evaluate_expression_int(node->data.op.left);
-                size_t scale = get_type_size_for_descriptor(
-                    get_expression_type(node->data.op.right), right_ptr - 1,
-                    node->data.op.right->modifiers);
+                size_t scale =
+                    pointer_arith_scale(node->data.op.right, right_ptr);
                 if (scale == 0)
                 {
                     yyerror("Cannot perform pointer arithmetic on a "

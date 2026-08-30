@@ -1,0 +1,44 @@
+🚽 Test case: the rejections that come with struct pointer indexing
+🚽 (issue #311), kept separate from struct_pointer_arithmetic.brainrot so
+🚽 the feature fixture stays readable.
+🚽
+🚽 All three report and continue, which is this family's convention for a
+🚽 runtime yyerror(), so the values printed after each are part of what is
+🚽 pinned -- an implementation that reported the error and then indexed
+🚽 anyway would print something other than 0.0 here.
+🚽
+🚽   null pointer        no base to offset from. Unlike an array, a
+🚽                       pointer's storage is a value that may be unset.
+🚽   multi-level         `pp[0].x` on a `gang E **` would need an explicit
+🚽                       dereference; the same single-level rule the
+🚽                       variable and nested-field member-access branches
+🚽                       already enforce.
+🚽   two indices         `p[0][1]` -- the second index would be indexing
+🚽                       into a struct, which is not an array. An array
+🚽                       CAN take two indices (`grid[r][c]`); a pointer
+🚽                       cannot, because it carries no second extent.
+🚽
+🚽 Not tested here because it cannot be: an OUT-OF-BOUNDS index. A pointer
+🚽 carries no extent, so `p[99]` is undiagnosable by construction, exactly
+🚽 as in C -- whereas the array form does bounds-check
+🚽 (array_of_structs_oob_fail.brainrot). That asymmetry is a real property
+🚽 of the feature, not an oversight.
+gang E {
+    chad x;
+};
+
+skibidi main {
+    gang E pool[2];
+    pool[0].x = 1.0;
+    pool[1].x = 2.0;
+
+    gang E *nullp;
+    yapping("null: %.1f", nullp[0].x);
+
+    gang E *p = &pool[0];
+    gang E **pp = &p;
+    yapping("multi: %.1f", pp[0].x);
+
+    yapping("two: %.1f", p[0][1].x);
+    bussin 0;
+}
