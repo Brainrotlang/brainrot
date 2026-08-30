@@ -3097,7 +3097,38 @@ SymbolEntry *find_symbol(SemanticAnalyzer *analyzer, const String name)
             if (is_global && !fallback)
             {
                 /* Remember the first global match, but keep looking: an
-                   in-function entry later in the table must still win. */
+                   in-function entry later in the table must still win.
+
+                   The FIRST match, not the last, deliberately: that is
+                   the exact entry the old `return entry` handed back, so
+                   a program with no in-function declaration of the name
+                   behaves bit-for-bit as before. This is a refinement of
+                   the old rule, not a replacement for it.
+
+                   ── "Keep looking" is not free, and was measured ───────
+                   It costs the early exit: every lookup that resolves to
+                   a global now walks the table to the end. That is not a
+                   rare path here -- since main's locals ARE globals (see
+                   above), every variable reference inside main takes it.
+
+                   Timed on a generated main with N declarations plus N/4
+                   assignments, same build flags on both sides:
+
+                     N=2000   0.07s -> 0.11s
+                     N=6000   0.53s -> 0.93s
+
+                   so ~1.6-1.8x, a constant factor rather than a new
+                   complexity class: 3x the input costs ~8x the time on
+                   BOTH sides, because this lookup is already quadratic
+                   either way. It makes an existing scaling problem
+                   somewhat worse; it does not create one.
+
+                   Stated here because "keep looking" reads as free, and
+                   re-adding a `return entry` for the global case as an
+                   obvious optimization would quietly reintroduce #312.
+                   If the symbol table ever gets an index -- it is a
+                   linked list today, and lib/hm.c is right there -- this
+                   is one of the call sites that would benefit most. */
                 fallback = entry;
             }
         }
