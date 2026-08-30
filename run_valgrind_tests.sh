@@ -54,21 +54,28 @@ for f in test_cases/*.brainrot; do
         exit 1
     fi
 
-    # Valgrind summarises as: "FILE DESCRIPTORS: N open (M std) at exit."
-    # The M std ones are stdin/stdout/stderr and are always open; anything
-    # beyond them is a resource the program opened and never released. A
-    # leaked file reads as "5 open (3 std)" against a clean "3 open (3 std)"
-    # -- verified both ways by mutation.
-    fd_line=$(grep -oE 'FILE DESCRIPTORS: [0-9]+ open \([0-9]+ std\)' "$fd_log" | tail -1)
-    if [[ -n "$fd_line" ]]; then
-        fd_open=$(echo "$fd_line" | grep -oE '[0-9]+ open' | grep -oE '[0-9]+')
-        fd_std=$(echo "$fd_line" | grep -oE '\([0-9]+ std' | grep -oE '[0-9]+')
-        if (( fd_open > fd_std )); then
-            echo "Valgrind found $((fd_open - fd_std)) file descriptor(s) left open in $f"
-            grep -E 'FILE DESCRIPTORS|Open (file descriptor|AF_)' "$fd_log"
-            rm -f "$fd_log"
-            exit 1
-        fi
+    # Valgrind lists each descriptor still open at exit. Only the ones this
+    # program opened itself count: a CI runner hands its child unrelated
+    # inherited descriptors (GitHub Actions passes several), and valgrind
+    # labels those "<inherited from parent>" on the following line. The
+    # summary count cannot be used for this -- it lumps inherited ones in
+    # with real leaks, which is exactly how the first version of this check
+    # failed CI on a fixture that opens no files at all.
+    #
+    # A genuinely leaked file looks like:
+    #     Open file descriptor 4: /tmp/whatever.txt
+    #        at 0x...: open (open64.c:41)
+    # so the discriminator is the absence of the inherited marker.
+    stray_fds=$(awk '
+        /Open file descriptor [0-9]+:/ { pending = 1; next }
+        pending { if ($0 !~ /inherited from parent/) count++; pending = 0 }
+        END { print count + 0 }
+    ' "$fd_log")
+    if (( stray_fds > 0 )); then
+        echo "Valgrind found $stray_fds file descriptor(s) left open in $f"
+        grep -E 'FILE DESCRIPTORS|Open (file descriptor|AF_)' "$fd_log"
+        rm -f "$fd_log"
+        exit 1
     fi
     rm -f "$fd_log"
 
