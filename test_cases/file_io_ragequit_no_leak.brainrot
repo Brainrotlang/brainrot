@@ -1,0 +1,45 @@
+🚽 Test case: issue #213 -- an open SAUCE is released even when the program
+🚽 never closes it.
+🚽
+🚽 The issue's definition of done requires "no leaked FILE * on any exit
+🚽 path -- including ragequit". This is the fixture that puts an unclosed
+🚽 handle in front of that gate, and it is deliberately shaped so the
+🚽 program CANNOT clean up after itself: ragequit() calls exit() from inside
+🚽 the native, so nothing after it runs -- no peaceout, no scope teardown,
+🚽 no interpreter shutdown code.
+🚽
+🚽 What catches it instead is a library DESTRUCTOR in stdrot/file.c, which
+🚽 closes everything still in the live-handle registry when libstdrot.so is
+🚽 unloaded. A destructor rather than atexit() for the same reason
+🚽 yapcat.c's scratch uses one: stdrot_unload() dlclose()s that object, and
+🚽 an atexit handler registered from inside it could be invoked after its
+🚽 own code was unmapped.
+🚽
+🚽 ── This fixture's stdout proves almost nothing on its own ────────────
+🚽 Worth stating plainly rather than letting the file look stronger than it
+🚽 is. `make test` only checks that the two lines print and the exit code is
+🚽 4; a build that leaked the FILE * would pass exactly the same. The gate
+🚽 that can see the difference is `make valgrind`, which sweeps every
+🚽 test_cases/*.brainrot -- so the value of this file is that it EXISTS in
+🚽 that sweep with an unclosed handle in it, not that its output is
+🚽 interesting.
+🚽
+🚽 Two files are opened and neither is closed, so the destructor has to walk
+🚽 more than one entry -- a release loop that only ever handled the head of
+🚽 the registry would still pass with one.
+🚽
+🚽 ExitCode:4 rather than a stdout comparison: what is pinned is that
+🚽 ragequit's status survives intact, and that the destructor running does
+🚽 not alter it.
+skibidi main {
+    SAUCE *a = crackopen("/tmp/brainrot_file_io_leak_a.txt", "w");
+    SAUCE *b = crackopen("/tmp/brainrot_file_io_leak_b.txt", "w");
+    edgy (!a || !b) {
+        yapping("could not open for writing");
+        ragequit(1);
+    }
+    yapto(a, "never closed\n");
+    yapto(b, "also never closed\n");
+    yapping("two handles open, closing neither");
+    ragequit(4);
+}

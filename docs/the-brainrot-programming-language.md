@@ -310,6 +310,10 @@ Brainrot supports common arithmetic and logical operators:
 - **`yapcmp`**: lexicographic comparison, returning `-1`, `0` or `1`.
 - **`yapidx`**: byte index of the first occurrence of one `rant` in another,
   or `-1`.
+- **File I/O** — `crackopen`, `peaceout`, `skim`, `doomscroll`, `yapto`,
+  `shitpost`, `zoink`, `whereami`, `throwback`, `itsjoever`, `bricked`,
+  `bustcache`. Twelve operations behind a `SAUCE *` handle; see
+  [`docs/file-io.md`](file-io.md) for the full reference.
 
 ---
 

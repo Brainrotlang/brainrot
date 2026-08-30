@@ -1,0 +1,94 @@
+🚽 Test case: issue #213 -- file I/O behind a `SAUCE *` handle, and the
+🚽 STDROT_HANDLE ABI that makes it expressible.
+🚽
+🚽 This fixture is self-contained: it WRITES the file it later reads, so it
+🚽 depends on no checked-in data and can be re-run. "w" truncates, so
+🚽 running it twice gives the same answer as running it once.
+🚽
+🚽 ── The idiom the issue leads with ────────────────────────────────────
+🚽 The `goon (!itsjoever(f))` read loop is the headline example, and it
+🚽 prints exactly the file's lines -- no trailing blank. That is worth
+🚽 pinning, because the obvious implementation gets it wrong: C's feof()
+🚽 reports that a read has ALREADY failed, so `while (!feof(f))` always runs
+🚽 one iteration too many and processes a phantom empty record. itsjoever()
+🚽 peeks one byte instead (see stdrot/file.c), which is what the NAME
+🚽 promises -- "is it over" is a question about what remains, not about what
+🚽 already went wrong. A regression back to a bare feof() adds a blank line
+🚽 here and this fixture fails.
+🚽
+🚽 `bricked` deliberately stays a plain ferror(), because "did something go
+🚽 wrong" is a question C's semantics answer correctly.
+🚽
+🚽 ── The two write shapes, which are not interchangeable ───────────────
+🚽 `yapto` is fprintf-shaped (a format string) and `shitpost` is
+🚽 fwrite-shaped (raw bytes, a count returned). Both appear here because the
+🚽 distinction mirrors yapping/yappin's relationship to stdout and is the
+🚽 reason the vocabulary has two write verbs at all. `shitpost wrote 10`
+🚽 pins that the byte count comes back, not a status.
+🚽
+🚽 ── Binary safety ─────────────────────────────────────────────────────
+🚽 `doomscroll` reports the byte count actually read and builds a rant of
+🚽 exactly that length, so the result is length-delimited rather than
+🚽 NUL-delimited. `chunk len 5` is what pins that: a terminator-based
+🚽 implementation would agree on the text and disagree on the length the
+🚽 moment a NUL appeared.
+🚽
+🚽 ── A missing file is falsy, not fatal ────────────────────────────────
+🚽 `crackopen` on a file that is not there returns a null handle, so
+🚽 `edgy (!f)` is the check -- a null pointer is falsy in Brainrot. That is
+🚽 deliberately NOT an error: a missing file is an ordinary outcome a
+🚽 program should be able to handle. Being handed a fabricated or already
+🚽 closed handle is a bug, and that one IS fatal -- see
+🚽 file_io_use_after_close_fail.brainrot.
+🚽
+🚽 ── What this fixture cannot see ──────────────────────────────────────
+🚽 That no FILE * leaks when a program never closes one. Nothing on stdout
+🚽 can show that; `make valgrind` is the gate, and
+🚽 file_io_ragequit_no_leak.brainrot is the fixture that puts an unclosed
+🚽 handle in front of it.
+skibidi main {
+    🚽 write, both shapes
+    SAUCE *w = crackopen("/tmp/brainrot_file_io.txt", "w");
+    edgy (!w) {
+        yapping("could not open for writing");
+        ragequit(1);
+    }
+    yapto(w, "aura = %d\n", 42);
+    yapping("shitpost wrote %d", shitpost(w, "raw bytes\n"));
+    yapping("flush %d", bustcache(w));
+    yapping("wrote to pos %d", whereami(w));
+    yapping("close %d", peaceout(w));
+
+    🚽 read it back, the documented way
+    SAUCE *r = crackopen("/tmp/brainrot_file_io.txt", "r");
+    edgy (!r) {
+        yapping("file got negative aura");
+        ragequit(1);
+    }
+    goon (!itsjoever(r)) {
+        rant line = skim(r);
+        yapping("%s", line);
+    }
+    yapping("eof %d", itsjoever(r));
+    yapping("bricked %d", bricked(r));
+
+    🚽 seek back and read raw bytes
+    throwback(r);
+    yapping("after throwback %d", whereami(r));
+    rant chunk = doomscroll(r, 5);
+    yapping("chunk [%s] len %d", chunk, yaplen(chunk));
+
+    🚽 zoink to the end and confirm the position
+    yapping("zoink %d", zoink(r, 0, 2));
+    yapping("end pos %d", whereami(r));
+    peaceout(r);
+
+    🚽 a missing file is falsy, not fatal
+    SAUCE *missing = crackopen("/tmp/brainrot_no_such_file_here.txt", "r");
+    edgy (!missing) {
+        yapping("missing file is falsy");
+    } amogus {
+        yapping("UNEXPECTED: missing file opened");
+    }
+    bussin 0;
+}

@@ -164,11 +164,12 @@ static void *stdrot_lookup_symbol(const String symbol_name)
  * pointer_level only meaningful alongside STDROT_PTR, return_like_arg only
  * meaningful naming a STDROT_ANY mandatory argument, and so on). It does
  * NOT mean every *capability* a structurally-valid descriptor could
- * describe is actually implemented end to end. STDROT_HANDLE (any
- * position) and STDROT_CSTRING as a *return* type are real, well-formed
- * StdrotType values -- reserved groundwork for capabilities this ABI
- * hasn't finished (see stdrot_api.h's own STDROT_HANDLE/STDROT_CSTRING
- * comments) -- not malformed metadata. A descriptor using either loads
+ * describe is actually implemented end to end. STDROT_CSTRING as a
+ * *return* type is a real, well-formed StdrotType value -- reserved
+ * groundwork for a capability this ABI hasn't finished (see
+ * stdrot_api.h's own STDROT_CSTRING comment) -- not malformed metadata.
+ * STDROT_HANDLE was in that set until #213 and no longer is: handles are
+ * now implemented in both directions. A descriptor using either loads
  * successfully; semantic_check_native_call() (semantic_analyzer.c)
  * rejects any *call* to it before that call could ever reach a marshaller
  * with no code path to honor it. That is a deliberate two-tier design,
@@ -902,14 +903,23 @@ VarType stdrot_type_to_vartype(StdrotType type)
            tag (StdrotParam.type_name) separately rather than relying on
            this mapping to distinguish them. */
         return VAR_STRUCT;
-    case STDROT_ANY:
     case STDROT_HANDLE:
+        /* An opaque native resource (#213). VAR_PTR, for the same reason
+           STDROT_PTR is: from the type system's point of view a handle IS
+           an address whose base type is deliberately erased, and VAR_PTR
+           is exactly that category. What distinguishes a handle from a
+           plain pointer is not its Brainrot type but its `kind` tag and
+           the owning library's live-handle registry -- see
+           STDROT_HANDLE's own comment in stdrot_api.h. enforce_arg_type()
+           compares the tags separately, the same way it does for
+           STDROT_STRUCT, because VAR_PTR alone cannot tell two kinds
+           apart. */
+        return VAR_PTR;
+    case STDROT_ANY:
     default:
-        /* Genuinely unknown/unsupported representations -- STDROT_ANY
-           (legacy export, real type not statically knowable) and
-           STDROT_HANDLE (reserved groundwork, no marshalling exists) --
-           correctly remain NONE, distinct from STDROT_NONE's VAR_VOID
-           just above. */
+        /* Genuinely unknown representations -- STDROT_ANY (legacy export,
+           real type not statically knowable) correctly remains NONE,
+           distinct from STDROT_NONE's VAR_VOID just above. */
         return NONE;
     }
 }
@@ -1333,6 +1343,12 @@ static void enforce_return_type(const String func_name, StdrotValue *result,
         if (result->type == STDROT_PTR || result->type == STDROT_HANDLE ||
             result->type == STDROT_CSTRING || result->type == STDROT_ANY ||
             result->type == STDROT_STRUCT)
+        /* NOTE: this branch is the STDROT_ANY-DECLARED case only -- a
+           legacy untyped export handing back a tag the static side never
+           saw. A native that DECLARES STDROT_HANDLE is checked by the
+           exact-match path below and is entirely legal (#213); it is only
+           smuggling one through an ANY descriptor that stays rejected,
+           since then nothing static knows it is a handle. */
         {
             const char *actual_name;
             switch (result->type)
@@ -1433,7 +1449,8 @@ static void apply_variadic_promotion(StdrotValue *value)
     }
 }
 
-static bool coerce_arg_to_param(StdrotValue *value, StdrotType declared)
+static bool coerce_arg_to_param(StdrotValue *value, StdrotType declared,
+                                const char *declared_type_name)
 {
     if (value->type == declared)
         return false;
@@ -1443,6 +1460,34 @@ static bool coerce_arg_to_param(StdrotValue *value, StdrotType declared)
 
     switch (declared)
     {
+    case STDROT_HANDLE:
+        /* A `SAUCE *` variable arrives tagged STDROT_PTR, because
+           ast_expr_to_stdrot_value() marshals ANY pointer-level
+           expression as a raw address before it can know what the
+           parameter declared (#213). Retag it as the handle kind the
+           parameter names.
+
+           Be precise about what this does and does not establish: it
+           ASSERTS the declared kind, it does not VERIFY it -- a Variable
+           holds only an address, with no kind tag of its own to compare
+           against. Static typing is what keeps kinds apart at the source
+           level (`SAUCE *` is a distinct type spelling), and the owning
+           library's live-handle registry is what actually catches a
+           fabricated, stale or wrong-kind token at runtime, by refusing
+           any address that is not currently one of ITS live handles. That
+           split is the whole ownership model -- see STDROT_HANDLE's
+           comment in stdrot_api.h -- and it is why a handle is safe in a
+           way the raw STDROT_PTR underneath it is not. Retagging here
+           without the registry behind it would be security theatre. */
+        if (value->type == STDROT_PTR)
+        {
+            void *addr = value->val.ptr;
+            value->type = STDROT_HANDLE;
+            value->val.handle.type_name = declared_type_name;
+            value->val.handle.handle = addr;
+            return false; /* nothing allocated; nothing to free after */
+        }
+        return false;
     case STDROT_CSTRING:
         if (value->type == STDROT_STRING)
         {
@@ -2025,7 +2070,8 @@ NativeResult execute_native_call(const String func_name, ArgumentList *args,
         if (arg_count < entry->param_count && entry->params)
         {
             if (coerce_arg_to_param(&arg_values[arg_count],
-                                    entry->params[arg_count].type))
+                                    entry->params[arg_count].type,
+                                    entry->params[arg_count].type_name))
             {
                 owned_cstring_bufs[arg_count] = arg_values[arg_count].val.cstr;
             }
@@ -2218,8 +2264,22 @@ void execute_func_call(const String func_name, ArgumentList *args,
      * STDROT_STRING case, stdrot/slorp.c), so there is nothing left to
      * write back either -- flagging it here would both misdescribe
      * intended usage as deprecated and be redundant. */
+    /* A STDROT_HANDLE first parameter is exempt for a stronger reason
+       than the `yap[N]` case above: there, writing back is merely
+       redundant, whereas here it is actively destructive. `peaceout(f)`
+       returns fclose's status, and writing that into `f` would overwrite
+       the handle with 0 -- silently turning a live SAUCE variable into a
+       null one, or worse, a small integer later handed back as an
+       address. A handle argument names the RESOURCE being operated on; it
+       is never a pre-#204 scalar type witness, and no file operation has
+       ever had the write-back convention to preserve. */
+    const StdrotEntry *wb_entry = get_native_function(func_name);
+    const bool first_param_is_handle =
+        wb_entry && wb_entry->params && wb_entry->param_count > 0 &&
+        wb_entry->params[0].type == STDROT_HANDLE;
+
     if (result.type != STDROT_NONE && args && args->expr &&
-        args->expr->type == NODE_IDENTIFIER)
+        args->expr->type == NODE_IDENTIFIER && !first_param_is_handle)
     {
         const String name = args->expr->data.name;
         Variable *var = get_variable(name);

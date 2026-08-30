@@ -390,7 +390,7 @@ static void register_anonymous_aggregate_typedef(String alias_name,
 }
 
 /* Define token types */
-%token SKIBIDI RIZZ YAP BAKA MAIN BUSSIN FLEX CAP RANT
+%token SKIBIDI RIZZ YAP BAKA MAIN BUSSIN FLEX CAP RANT SAUCE
 %token PLUS MINUS TIMES DIVIDE MOD SEMICOLON COLON COMMA
 %token AMPERSAND
 %token LPAREN RPAREN LBRACE RBRACE
@@ -1439,6 +1439,12 @@ type:
     | YAP       { $$ = VAR_CHAR; }
     | CAP       { $$ = VAR_BOOL; }
     | RANT      { $$ = VAR_STRING; }
+    /* An opaque native resource handle (#213) -- see lang.l's own note.
+       VAR_PTR carries it; `SAUCE *f` is therefore VAR_PTR at pointer
+       level 1, which is what a STDROT_HANDLE-returning native's result
+       already infers to, so `SAUCE *f = crackopen(...)` type-checks
+       through the existing pointer machinery rather than new rules. */
+    | SAUCE     { $$ = VAR_PTR; }
     | SKIBIDI   { $$ = VAR_VOID; }
     ;
 

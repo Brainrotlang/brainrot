@@ -465,14 +465,20 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
         {
             const StdrotEntry *entry =
                 get_native_function(node->data.func_call.function_name);
-            /* Only STDROT_PTR has a pointer_level to report -- an opaque
-               pointer is inherently one level of indirection
-               (param->pointer_level counts any *further* indirection
-               beyond that, e.g. a "pointer to a pointer"). Every other
-               native return (including the unmarshalled STDROT_HANDLE,
-               rejected elsewhere) is pointer_level 0 as far as static
-               analysis is concerned. */
-            if (entry && entry->return_type.type == STDROT_PTR)
+            /* Only STDROT_PTR and STDROT_HANDLE have a pointer_level to
+               report -- an opaque address is inherently one level of
+               indirection (param->pointer_level counts any *further*
+               indirection beyond that, e.g. a "pointer to a pointer").
+               Every other native return is pointer_level 0 as far as
+               static analysis is concerned. */
+            /* STDROT_HANDLE alongside STDROT_PTR (#213): a handle is an
+               opaque address too, so `SAUCE *f = crackopen(...)` needs
+               the same pointer_level. A handle declares pointer_level 0,
+               giving level 1 -- one indirection, and never more: the
+               token is the resource, there is nothing behind it to
+               reach through. */
+            if (entry && (entry->return_type.type == STDROT_PTR ||
+                          entry->return_type.type == STDROT_HANDLE))
                 return entry->return_type.pointer_level + 1;
             return 0;
         }
@@ -1756,29 +1762,24 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
         return;
     }
 
-    if (entry->return_type.type == STDROT_HANDLE)
-    {
-        /* STDROT_HANDLE exists in the ABI as reserved groundwork (see
-           stdrot_api.h) but nothing marshals a handle-valued return yet,
-           and -- unlike STDROT_PTR -- a handle isn't just a raw address:
-           it needs a resource-identity/ownership model (type_name-based
-           type checking, who frees it, GC vs manual release) that Phase 2
-           deliberately hasn't designed yet (see the roadmap's Appendix B
-           Q6, "ownership of native resources"). Silently treating that as
-           unchecked would make the descriptor decorative -- claim a type
-           it can't actually deliver. Reject it outright instead of
-           guessing at a design that hasn't been made. STDROT_PTR (a plain
-           opaque address, which this pipeline *can* honestly represent
-           with the existing pointer_level machinery) is handled below,
-           not rejected. */
-        char error_msg[MAX_BUFFER_LEN];
-        snprintf(error_msg, sizeof(error_msg),
-                 "'%s': native handle return types are not marshalled yet",
-                 func_name.data);
-        add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
-                           STRING_LITERAL(error_msg), line);
-        return;
-    }
+    /* STDROT_HANDLE returns are legal (#213). This used to be an outright
+       rejection, on the grounds that a handle "needs a resource-identity/
+       ownership model (type_name-based type checking, who frees it, GC vs
+       manual release) that Phase 2 deliberately hasn't designed yet". That
+       model now exists and is written down on STDROT_HANDLE itself
+       (stdrot_api.h), answering the roadmap's Appendix B Q6: ownership
+       stays in C, release is manual through the owning library, the
+       library keeps a registry of live handles and validates against it,
+       and anything still live at unload is released by the library.
+
+       The three questions the old comment named, answered concretely:
+       type_name-based checking happens in enforce_arg_type() (stdrot.c),
+       the owning LIBRARY frees, and release is manual-but-registered
+       rather than collected. What made this safe to allow before the
+       other deferred returns is that a handle is a TOKEN, not memory the
+       caller must free -- so unlike STDROT_STRUCT there is no "who owns
+       the bytes" question to answer first. STDROT_CSTRING and
+       STDROT_STRUCT stay rejected below for exactly that reason. */
 
     if (entry->return_type.type == STDROT_CSTRING)
     {
@@ -1876,14 +1877,33 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
 
         if (param->type == STDROT_HANDLE)
         {
-            /* Same reasoning as the return-type check above. */
-            char error_msg[MAX_BUFFER_LEN];
-            snprintf(error_msg, sizeof(error_msg),
-                     "'%s' argument %d: native handle parameters are not "
-                     "marshalled yet",
-                     func_name.data, i + 1);
-            add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
-                               STRING_LITERAL(error_msg), line);
+            /* An opaque native resource handle (#213). Statically this is
+               the same shape as STDROT_PTR below -- a `SAUCE *` is
+               VAR_PTR at pointer level 1 -- so the checkable property is
+               the indirection depth, and exactly one level of it: the
+               token IS the resource, so there is nothing behind it to
+               reach through and `SAUCE **` is not a thing.
+
+               What this check deliberately does NOT do is verify the
+               handle's KIND. A Variable stores an address and no tag, so
+               there is nothing here to compare against param->type_name;
+               claiming otherwise would be a check that always passes.
+               Kinds are kept apart at the source level by `SAUCE *`
+               being its own type spelling, and at runtime by the owning
+               library refusing any address that is not one of its own
+               live handles -- see STDROT_HANDLE's comment in
+               stdrot_api.h. */
+            int actual_pl = infer_expression_pointer_level(cur->expr, analyzer);
+            if (actual_pl != 1)
+            {
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: expected a handle such as "
+                         "SAUCE * (pointer level 1), got pointer level %d",
+                         func_name.data, i + 1, actual_pl);
+                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                   STRING_LITERAL(error_msg), line);
+            }
             continue;
         }
 

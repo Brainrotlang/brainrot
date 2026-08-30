@@ -2663,13 +2663,20 @@ int get_expression_pointer_level(ASTNode *node)
                is static data on the registered StdrotEntry -- answering
                this from it never invokes the call, so it never touches
                the native-call memo cache, same as before this consulted
-               STDROT_PTR at all. Only STDROT_PTR has a pointer_level to
-               report (see marshal_native_return_value()'s comment on why
-               that reuses VAR_INT + pointer_level); everything else,
-               including the unmarshalled STDROT_HANDLE, is level 0. */
+               STDROT_PTR at all. Only STDROT_PTR and STDROT_HANDLE have
+               a pointer_level to report (see marshal_native_return_
+               value()'s comment on why that reuses VAR_INT +
+               pointer_level); everything else is level 0. */
             const StdrotEntry *entry =
                 get_native_function(node->data.func_call.function_name);
-            if (entry && entry->return_type.type == STDROT_PTR)
+            /* STDROT_HANDLE alongside STDROT_PTR (#213): a handle is an
+               opaque address too, so `SAUCE *f = crackopen(...)` needs
+               the same pointer_level. A handle declares pointer_level 0,
+               giving level 1 -- one indirection, and never more: the
+               token is the resource, there is nothing behind it to
+               reach through. */
+            if (entry && (entry->return_type.type == STDROT_PTR ||
+                          entry->return_type.type == STDROT_HANDLE))
                 return entry->return_type.pointer_level + 1;
             return 0;
         }
@@ -5536,7 +5543,16 @@ static void marshal_native_return_value(ASTNode *node)
        need to agree on a VarType tag (this function tags it VAR_INT, not
        VAR_PTR), only on pointer_level and the raw
        value. */
-    if (result.type == STDROT_PTR)
+    /* STDROT_HANDLE rides the same representation as STDROT_PTR (#213):
+       an opaque resource token is an address with no further type
+       information, which is exactly what the convention above describes.
+       Sharing it means `SAUCE *f = crackopen(...)` reaches a pointer
+       variable through the machinery that already works for
+       `rizz *p = test_ptr_source();`, rather than needing a parallel
+       path. The handle's KIND is not carried here and does not need to
+       be -- it is checked at the ABI boundary, and enforced for real by
+       the owning library's live-handle registry. */
+    if (result.type == STDROT_PTR || result.type == STDROT_HANDLE)
     {
         const StdrotEntry *entry =
             get_native_function(node->data.func_call.function_name);
@@ -5576,21 +5592,31 @@ static void marshal_native_return_value(ASTNode *node)
     case STDROT_PTR:
         current_return_value.value.pvalue = (uintptr_t)result.val.ptr;
         break;
-    case STDROT_CSTRING:
     case STDROT_HANDLE:
+        /* An opaque native resource (#213). Marshalled exactly like
+           STDROT_PTR above, and that is the whole of it on this side:
+           what Brainrot stores is the token, nothing more. The token is
+           deliberately NOT memory Brainrot owns -- the native library
+           owns the resource and releases it, so unlike a STDROT_STRING
+           return there is nothing here to deep-copy and nothing to free.
+           See STDROT_HANDLE's comment in stdrot_api.h for the ownership
+           model this implements, and why the library's live-handle
+           registry rather than this line is what makes it safe. */
+        current_return_value.value.pvalue = (uintptr_t)result.val.handle.handle;
+        break;
+    case STDROT_CSTRING:
     case STDROT_STRUCT:
         /* semantic_check_native_call() rejects any call to a native whose
-           return_type.type is STDROT_CSTRING, STDROT_HANDLE or
-           STDROT_STRUCT outright (CSTRING has no return-side marshalling
-           implemented -- this switch has no case that would populate
-           strvalue for it; HANDLE needs a resource-ownership model Phase
-           2 hasn't designed yet, see roadmap Appendix B Q6; STRUCT is
-           argument-direction-only for the same ownership reason, see
+           return_type.type is STDROT_CSTRING or STDROT_STRUCT outright
+           (CSTRING has no return-side marshalling implemented -- this
+           switch has no case that would populate strvalue for it; STRUCT
+           is argument-direction-only for an ownership reason, see
            STDROT_STRUCT's own comment in stdrot_api.h) -- so a Brainrot
-           program can never reach this call with result.type equal to any
-           of them, structurally unreachable here. Add real marshalling
-           (and remove the semantic-analyzer rejection) once a builtin
-           actually needs to return one. */
+           program can never reach this call with result.type equal to
+           either, structurally unreachable here. STDROT_HANDLE used to
+           sit in this set and no longer does: returning a handle needs no
+           ownership answer of its own, because the token is not memory
+           the caller must free. */
     case STDROT_ANY:
         /* STDROT_ANY is a descriptor placeholder ("type genuinely
            unknown" or "identity-polymorphic", see StdrotEntry's own

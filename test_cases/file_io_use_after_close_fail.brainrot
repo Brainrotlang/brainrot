@@ -1,0 +1,42 @@
+🚽 Test case: issue #213 -- using a SAUCE after peaceout() is diagnosed,
+🚽 not undefined behaviour.
+🚽
+🚽 This is the fixture for the property that makes a handle worth having.
+🚽 A `SAUCE *` is an address, and Brainrot's type system sees only "opaque
+🚽 pointer" -- it cannot tell a live file from a token that was closed ten
+🚽 lines ago, and neither can the ABI's kind tag, which describes what the
+🚽 parameter EXPECTS rather than what the value IS. Handing a stale address
+🚽 to fclose()/fgets() is undefined behaviour that no static check prevents.
+🚽
+🚽 So stdrot/file.c keeps a registry of live handles and resolves every
+🚽 operation through it. That registry is the ownership model this project
+🚽 gave as its answer to roadmap Appendix B Q6 ("Handles sidestep ownership
+🚽 by keeping it in C -- is that the general answer?"), and this fixture is
+🚽 what stops it being quietly removed as bookkeeping.
+🚽
+🚽 The same check covers three shapes that cannot share a fixture, because
+🚽 each stops the process. All three were verified by hand to produce this
+🚽 identical diagnostic:
+🚽   use after peaceout   (pinned here)
+🚽   peaceout twice       -- a double fclose() without the registry
+🚽   any op on the null handle from a failed crackopen
+🚽
+🚽 `opened` and `closed` pin that execution reached the misuse; nothing
+🚽 follows, because this must stop rather than press on with a wild pointer.
+🚽
+🚽 Note the contrast with a MISSING file, which is not an error at all --
+🚽 crackopen returns a falsy handle and the program decides what to do
+🚽 (file_io.brainrot). Absent file: ordinary. Invalid handle: a bug.
+skibidi main {
+    SAUCE *f = crackopen("/tmp/brainrot_file_io_uaf.txt", "w");
+    edgy (!f) {
+        yapping("could not open for writing");
+        ragequit(1);
+    }
+    yapping("opened");
+    yapping("close %d", peaceout(f));
+    yapping("closed");
+    yapto(f, "this must not be written");
+    yapping("never");
+    bussin 0;
+}

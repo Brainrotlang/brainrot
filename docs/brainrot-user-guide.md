@@ -380,6 +380,7 @@ Brainrot includes some built-in functions for convenience:
 | **yapcat**   | -           | -            | Joins two `rant`s into a new one.                                     |
 | **yapcmp**   | -           | -            | Lexicographic comparison: `-1`, `0` or `1`.                           |
 | **yapidx**   | -           | -            | Byte index of one `rant` inside another, or `-1`.                     |
+| **file I/O** | files       | -            | `crackopen`/`peaceout`/`skim`/`yapto`/… — see [docs/file-io.md](file-io.md). |
 
 ## 10.1. yapping
 

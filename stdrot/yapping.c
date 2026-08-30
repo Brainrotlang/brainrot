@@ -6,6 +6,7 @@
  */
 
 #include "stdrot_api.h"
+#include "stdrot_format.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
@@ -25,9 +26,19 @@ void v_yappin(const char *fmt, va_list ap)
     fflush(stdout);
 }
 
-/* Format string processing for yapping with StdrotValue arguments */
-static void process_yapping_format(const char *format, const StdrotValue *args,
-                                   int arg_count, int add_newline)
+/* Format string processing for yapping with StdrotValue arguments.
+ *
+ * Takes the destination stream rather than assuming stdout, so that
+ * yapto() (stdrot/file.c, #213) can reuse this exact formatter instead of
+ * growing a second copy that drifts. `yapto` is deliberately the
+ * fprintf-shaped file writer -- the same relationship yapping/yappin have
+ * to stdout -- so sharing the implementation is the point, not an
+ * optimisation. Declared in stdrot/stdrot_format.h for that one caller;
+ * it stays out of stdrot_api.h, which is the external ABI contract, not a
+ * place for libstdrot's internals. */
+void stdrot_format_to_stream(FILE *out, const char *format,
+                             const StdrotValue *args, int arg_count,
+                             int add_newline)
 {
     char buffer[1024];
     int buffer_offset = 0;
@@ -207,13 +218,13 @@ static void process_yapping_format(const char *format, const StdrotValue *args,
     buffer[buffer_offset] = '\0';
     if (add_newline)
     {
-        printf("%s\n", buffer);
+        fprintf(out, "%s\n", buffer);
     }
     else
     {
-        printf("%s", buffer);
+        fprintf(out, "%s", buffer);
     }
-    fflush(stdout);
+    fflush(out);
 }
 
 /* StdrotValue wrapper for yapping (with format string processing) */
@@ -221,8 +232,8 @@ static StdrotValue stdrot_yapping(StdrotValue *args, int arg_count)
 {
     if (arg_count > 0 && args[0].type == STDROT_STRING)
     {
-        process_yapping_format(args[0].val.str.data, &args[1], arg_count - 1,
-                               1);
+        stdrot_format_to_stream(stdout, args[0].val.str.data, &args[1],
+                                arg_count - 1, 1);
     }
     return (StdrotValue){STDROT_NONE, {0}};
 }
@@ -232,8 +243,8 @@ static StdrotValue stdrot_yappin(StdrotValue *args, int arg_count)
 {
     if (arg_count > 0 && args[0].type == STDROT_STRING)
     {
-        process_yapping_format(args[0].val.str.data, &args[1], arg_count - 1,
-                               0);
+        stdrot_format_to_stream(stdout, args[0].val.str.data, &args[1],
+                                arg_count - 1, 0);
     }
     return (StdrotValue){STDROT_NONE, {0}};
 }
