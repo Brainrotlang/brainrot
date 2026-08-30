@@ -549,6 +549,15 @@ skibidi main {
 - Chained access follows a single-level pointer field per hop (`a.next.val`);
   a multi-level pointer field (`gang Node **next`) is not followed and must
   be dereferenced explicitly.
+- A struct/union pointer supports arithmetic and indexing, scaled by the
+  pointee's size: `p = p + 1`, `p = p - 1`, and `p[i].x` for both reading and
+  assignment — so a function handed a bare `gang Entity *` can walk a whole
+  pool. A pointer carries no extent, so — as in C — `p[i]` is **not**
+  bounds-checked, unlike the array form (`pts[i]`) which is. Only
+  single-level pointers and a single index are accepted: `gang E **pp` needs
+  an explicit dereference, and `p[0][1]` would be indexing into a struct.
+- Member access directly on a parenthesized expression (`(p + 1).x`) is not
+  supported; assign first (`p = p + 1; p.x`) or index (`p[1].x`).
 - A struct can be passed as a function parameter or returned from a
   function by value as a plain struct variable (`take(p)`, `bussin p;`), a
   by-value struct member-access sub-expression (`take(b.corner)`, `bussin
