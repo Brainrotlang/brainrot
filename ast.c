@@ -910,9 +910,17 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
     {
         /* Member access on an element of an array of struct/union values or
            pointers (`pts[i].x`, `ptrs[i].x`), or on an INDEXED STRUCT
-           POINTER (`p[i].x`, #311 -- see the pointer branch below). The
-           struct-field array form (`foo.arr[i].x`, obj->data.array.base
-           set) is handled by its own branch above. */
+           POINTER (`p[i].x`, #311 -- see the pointer branch below).
+
+           The struct-field array form (`foo.arr[i].x`,
+           obj->data.array.base set) is NOT handled here and falls through
+           to the error at the end of this chain. That is a separate gap
+           with its own change in flight (#315, which adds a branch for it
+           above this one); this comment deliberately does not claim such a
+           branch exists, because on this branch it does not (PR #316
+           review). If #315 has landed by the time you read this, the
+           branch is there and this paragraph is stale in the harmless
+           direction. */
         Variable *var = get_variable(obj->data.array.name);
         if (!var || var->desc.type != VAR_STRUCT)
         {
