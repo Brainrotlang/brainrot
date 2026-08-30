@@ -417,5 +417,7 @@
     "string_indexing": "stored [h]\ninline [d]\nas int 101\nvaridx [o]\nslice  [hello]\nlen    5\ninline [world]\nwhole  [hello world]\none    [o]\nempty  []\nempty at end []\nexpr   [llo]\nagree  [w] [w]\ncat    [hello world]\nrebuilt 0\nidx    1\nutf8 len 2\nutf8 halves -61 -87\n",
     "string_index_out_of_bounds_fail": "before\nStderr:\nError: String index out of bounds (index=5, length=5) at line 31\n",
     "string_slice_out_of_bounds_fail": "before\nStderr:\nError: String slice out of bounds (start=-1, end=2, length=5) at line 34\n",
-    "string_slice_non_rant_fail": "Error: Cannot slice 'n': only a rant can be sliced at line 31\n"
+    "string_slice_non_rant_fail": "Error: Cannot slice 'n': only a rant can be sliced at line 31\n",
+    "string_index_assignment": "write [Jello] len 5\nliterals [Xello] [hello]\ncopy-init [World] [world]\nslice both ways [Xel] [hello]\nslice both ways [Xel] [hYllo]\nparam inside [Zello]\nparam caller [hello]\nyap buf [Hi]\nbuiltin [abcd] [abc]\n",
+    "string_index_write_out_of_bounds_fail": "before\nStderr:\nError: String index out of bounds (index=5, length=5) at line 29\n"
 }

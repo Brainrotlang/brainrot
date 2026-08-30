@@ -1343,9 +1343,14 @@ one.
 > rather than treating the bytes as a C string. Pinned by
 > `test_cases/string_stdlib_char_buffer.brainrot`, and expected to change.
 
-**Strings are immutable; `yapcat` returns a new one.** Neither argument is
-modified, and the result is independent of both -- storing it and then calling
-`yapcat` again leaves the first result untouched.
+**The builtins never modify their arguments; `yapcat` returns a new string.**
+Neither argument is touched, and the result is independent of both -- storing
+it and then calling `yapcat` again leaves the first result untouched. The same
+goes for `s[i:j]`: a slice is a **copy, not a view**, so mutating either the
+slice or the string it came from leaves the other alone.
+
+That is a narrower claim than "strings are immutable", and deliberately so --
+`s[i] = c` writes a byte in place (see below).
 
 - `yaplen` reads the stored length, so it is O(1) and is correct for a string
   containing an embedded NUL. It is not `strlen`.
@@ -1371,6 +1376,12 @@ rant sub = s[0:5];      🚽 "hello" -- a NEW rant
 
 - **`s[i]` yields a `yap`** — the byte at offset `i`. Index in `[0, len)`;
   anything else is a runtime error.
+- **`s[i]` is assignable**: `s[0] = 74;` writes that byte in place, exactly as
+  `yap buf[0] = 74;` does. Writes are bounds-checked by the same rule as reads,
+  so `s[yaplen(s)] = c` is refused rather than scribbling past the buffer. The
+  string's length never changes — you are overwriting a byte, not splicing.
+  This is the one way a `rant`'s contents can be modified; every builtin
+  returns a new string instead.
 - **`s[i:j]` yields a new `rant`** — the half-open range `[i, j)`, so its
   length is `j - i`. Requires `0 <= i <= j <= len`.
 - **Both slice bounds are required.** `s[:j]`, `s[i:]` and `s[:]` are not v1

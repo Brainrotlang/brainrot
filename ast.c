@@ -4931,7 +4931,10 @@ size_t handle_sizeof(ASTNode *node)
  * the caller owns (#251).
  *
  * Returning a fresh copy rather than a view into the source is the
- * immutability rule the rest of this string library follows, and here it is
+ * copy-not-a-view rule the rest of this string library follows -- NOT a claim
+ * that a rant is immutable, which it is not: `s[i] = c` writes a byte in
+ * place, exactly as `yap buf[i] = c` does. What is guaranteed is that a slice
+ * and its source are independent afterwards, in both directions. Here that is
  * also a lifetime requirement: evaluate_expression_string()'s contract is
  * that every result is an independently owned buffer its caller frees (see
  * free_owned_string_args()'s comment), so handing back a pointer into a live

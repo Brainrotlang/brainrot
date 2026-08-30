@@ -659,9 +659,10 @@ rant sub = s[i:j];                    /* half-open [i, j)    -- SYNTAX       */
   unaffected. Measure and compare a `rant`, not a buffer — and there is no
   conversion: `rant r = buf;` is a type error. This comes from how character
   arrays are marshalled to builtins, not from these functions.
-- **Strings are immutable.** `yapcat` modifies neither argument and returns a
-  new string that is independent of both, so an earlier result stays valid
-  after later calls.
+- **The builtins never modify their arguments.** `yapcat` touches neither and
+  returns a new string independent of both, so an earlier result stays valid
+  after later calls. A slice is likewise a **copy, not a view**. Note this is
+  narrower than "strings are immutable" -- `s[i] = c` does write in place.
 - `yaplen` reads the stored length rather than scanning, so it is O(1) and
   stays correct for a string containing an embedded NUL.
 - `yapcmp` returns exactly `-1`, `0` or `1`. When one string is a prefix of
@@ -674,6 +675,10 @@ rant sub = s[i:j];                    /* half-open [i, j)    -- SYNTAX       */
   syntax, not builtins.
   - Index in `[0, len)`; slice bounds `0 <= i <= j <= len`. Out of range is a
     runtime error, not a clamp.
+  - **`s[i]` is assignable** — `s[0] = 74;` overwrites that byte in place,
+    like `yap buf[0] = 74;`. Writes are bounds-checked the same as reads, and
+    the length never changes. This is the only way to modify a rant's
+    contents; the builtins all return new strings.
   - **Both slice bounds are required** — no `s[:j]`, `s[i:]` or `s[:]` — and
     there are **no negative indices**; use `s[yaplen(s) - 1]`.
   - `s[len]` is an error but `s[len:len]` is legal and empty: a slice's upper

@@ -2,8 +2,10 @@
  *
  * Returns a NEW string of length a.len + b.len; neither argument is
  * touched. `yapcat("", x)` and `yapcat(x, "")` are value-equal to x, and
- * freshly allocated rather than aliased -- the immutable/return-new model
- * this string library follows throughout (#251).
+ * freshly allocated rather than aliased -- the return-new model this string
+ * library follows throughout (#251). That is a statement about this
+ * function's arguments and result, not about rants in general: `s[i] = c`
+ * writes a byte in place, so a rant is not immutable.
  *
  * The declared StdrotParams are enforced by enforce_arg_type() (stdrot.c)
  * before fn() is entered, so there is no argument-type check here.
