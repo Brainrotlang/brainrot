@@ -75,6 +75,16 @@ skibidi scroll_all(gang Pool *p) {
     }
 }
 
+🚽 Passing an element BY VALUE, and the rejection that must come with it.
+🚽 The fixture originally only ever read THROUGH the new syntax
+🚽 (`pool.es[i].x`) and never passed one of these things anywhere, which
+🚽 is why it stayed green while both directions were broken: the element
+🚽 form was refused and the whole-array form was silently accepted as
+🚽 element 0 (PR #315 review). Both are checked below.
+chad len2(gang Entity e) {
+    bussin e.x * e.x + e.y * e.y;
+}
+
 skibidi main {
     gang Pool pool;
     yapping("sizeof Pool: %lu", maxxing(pool));
@@ -103,6 +113,19 @@ skibidi main {
     g.cells[1][2].v = 6;
     yapping("sizeof Grid: %lu", maxxing(g));
     yapping("grid %d %d tag=%d", g.cells[0][0].v, g.cells[1][2].v, g.tag);
+
+    🚽 An ELEMENT of a struct-array field is a by-value struct value
+    🚽 anywhere one is accepted: as an argument, and by extension as a
+    🚽 return value and a copy-initializer (all three go through
+    🚽 resolve_by_value_struct_source()).
+    pool.es[0].x = 3.0;
+    pool.es[0].y = 4.0;
+    yapping("len2 element: %.1f", len2(pool.es[0]));
+
+    🚽 ... and the WHOLE array is not. Without this line a regression that
+    🚽 silently passed es[0] again would go unnoticed -- it would print
+    🚽 25.0 here instead of being refused.
+    yapping("len2 whole:   %.1f", len2(pool.es));
 
     🚽 a struct-array field nested two levels down, beside a by-value
     🚽 struct field of the same element type

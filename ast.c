@@ -1245,6 +1245,26 @@ static bool struct_access_executes_call(const ASTNode *node)
     return node && node->type == NODE_FUNC_CALL;
 }
 
+/* ── TWO DISPATCHES, ONE SET OF EXPRESSION SHAPES ───────────────────────
+ * resolve_by_value_struct_source() (below) and resolve_struct_access()
+ * (above) both dispatch on the same three node types -- NODE_IDENTIFIER,
+ * NODE_STRUCT_ACCESS, NODE_ARRAY_ACCESS -- for the same set of
+ * struct-valued expressions, but answer different questions:
+ * resolve_struct_access() finds the struct a MEMBER is being read out of;
+ * this one finds a by-value struct VALUE to copy.
+ *
+ * Every divergence between those two lists has been a bug. #307: the
+ * array-variable guard was added to one arm and not its sibling. #309:
+ * the static array check covered NODE_IDENTIFIER only. #315: a new
+ * expression shape (struct-typed array fields) was taught to
+ * resolve_struct_access() and not to this function, which inverted the
+ * polarity outright -- the legitimate `f(b.pts[0])` was refused while the
+ * illegitimate `f(b.pts)` silently passed element 0.
+ *
+ * So: if you are adding an expression shape that can denote a struct,
+ * there are TWO lists to update, not one -- and a fixture that only reads
+ * a field out of the new shape will not notice the other. Pass one
+ * somewhere too. */
 bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
                                     String *tag_out, bool *owned_out,
                                     bool report_errors)
@@ -1326,6 +1346,26 @@ bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
                 free_pending_return_value();
             return false;
         }
+        /* An ARRAY field is not a by-value struct value, for exactly the
+           reason the NODE_IDENTIFIER arm above says an array VARIABLE
+           isn't: the field's bytes are the whole array, so copying
+           total_size out of it silently yields element 0 -- `len2(b.pts)`
+           hands the callee `b.pts[0]` and nothing objects.
+           That guard was added above by #307 and NOT here, because a
+           struct-typed array field could not be declared at the time.
+           This change is what makes it declarable, so the same guard is
+           needed on this arm too. #309's static check does not cover it
+           either: array_identifier_symbol() is NODE_IDENTIFIER-only, and
+           `b.pts` is a NODE_STRUCT_ACCESS (PR #315 review). */
+        if (fld->desc.is_array)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union value, got an "
+                        "array (index it, e.g. `arr[0]`)");
+            if (struct_access_executes_call(expr))
+                free_pending_return_value();
+            return false;
+        }
         if (struct_access_executes_call(expr))
         {
             /* `make_outer().inner`. Copy the field out of the pending-return
@@ -1361,6 +1401,82 @@ bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
         }
         *blob_out = (char *)base + fld->offset;
         *tag_out = fld->desc.struct_name;
+        return true;
+    }
+
+    if (expr->type == NODE_ARRAY_ACCESS && expr->data.array.base)
+    {
+        /* An element of a struct-typed ARRAY FIELD (`b.pts[i]`) used as a
+           by-value struct value -- passing it to a function, returning it,
+           copy-initializing from it (PR #315 review).
+           This is the field form of the name-based arm below, and it needs
+           its own dispatch for the same reason resolve_struct_access() does:
+           `b.pts[i]` is a NODE_ARRAY_ACCESS whose data.array.base is set and
+           whose data.array.name is NOT, so it fell straight past that arm's
+           `name.data` requirement into the catch-all error -- meaning
+           `len2(b.pts[0])`, the natural thing to write once `b.pts[0].x`
+           works, was refused while `len2(b.pts)` (the whole array) was
+           quietly accepted.
+           The address arithmetic mirrors resolve_struct_access()'s
+           equivalent branch exactly, through the same two helpers, so
+           bounds checking and struct-aware striding are inherited. */
+        StructDef *outer_def = NULL;
+        void *outer_base = NULL;
+        StructField *arr_fld = NULL;
+        if (!resolve_struct_access(expr->data.array.base, &outer_def,
+                                   &outer_base, &arr_fld, report_errors))
+            return false;
+
+        if (!arr_fld->desc.is_array || arr_fld->desc.type != VAR_STRUCT ||
+            arr_fld->desc.pointer_level != 0)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union value");
+            return false;
+        }
+
+        StructDef *elem_def = get_struct_def(arr_fld->desc.struct_name);
+        if (!elem_def)
+        {
+            if (report_errors)
+                yyerror("Unknown struct or union type");
+            return false;
+        }
+
+        /* Same rank check resolve_struct_access() makes on this shape: an
+           array field is inline in the enclosing blob, so a dimension
+           mismatch would resolve into a NEIGHBOURING field's bytes rather
+           than merely misindexing its own array. */
+        int num_indices = expr->data.array.num_dimensions;
+        if (num_indices <= 0 ||
+            num_indices != arr_fld->desc.array_dimensions.num_dimensions)
+        {
+            if (report_errors)
+                yyerror("Wrong number of array indices for a struct/union "
+                        "array field");
+            return false;
+        }
+
+        int indices[MAX_DIMENSIONS] = {0};
+        for (int i = 0; i < num_indices; i++)
+        {
+            if (!expr->data.array.indices[i])
+            {
+                if (report_errors)
+                    yyerror("Missing array index in struct field access");
+                return false;
+            }
+            indices[i] = evaluate_expression_int(expr->data.array.indices[i]);
+        }
+
+        size_t offset = calculate_array_offset(
+            true, &arr_fld->desc.array_dimensions, indices, num_indices);
+        void *element_base = (char *)outer_base + arr_fld->offset;
+        *blob_out = array_element_address(
+            element_base, offset, arr_fld->desc.type,
+            arr_fld->desc.pointer_level, arr_fld->desc.modifiers,
+            arr_fld->desc.struct_name);
+        *tag_out = arr_fld->desc.struct_name;
         return true;
     }
 
