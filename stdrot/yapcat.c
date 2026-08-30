@@ -27,9 +27,9 @@
  * results -- see string_stdlib_result_independence.brainrot, which records
  * which mutation flips it and which does not.
  *
- * The arena is not an option either: libstdrot.so links only stdrot/*.c
- * and lib/input.c (see STDROT_SRCS in the Makefile) -- lib/arena.c is
- * host-side and not in this object.
+ * The arena is not an option either: libstdrot.so links only this
+ * directory's own sources plus lib/input.c (see STDROT_SRCS in the
+ * Makefile) -- lib/arena.c is host-side and not in this object.
  *
  * So: one buffer, replaced as needed, reused across calls. It is safe
  * because the host's copy happens before anything else can run --
