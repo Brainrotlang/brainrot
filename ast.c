@@ -3986,7 +3986,7 @@ void *handle_unary_expression(ASTNode *node, void *operand_value,
         else if (operand_type == VAR_SHORT)
         {
             short *result = SAFE_MALLOC(short);
-            *result = !(*(short *)operand_value);
+            *result = -(*(short *)operand_value);
             return result;
         }
         else if (operand_type == VAR_FLOAT)
