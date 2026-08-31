@@ -1002,9 +1002,14 @@ function table, are both load-time errors for the same reason a
 
 Cooking the same artifact more than once (e.g. two modules that both
 `#cooked` a shared third one) is a no-op after the first time — for a
-`.brainrot` file this is because Brainrot has no `#edgydef`/`#slaps` guards
-yet, so it's handled automatically; a native `.so` is simply never
-`dlopen`'d twice. A `.brainrot` file that `#cooked`s itself, directly or
+`.brainrot` file this is handled automatically, and a native `.so` is simply
+never `dlopen`'d twice.
+
+Include-once being **structural rather than a convention** is the reason
+Brainrot has no include guards and is not getting any: C needs
+`#ifndef`/`#define`/`#endif` precisely because its `#include` will happily
+splice a file twice, so every header has to defend itself and a forgotten
+guard is a real bug. Here there is nothing to forget. A `.brainrot` file that `#cooked`s itself, directly or
 through a cycle of other files, is a compile error that reports the include
 chain instead of hanging — a native module can't form a cycle this way
 (loading one never re-enters the lexer), so only the "already loaded, no-op"

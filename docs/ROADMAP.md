@@ -1292,9 +1292,11 @@ vocabulary stays single-token throughout.
 
 None of these collide with a keyword currently in `lang.l`, with a registered
 builtin (`yapping`, `yappin`, `baka`, `bet`, `chill`, `ragequit`, `slorp`),
-with Phase 11's `gamba` / `gamba_bytes`, or with a proposed preprocessor
-directive. `letcook` is deliberately one word so it cannot be confused with
-the `#cooked` directive.
+with Phase 11's `gamba` / `gamba_bytes`, or with `#cooked` — which is the
+only preprocessor directive there is, and the only one planned (see the
+README's own note on why the `#ifdef`/`#define`/`#pragma` family was dropped
+rather than left as a TODO). `letcook` is deliberately one word so it cannot
+be confused with the `#cooked` directive.
 
 `bruh` was considered and rejected: it is already `break`
 ([lang.l:71](../lang.l#L71)).
