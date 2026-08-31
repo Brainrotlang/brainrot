@@ -387,16 +387,19 @@ jobs:
           out="$(./brainrot.exe examples/hello_world.brainrot)"
           test "$out" = "Hello, World!" \
             || { echo "hello_world mismatch: [$out]"; exit 1; }
-          # Every dependency-free example must run and exit 0. Excludes
-          # file_wordcount (reads a path) and examples/raylib/ (native module).
+          # Every dependency-free STANDALONE example must run and exit 0.
+          # Excludes: file_wordcount (reads a path), examples/raylib/ (native
+          # module), and mathutils (a #cooked library with no `skibidi main` --
+          # it's exercised via modules_named below, not run on its own).
           for f in fibonacci fizz_buzz bubble_sort sieve_of_eras twoSum \
-                   array_of_structs string_parsing string_toolkit mathutils \
+                   array_of_structs string_parsing string_toolkit \
                    heat_equation_1d; do
             echo "-- $f --"
             ./brainrot.exe "examples/$f.brainrot" >/dev/null \
               || { echo "example $f failed"; exit 1; }
           done
           # #cooked prelude modules (relative + BRAINROT_PATH) work statically.
+          # modules_named cooks <mathutils>, so that module is covered here.
           ./brainrot.exe examples/modules.brainrot >/dev/null
           BRAINROT_PATH=examples ./brainrot.exe examples/modules_named.brainrot >/dev/null
           echo "windows smoke tests passed"
