@@ -16,20 +16,22 @@
  * sidestep this by keeping ownership in C -- is that the general answer?").
  * Files are the simplest case to prove it on.
  *
- * The registry is not bookkeeping. A Brainrot `SAUCE *` is an address, and
- * a Brainrot program can produce an address that was never a file: a stale
- * token kept past peaceout(), a pointer from somewhere else entirely, the
- * result of arithmetic. Handing any of those to fclose()/fread() is
- * undefined behaviour that no amount of static typing prevents, because
- * the type system sees only "opaque pointer".
+ * The registry is not bookkeeping. A Brainrot `SAUCE *` is an opaque value,
+ * and a Brainrot program can hold one that no longer means anything: a
+ * stale token kept past peaceout(), or something that was never a handle.
+ * Handing that to fclose()/fread() is undefined behaviour no amount of
+ * static typing prevents, because the type system sees only "opaque
+ * pointer".
  *
- * So every entry point resolves its handle through resolve_handle(), which
- * accepts ONLY an address currently in this table. Use-after-release and
- * double-release become diagnostics instead of a double free(); a
- * fabricated token becomes an error instead of a wild fclose(). That is
- * what makes a handle genuinely safer than the raw pointer underneath it,
- * and it is why the ABI comment says retagging a pointer as a handle
- * without a registry behind it would be security theatre.
+ * So every entry point resolves through resolve_handle(), which accepts
+ * ONLY a token this library issued and has not retired. Use-after-release
+ * and double-release become diagnostics instead of a double free(); a
+ * fabricated handle becomes an error instead of a wild fclose().
+ *
+ * What the token buys over the FILE * itself is IDENTITY rather than mere
+ * liveness -- see the registry's own comment below for why checking an
+ * address against a set of live addresses silently fails the moment the
+ * allocator recycles one, which it does immediately.
  *
  * ── No leaked FILE * on any exit path ─────────────────────────────────
  * A destructor closes everything still open when libstdrot.so is unloaded.
@@ -42,15 +44,54 @@
  */
 #include "stdrot_api.h"
 #include "stdrot_format.h"
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* Grows by doubling; there is no fixed ceiling on open files beyond what
-   the OS itself enforces. */
-static FILE **live_files = NULL;
+/* ── Handles are TOKENS, not addresses ─────────────────────────────────
+   The registry maps a token to its FILE *, and a token is a counter value
+   that is issued once and never issued again.
+
+   The obvious implementation -- hand back the FILE * itself and check
+   membership in a set of live pointers -- is WRONG, and wrong in the
+   ordinary case rather than a corner. fclose() frees the FILE, the next
+   fopen() gets the same address back from the allocator, and a stale
+   handle then passes the liveness check while referring to a completely
+   different file:
+
+       SAUCE *a = crackopen("fa.txt", "r");   // AAAA
+       peaceout(a);
+       SAUCE *b = crackopen("fb.txt", "r");   // BBBB
+       skim(a);                               // -> "BBBB", no diagnostic
+
+   and worse on the close path, where a stale peaceout() silently closes
+   somebody else's file and the rightful owner's peaceout() is then
+   rejected. Measured on a release build while this was still address-based
+   (PR #329 review): the address was reused 50 times out of 50.
+
+   That it survived a green test suite is itself the lesson. ASan's
+   quarantine delays reuse, and valgrind's allocator does the same, so the
+   two builds this project checks memory behaviour with are precisely the
+   two that hide it -- 0 reuses out of 50 under ASan. A guarantee that
+   depends on allocator behaviour is not a guarantee.
+
+   A token makes it structural instead. Membership answers "is some live
+   file here?"; identity answers "is this the file the program opened?",
+   and only the second is what every caller actually needs. */
+typedef struct
+{
+    uintptr_t token;
+    FILE *fp;
+} FileSlot;
+
+static FileSlot *live_files = NULL;
 static size_t live_count = 0;
 static size_t live_capacity = 0;
+
+/* Starts at 1 so that 0 is never a valid token, which is what lets a failed
+   crackopen return a null handle that `edgy (!f)` sees as falsy. */
+static uintptr_t next_token = 1;
 
 /* doomscroll's read scratch. File-scope rather than function-static so the
    destructor below can release it: libstdrot.so is dlclose()d by
@@ -60,18 +101,12 @@ static size_t live_capacity = 0;
 static char *read_buf = NULL;
 static size_t read_buf_size = 0;
 
-static void registry_add(FILE *fp)
+static uintptr_t registry_add(FILE *fp)
 {
     if (live_count == live_capacity)
     {
         size_t next = live_capacity ? live_capacity * 2 : 8;
-        /* sizeof a FILE* is exactly what is wanted here -- this array holds
-           pointers, not FILE objects, whose size is not even knowable.
-           bugprone-sizeof-expression flags every sizeof of a pointer-to-
-           aggregate because the usual mistake is meaning the aggregate;
-           that is not the case here. */
-        // NOLINTNEXTLINE(bugprone-sizeof-expression)
-        FILE **grown = realloc(live_files, next * sizeof(*live_files));
+        FileSlot *grown = realloc(live_files, next * sizeof(*live_files));
         if (!grown)
         {
             fprintf(stderr,
@@ -84,14 +119,32 @@ static void registry_add(FILE *fp)
         live_files = grown;
         live_capacity = next;
     }
-    live_files[live_count++] = fp;
+    /* Refusing to wrap is what makes "never issued twice" a fact rather
+       than an overwhelming likelihood. Reaching it needs UINTPTR_MAX
+       successful opens in one process, so this is unreachable in practice
+       -- but the whole point of this rewrite is not resting the guarantee
+       on something being unlikely. */
+    if (next_token == 0)
+    {
+        fprintf(stderr,
+                "Error: crackopen: handle tokens exhausted at "
+                "line %d\n",
+                g_exec_context.line_number);
+        fclose(fp);
+        exit(1);
+    }
+    uintptr_t token = next_token++;
+    live_files[live_count].token = token;
+    live_files[live_count].fp = fp;
+    live_count++;
+    return token;
 }
 
-static bool registry_remove(FILE *fp)
+static bool registry_remove(uintptr_t token)
 {
     for (size_t i = 0; i < live_count; i++)
     {
-        if (live_files[i] == fp)
+        if (live_files[i].token == token)
         {
             live_files[i] = live_files[--live_count];
             return true;
@@ -100,14 +153,14 @@ static bool registry_remove(FILE *fp)
     return false;
 }
 
-static bool registry_contains(const FILE *fp)
+static FILE *registry_lookup(uintptr_t token)
 {
     for (size_t i = 0; i < live_count; i++)
     {
-        if (live_files[i] == fp)
-            return true;
+        if (live_files[i].token == token)
+            return live_files[i].fp;
     }
-    return false;
+    return NULL;
 }
 
 /* Runs when libstdrot.so is unloaded, while this object is still mapped.
@@ -115,7 +168,7 @@ static bool registry_contains(const FILE *fp)
 __attribute__((destructor)) static void file_release_all(void)
 {
     for (size_t i = 0; i < live_count; i++)
-        fclose(live_files[i]);
+        fclose(live_files[i].fp);
     free(live_files);
     live_files = NULL;
     live_count = 0;
@@ -125,17 +178,31 @@ __attribute__((destructor)) static void file_release_all(void)
     read_buf_size = 0;
 }
 
-/* The one gate every operation below passes through. A handle that is not
-   currently live is an error, never a pointer to act on -- see the file
-   comment for why this is the load-bearing part of the design. */
+/* The one gate every operation below passes through. Returns the FILE * for
+   a token that is currently live, and never returns for anything else --
+   see the registry comment above for why this is identity rather than
+   membership. */
 static FILE *resolve_handle(const char *who, const StdrotValue *v)
 {
-    FILE *fp = (FILE *)v->val.handle.handle;
-    if (!fp || !registry_contains(fp))
+    uintptr_t token = (uintptr_t)v->val.handle.handle;
+    /* A null handle is a failed crackopen, kept distinguishable from a
+       token that was valid once: the message covers both, but this arm
+       means "you never had a file" rather than "you had one and it is
+       gone". */
+    if (token == 0)
     {
         fprintf(stderr,
-                "Error: %s: not an open SAUCE -- it was never opened, or "
-                "was already closed with peaceout, at line %d\n",
+                "Error: %s: not an open SAUCE -- crackopen failed, so there "
+                "is no file to work with, at line %d\n",
+                who, g_exec_context.line_number);
+        exit(1);
+    }
+    FILE *fp = registry_lookup(token);
+    if (!fp)
+    {
+        fprintf(stderr,
+                "Error: %s: not an open SAUCE -- it was already closed with "
+                "peaceout, or was never a handle at all, at line %d\n",
                 who, g_exec_context.line_number);
         exit(1);
     }
@@ -178,8 +245,8 @@ static StdrotValue stdrot_crackopen(StdrotValue *args, int argc)
     if (!fp)
         return out;
 
-    registry_add(fp);
-    out.val.handle.handle = fp;
+    /* The handle is the TOKEN, not the FILE * -- see the registry comment. */
+    out.val.handle.handle = (void *)registry_add(fp);
     return out;
 }
 
@@ -188,7 +255,11 @@ static StdrotValue stdrot_peaceout(StdrotValue *args, int argc)
 {
     (void)argc;
     FILE *fp = resolve_handle("peaceout", &args[0]);
-    registry_remove(fp);
+    /* Retire the token BEFORE closing. The token is never reissued, so the
+       handle the program still holds is dead from here on however the
+       allocator later reuses the FILE's memory -- which is the entire
+       point of tokens over addresses. */
+    registry_remove((uintptr_t)args[0].val.handle.handle);
     return (StdrotValue){STDROT_INT, {.i = fclose(fp)}};
 }
 
