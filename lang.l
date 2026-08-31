@@ -501,9 +501,7 @@ extern int yylineno;
 "mewing"         { return DO; }
 "gigachad"       { current_var_type = VAR_DOUBLE; return GIGACHAD; }
 "gyatt"          { return ENUM; }
-"whopper"        { return EXTERN; }
 "chad"           { current_var_type = VAR_FLOAT; return CHAD; }
-"cringe"         { return GOTO; }
 "edgy"           { return IF; }
 "amogus"         { return ELSE; }
 "giga"           { return LONG; }
