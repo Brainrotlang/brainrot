@@ -197,7 +197,7 @@ Known platform-specific difference from the native build: `sizeof(giga)` is `4`,
 make windows
 ```
 
-Like the wasm target, this is the `STDROT_STATIC` build — `stdrot` is compiled straight into the binary, with no `libstdrot.so`/`dlopen`. So it runs pure-Brainrot programs and `#cooked` **prelude** modules, but **not** `#cooked <native.dll>` native modules (the dynamic-module loader is compiled out) — that's [issue #337](https://github.com/Brainrotlang/brainrot/issues/337) Stage 2. `gamba`'s CSPRNG is backed by `BCryptGenRandom` here (no OpenSSL dependency on Windows).
+Like the wasm target, this is the `STDROT_STATIC` build — the core `stdrot` library is compiled straight into the binary, with no `libstdrot.so`/`dlopen`. It runs pure-Brainrot programs, `#cooked` **prelude** modules, **and** `#cooked <name>` **native modules**: those resolve to a `<name>.dll` and load via `LoadLibraryA`/`GetProcAddress` ([issue #337](https://github.com/Brainrotlang/brainrot/issues/337) Stages 1–2). A native module built for Windows is an ordinary `.dll` (see the `.dll` rule in the `Makefile`); it must be on `$BRAINROT_PATH` (`;`-separated on Windows) for `#cooked <name>` to find it. `gamba`'s CSPRNG is backed by `BCryptGenRandom` here (no OpenSSL dependency on Windows).
 
 `chill()` calls `sleep()` under the hood, which blocks the JS thread it runs on rather than yielding — fine in a short-lived CLI run, but something a browser embedder (e.g. a playground) should account for (run in a Worker, expect the tab to be unresponsive for the duration) rather than assume it behaves like an async delay.
 

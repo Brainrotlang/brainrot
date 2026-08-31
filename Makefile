@@ -312,6 +312,20 @@ $(NATIVEMODULES_DIR)/no_module_init.so: $(NATIVEMODULES_DIR)/no_module_init.c \
 nativemodules: $(NATIVEMODULES_LIBS)
 	@echo "tests/nativemodules/*.so (native module fixtures) compiled."
 
+# A native module built as a Windows DLL (issue #337 Stage 2), to prove
+# #cooked <name> resolves to a ".dll" (module_path.c) and LoadLibraryA-loads
+# it (stdrot.c). Same registry.c-per-file shape as the .so rule above, minus
+# -fPIC (a no-op on PE) and with a .dll suffix. Used by the CI windows job's
+# native-module test; not part of any POSIX target.
+$(NATIVEMODULES_DIR)/%.dll: $(NATIVEMODULES_DIR)/%.c $(STDROT_DIR)/registry.c \
+		$(STDROT_ABI_HDR)
+	$(CC) -shared -O2 -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3 \
+		-I. -I$(STDROT_DIR) -o $@ $(STDROT_DIR)/registry.c $< -lm
+
+.PHONY: windows-test-module
+windows-test-module: $(NATIVEMODULES_DIR)/testnative.dll ## Build a native-module DLL for the Windows #cooked test (issue #337).
+	@echo "tests/nativemodules/testnative.dll compiled."
+
 # ── Optional raylib binding: the first cursed game (Issue #208, Phase 5 Road A)
 # rayrot/raylib.so is a hand-written native module (rayrot/raylib.c) wrapping
 # ~20 raylib primitives, loaded at runtime by `#cooked <raylib>`. It links
@@ -549,6 +563,7 @@ clean: ## Remove all build artifacts (never touches source). Amogus sussy impost
 	rm -f tests/brainrot-test.wasm tests/brainrot-test.mjs
 	rm -f $(BADNATIVES_LIBS)
 	rm -f $(NATIVEMODULES_LIBS)
+	rm -f $(NATIVEMODULES_DIR)/*.dll
 	rm -f $(RAYROT_LIB)
 	rm -f $(OLD_ABI_SIM_LIB)
 	rm -f $(ABI_CHECK_BIN)

@@ -34,9 +34,93 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
-#ifndef STDROT_STATIC
-#include <dlfcn.h>
+
+/* A dynamic loader for #cooked <name> native modules exists wherever the
+ * platform provides one -- POSIX dlopen (any non-wasm build) or the Win32
+ * loader -- INDEPENDENTLY of whether the CORE library is statically linked.
+ * On Windows the core is compiled in (STDROT_STATIC, no libstdrot.so) yet
+ * native modules still load via LoadLibraryA (issue #337 Stage 2). Only the
+ * wasm build (STDROT_STATIC && !_WIN32) has no loader at all. lib/module_path.c
+ * mirrors this exact predicate to decide whether to resolve a native module. */
+#if !defined(STDROT_STATIC) || defined(_WIN32)
+#define STDROT_DYNAMIC_MODULES 1
 #endif
+
+#ifndef STDROT_STATIC
+#include <dlfcn.h> /* core library loader (dlopen/dlsym) -- POSIX native build */
+#elif defined(_WIN32)
+#include <stdint.h> /* uintptr_t, for the GetProcAddress round-trip below */
+#include <windows.h> /* Win32 native-module loader (LoadLibraryA/GetProcAddress) */
+#endif
+
+/* ── Native-module loader shim ────────────────────────────────────────────
+ * One trio -- open/sym/close -- over dlopen and the Win32 loader, so
+ * stdrot_load_module() and stdrot_unload() read identically on both. The
+ * existing void* handle fields hold either a dlopen handle or an HMODULE
+ * (a pointer). Only compiled where a loader exists. */
+#ifdef STDROT_DYNAMIC_MODULES
+#if defined(_WIN32)
+static void *br_module_open(const char *path)
+{
+    return (void *)LoadLibraryA(path);
+}
+static void *br_module_sym(void *handle, const char *name)
+{
+    /* GetProcAddress returns FARPROC; round-trip through uintptr_t to a data
+     * pointer, the same shape dlsym() hands back. */
+    return (void *)(uintptr_t)GetProcAddress((HMODULE)handle, name);
+}
+static void br_module_close(void *handle)
+{
+    FreeLibrary((HMODULE)handle);
+}
+/* Formats the last loader error into a static buffer (single-threaded loader
+ * path, same as dlerror()'s own not-thread-safe contract). */
+static const char *br_module_error(void)
+{
+    static char buf[256];
+    DWORD err = GetLastError();
+    DWORD n = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM |
+                                 FORMAT_MESSAGE_IGNORE_INSERTS,
+                             NULL, err, 0, buf, (DWORD)sizeof(buf), NULL);
+    if (n == 0)
+    {
+        snprintf(buf, sizeof(buf), "Win32 error %lu", (unsigned long)err);
+    }
+    else
+    {
+        /* Trim the trailing CR/LF FormatMessage appends. */
+        while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r'))
+        {
+            buf[--n] = '\0';
+        }
+    }
+    return buf;
+}
+#else
+/* RTLD_LOCAL, unlike the core library's own dlopen(): a cooked module is
+ * looked up entirely by explicit handle (br_module_sym below searches that
+ * object only), so its exports -- including its own brainrot_module_init_v3,
+ * shared by every module -- never enter the process-wide symbol scope, and
+ * two modules exporting that name never collide. */
+static void *br_module_open(const char *path)
+{
+    return dlopen(path, RTLD_LAZY | RTLD_LOCAL);
+}
+static void *br_module_sym(void *handle, const char *name)
+{
+    return dlsym(handle, name);
+}
+static void br_module_close(void *handle)
+{
+    dlclose(handle);
+}
+static const char *br_module_error(void)
+{
+    return dlerror();
+}
+#endif
+#endif /* STDROT_DYNAMIC_MODULES */
 
 /* ── Global execution context ────────────────────────────────────────────── */
 ExecutionContext g_exec_context = {0, {NULL, 0}, {NULL, 0}};
@@ -67,8 +151,10 @@ typedef struct
 
 static SymbolCache symbol_cache[STDROT_CACHE_SIZE];
 static int cache_count = 0;
+#endif /* !STDROT_STATIC (core-library dynamic state) */
 
-/* ── Cooked native modules (#cooked <name> resolving to a .so) ────────────
+#ifdef STDROT_DYNAMIC_MODULES
+/* ── Cooked native modules (#cooked <name> resolving to a .so/.dll) ────────
  * A SEPARATE list from the core library's own functions/function_count
  * above, rather than unifying the two: the core lib is always loaded
  * unconditionally, once, before any Brainrot program has even been
@@ -103,7 +189,7 @@ static int cooked_module_count = 0;
  * that function's own comment on why this exists. NULL whenever no
  * stdrot_load_module() call is in progress. */
 static void *pending_module_handle = NULL;
-#endif
+#endif /* STDROT_DYNAMIC_MODULES */
 
 #ifdef STDROT_STATIC
 /* Statically linked in from stdrot/yapping.c and stdrot/baka.c — called
@@ -478,30 +564,6 @@ void stdrot_load(void)
     validate_native_registry(functions, function_count);
 }
 
-void stdrot_unload(void)
-{
-    functions = NULL;
-    function_count = 0;
-}
-
-/* wasm has no dynamic loader worth using (see this file's own top comment)
- * -- module_path_resolve() (module_path.c) never resolves a #cooked <name>
- * to a native module in this build, so this should never actually be
- * called here. Fails loudly instead of silently doing nothing, on the same
- * principle as every other ABI-enforcement function in this file: a path
- * that's "supposed to be unreachable" still needs to fail safely if it's
- * ever reached anyway (a module_path.c bug, or a future caller that
- * doesn't route through the resolver), not corrupt state or crash. */
-void stdrot_load_module(const char *name, const char *so_path)
-{
-    (void)so_path;
-    fprintf(stderr,
-            "Error: cannot load native module '%s' -- native modules are "
-            "not supported in this build (no dynamic loader)\n",
-            name);
-    exit(1);
-}
-
 #else
 
 void stdrot_load(void)
@@ -595,8 +657,16 @@ void stdrot_load(void)
     validate_native_registry(functions, function_count);
 }
 
+#endif /* STDROT_STATIC -- core-library load path */
+
+/* Unloads the core library (dynamic-core builds only -- Windows and wasm
+ * compile the core in, so there is no lib_handle to close there) and every
+ * #cooked native module (wherever a module loader exists). Two independent
+ * guards, not one: on Windows the core is static yet modules still load via
+ * br_module_open() and must be freed here. */
 void stdrot_unload(void)
 {
+#ifndef STDROT_STATIC
     if (lib_handle)
     {
         dlclose(lib_handle);
@@ -605,9 +675,14 @@ void stdrot_unload(void)
         function_count = 0;
         cache_count = 0;
     }
+#else
+    functions = NULL;
+    function_count = 0;
+#endif
+#ifdef STDROT_DYNAMIC_MODULES
     for (int i = 0; i < cooked_module_count; i++)
     {
-        dlclose(cooked_modules[i].handle);
+        br_module_close(cooked_modules[i].handle);
         free(cooked_modules[i].name);
     }
     cooked_module_count = 0;
@@ -616,10 +691,13 @@ void stdrot_unload(void)
         /* stdrot_load_module() exited (e.g. via validate_native_registry())
            before either closing this handle itself or committing it into
            cooked_modules[] above -- see that function's own comment. */
-        dlclose(pending_module_handle);
+        br_module_close(pending_module_handle);
         pending_module_handle = NULL;
     }
+#endif
 }
+
+#ifdef STDROT_DYNAMIC_MODULES
 
 /* Describes whichever already-registered source (the core library, or an
  * earlier #cooked module) provides `func_name` -- used only to name that
@@ -669,27 +747,20 @@ void stdrot_load_module(const char *name, const char *so_path)
         exit(1);
     }
 
-    /* RTLD_LOCAL, unlike the core library's own dlopen() above: a cooked
-       module is looked up entirely by explicit handle --
-       dlsym(handle, "brainrot_module_init_v3") below searches that specific
-       object (and its own dependencies), never the process-wide global
-       scope, so RTLD_GLOBAL buys nothing for that lookup. The core
-       library needs RTLD_GLOBAL because some of its OWN natives
-       (yapping's varargs stubs, stdrot_lookup_symbol() above) are reached
-       by ordinary natives dlsym'ing/linking against main-binary globals
-       like g_exec_context; a cooked module has no such need by design.
-       Keeping it RTLD_LOCAL also means a module's own exported symbols
-       (including, deliberately, its own brainrot_module_init_v3 -- every
-       cooked module built via -DSTDROT_REGISTRY_ENTRYPOINT=
-       brainrot_module_init_v3 exports one under that exact same name) never
-       enter the process-wide symbol scope at all, so two modules sharing
-       that name is never a collision to begin with, regardless of load
-       order -- not because the name happens to be unique (it isn't). */
-    void *handle = dlopen(so_path, RTLD_LAZY | RTLD_LOCAL);
+    /* br_module_open() loads the module in isolation -- RTLD_LOCAL on POSIX,
+       and the Win32 loader's per-module handle scope -- so its exports never
+       enter the process-wide symbol namespace. That matters most for the
+       module's OWN brainrot_module_init_v3: every cooked module (built with
+       -DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3) exports one under
+       that exact name, and isolation is why two of them are never a collision,
+       regardless of load order -- not because the name happens to be unique
+       (it isn't). br_module_sym() below looks the entrypoint up on this
+       handle specifically, never globally. See the shim near the top. */
+    void *handle = br_module_open(so_path);
     if (!handle)
     {
         fprintf(stderr, "Error: cannot load module '%s' (%s): %s\n", name,
-                so_path, dlerror());
+                so_path, br_module_error());
         exit(1);
     }
     /* Recorded before this handle is fully validated, for the same reason
@@ -732,7 +803,7 @@ void stdrot_load_module(const char *name, const char *so_path)
        ANYTHING crossing it changes shape -- StdrotValue and StdrotType
        included -- not only when StdrotAPI/StdrotEntry do. */
     StdrotAPI (*module_init)(void);
-    *(void **)(&module_init) = dlsym(handle, "brainrot_module_init_v3");
+    *(void **)(&module_init) = br_module_sym(handle, "brainrot_module_init_v3");
     if (!module_init)
     {
         fprintf(stderr,
@@ -742,7 +813,7 @@ void stdrot_load_module(const char *name, const char *so_path)
                 "STDROT_ABI_VERSION %d). Rebuild this module against the "
                 "current stdrot_api.h.\n",
                 name, so_path, STDROT_ABI_VERSION);
-        dlclose(handle);
+        br_module_close(handle);
         pending_module_handle = NULL;
         exit(1);
     }
@@ -771,7 +842,7 @@ void stdrot_load_module(const char *name, const char *so_path)
                     "already provided by %s\n",
                     name, so_path, entry_name,
                     describe_native_source(entry_name));
-            dlclose(handle);
+            br_module_close(handle);
             pending_module_handle = NULL;
             exit(1);
         }
@@ -781,7 +852,7 @@ void stdrot_load_module(const char *name, const char *so_path)
     if (!name_copy)
     {
         fprintf(stderr, "out of memory\n");
-        dlclose(handle);
+        br_module_close(handle);
         pending_module_handle = NULL;
         exit(1);
     }
@@ -795,7 +866,27 @@ void stdrot_load_module(const char *name, const char *so_path)
         NULL; /* ownership transferred to cooked_modules[] */
 }
 
-#endif /* STDROT_STATIC */
+#else /* !STDROT_DYNAMIC_MODULES */
+
+/* wasm has no dynamic loader worth using (see this file's own top comment)
+ * -- module_path_resolve() (module_path.c) never resolves a #cooked <name>
+ * to a native module in this build, so this should never actually be
+ * called here. Fails loudly instead of silently doing nothing, on the same
+ * principle as every other ABI-enforcement function in this file: a path
+ * that's "supposed to be unreachable" still needs to fail safely if it's
+ * ever reached anyway (a module_path.c bug, or a future caller that
+ * doesn't route through the resolver), not corrupt state or crash. */
+void stdrot_load_module(const char *name, const char *so_path)
+{
+    (void)so_path;
+    fprintf(stderr,
+            "Error: cannot load native module '%s' -- native modules are "
+            "not supported in this build (no dynamic loader)\n",
+            name);
+    exit(1);
+}
+
+#endif /* STDROT_DYNAMIC_MODULES */
 
 /* ── Runtime query ──────────────────────────────────────────────────────────
  */
