@@ -125,16 +125,31 @@ Homebrew's raylib ships a `raylib.pc`, so this just works:
 brew install raylib
 ```
 
+### Windows (MSYS2 / MinGW-w64)
+
+The native Windows interpreter (`make windows`, [issue #337](https://github.com/Brainrotlang/brainrot/issues/337))
+loads native modules too, so the cursed game runs there. From the **MINGW64**
+shell, MSYS2's raylib package ships a `raylib.pc`:
+
+```bash
+pacman -S mingw-w64-x86_64-raylib
+```
+
+On Windows `make rayrot` produces `rayrot/raylib.dll` (not `.so`) — the name
+`#cooked <raylib>` looks for on this platform. `raylib.dll` depends on the
+system `libraylib.dll`, which Windows finds next to the loading binary, so keep
+them in the same directory (as the game's Windows bundle does).
+
 ### Other platforms
 
 Any raylib install is fine as long as `pkg-config --exists raylib` succeeds. The
-official [raylib wiki](https://github.com/raysan5/raylib/wiki) covers Windows,
-BSD, and prebuilt release binaries.
+official [raylib wiki](https://github.com/raysan5/raylib/wiki) covers BSD and
+prebuilt release binaries.
 
 ## Building the binding
 
 Once `pkg-config --exists raylib` passes, build the module (produces
-`rayrot/raylib.so`):
+`rayrot/raylib.so`, or `rayrot/raylib.dll` on Windows):
 
 ```bash
 make rayrot
