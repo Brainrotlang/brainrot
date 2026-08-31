@@ -170,14 +170,15 @@ jobs:
   # brainrot + libstdrot.so via the native-release-build composite action,
   # whereas Windows is a single self-contained brainrot.exe from `make windows`
   # (STDROT_STATIC, no libstdrot.so) built under MSYS2 -- hence a sibling job.
-  # Gated on the `windows` smoke job, mirroring how the POSIX dry-run needs
-  # `test`. No publish; just proves the shippable artifact builds and is
-  # self-contained. Wiring this into the real release (release.yml) is Stage 3.
+  # Gated on `test` like every other release-dry-run job, so the whole suite
+  # must pass before any release artifact is packaged. No publish; just proves
+  # the shippable artifact builds and is self-contained. Wiring this into the
+  # real release (release.yml) is Stage 3.
   release-dry-run-windows:
     name: Release dry-run windows/amd64
     if: github.event_name == 'pull_request'
     runs-on: windows-latest
-    needs: windows
+    needs: test
     timeout-minutes: 20
     steps:
       - name: Checkout code
