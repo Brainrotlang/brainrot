@@ -358,6 +358,12 @@ circular-include detection).
 
 Check the [user documentation](docs/the-brainrot-programming-language.md).
 
+File I/O (`crackopen` / `peaceout` / `skim` / `yapto` / …) has its own
+reference: [`docs/file-io.md`](docs/file-io.md). Like every other builtin
+these are library functions rather than keywords, so they are **not** in the
+keyword table above — the only thing file I/O adds to the grammar is the type
+name `SAUCE`, used as `SAUCE *f`.
+
 ### Operators
 
 The language supports basic arithmetic operators:

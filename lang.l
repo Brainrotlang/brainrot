@@ -524,6 +524,18 @@ extern int yylineno;
 "slorp"          { return SLORP; }
 "cap"            { current_var_type = VAR_BOOL; return CAP; }
 "rant"           { current_var_type = VAR_STRING; return RANT; }
+ /* SAUCE -- an opaque native RESOURCE handle (FILE *, #213). Only ever
+    written with a star (`SAUCE *f`), because the token IS the resource and
+    a bare `SAUCE` would be a value the type system has no representation
+    for; semantic analysis rejects the starless form. VAR_PTR because that
+    is already this codebase's "opaque address, base type deliberately
+    erased" category -- what separates a SAUCE from any other opaque
+    pointer is its ABI kind tag and the owning library's live-handle
+    registry, not a distinct VarType. NOT a grammar keyword in the README
+    table sense: it names a type, not an operation, and the twelve file
+    OPERATIONS (crackopen, peaceout, ...) are ordinary stdrot natives with
+    no lexer entry at all. */
+"SAUCE"          { current_var_type = VAR_PTR; return SAUCE; }
 
 "=="             { return EQ; }
 "!="             { return NE; }

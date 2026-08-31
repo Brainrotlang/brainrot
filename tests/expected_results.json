@@ -419,5 +419,9 @@
     "string_slice_out_of_bounds_fail": "before\nStderr:\nError: String slice out of bounds (start=-1, end=2, length=5) at line 34\n",
     "string_slice_non_rant_fail": "Error: Cannot slice 'n': only a rant can be sliced at line 31\n",
     "string_index_assignment": "write [Jello] len 5\nliterals [Xello] [hello]\ncopy-init [World] [world]\nslice both ways [Xel] [hello]\nslice both ways [Xel] [hYllo]\nparam inside [Zello]\nparam caller [hello]\nyap buf [Hi]\nbuiltin [abcd] [abc]\n",
-    "string_index_write_out_of_bounds_fail": "before\nStderr:\nError: String index out of bounds (index=5, length=5) at line 29\n"
+    "string_index_write_out_of_bounds_fail": "before\nStderr:\nError: String index out of bounds (index=5, length=5) at line 29\n",
+    "file_io": "shitpost wrote 10\nflush 0\nwrote to pos 20\nclose 0\naura = 42\nraw bytes\neof 1\nbricked 0\nafter throwback 0\nchunk [aura ] len 5\nzoink 0\nend pos 20\nmissing file is falsy\n",
+    "file_io_use_after_close_fail": "opened\nclose 0\nclosed\nStderr:\nError: yapto: not an open SAUCE -- it was already closed with peaceout, or was never a handle at all, at line 47\n",
+    "file_io_ragequit_no_leak": "ExitCode:4",
+    "file_io_stale_handle_fail": "close a 0\nsame handle 0\nb works, pos 5\nnow using the retired handle, while b is still open:\nStderr:\nError: yapto: not an open SAUCE -- it was already closed with peaceout, or was never a handle at all, at line 62\n"
 }

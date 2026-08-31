@@ -1,0 +1,66 @@
+🚽 Test case: issue #213 -- a handle stays dead after peaceout, even once
+🚽 another file has taken over the memory the first one used.
+🚽
+🚽 This is the shape that broke the first implementation (PR #329 review).
+🚽 The registry originally stored FILE * addresses and checked membership,
+🚽 which answers "is some live file here?" when every caller needs "is this
+🚽 the file the program opened?". fclose() frees the FILE, the very next
+🚽 fopen() gets the same address back, and the stale handle then passed the
+🚽 check while naming a different file entirely:
+🚽
+🚽     peaceout(a);                  🚽 a's address is freed
+🚽     b = crackopen("fb.txt");      🚽 reuses that address
+🚽     skim(a)  -> "BBBB"            🚽 silently read b's file
+🚽
+🚽 and on the close path a stale peaceout(a) silently closed b's file, after
+🚽 which b's own peaceout was refused. Measured at 50 address reuses out of
+🚽 50 on a release build.
+🚽
+🚽 The fix is that a handle is a TOKEN issued once and never reissued, so a
+🚽 retired handle is dead regardless of what the allocator does afterwards.
+🚽
+🚽 ── What this fixture pins, and what it does NOT ──────────────────────
+🚽 It pins that the stale handle is refused WHILE b IS STILL OPEN, which is
+🚽 the ordering that matters. An earlier draft closed b first, and that was
+🚽 measurably weaker: with no live file left at the recycled address even
+🚽 the broken version errored, so the fixture agreed with itself for the
+🚽 wrong reason. With b open, the address-based version finds a live file
+🚽 there and silently operates on somebody else's.
+🚽
+🚽 What it cannot do is distinguish the two implementations under `make
+🚽 test`. That suite runs the ASan build, and ASan's quarantine delays
+🚽 address reuse -- 0 reuses out of 50 -- so the addresses differ there and
+🚽 even the broken version errors correctly. Valgrind's allocator hides it
+🚽 the same way. Stating that plainly matters more than the fixture looking
+🚽 strong: the property is verified by MUTATION on a release build, where
+🚽 reverting to address membership makes `same handle 1` and a silent
+🚽 `[BBBB]` read appear instead of these lines.
+🚽
+🚽 That the two builds this project checks memory behaviour with are exactly
+🚽 the two that conceal this is the real lesson, and is why the ABI header
+🚽 now states that a handle must be a token rather than an address.
+🚽
+🚽 `same handle 0` is the one line here that is allocator-independent: two
+🚽 tokens are never equal, whatever the addresses do.
+skibidi main {
+    SAUCE *a = crackopen("/tmp/brainrot_stale_a.txt", "w");
+    edgy (!a) { yapping("could not open a"); ragequit(1); }
+    yapto(a, "AAAA\n");
+    yapping("close a %d", peaceout(a));
+
+    SAUCE *b = crackopen("/tmp/brainrot_stale_b.txt", "w");
+    edgy (!b) { yapping("could not open b"); ragequit(1); }
+    yapto(b, "BBBB\n");
+
+    yapping("same handle %d", b == a);
+    yapping("b works, pos %d", whereami(b));
+
+    🚽 b is deliberately still OPEN here. a has been retired, so using it
+    🚽 must fail -- and must not quietly act on b's file, which is exactly
+    🚽 what an address-based registry does once the allocator recycles.
+    yapping("now using the retired handle, while b is still open:");
+    yapto(a, "must not be written");
+    yapping("unreachable");
+    peaceout(b);
+    bussin 0;
+}

@@ -667,4 +667,48 @@ skibidi main {
 
 ---
 
+## 13. File I/O — Word Count (`SAUCE *`)
+
+**File Name:** `file_wordcount.brainrot`
+
+```c
+skibidi main {
+    SAUCE *out = crackopen("/tmp/demo.txt", "w");
+    yapto(out, "the quick brown fox\n");
+    peaceout(out);
+
+    SAUCE *in = crackopen("/tmp/demo.txt", "r");
+    edgy (!in) {
+        yapping("file got negative aura");
+        ragequit(1);
+    }
+
+    goon (!itsjoever(in)) {
+        rant line = skim(in);
+        yapping("%s", line);
+    }
+    peaceout(in);
+    bussin 0;
+}
+```
+
+### What It Does
+
+- Writes its own input file and reads it back, so it is self-contained and
+  re-runnable — nothing to set up.
+- Uses the `goon (!itsjoever(f))` read loop, which prints **exactly** the
+  file's lines. `itsjoever` peeks at the next byte rather than reporting a
+  past failure, so it avoids the phantom trailing iteration that makes C's
+  `while (!feof(f))` a classic bug.
+- Combines file I/O with the string library: `skim` returns a `rant`, and
+  `yaplen` / `s[i]` do the word counting.
+- Shows `doomscroll` (raw bytes, binary-safe, length-delimited), `zoink` /
+  `whereami` / `throwback` for seeking, and `yapto` for formatted writing.
+- Ends on the two failure shapes: a **missing** file is falsy and handled
+  (`edgy (!f)`), while an **invalid** handle is fatal and diagnosed.
+- A `SAUCE *` is an opaque handle the library owns — see
+  [`docs/file-io.md`](../docs/file-io.md) for the ownership model.
+
+---
+
 Feel free to explore and modify each example to learn more about how this language’s syntax and features work!

@@ -175,7 +175,89 @@ typedef enum
                         binding generator emitting STDROT_PTR at depth > 1
                         must treat it as fully opaque all the way down,
                         not assume any base-type safety at inner levels. */
-    STDROT_HANDLE,  /* opaque native resource, see StdrotValue.val.handle */
+    STDROT_HANDLE,  /* An opaque native RESOURCE -- a file, later a socket
+                        or a texture -- carried as an address plus a "kind"
+                        tag, see StdrotValue.val.handle.
+ 
+                        ── The ownership model (roadmap Appendix B Q6) ──
+                        Q6 asked whether "handles sidestep ownership by
+                        keeping it in C" is the general answer. It is, and
+                        this is that answer written down, validated first on
+                        files (#213) because they are the simplest resource
+                        that outlives a statement:
+ 
+                        1. OWNERSHIP STAYS IN C. The native library creates
+                           the resource, owns it, and provides an explicit
+                           release. Brainrot never sees a freeable pointer,
+                           only a token, so there is no Brainrot-side free()
+                           to get wrong and nothing for the arena or the
+                           string machinery to take responsibility for.
+                        2. RELEASE IS MANUAL, NOT COLLECTED. Brainrot has no
+                           destructors and no GC, so a handle is closed by
+                           calling the library's release function. What makes
+                           that safe rather than merely conventional is (3).
+                        3. THE LIBRARY KEEPS A REGISTRY OF LIVE HANDLES, and
+                           validates every handle it is given against it.
+                           This is the part that matters, and it is why a
+                           handle is genuinely safer than the raw STDROT_PTR
+                           it superficially resembles: a Brainrot program can
+                           hold a value that no longer means anything (a
+                           stale handle kept past release) and hand it back,
+                           and a raw pointer would be dereferenced or
+                           free()d. A registered handle is looked up first
+                           and rejected if it is not live -- so
+                           use-after-release and double-release are
+                           diagnosed, not undefined.
+ 
+                           THE HANDLE MUST BE A TOKEN, NOT THE RESOURCE'S
+                           ADDRESS, and this is a correctness requirement
+                           rather than a style note. Registering addresses
+                           checks LIVENESS ("is some live resource here?")
+                           when every caller needs IDENTITY ("is this the
+                           resource the program opened?"). Those diverge the
+                           instant the allocator reuses an address, which it
+                           does immediately: released, reopened, and the
+                           stale handle passes the check while naming a
+                           different resource. Measured at 50 reuses out of
+                           50 on a release build when stdrot/file.c was
+                           first written this way (#329 review) -- and
+                           invisible under ASan and valgrind, whose
+                           quarantines delay reuse, so a green test suite is
+                           no evidence either way. Issue a value that is
+                           never issued twice (a counter, or slot+generation)
+                           and the guarantee stops depending on the
+                           allocator.
+ 
+                        3a. CONSEQUENTLY, val.handle.handle IS AN OPAQUE
+                            TOKEN, NOT A POINTER. A binding must not
+                            dereference it, must not compare it against
+                            addresses of its own, and must not assume two
+                            handles naming the same resource compare equal
+                            (or that two different resources compare
+                            unequal). The only thing it may do is hand the
+                            value back to the library that issued it. It is
+                            declared void * because the ABI has nowhere
+                            better to put an integer of pointer width -- not
+                            because it points at anything.
+                        4. ANYTHING STILL LIVE AT UNLOAD IS RELEASED by the
+                           library itself. That is what makes "no leaked
+                           resource on any exit path" true for paths a
+                           program cannot clean up after -- ragequit(), a
+                           fatal error, or simply forgetting to close.
+ 
+                        The `kind` tag (val.handle.type_name, mirrored by
+                        StdrotParam.type_name) is checked at the ABI boundary
+                        the same way STDROT_STRUCT's tag is: two resources
+                        are both STDROT_HANDLE, so the base type alone cannot
+                        tell a SAUCE from a future socket, and enforce_arg_
+                        type() compares the tags rather than trusting it.
+ 
+                        Both directions are implemented: a native may take a
+                        handle and RETURN one. That is the difference from
+                        STDROT_CSTRING and STDROT_STRUCT, which remain
+                        argument-direction-only -- their return side needs an
+                        ownership answer that returning a token does not,
+                        because a token is not memory the caller must free. */
     STDROT_STRUCT,  /* A `gang`/`chungus` aggregate passed BY VALUE, as a
                         flat byte image laid out to the C ABI -- see
                         StdrotValue.val.blob. This is what makes a native
