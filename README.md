@@ -18,193 +18,37 @@ Brainrot is a C-like programming language where traditional keywords are replace
 - `for` → `flex`
 - `return` → `bussin`
 
-## 📋 Requirements
+## 📦 Installation
 
-To build and run the Brainrot compiler, you'll need:
+**Prebuilt binaries.** Every [release](https://github.com/Brainrotlang/brainrot/releases)
+attaches ready-to-run archives for Linux (amd64/arm64), macOS (Intel & Apple
+Silicon), and Windows (amd64), plus the wasm module — download, extract, run.
 
-- GCC (GNU Compiler Collection)
-- Flex (Fast Lexical Analyzer)
-- Bison (Parser Generator)
-- OpenSSL (`libcrypto`) — a **required** dependency of the standard library
-  (`libstdrot.so`), which uses it for the cryptographically safe `gamba()` RNG.
-  You need the development headers to build, and the runtime library
-  (`libcrypto`) to run the interpreter on Linux. Building without OpenSSL is a
-  failed link, not a `gamba`-less interpreter.
-
-### Installation on Different Platforms
-
-#### Ubuntu/Debian
-
-```bash
-sudo apt-get update
-sudo apt-get install gcc flex bison libfl-dev libssl-dev
-```
-
-#### Arch Linux
-
-```bash
-sudo pacman -S gcc flex bison openssl
-```
-
-#### macOS (using Homebrew)
-
-```bash
-brew install gcc flex bison openssl@3
-```
-
-Homebrew's OpenSSL is keg-only, but `make` locates it automatically (via
-`brew --prefix openssl@3`) and **statically** links `libcrypto` into
-`libstdrot.so`, so the built standard library is self-contained.
-
-Some macOS users are experiencing an error related to `libfl`. First, check if `libfl` is installed at:
-
-```
-/opt/homebrew/lib/libfl.dylib  # For Apple Silicon
-/usr/local/lib/libfl.dylib  # For Intel Macs
-```
-
-And if not, you have to find it and symlink to it. Find it using:
-
-```
-find /opt/homebrew -name "libfl.*"  # For Apple Silicon
-find /usr/local -name "libfl.*"  # For Intel Macs
-```
-
-And link it with:
-
-```
-sudo ln -s /path/to/libfl.dylib /opt/homebrew/lib/libfl.dylib  # For Apple Silicon
-sudo ln -s /path/to/libfl.dylib /usr/local/lib/libfl.dylib  # For Intel Macs
-```
-
-#### For NixOS
+**From source.** You need a C compiler (GCC or Clang), **Flex**, **Bison**, and
+**OpenSSL** development headers (the standard library's `gamba()` CSPRNG links
+`libcrypto`):
 
 ```bash
 git clone https://github.com/Brainrotlang/brainrot.git
 cd brainrot
-nix develop
-# then create your .brainrot file
-./result/bin/brainrot filename.brainrot
+make                       # regenerates the lexer/parser, builds ./brainrot + libstdrot.so
+./brainrot examples/hello_world.brainrot
+sudo make install          # optional: install under /usr/local
 ```
 
-Or via a flake-based NixOS config (`/etc/nixos/flake.nix`), which always tracks the latest version:
+Per-platform dependency setup (**NixOS**, **Ubuntu/Debian**, **Arch**,
+**macOS**, **Windows**), prebuilt-binary details, and troubleshooting live in
+the **[Installation Guide](docs/installation.md)**.
 
-```nix
-# /etc/nixos/flake.nix
-{
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    brainrot.url = "github:Brainrotlang/brainrot";
-  };
+## 🛠️ Building & contributing
 
-  outputs = { nixpkgs, brainrot, ... }: {
-    nixosConfigurations.your-hostname = nixpkgs.lib.nixosSystem {
-      modules = [
-        ./configuration.nix
-        {
-          # For a specific user
-          users.users.username = {
-            packages = [ brainrot.packages.x86_64-linux.default ];
-          };
-          # For system-wide installation
-          environment.systemPackages = [
-            brainrot.packages.x86_64-linux.default
-          ];
-        }
-      ];
-    };
-  };
-}
-```
-
-Run `nix flake update` whenever you want to pull the latest version, then rebuild with `sudo nixos-rebuild switch`.
-
-## 🚀 Building the Compiler
-
-1. Clone this repository:
-
-```bash
-git clone https://github.com/Brainrotlang/brainrot.git
-cd brainrot
-```
-
-2. Generate the parser and lexer:
-
-```bash
-bison -d -Wcounterexamples lang.y -o lang.tab.c
-flex -o lang.lex.c lang.l
-```
-
-3. Compile the compiler:
-
-```bash
-make
-```
-
-NOTE: The gcc version we use to test is v13 if you get any warnings remove `-Werror` flag from the Makefile
-
-## Installation
-
-```bash
-sudo make install
-```
-
-### Prebuilt binaries
-
-Each `v*` GitHub release attaches native archives plus the wasm module:
-
-- `brainrot-<tag>-linux-amd64.tar.gz`, `linux-arm64`,
-  `darwin-amd64`, `darwin-arm64` -- `brainrot` and `libstdrot.so`.
-  Extract both files and run `./brainrot file.brainrot` from that
-  directory. At startup the interpreter honors `STDROT_LIB_PATH` if set;
-  otherwise it tries cwd-relative `./libstdrot.so`, then the dynamic
-  linker's `libstdrot.so` search path. Release binaries include an rpath
-  (`$ORIGIN` / `@loader_path`) so that second lookup can find the
-  `libstdrot.so` next to `brainrot` when no cwd copy is loaded first.
-- `brainrot-<tag>-windows-amd64.zip` -- a single self-contained
-  `brainrot.exe` (no `libstdrot.so`: the core is statically linked in, and
-  the MinGW runtime is baked in with `-static`). Unzip and run
-  `brainrot.exe file.brainrot`. Native `#cooked <name>` modules load from
-  `<name>.dll` on `$BRAINROT_PATH` (`;`-separated on Windows); see the
-  [Native Windows build](#-native-windows-build) section.
-- `brainrot.wasm` and `brainrot.mjs` -- same names as previous wasm-only
-  releases, for the in-browser playground.
-- `SHA256SUMS.txt` -- checksums for every attached file.
-
-A release can also be cut from the Actions UI with a patch/minor/major bump
-over the latest stable tag.
-
-## Uninstall
-
-```bash
-sudo make uninstall
-```
-
-## 🌐 WebAssembly build
-
-`make wasm` builds `brainrot.wasm` + `brainrot.mjs` using [Emscripten](https://emscripten.org/) — this is what powers the in-browser playground. Requires `emcc` on your `PATH` (install via [emsdk](https://emscripten.org/docs/getting_started/downloads.html)):
-
-```bash
-make wasm
-```
-
-The interpreter is statically linked for this target (no `libstdrot.so`, no `dlopen` — see `stdrot.c`'s `STDROT_STATIC` path), and takes its source file the same way the native binary does, via `argv[1]` written into Emscripten's in-memory filesystem before calling `callMain`.
-
-Known platform-specific difference from the native build: `sizeof(giga)` is `4`, not `8` — wasm32 uses the ILP32 data model (`long` = 4 bytes) instead of native's LP64 ([#177](https://github.com/Brainrotlang/brainrot/issues/177)). Everything else, including stderr, matches native exactly.
-
-`node tests/run_wasm_tests.mjs` runs the same fixtures as the native `pytest` suite against the wasm build (checking the one difference above against its wasm-correct value instead of native's), and `node tests/run_wasm_examples_check.mjs` diffs every `examples/*.brainrot` program's stdout against a real native run. Run both after `make && make wasm` to sanity-check a build.
-
-## 🪟 Native Windows build
-
-`make windows` builds a single, statically-linked `brainrot.exe` with the [MinGW-w64](https://www.mingw-w64.org/) toolchain (via [MSYS2](https://www.msys2.org/): `pacman -S mingw-w64-x86_64-gcc make bison flex`, from the *MINGW64* shell):
-
-```bash
-make windows
-```
-
-Like the wasm target, this is the `STDROT_STATIC` build — the core `stdrot` library is compiled straight into the binary, with no `libstdrot.so`/`dlopen`. It runs pure-Brainrot programs, `#cooked` **prelude** modules, **and** `#cooked <name>` **native modules**: those resolve to a `<name>.dll` and load via `LoadLibraryA`/`GetProcAddress` ([issue #337](https://github.com/Brainrotlang/brainrot/issues/337) Stages 1–2). A native module built for Windows is an ordinary `.dll` (see the `.dll` rule in the `Makefile`); it must be on `$BRAINROT_PATH` (`;`-separated on Windows) for `#cooked <name>` to find it. `gamba`'s CSPRNG is backed by `BCryptGenRandom` here (no OpenSSL dependency on Windows).
-
-`chill()` calls `sleep()` under the hood, which blocks the JS thread it runs on rather than yielding — fine in a short-lived CLI run, but something a browser embedder (e.g. a playground) should account for (run in a Worker, expect the tab to be unresponsive for the duration) rather than assume it behaves like an async delay.
+`make` regenerates the lexer/parser and builds the interpreter, with `-Werror`
+and the address/undefined-behavior sanitizers on. The full contributor
+workflow — every `make` target, the `pytest` and Valgrind suites,
+`clang-format`/`cppcheck`, and the **WebAssembly** (`make wasm`) and **native
+Windows** (`make windows`) builds — is in the **[Building & Development
+Guide](docs/building.md)**, alongside [`AGENTS.md`](AGENTS.md) and
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## 💻 Usage
 
