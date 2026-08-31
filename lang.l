@@ -3,8 +3,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include <libgen.h>
 #include <sys/stat.h>
+#if !defined(_WIN32)
+#include <libgen.h> /* dirname/basename -- POSIX only; Windows uses the helpers below */
+#endif
+/* Deliberately NOT <windows.h> here even on Windows: it typedefs CHAR (and
+ * other names) that collide with this grammar's token enum in lang.tab.h,
+ * included just below. _fullpath() is in <stdlib.h> and existence is checked
+ * with stat() (already included), so the Win32 path helper needs neither. */
 #include "ast.h"
 #include "lib/mem.h"
 #include "lib/arena.h"
@@ -34,6 +40,52 @@ typedef struct {
 static IncludeFrame include_stack[MAX_INCLUDE_DEPTH];
 static int include_stack_top = 0;
 
+/* Portable path helpers: dirname()/basename()/realpath() are POSIX and absent
+ * on Windows. These mirror lib/module_path.c's equivalents so this subsystem
+ * stays self-contained (its comment above already notes it owns its own
+ * strings rather than sharing). '/'-vs-'\\' handling is Windows-only; POSIX
+ * behavior is byte-for-byte what libgen/realpath gave. */
+
+/* Canonical absolute path of an EXISTING file, malloc'd, or NULL if it does
+ * not exist -- realpath()'s contract, which the callers below depend on. */
+static char *br_path_canonical(const char *path) {
+#if defined(_WIN32)
+    struct stat st;
+    if (stat(path, &st) != 0) return NULL; /* mirror realpath: NULL if absent */
+    return _fullpath(NULL, path, 0);       /* malloc'd; caller free()s */
+#else
+    return realpath(path, NULL);
+#endif
+}
+
+/* Is `p` an absolute path? POSIX: leading '/'. Windows also: leading '\\' or a
+ * drive prefix ("C:\\" / "C:/"). */
+static int br_path_is_absolute(const char *p) {
+    if (p[0] == '/') return 1;
+#if defined(_WIN32)
+    if (p[0] == '\\') return 1;
+    if (p[0] && p[1] == ':' &&
+        ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')))
+        return 1;
+#endif
+    return 0;
+}
+
+/* Offset of the last path separator in `path`, or -1 if none. '\\' is a
+ * separator only on Windows. */
+static long br_path_last_sep(const char *path) {
+    long idx = -1;
+    for (long i = 0; path[i]; i++) {
+        if (path[i] == '/'
+#if defined(_WIN32)
+            || path[i] == '\\'
+#endif
+        )
+            idx = i;
+    }
+    return idx;
+}
+
 static char *visited_paths[MAX_COOKED_FILES];
 static int visited_count = 0;
 
@@ -60,11 +112,8 @@ static void cooked_die(void) {
  * (this repo can be checked out anywhere), which makes error output
  * non-reproducible across machines/CI. Caller frees the result. */
 static char *basename_copy(const char *path) {
-    char *copy = strdup(path);
-    if (!copy) { fprintf(stderr, "out of memory\n"); exit(1); }
-    char *base = basename(copy); /* may alias copy, or point to static storage */
-    char *result = strdup(base);
-    free(copy);
+    long sep = br_path_last_sep(path);
+    char *result = strdup(sep >= 0 ? path + sep + 1 : path);
     if (!result) { fprintf(stderr, "out of memory\n"); exit(1); }
     return result;
 }
@@ -104,13 +153,18 @@ static char *extract_angle_name(const char *text) {
  * exits with a diagnostic on failure. */
 static char *resolve_cooked_path(const char *raw) {
     char *joined;
-    if (raw[0] == '/') {
+    if (br_path_is_absolute(raw)) {
         joined = strdup(raw);
         if (!joined) { fprintf(stderr, "out of memory\n"); exit(1); }
     } else {
+        /* Directory of current_filename = everything before its last
+         * separator; "." if it has none. Replaces POSIX dirname(). */
         char *dir_copy = strdup(current_filename);
         if (!dir_copy) { fprintf(stderr, "out of memory\n"); exit(1); }
-        char *dir = dirname(dir_copy); /* may alias dir_copy; read before freeing */
+        long sep = br_path_last_sep(dir_copy);
+        const char *dir;
+        if (sep >= 0) { dir_copy[sep] = '\0'; dir = dir_copy; }
+        else { dir = "."; }
         size_t len = strlen(dir) + 1 + strlen(raw) + 1;
         joined = malloc(len);
         if (!joined) { fprintf(stderr, "out of memory\n"); exit(1); }
@@ -118,7 +172,7 @@ static char *resolve_cooked_path(const char *raw) {
         free(dir_copy);
     }
 
-    char *resolved = realpath(joined, NULL);
+    char *resolved = br_path_canonical(joined);
     if (!resolved) {
         char *base = basename_copy(current_filename);
         fprintf(stderr, "Error: %s:%d: cannot open #cooked file \"%s\": %s\n",
@@ -385,7 +439,7 @@ static void handle_cooked_module_directive(const char *text) {
 
 /* Called once from main() before yyparse(). */
 void cooked_init(const char *initial_filename) {
-    char *resolved = realpath(initial_filename, NULL);
+    char *resolved = br_path_canonical(initial_filename);
     if (!resolved) {
         fprintf(stderr, "Error: cannot resolve source file '%s': %s\n",
                 initial_filename, strerror(errno));

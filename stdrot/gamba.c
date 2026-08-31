@@ -39,7 +39,33 @@ static void gamba_die(const char *reason)
     exit(1);
 }
 
-#ifdef STDROT_STATIC
+#if defined(_WIN32)
+
+/* Windows: draw from the OS CSPRNG via BCryptGenRandom (bcrypt.dll, always
+ * present), so gamba is a real CSPRNG without an OpenSSL dependency -- and
+ * without the STDROT_STATIC stub below, which the Windows build would
+ * otherwise hit (it compiles with -DSTDROT_STATIC). Checked before
+ * STDROT_STATIC on purpose. BCRYPT_USE_SYSTEM_PREFERRED_RNG lets us pass a
+ * NULL algorithm handle. NTSTATUS success is STATUS_SUCCESS (0). */
+#include <windows.h>
+#include <bcrypt.h>
+static uint64_t gamba_random_u64(void)
+{
+    unsigned char bytes[sizeof(uint64_t)];
+    if (BCryptGenRandom(NULL, bytes, (ULONG)sizeof(bytes),
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
+    {
+        gamba_die("CSPRNG failure (BCryptGenRandom did not succeed)");
+    }
+    uint64_t value = 0;
+    for (size_t i = 0; i < sizeof(bytes); i++)
+    {
+        value = (value << 8) | bytes[i];
+    }
+    return value;
+}
+
+#elif defined(STDROT_STATIC)
 
 /* wasm / static build: no OpenSSL. gamba errors loudly rather than silently
  * degrading to a non-cryptographic source. Native stdlib always has a real
