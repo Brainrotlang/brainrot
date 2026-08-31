@@ -1,0 +1,11 @@
+🚽 Regression for #322: a parenthesized null struct-pointer expression
+🚽 must fail cleanly rather than becoming a readable member address.
+gang Item {
+    chad value;
+};
+
+skibidi main {
+    gang Item *p;
+    yapping("null: %.1f", (p + 0).value);
+    bussin 0;
+}

@@ -400,6 +400,8 @@
     "modulo_by_zero_smol_fail": "rizz: 0\nsmol: 0\nStderr:\nError: Modulo by zero at line 42\nError: Modulo by zero at line 42",
     "division_overflow_int_min_fail": "div: 0\nmod: 0\nsmol mod: 0\nStderr:\nError: Division overflow: the most negative rizz divided by -1 has no representable result at line 63",
     "struct_pointer_arithmetic": "walk:\n  [0] x=0.0 id=0\n  [1] x=1.0 id=10\n  [2] x=2.0 id=20\nafter bump:\n  [0] x=100.0 id=0\n  [1] x=101.0 id=10\n  [2] x=102.0 id=20\ncaller sees: 100.0 101.0 102.0\np    x=100.0\np+2  x=102.0\np-1  x=101.0\np[1] x=102.0\nsizeof Big: 24\nbp[0] a=10.0 c=0.0\nbp[2] a=30.0 c=2.0\nbp+1  a=20.0 c=1.0\nbp+2  a=30.0 c=2.0\nwrote arr[2].a = 99.0\nscalar q=9",
+    "parenthesized_struct_access": "read: 23.0 21.0 22\nwrite: 91.0 93.0\ncompound: 20.0\nby value: 91.0 22\ncopy: 91.0 22\nreturn: 91.0 22\nneighbors: 13.0 33.0",
+    "parenthesized_struct_access_fail": "null: 0.0\nStderr:\nError: Null pointer dereference in struct member access at line 11",
     "struct_pointer_index_fail": "null: 0.0\nmulti: 0.0\ntwo: 0.0\nStderr:\nError: Member access through a null struct/union pointer at line 44\nError: Indexing a multi-level pointer (pointer_level > 1) is not supported -- dereference it explicitly at line 44\nError: A struct/union pointer takes exactly one index at line 44",
     "rant_parameter": "literal\nfrom var\ncaller: from var\npick: first\npick: second\n\nx3\nx2\nx1",
     "rant_parameter_invalid_arg_fail": "survived\nStderr:\nError: Invalid string expression at line 47",

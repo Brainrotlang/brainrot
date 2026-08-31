@@ -665,6 +665,21 @@ static StructDef *infer_struct_def_static(ASTNode *expr,
         return NULL;
     }
 
+    if (expr->type == NODE_OPERATION)
+    {
+        /* Pointer arithmetic keeps the pointer operand's struct tag; the
+           integer operand only selects an element. */
+        int left_level =
+            infer_expression_pointer_level(expr->data.op.left, analyzer);
+        int right_level =
+            infer_expression_pointer_level(expr->data.op.right, analyzer);
+        if (left_level > 0 && right_level == 0 &&
+            (expr->data.op.op == OP_PLUS || expr->data.op.op == OP_MINUS))
+            return infer_struct_def_static(expr->data.op.left, analyzer);
+        if (right_level > 0 && left_level == 0 && expr->data.op.op == OP_PLUS)
+            return infer_struct_def_static(expr->data.op.right, analyzer);
+    }
+
     return NULL;
 }
 
@@ -4120,6 +4135,24 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
 
             parent_is_struct_typed = true;
             parent_def = elem_def;
+        }
+        else if (obj && obj->type == NODE_OPERATION)
+        {
+            /* `(p + i).field`: infer_struct_def_static() follows the
+               pointer operand without evaluating the expression. */
+            int pointer_level = infer_expression_pointer_level(obj, analyzer);
+            parent_def = infer_struct_def_static(obj, analyzer);
+            parent_is_struct_typed = parent_def != NULL && pointer_level == 1;
+            if (parent_def && pointer_level > 1)
+            {
+                add_semantic_error(
+                    analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                    STRING_LITERAL(
+                        "Member access via '.' through a multi-level "
+                        "pointer (pointer_level > 1) is not supported"),
+                    node->line_number > 0 ? node->line_number : 1);
+                break;
+            }
         }
         else if (obj && obj->type == NODE_FUNC_CALL)
         {

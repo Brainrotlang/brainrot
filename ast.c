@@ -44,6 +44,7 @@ extern void cleanup(void);
 extern const char *vartype_to_string(VarType type);
 extern int yylineno;
 static int get_function_return_pointer_level(const String name);
+static StructDef *get_struct_def_for_expression(ASTNode *expr);
 String evaluate_expression_string(ASTNode *node);
 
 /* ── Native-call memo cache ──────────────────────────────────────────────
@@ -1166,6 +1167,35 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                 parent_base = element_addr;
             }
         }
+    }
+    else if (obj && obj->type == NODE_OPERATION)
+    {
+        /* `(p + i).field`: pointer arithmetic already preserves the
+           struct-pointer type and scales by the pointee's complete layout.
+           Resolve that same pointee definition here, then evaluate the
+           expression once to obtain the element address. */
+        if (get_expression_pointer_level(obj) != 1)
+        {
+            if (report_errors)
+                yyerror("Member access on a non-struct/union expression");
+            return false;
+        }
+        parent_def = get_struct_def_for_expression(obj);
+        if (!parent_def)
+        {
+            if (report_errors)
+                yyerror("Member access on an expression with an unknown "
+                        "struct or union type");
+            return false;
+        }
+        uintptr_t target = evaluate_expression_pointer(obj);
+        if (!target)
+        {
+            if (report_errors)
+                yyerror("Null pointer dereference in struct member access");
+            return false;
+        }
+        parent_base = (void *)target;
     }
     else if (obj && obj->type == NODE_FUNC_CALL)
     {
@@ -2969,6 +2999,19 @@ static StructDef *get_struct_def_for_expression(ASTNode *expr)
             return get_struct_def_for_expression(operand);
         }
         return NULL;
+    case NODE_OPERATION:
+    {
+        /* Preserve the pointee layout through pointer arithmetic. The
+           numeric operand contributes an offset, not a new pointee type. */
+        int left_level = get_expression_pointer_level(expr->data.op.left);
+        int right_level = get_expression_pointer_level(expr->data.op.right);
+        if (left_level > 0 && right_level == 0 &&
+            (expr->data.op.op == OP_PLUS || expr->data.op.op == OP_MINUS))
+            return get_struct_def_for_expression(expr->data.op.left);
+        if (right_level > 0 && left_level == 0 && expr->data.op.op == OP_PLUS)
+            return get_struct_def_for_expression(expr->data.op.right);
+        return NULL;
+    }
     default:
         return NULL;
     }
