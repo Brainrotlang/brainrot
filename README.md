@@ -1,7 +1,7 @@
 # Brainrot Programming Language
 
-[![license](https://img.shields.io/badge/license-GPL-green)](https://raw.githubusercontent.com/araujo88/brainrot/main/LICENSE)
-[![CI](https://github.com/araujo88/brainrot/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/araujo88/brainrot/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-GPL-green)](https://raw.githubusercontent.com/Brainrotlang/brainrot/main/LICENSE)
+[![CI](https://github.com/Brainrotlang/brainrot/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Brainrotlang/brainrot/actions/workflows/ci.yml)
 
 Brainrot is a meme-inspired programming language that translates common programming keywords into internet slang and meme references. It's built using Flex (lexical analyzer) and Bison (parser generator), making it a fun way to learn about language processing and compiler design.
 
