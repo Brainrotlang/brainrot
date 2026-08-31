@@ -337,12 +337,21 @@ windows-test-module: $(NATIVEMODULES_DIR)/testnative.dll ## Build a native-modul
 # fixtures above (registry.c's own comment has the reasoning), so rayrot/raylib.c's
 # STDROT_EXPORT_SIG() entries are exported as brainrot_module_init_v3().
 RAYROT_DIR := rayrot
-RAYROT_LIB := $(RAYROT_DIR)/raylib.so
+# The module's file name must match what #cooked <raylib> looks for on this
+# platform: ".dll" on Windows (module_path.c's MODULE_NATIVE_SUFFIX, resolved
+# and LoadLibraryA-loaded), ".so" everywhere else. So the native Windows
+# interpreter (`make windows`, issue #337) can run the cursed game too.
+ifneq (,$(findstring MINGW,$(UNAME_S))$(findstring MSYS,$(UNAME_S)))
+RAYROT_MODULE_EXT := dll
+else
+RAYROT_MODULE_EXT := so
+endif
+RAYROT_LIB := $(RAYROT_DIR)/raylib.$(RAYROT_MODULE_EXT)
 RAYLIB_CFLAGS := $(shell pkg-config --cflags raylib 2>/dev/null)
 RAYLIB_LIBS := $(shell pkg-config --libs raylib 2>/dev/null)
 
 .PHONY: rayrot
-rayrot: $(RAYROT_LIB) ## Build the optional raylib binding rayrot/raylib.so (needs raylib; docs/rayrot.md). Cursed game unlocked.
+rayrot: $(RAYROT_LIB) ## Build the optional raylib binding (rayrot/raylib.so, or .dll on Windows; needs raylib; docs/rayrot.md). Cursed game unlocked.
 
 $(RAYROT_LIB): $(RAYROT_DIR)/raylib.c $(STDROT_DIR)/registry.c $(STDROT_ABI_HDR)
 	@pkg-config --exists raylib || { \
@@ -350,13 +359,15 @@ $(RAYROT_LIB): $(RAYROT_DIR)/raylib.c $(STDROT_DIR)/registry.c $(STDROT_ABI_HDR)
 		echo "raylib is an OPTIONAL dependency, needed only for 'make rayrot'."; \
 		echo "Install it, then re-run 'make rayrot'. Setup guide (Linux/macOS):"; \
 		echo "  docs/rayrot.md"; \
-		echo "macOS: 'brew install raylib'. Verify with: pkg-config --exists raylib"; \
+		echo "macOS: 'brew install raylib'."; \
+		echo "Windows (MSYS2 MINGW64): 'pacman -S mingw-w64-x86_64-raylib'."; \
+		echo "Verify with: pkg-config --exists raylib"; \
 		exit 1; }
 	$(CC) $(SO_CFLAGS) -Wall -Wextra \
 		-DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3 \
 		-I. -I$(STDROT_DIR) $(RAYLIB_CFLAGS) -o $@ \
 		$(STDROT_DIR)/registry.c $< $(RAYLIB_LIBS) -lm $(SO_LDFLAGS)
-	@echo "rayrot/raylib.so built. Run the cursed game with:"
+	@echo "$(RAYROT_LIB) built. Run the cursed game with:"
 	@echo "  BRAINROT_PATH=$(RAYROT_DIR) ./brainrot examples/raylib/ohio_engine.brainrot"
 
 # Convenience: build the binding and launch the cursed game in one step. It
