@@ -903,7 +903,7 @@ bool is_builtin_function(const String func_name)
             return true;
         }
     }
-#ifndef STDROT_STATIC
+#ifdef STDROT_DYNAMIC_MODULES
     for (int m = 0; m < cooked_module_count; m++)
     {
         for (int i = 0; i < cooked_modules[m].function_count; i++)
@@ -931,7 +931,7 @@ const StdrotEntry *get_native_function(const String func_name)
             return functions[i];
         }
     }
-#ifndef STDROT_STATIC
+#ifdef STDROT_DYNAMIC_MODULES
     for (int m = 0; m < cooked_module_count; m++)
     {
         for (int i = 0; i < cooked_modules[m].function_count; i++)
