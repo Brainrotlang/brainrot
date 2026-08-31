@@ -1009,11 +1009,12 @@ Include-once being **structural rather than a convention** is the reason
 Brainrot has no include guards and is not getting any: C needs
 `#ifndef`/`#define`/`#endif` precisely because its `#include` will happily
 splice a file twice, so every header has to defend itself and a forgotten
-guard is a real bug. Here there is nothing to forget. A `.brainrot` file that `#cooked`s itself, directly or
-through a cycle of other files, is a compile error that reports the include
-chain instead of hanging — a native module can't form a cycle this way
-(loading one never re-enters the lexer), so only the "already loaded, no-op"
-half applies to it.
+guard is a real bug. Here there is nothing to forget.
+
+A `.brainrot` file that `#cooked`s itself, directly or through a cycle of
+other files, is a compile error that reports the include chain instead of
+hanging — a native module can't form a cycle this way (loading one never
+re-enters the lexer), so only the "already loaded, no-op" half applies to it.
 
 #### Example
 
