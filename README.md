@@ -161,13 +161,18 @@ Each `v*` GitHub release attaches native archives plus the wasm module:
   linker's `libstdrot.so` search path. Release binaries include an rpath
   (`$ORIGIN` / `@loader_path`) so that second lookup can find the
   `libstdrot.so` next to `brainrot` when no cwd copy is loaded first.
+- `brainrot-<tag>-windows-amd64.zip` -- a single self-contained
+  `brainrot.exe` (no `libstdrot.so`: the core is statically linked in, and
+  the MinGW runtime is baked in with `-static`). Unzip and run
+  `brainrot.exe file.brainrot`. Native `#cooked <name>` modules load from
+  `<name>.dll` on `$BRAINROT_PATH` (`;`-separated on Windows); see the
+  [Native Windows build](#-native-windows-build) section.
 - `brainrot.wasm` and `brainrot.mjs` -- same names as previous wasm-only
   releases, for the in-browser playground.
 - `SHA256SUMS.txt` -- checksums for every attached file.
 
-Windows is not a native target (`dlopen` / POSIX stdrot). A release can
-also be cut from the Actions UI with a patch/minor/major bump over the
-latest stable tag.
+A release can also be cut from the Actions UI with a patch/minor/major bump
+over the latest stable tag.
 
 ## Uninstall
 

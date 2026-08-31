@@ -7,8 +7,14 @@
 # Native binaries are built on NATIVE runners (linux/amd64, linux/arm64,
 # darwin/amd64, darwin/arm64) because the interpreter is C + Flex/Bison and
 # dlopen's libstdrot.so at runtime — there is no useful cross-compile path
-# that still produces a runnable artifact. Windows is omitted: the loader
-# and stdrot are POSIX (dlfcn.h, libstdrot.so, unistd.h).
+# that still produces a runnable artifact.
+#
+# Windows (windows/amd64) is a separate job too: it ships a SINGLE
+# self-contained brainrot.exe from `make windows` (STDROT_STATIC, the core
+# compiled in — no libstdrot.so — and -static so the MinGW runtime is baked
+# in), built under MSYS2. Native #cooked <name> modules load via LoadLibraryA
+# (issue #337). It's packaged as a .zip, not a .tar.gz, and carries no
+# libstdrot.so.
 #
 # wasm stays a separate job (Emscripten, statically linked stdrot) and still
 # publishes brainrot.wasm / brainrot.mjs under those exact names so existing
@@ -245,9 +251,63 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  windows:
+    name: Build windows/amd64
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.checkout_ref }}
+
+      - name: Set up MSYS2 (MinGW-w64 toolchain)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            make
+            bison
+            flex
+
+      - name: Build brainrot.exe
+        shell: msys2 {0}
+        run: make windows
+
+      # The shipped .exe must import only system DLLs. A libgcc_s_seh-1.dll /
+      # libwinpthread-1.dll dependency would make it run only where MSYS2's bin
+      # is on PATH -- the Windows analogue of the Darwin otool check in the
+      # native-release-build action. -static (Makefile) prevents it; fail
+      # loudly here if that ever regresses. Also smoke-run it.
+      - name: Verify + smoke-test
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          objdump -p brainrot.exe | grep -i 'DLL Name'
+          if objdump -p brainrot.exe | grep -iqE 'libgcc|libwinpthread|libstdc\+\+'; then
+            echo "ERROR: brainrot.exe depends on a MinGW runtime DLL;" \
+              "it must be statically linked (-static)." >&2
+            exit 1
+          fi
+          out="$(./brainrot.exe examples/hello_world.brainrot)"
+          test "$out" = "Hello, World!" \
+            || { echo "hello_world mismatch: [$out]"; exit 1; }
+          echo "windows release artifact verified"
+
+      - name: Upload brainrot.exe
+        uses: actions/upload-artifact@v7
+        with:
+          name: brainrot-windows-amd64
+          path: brainrot.exe
+          if-no-files-found: error
+          retention-days: 1
+
   publish:
     name: Package and publish release
-    needs: [version, build, wasm]
+    needs: [version, build, wasm, windows]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -280,6 +340,15 @@ jobs:
               tar -czf "$out/brainrot-${VERSION}-wasm.tar.gz" \
                 -C "$dir" brainrot.wasm brainrot.mjs
               cp "$dir/brainrot.wasm" "$dir/brainrot.mjs" "$out/"
+              continue
+            fi
+            # Windows ships a single self-contained brainrot.exe (no
+            # libstdrot.so) as a .zip, the conventional Windows archive.
+            # python3 -m zipfile (always present, like tar) rather than the
+            # `zip` binary, which isn't guaranteed on the runner.
+            if [ "$name" = "brainrot-windows-amd64" ]; then
+              (cd "$dir" && python3 -m zipfile -c \
+                "$out/brainrot-${VERSION}-windows-amd64.zip" brainrot.exe)
               continue
             fi
             platform="${name#brainrot-}"
@@ -336,6 +405,7 @@ jobs:
           prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
           files: |
             dist/*.tar.gz
+            dist/*.zip
             dist/brainrot.wasm
             dist/brainrot.mjs
             dist/SHA256SUMS.txt
