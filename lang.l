@@ -31,17 +31,9 @@ VarType current_var_type = NONE;
 #define MAX_INCLUDE_DEPTH 32
 #define MAX_COOKED_FILES  128
 
-/* File extension a #cooked <name> native module wears, for diagnostics only.
- * Defined exactly where module_path.c resolves one (a loader exists): ".dll"
- * on Windows, ".so" on other native builds; undefined in a wasm STDROT_STATIC
- * build, which has no native modules to mention. */
-#if !defined(STDROT_STATIC) || defined(_WIN32)
-#if defined(_WIN32)
-#define COOKED_NATIVE_EXT ".dll"
-#else
-#define COOKED_NATIVE_EXT ".so"
-#endif
-#endif
+/* MODULE_NATIVE_LOADER / MODULE_NATIVE_SUFFIX (module_path.h) drive the
+ * "cannot find module" diagnostic below: whether a native module is even
+ * loadable here, and which extension (.dll/.so) to name if so. */
 
 typedef struct {
     FILE *file;
@@ -421,7 +413,7 @@ static void handle_cooked_module_directive(const char *text) {
     char *resolved = module_path_resolve(name, &kind);
     if (!resolved) {
         char *base = basename_copy(current_filename);
-#ifndef COOKED_NATIVE_EXT
+#ifndef MODULE_NATIVE_LOADER
         /* wasm: only .brainrot preludes resolve -- no native module loader. */
         fprintf(stderr, "Error: %s:%d: cannot find module '%s' (looked "
                 "for '%s.brainrot' via $BRAINROT_PATH, then either the "
@@ -430,7 +422,7 @@ static void handle_cooked_module_directive(const char *text) {
                 name, name);
 #else
         fprintf(stderr, "Error: %s:%d: cannot find module '%s' (looked "
-                "for '%s.brainrot' or '%s" COOKED_NATIVE_EXT "' via "
+                "for '%s.brainrot' or '%s" MODULE_NATIVE_SUFFIX "' via "
                 "$BRAINROT_PATH, then either the install module directory or "
                 "a 'stdrot' directory next to this executable, whichever "
                 "applies)\n", base, yylineno, name, name, name);

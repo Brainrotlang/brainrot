@@ -27,20 +27,8 @@
 #define MODULE_PATH_LIST_SEP ":"
 #endif
 
-/* Whether a #cooked <name> can resolve to a NATIVE module here, and the file
- * extension it wears. Must match stdrot.c's STDROT_DYNAMIC_MODULES predicate
- * exactly: a loader exists on any POSIX build (dlopen) and on Windows
- * (LoadLibraryA, .dll), but not in a wasm STDROT_STATIC build. Resolving a
- * native module the loader can't actually load would just move the failure
- * later, further from the cause. */
-#if !defined(STDROT_STATIC) || defined(_WIN32)
-#define MODULE_HAS_NATIVE 1
-#if defined(_WIN32)
-#define MODULE_NATIVE_SUFFIX ".dll"
-#else
-#define MODULE_NATIVE_SUFFIX ".so"
-#endif
-#endif
+/* MODULE_NATIVE_LOADER / MODULE_NATIVE_SUFFIX come from module_path.h -- the
+ * single definition shared with stdrot.c and lang.l. */
 
 #if defined(__APPLE__) && defined(__MACH__)
 #include <mach-o/dyld.h>
@@ -320,9 +308,9 @@ char *module_path_resolve(const char *name, ModuleArtifactKind *out_kind)
             *out_kind = MODULE_ARTIFACT_PRELUDE;
             break;
         }
-#ifdef MODULE_HAS_NATIVE
+#ifdef MODULE_NATIVE_LOADER
         /* A native module -- ".so" on POSIX, ".dll" on Windows. Only where a
-         * loader actually exists (see MODULE_HAS_NATIVE above); a wasm
+         * loader actually exists (MODULE_NATIVE_LOADER, module_path.h); a wasm
          * STDROT_STATIC build skips this entirely rather than advertising a
          * module it could never load. */
         found = resolve_candidate(dirs[i], name, MODULE_NATIVE_SUFFIX);

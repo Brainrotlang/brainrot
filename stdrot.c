@@ -30,21 +30,13 @@
 #include "stdrot.h"
 #include "ast.h"
 #include "lib/mem.h"
+#include "lib/module_path.h" /* MODULE_NATIVE_LOADER: can this build load a
+                              * #cooked <name> native module? (Shared with
+                              * module_path.c and lang.l -- one definition.) */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
-
-/* A dynamic loader for #cooked <name> native modules exists wherever the
- * platform provides one -- POSIX dlopen (any non-wasm build) or the Win32
- * loader -- INDEPENDENTLY of whether the CORE library is statically linked.
- * On Windows the core is compiled in (STDROT_STATIC, no libstdrot.so) yet
- * native modules still load via LoadLibraryA (issue #337 Stage 2). Only the
- * wasm build (STDROT_STATIC && !_WIN32) has no loader at all. lib/module_path.c
- * mirrors this exact predicate to decide whether to resolve a native module. */
-#if !defined(STDROT_STATIC) || defined(_WIN32)
-#define STDROT_DYNAMIC_MODULES 1
-#endif
 
 #ifndef STDROT_STATIC
 #include <dlfcn.h> /* core library loader (dlopen/dlsym) -- POSIX native build */
@@ -58,7 +50,7 @@
  * stdrot_load_module() and stdrot_unload() read identically on both. The
  * existing void* handle fields hold either a dlopen handle or an HMODULE
  * (a pointer). Only compiled where a loader exists. */
-#ifdef STDROT_DYNAMIC_MODULES
+#ifdef MODULE_NATIVE_LOADER
 #if defined(_WIN32)
 static void *br_module_open(const char *path)
 {
@@ -120,7 +112,7 @@ static const char *br_module_error(void)
     return dlerror();
 }
 #endif
-#endif /* STDROT_DYNAMIC_MODULES */
+#endif /* MODULE_NATIVE_LOADER */
 
 /* ── Global execution context ────────────────────────────────────────────── */
 ExecutionContext g_exec_context = {0, {NULL, 0}, {NULL, 0}};
@@ -153,7 +145,7 @@ static SymbolCache symbol_cache[STDROT_CACHE_SIZE];
 static int cache_count = 0;
 #endif /* !STDROT_STATIC (core-library dynamic state) */
 
-#ifdef STDROT_DYNAMIC_MODULES
+#ifdef MODULE_NATIVE_LOADER
 /* ── Cooked native modules (#cooked <name> resolving to a .so/.dll) ────────
  * A SEPARATE list from the core library's own functions/function_count
  * above, rather than unifying the two: the core lib is always loaded
@@ -189,7 +181,7 @@ static int cooked_module_count = 0;
  * that function's own comment on why this exists. NULL whenever no
  * stdrot_load_module() call is in progress. */
 static void *pending_module_handle = NULL;
-#endif /* STDROT_DYNAMIC_MODULES */
+#endif /* MODULE_NATIVE_LOADER */
 
 #ifdef STDROT_STATIC
 /* Statically linked in from stdrot/yapping.c and stdrot/baka.c — called
@@ -679,7 +671,7 @@ void stdrot_unload(void)
     functions = NULL;
     function_count = 0;
 #endif
-#ifdef STDROT_DYNAMIC_MODULES
+#ifdef MODULE_NATIVE_LOADER
     for (int i = 0; i < cooked_module_count; i++)
     {
         br_module_close(cooked_modules[i].handle);
@@ -697,7 +689,7 @@ void stdrot_unload(void)
 #endif
 }
 
-#ifdef STDROT_DYNAMIC_MODULES
+#ifdef MODULE_NATIVE_LOADER
 
 /* Describes whichever already-registered source (the core library, or an
  * earlier #cooked module) provides `func_name` -- used only to name that
@@ -866,7 +858,7 @@ void stdrot_load_module(const char *name, const char *so_path)
         NULL; /* ownership transferred to cooked_modules[] */
 }
 
-#else /* !STDROT_DYNAMIC_MODULES */
+#else /* !MODULE_NATIVE_LOADER */
 
 /* wasm has no dynamic loader worth using (see this file's own top comment)
  * -- module_path_resolve() (module_path.c) never resolves a #cooked <name>
@@ -886,7 +878,7 @@ void stdrot_load_module(const char *name, const char *so_path)
     exit(1);
 }
 
-#endif /* STDROT_DYNAMIC_MODULES */
+#endif /* MODULE_NATIVE_LOADER */
 
 /* ── Runtime query ──────────────────────────────────────────────────────────
  */
@@ -903,7 +895,7 @@ bool is_builtin_function(const String func_name)
             return true;
         }
     }
-#ifdef STDROT_DYNAMIC_MODULES
+#ifdef MODULE_NATIVE_LOADER
     for (int m = 0; m < cooked_module_count; m++)
     {
         for (int i = 0; i < cooked_modules[m].function_count; i++)
@@ -931,7 +923,7 @@ const StdrotEntry *get_native_function(const String func_name)
             return functions[i];
         }
     }
-#ifdef STDROT_DYNAMIC_MODULES
+#ifdef MODULE_NATIVE_LOADER
     for (int m = 0; m < cooked_module_count; m++)
     {
         for (int i = 0; i < cooked_modules[m].function_count; i++)

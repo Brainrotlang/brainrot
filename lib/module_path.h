@@ -28,6 +28,26 @@
 #ifndef MODULE_PATH_H
 #define MODULE_PATH_H
 
+/* ── Native-module capability (single source of truth) ─────────────────────
+ * Whether this build can load a #cooked <name> NATIVE module, and the file
+ * extension one wears. A loader exists on any POSIX build (dlopen) and on
+ * Windows (LoadLibraryA), but NOT in a wasm STDROT_STATIC build. All three
+ * translation units that care -- stdrot.c (compiles the loader),
+ * lib/module_path.c (resolves the artifact), and lang.l (its diagnostics) --
+ * key off THESE macros rather than re-spelling `!defined(STDROT_STATIC) ||
+ * defined(_WIN32)` and the suffix locally, so they can never drift out of
+ * agreement about what is loadable (issue #337). STDROT_STATIC comes from the
+ * compiler's -D flag, so this resolves identically in every TU regardless of
+ * include order. */
+#if !defined(STDROT_STATIC) || defined(_WIN32)
+#define MODULE_NATIVE_LOADER 1
+#if defined(_WIN32)
+#define MODULE_NATIVE_SUFFIX ".dll"
+#else
+#define MODULE_NATIVE_SUFFIX ".so"
+#endif
+#endif
+
 /* Called once from main(), before any #cooked <name> directive can be
  * lexed. Determines the running executable's own directory and whether it
  * is the installed one (see the search order above); harmless (search
