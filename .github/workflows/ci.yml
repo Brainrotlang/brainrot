@@ -170,14 +170,15 @@ jobs:
   # brainrot + libstdrot.so via the native-release-build composite action,
   # whereas Windows is a single self-contained brainrot.exe from `make windows`
   # (STDROT_STATIC, no libstdrot.so) built under MSYS2 -- hence a sibling job.
-  # Gated on the `windows` smoke job, mirroring how the POSIX dry-run needs
-  # `test`. No publish; just proves the shippable artifact builds and is
-  # self-contained. Wiring this into the real release (release.yml) is Stage 3.
+  # Gated on `test` like every other release-dry-run job, so the whole suite
+  # must pass before any release artifact is packaged. No publish; just proves
+  # the shippable artifact builds and is self-contained. Wiring this into the
+  # real release (release.yml) is Stage 3.
   release-dry-run-windows:
     name: Release dry-run windows/amd64
     if: github.event_name == 'pull_request'
     runs-on: windows-latest
-    needs: windows
+    needs: test
     timeout-minutes: 20
     steps:
       - name: Checkout code
@@ -408,15 +409,15 @@ jobs:
             brainrot.wasm
             brainrot.mjs
 
-  # Native Windows build (issue #337, Stage 1): prove the CORE interpreter
-  # builds and runs on Windows via `make windows` (a single statically-linked
-  # brainrot.exe, -DSTDROT_STATIC, MinGW-w64). Independent of the Linux job
-  # chain -- no dynamic loader, so `#cooked <native.dll>` modules and the
-  # dynamic-loader pytest fixtures are out of scope here (that's Stage 2). This
-  # smoke-tests the built .exe against runnable examples instead of the full
-  # pytest suite, mirroring how the wasm job has its own runner.
+  # Native Windows build (issue #337): prove the interpreter builds and runs on
+  # Windows via `make windows` (a single statically-linked brainrot.exe,
+  # -DSTDROT_STATIC, MinGW-w64). Independent of the Linux job chain. Stage 1
+  # smoke-tests the .exe against runnable examples; Stage 2 additionally builds
+  # a native module DLL and proves `#cooked <name>` LoadLibraryA-loads it. Uses
+  # its own runners rather than the dynamic-loader pytest suite (which needs the
+  # core libstdrot.so this build compiles in), mirroring the wasm job.
   windows:
-    name: Windows (MinGW, core interpreter)
+    name: Windows (MinGW interpreter + native modules)
     runs-on: windows-latest
     steps:
       - name: Checkout code
@@ -461,6 +462,22 @@ jobs:
           ./brainrot.exe examples/modules.brainrot >/dev/null
           BRAINROT_PATH=examples ./brainrot.exe examples/modules_named.brainrot >/dev/null
           echo "windows smoke tests passed"
+
+      # Stage 2: #cooked <name> resolves to a .dll (module_path.c) and is loaded
+      # via LoadLibraryA (stdrot.c). Build a native module DLL, then run a
+      # program that cooks it and calls its tripled(rizz) -> rizz (returns n*3).
+      # printf, not a heredoc, to avoid the YAML-block-indentation trap on the
+      # closing delimiter.
+      - name: Native module test (#cooked <name> .dll)
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          make windows-test-module
+          printf '#cooked <testnative>\nskibidi main {\n  yapping("%%d", tripled(14));\n  bussin 0;\n}\n' > nativemod.brainrot
+          out="$(BRAINROT_PATH=tests/nativemodules ./brainrot.exe nativemod.brainrot)"
+          test "$out" = "42" \
+            || { echo "native module mismatch: expected 42, got [$out]"; exit 1; }
+          echo "windows native-module (#cooked <name> .dll) test passed"
 
       - name: Upload brainrot.exe
         uses: actions/upload-artifact@v7

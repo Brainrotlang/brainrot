@@ -27,6 +27,9 @@
 #define MODULE_PATH_LIST_SEP ":"
 #endif
 
+/* MODULE_NATIVE_LOADER / MODULE_NATIVE_SUFFIX come from module_path.h -- the
+ * single definition shared with stdrot.c and lang.l. */
+
 #if defined(__APPLE__) && defined(__MACH__)
 #include <mach-o/dyld.h>
 #endif
@@ -305,13 +308,12 @@ char *module_path_resolve(const char *name, ModuleArtifactKind *out_kind)
             *out_kind = MODULE_ARTIFACT_PRELUDE;
             break;
         }
-#ifndef STDROT_STATIC
-        /* No dynamic loader exists in a STDROT_STATIC (wasm) build to
-         * dlopen a ".so" with (see stdrot.c's own STDROT_STATIC comment)
-         * -- never advertise one as resolvable there, rather than finding
-         * it here and only failing later, further from the actual cause,
-         * inside a load path that doesn't exist in that build at all. */
-        found = resolve_candidate(dirs[i], name, ".so");
+#ifdef MODULE_NATIVE_LOADER
+        /* A native module -- ".so" on POSIX, ".dll" on Windows. Only where a
+         * loader actually exists (MODULE_NATIVE_LOADER, module_path.h); a wasm
+         * STDROT_STATIC build skips this entirely rather than advertising a
+         * module it could never load. */
+        found = resolve_candidate(dirs[i], name, MODULE_NATIVE_SUFFIX);
         if (found)
         {
             *out_kind = MODULE_ARTIFACT_NATIVE;
