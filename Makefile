@@ -188,9 +188,16 @@ WASM_LDFLAGS := -lm \
 # single-binary build just compiles core + stdrot together, so it inherits that.
 # gamba's CSPRNG comes from BCryptGenRandom (stdrot/gamba.c), so link -lbcrypt
 # -- no OpenSSL on Windows.
+#
+# -static links the MinGW runtime (libgcc, libwinpthread) INTO brainrot.exe so
+# the artifact is self-contained: run on a clean Windows box it imports only
+# system DLLs (KERNEL32, bcrypt, the Universal CRT), never libgcc_s_seh-1.dll /
+# libwinpthread-1.dll, which otherwise live only on an MSYS2 PATH. That is what
+# makes `make windows` produce a shippable/release binary, not just one that
+# runs inside the build shell.
 WINDOWS_TARGET := brainrot.exe
 WINDOWS_CFLAGS := -Wall -Wextra -Werror -O2 -Wuninitialized -DSTDROT_STATIC
-WINDOWS_LDFLAGS := -lm -lbcrypt
+WINDOWS_LDFLAGS := -static -lm -lbcrypt
 
 # Default target
 .PHONY: all
