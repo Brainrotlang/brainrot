@@ -189,8 +189,6 @@ Brainrot replaces familiar C keywords with meme-inspired slang:
 | based      | default      |
 | mewing     | do           |
 | gyatt      | enum         |
-| whopper    | extern       |
-| cringe     | goto         |
 | giga       | long         |
 | smol       | short        |
 | nut        | signed       |
@@ -206,6 +204,13 @@ Brainrot replaces familiar C keywords with meme-inspired slang:
 | thicc      | long long    |
 | rant       | string type  |
 | lit        | typedef      |
+
+There is no equivalent of C's `extern` or `goto`. `extern` has nothing to do
+here: `#cooked` splices source and native modules register their own
+functions, so a symbol from another file resolves with no declaration and
+there is no linker to inform. `goto` is simply not offered. Both once existed
+as reserved words that no grammar rule accepted — writing either was always a
+syntax error — so `whopper` and `cringe` are now ordinary identifiers.
 
 ### 7.2. Operators
 

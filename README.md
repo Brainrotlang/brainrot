@@ -312,8 +312,6 @@ Join our community on:
 | based      | default      | ✅           |
 | mewing     | do           | ✅           |
 | gyatt      | enum         | ✅           |
-| whopper    | extern       | ❌           |
-| cringe     | goto         | ❌           |
 | giga       | long         | ✅           |
 | smol       | short        | ✅           |
 | nut        | signed       | ✅           |
@@ -331,27 +329,27 @@ Join our community on:
 | lit        | typedef      | ✅           |
 | unc        | `__asm__`    | ❌           |
 
+Every keyword above is implemented except `unc`. Two former entries were
+removed rather than implemented: `whopper` (`extern`), because `#cooked`
+splices source and native modules self-register, so there is no separate
+compilation for it to bridge and no linker to inform; and `cringe` (`goto`).
+Both had been reserved words that only ever produced a syntax error, so both
+names are now ordinary identifiers.
+
 ### Preprocessor directives
 
-| Brainrot   | C Equivalent | Implemented? |
-| ---------- | ------------ | ------------ |
-| #cooked     | #include    | ✅           |
+| Brainrot | C Equivalent |
+| -------- | ------------ |
+| #cooked  | #include     |
 
-`#cooked` is the only preprocessor directive, and deliberately so. C's
-`#ifndef`/`#define`/`#endif` are mostly there to write include guards, and
-`#cooked` is **include-once by construction** — cooking the same artifact twice
-is a no-op, so there is no guard to forget. `#define` as a named constant is
-covered by `gyatt` (enum) and `deadass` (const), and Brainrot has real
-functions instead of function-like macros. A `#pragma` equivalent has nothing
-to say to a single tree-walking interpreter.
-
-Conditional compilation is the one genuinely missing capability, and it is
-missing on purpose: deciding things before the program exists is a
-compile-and-link idea, and Brainrot decides everything at run time. The real
-need behind it — adapting to an optional module that may not be installed — is
-tracked in [#331](https://github.com/Brainrotlang/brainrot/issues/331) as a
-runtime capability query, which can branch on things a preprocessor never
-knows.
+`#cooked` is the only one, deliberately. Include guards are unnecessary
+because `#cooked` is **include-once by construction**; named constants are
+`gyatt` (enum) and `deadass` (const); and there are real functions rather than
+function-like macros. Conditional compilation is left out because deciding
+things before the program exists is a compile-and-link idea, and Brainrot
+decides everything at run time — the real need behind it, adapting to an
+optional module that may not be installed, is
+[#331](https://github.com/Brainrotlang/brainrot/issues/331).
 
 `#cooked "path/to/file.brainrot"` splices another Brainrot file's functions
 and structs into the current one, resolved relative to the including file's

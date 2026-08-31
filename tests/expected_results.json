@@ -423,5 +423,6 @@
     "file_io": "shitpost wrote 10\nflush 0\nwrote to pos 20\nclose 0\naura = 42\nraw bytes\neof 1\nbricked 0\nafter throwback 0\nchunk [aura ] len 5\nzoink 0\nend pos 20\nmissing file is falsy\n",
     "file_io_use_after_close_fail": "opened\nclose 0\nclosed\nStderr:\nError: yapto: not an open SAUCE -- it was already closed with peaceout, or was never a handle at all, at line 47\n",
     "file_io_ragequit_no_leak": "ExitCode:4",
-    "file_io_stale_handle_fail": "close a 0\nsame handle 0\nb works, pos 5\nnow using the retired handle, while b is still open:\nStderr:\nError: yapto: not an open SAUCE -- it was already closed with peaceout, or was never a handle at all, at line 62\n"
+    "file_io_stale_handle_fail": "close a 0\nsame handle 0\nb works, pos 5\nnow using the retired handle, while b is still open:\nStderr:\nError: yapto: not an open SAUCE -- it was already closed with peaceout, or was never a handle at all, at line 62\n",
+    "freed_keywords_as_identifiers": "functions 42 42\nfields    2 3\nlocals    5 7\n"
 }

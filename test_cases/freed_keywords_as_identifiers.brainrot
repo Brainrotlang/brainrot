@@ -1,0 +1,69 @@
+🚽 Test case: `whopper` and `cringe` are ordinary identifiers.
+🚽
+🚽 Both used to be reserved words, and reserved for nothing: the lexer mapped
+🚽 them to EXTERN and GOTO, but neither token appeared in any grammar
+🚽 production -- only in lang.y's %token declaration. So the sole possible
+🚽 effect of writing either one was a syntax error, in both roles:
+🚽
+🚽     whopper rizz counter;   -> syntax error, unexpected EXTERN
+🚽     rizz whopper = 5;       -> syntax error, unexpected EXTERN
+🚽
+🚽 They cost a usable name and delivered nothing.
+🚽
+🚽 ── Why neither is coming back ────────────────────────────────────────
+🚽 `extern` exists in C to tell one translation unit that a symbol lives in
+🚽 another, for the linker to resolve. Brainrot has no separate compilation:
+🚽 #cooked splices source, so a function defined in another file simply
+🚽 resolves with no declaration of any kind, and a native module registers
+🚽 its functions at load. There is no forward-declaration problem to solve
+🚽 and no linker to inform -- the same structural argument that makes
+🚽 include guards unnecessary.
+🚽
+🚽 `goto` is a different case and was removed for a different reason: it is
+🚽 meaningful, just unwanted. It was never implemented, and the decision is
+🚽 that it will not be.
+🚽
+🚽 ── What this fixture pins ────────────────────────────────────────────
+🚽 That both names work in every position an identifier can appear, since
+🚽 the lexer does not distinguish them: a function name, a parameter, a
+🚽 struct field, and a local. Re-adding either lexer rule turns all four
+🚽 into parse errors, so this fails loudly rather than subtly.
+🚽
+🚽 The functions are CALLED, not just declared -- an earlier draft declared
+🚽 them and then shadowed both names with locals before ever using them, so
+🚽 the "function name" claim was unbacked.
+🚽
+🚽 The struct field matters slightly more than it looks -- field names go
+🚽 through the same IDENTIFIER token, so a reserved word breaks a data
+🚽 layout and not just a variable.
+gang Meal {
+    rizz whopper;
+    rizz cringe;
+};
+
+rizz cringe(rizz n) {
+    bussin n + 1;
+}
+
+rizz whopper(rizz cringe) {
+    🚽 A PARAMETER named after the other freed word. Also proves the two are
+    🚽 independent: nothing here knows `cringe` is also a function name.
+    bussin cringe * 2;
+}
+
+skibidi main {
+    🚽 Called before any local shadows them, so both function names are
+    🚽 genuinely exercised rather than merely declared.
+    yapping("functions %d %d", cringe(41), whopper(21));
+
+    gang Meal m;
+    m.whopper = 2;
+    m.cringe = 3;
+    yapping("fields    %d %d", m.whopper, m.cringe);
+
+    rizz whopper = 5;
+    rizz cringe = 7;
+    yapping("locals    %d %d", whopper, cringe);
+
+    bussin 0;
+}
