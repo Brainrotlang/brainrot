@@ -263,10 +263,19 @@ jobs:
           ref: ${{ needs.version.outputs.checkout_ref }}
 
       - name: Set up MSYS2 (MinGW-w64 toolchain)
-        uses: msys2/setup-msys2@v2
+        # SHA-pinned (v2.32.0): this builds a PUBLISHED artifact
+        # (brainrot-<tag>-windows-amd64.zip), so the same reasoning that
+        # SHA-pins setup-emsdk and action-gh-release applies -- a retag
+        # upstream must not silently change the shipped .exe. `update: true`
+        # is deliberately dropped for the same reason: it would pull whatever
+        # MSYS2 serves that day, reintroducing the nondeterminism the pin
+        # removes. The MinGW package version is left to the pinned action's
+        # bundled MSYS2 snapshot rather than pinned explicitly -- MSYS2 is a
+        # rolling distro that garbage-collects old package versions, so an
+        # exact package pin would eventually fail to resolve.
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
         with:
           msystem: MINGW64
-          update: true
           install: >-
             mingw-w64-x86_64-gcc
             make
