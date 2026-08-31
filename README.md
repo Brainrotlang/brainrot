@@ -189,6 +189,16 @@ Known platform-specific difference from the native build: `sizeof(giga)` is `4`,
 
 `node tests/run_wasm_tests.mjs` runs the same fixtures as the native `pytest` suite against the wasm build (checking the one difference above against its wasm-correct value instead of native's), and `node tests/run_wasm_examples_check.mjs` diffs every `examples/*.brainrot` program's stdout against a real native run. Run both after `make && make wasm` to sanity-check a build.
 
+## 🪟 Native Windows build
+
+`make windows` builds a single, statically-linked `brainrot.exe` with the [MinGW-w64](https://www.mingw-w64.org/) toolchain (via [MSYS2](https://www.msys2.org/): `pacman -S mingw-w64-x86_64-gcc make bison flex`, from the *MINGW64* shell):
+
+```bash
+make windows
+```
+
+Like the wasm target, this is the `STDROT_STATIC` build — `stdrot` is compiled straight into the binary, with no `libstdrot.so`/`dlopen`. So it runs pure-Brainrot programs and `#cooked` **prelude** modules, but **not** `#cooked <native.dll>` native modules (the dynamic-module loader is compiled out) — that's [issue #337](https://github.com/Brainrotlang/brainrot/issues/337) Stage 2. `gamba`'s CSPRNG is backed by `BCryptGenRandom` here (no OpenSSL dependency on Windows).
+
 `chill()` calls `sleep()` under the hood, which blocks the JS thread it runs on rather than yielding — fine in a short-lived CLI run, but something a browser embedder (e.g. a playground) should account for (run in a Worker, expect the tab to be unresponsive for the duration) rather than assume it behaves like an async delay.
 
 ## 💻 Usage

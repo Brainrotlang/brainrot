@@ -171,6 +171,34 @@ WASM_LDFLAGS := -lm \
 	-sEXPORTED_RUNTIME_METHODS=callMain,FS \
 	-sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=256MB
 
+# ── Native Windows build (issue #337, Stage 1) ──────────────────────────────
+# Windows has no dlopen/libstdrot.so, so -- like wasm -- stdrot is statically
+# linked into a single brainrot.exe (-DSTDROT_STATIC, see stdrot.c), and every
+# stdrot/*.c goes straight into the binary instead of a separate .so. This is
+# the CORE interpreter: it runs pure-Brainrot programs and the test suite, but
+# NOT `#cooked <native.dll>` modules -- STDROT_STATIC compiles the native-module
+# loader out. Real Win32 module loading (LoadLibraryW) is Stage 2.
+#
+# Built with MinGW-w64 gcc (MSYS2). gcc's -Wextra doesn't enable the
+# -Wstrict-prototypes / -Wtautological-negation-compare that emcc's clang trips
+# on, so the wasm suppressions aren't needed here. -Wpedantic IS dropped: it
+# rejects the compound-literal .return_type initializer in stdrot/*.c's
+# STDROT_EXPORT_SIG (a GNU extension gcc flags but Clang/emcc accepts), and the
+# native libstdrot.so build compiles those files without -Wpedantic too -- this
+# single-binary build just compiles core + stdrot together, so it inherits that.
+# gamba's CSPRNG comes from BCryptGenRandom (stdrot/gamba.c), so link -lbcrypt
+# -- no OpenSSL on Windows.
+#
+# -static links the MinGW runtime (libgcc, libwinpthread) INTO brainrot.exe so
+# the artifact is self-contained: run on a clean Windows box it imports only
+# system DLLs (KERNEL32, bcrypt, the Universal CRT), never libgcc_s_seh-1.dll /
+# libwinpthread-1.dll, which otherwise live only on an MSYS2 PATH. That is what
+# makes `make windows` produce a shippable/release binary, not just one that
+# runs inside the build shell.
+WINDOWS_TARGET := brainrot.exe
+WINDOWS_CFLAGS := -Wall -Wextra -Werror -O2 -Wuninitialized -DSTDROT_STATIC
+WINDOWS_LDFLAGS := -static -lm -lbcrypt
+
 # Default target
 .PHONY: all
 all: $(STDROT_LIB) $(TARGET) ## Build the interpreter + libstdrot.so (default). Sigma grindset activated.
@@ -503,10 +531,20 @@ test: $(TARGET) $(TEST_STDROT_LIB) badnatives nativemodules old-abi-sim abi-chec
 	STDROT_LIB_PATH=$(CURDIR)/$(TEST_STDROT_LIB) $(PYTHON) -m pytest -v
 	@echo "Tests ran bussin', no cap."
 
+# Native Windows build (issue #337, Stage 1). Single statically-linked
+# brainrot.exe, mirroring `wasm` but with MinGW-w64 gcc instead of emcc: stdrot
+# sources compile straight into the binary, so this does NOT depend on
+# $(STDROT_LIB). Run under MSYS2 with the mingw-w64 gcc/flex/bison toolchain.
+.PHONY: windows
+windows: $(GENERATED_SRCS) ## Build brainrot.exe (native Windows, MinGW-w64; issue #337). Windows sigma.
+	$(CC) $(WINDOWS_CFLAGS) -I. -o $(WINDOWS_TARGET) $(SRCS) $(STDROT_SRCS) $(GENERATED_SRCS) $(WINDOWS_LDFLAGS)
+	@echo "brainrot.exe compiled. Windows sigma unlocked."
+
 # Clean build artifacts
 .PHONY: clean
 clean: ## Remove all build artifacts (never touches source). Amogus sussy imposter mode.
 	rm -f $(TARGET) $(STDROT_LIB) $(TEST_STDROT_LIB) $(GENERATED_SRCS) lang.tab.h
+	rm -f $(WINDOWS_TARGET)
 	rm -f $(WASM_TARGET) $(WASM_JS)
 	rm -f tests/brainrot-test.wasm tests/brainrot-test.mjs
 	rm -f $(BADNATIVES_LIBS)

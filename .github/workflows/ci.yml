@@ -165,6 +165,64 @@ jobs:
           os: ${{ matrix.os }}
           artifact-name: brainrot-release-${{ matrix.os }}-${{ matrix.arch }}
 
+  # Windows release dry-run (issue #337). Windows can't share the POSIX
+  # release-dry-run matrix above: that path runs `make release` and packages
+  # brainrot + libstdrot.so via the native-release-build composite action,
+  # whereas Windows is a single self-contained brainrot.exe from `make windows`
+  # (STDROT_STATIC, no libstdrot.so) built under MSYS2 -- hence a sibling job.
+  # Gated on the `windows` smoke job, mirroring how the POSIX dry-run needs
+  # `test`. No publish; just proves the shippable artifact builds and is
+  # self-contained. Wiring this into the real release (release.yml) is Stage 3.
+  release-dry-run-windows:
+    name: Release dry-run windows/amd64
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    needs: windows
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up MSYS2 (MinGW-w64 toolchain)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            make
+            bison
+            flex
+
+      - name: Build release brainrot.exe
+        shell: msys2 {0}
+        run: make windows
+
+      # A shipped .exe must import only system DLLs. A dependency on
+      # libgcc_s_seh-1.dll / libwinpthread-1.dll would mean it only runs where
+      # MSYS2's bin is on PATH -- exactly the "works on the builder" trap the
+      # POSIX job's otool check guards against. -static (Makefile) prevents it;
+      # this fails the job loudly if that ever regresses.
+      - name: Verify self-contained
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          objdump -p brainrot.exe | grep -i 'DLL Name'
+          if objdump -p brainrot.exe | grep -iqE 'libgcc|libwinpthread|libstdc\+\+'; then
+            echo "ERROR: brainrot.exe depends on a MinGW runtime DLL;" \
+              "it must be statically linked (-static)." >&2
+            exit 1
+          fi
+          echo "objdump clean: no MinGW-runtime DLL imports."
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: brainrot-release-windows-amd64
+          path: brainrot.exe
+          if-no-files-found: error
+          retention-days: 1
+
   test:
     runs-on: ubuntu-24.04
     needs: build
@@ -349,3 +407,63 @@ jobs:
           path: |
             brainrot.wasm
             brainrot.mjs
+
+  # Native Windows build (issue #337, Stage 1): prove the CORE interpreter
+  # builds and runs on Windows via `make windows` (a single statically-linked
+  # brainrot.exe, -DSTDROT_STATIC, MinGW-w64). Independent of the Linux job
+  # chain -- no dynamic loader, so `#cooked <native.dll>` modules and the
+  # dynamic-loader pytest fixtures are out of scope here (that's Stage 2). This
+  # smoke-tests the built .exe against runnable examples instead of the full
+  # pytest suite, mirroring how the wasm job has its own runner.
+  windows:
+    name: Windows (MinGW, core interpreter)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up MSYS2 (MinGW-w64 toolchain)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            make
+            bison
+            flex
+
+      - name: Build brainrot.exe
+        shell: msys2 {0}
+        run: make windows
+
+      - name: Smoke-test the interpreter
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          # brainrot.exe is a native PE; run it directly from the MSYS2 shell.
+          out="$(./brainrot.exe examples/hello_world.brainrot)"
+          test "$out" = "Hello, World!" \
+            || { echo "hello_world mismatch: [$out]"; exit 1; }
+          # Every dependency-free STANDALONE example must run and exit 0.
+          # Excludes: file_wordcount (reads a path), examples/raylib/ (native
+          # module), and mathutils (a #cooked library with no `skibidi main` --
+          # it's exercised via modules_named below, not run on its own).
+          for f in fibonacci fizz_buzz bubble_sort sieve_of_eras twoSum \
+                   array_of_structs string_parsing string_toolkit \
+                   heat_equation_1d; do
+            echo "-- $f --"
+            ./brainrot.exe "examples/$f.brainrot" >/dev/null \
+              || { echo "example $f failed"; exit 1; }
+          done
+          # #cooked prelude modules (relative + BRAINROT_PATH) work statically.
+          # modules_named cooks <mathutils>, so that module is covered here.
+          ./brainrot.exe examples/modules.brainrot >/dev/null
+          BRAINROT_PATH=examples ./brainrot.exe examples/modules_named.brainrot >/dev/null
+          echo "windows smoke tests passed"
+
+      - name: Upload brainrot.exe
+        uses: actions/upload-artifact@v7
+        with:
+          name: brainrot-windows-amd64
+          path: brainrot.exe

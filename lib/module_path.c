@@ -9,17 +9,45 @@
  */
 
 #include "module_path.h"
-#include <libgen.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+
+#if defined(_WIN32)
+#include <windows.h> /* GetModuleFileNameA, GetFileAttributesA */
+/* No <libgen.h>/<unistd.h>: dirname(), readlink(), realpath() are all POSIX.
+ * The directory split, the running-executable probe, and canonicalization
+ * each get a Win32 path below. $BRAINROT_PATH is ';'-separated here, matching
+ * the platform's own PATH convention rather than POSIX ':'. */
+#define MODULE_PATH_LIST_SEP ";"
+#else
 #include <unistd.h>
+#define MODULE_PATH_LIST_SEP ":"
+#endif
 
 #if defined(__APPLE__) && defined(__MACH__)
 #include <mach-o/dyld.h>
 #endif
+
+/* Canonical absolute path of an EXISTING file/dir, malloc'd, or NULL if it
+ * doesn't exist or can't be resolved -- the realpath() contract the callers
+ * below rely on (a missing path yields NULL, never a made-up string). On
+ * Windows realpath() doesn't exist; _fullpath() normalizes but does not
+ * require existence, so gate it on GetFileAttributesA to match. */
+static char *path_canonical(const char *path)
+{
+#if defined(_WIN32)
+    if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES)
+    {
+        return NULL;
+    }
+    return _fullpath(NULL, path, 0); /* malloc'd; caller free()s */
+#else
+    return realpath(path, NULL);
+#endif
+}
 
 /* No configurable --prefix exists yet for `make install` either (it hard-
  * codes /usr/local/bin and /usr/local/lib, see the Makefile's install
@@ -49,14 +77,24 @@ static bool exe_is_installed = false;
  * directly, with no argv[0]/cwd ambiguity to get wrong. */
 static char *resolve_running_executable(void)
 {
-#if defined(__APPLE__) && defined(__MACH__)
+#if defined(_WIN32)
+    /* GetModuleFileNameA(NULL, ...) names the process's own image directly,
+     * the Win32 analogue of /proc/self/exe -- no argv[0]/cwd ambiguity. */
+    char buf[4096];
+    DWORD len = GetModuleFileNameA(NULL, buf, (DWORD)sizeof(buf));
+    if (len == 0 || len >= sizeof(buf)) /* 0 = error; == size = truncated */
+    {
+        return NULL;
+    }
+    return path_canonical(buf);
+#elif defined(__APPLE__) && defined(__MACH__)
     char buf[4096];
     uint32_t size = sizeof(buf);
     if (_NSGetExecutablePath(buf, &size) != 0)
     {
         return NULL; /* path longer than buf; not worth a heap retry here */
     }
-    return realpath(buf, NULL);
+    return path_canonical(buf);
 #else
     char buf[4096];
     ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
@@ -65,7 +103,7 @@ static char *resolve_running_executable(void)
         return NULL;
     }
     buf[len] = '\0';
-    return realpath(buf, NULL);
+    return path_canonical(buf);
 #endif
 }
 
@@ -80,8 +118,24 @@ void module_path_init(void)
     {
         return;
     }
-    char *dir = dirname(exe_path); /* may alias exe_path */
-    exe_dir = strdup(dir);
+    /* Directory component = everything before the last path separator. Done
+     * in-place instead of via POSIX dirname() (libgen.h), which doesn't exist
+     * on Windows. exe_path is an absolute, canonical path from
+     * resolve_running_executable(), so it always has a separator; '\\' is only
+     * checked on Windows, where GetModuleFileNameA yields backslashes. */
+    char *sep = strrchr(exe_path, '/');
+#if defined(_WIN32)
+    char *bslash = strrchr(exe_path, '\\');
+    if (bslash && (!sep || bslash > sep))
+    {
+        sep = bslash;
+    }
+#endif
+    if (sep)
+    {
+        *sep = '\0';
+    }
+    exe_dir = strdup(sep ? exe_path : ".");
     free(exe_path);
     if (!exe_dir)
     {
@@ -101,7 +155,7 @@ void module_path_init(void)
         install_bin_dir = BRAINROT_INSTALL_BIN_DIR;
     }
 
-    char *resolved_install_bin_dir = realpath(install_bin_dir, NULL);
+    char *resolved_install_bin_dir = path_canonical(install_bin_dir);
     if (resolved_install_bin_dir)
     {
         exe_is_installed = strcmp(exe_dir, resolved_install_bin_dir) == 0;
@@ -159,8 +213,8 @@ static char **build_search_dirs(int *out_count)
             exit(1);
         }
         char *save = NULL;
-        for (char *tok = strtok_r(env_copy, ":", &save); tok;
-             tok = strtok_r(NULL, ":", &save))
+        for (char *tok = strtok_r(env_copy, MODULE_PATH_LIST_SEP, &save); tok;
+             tok = strtok_r(NULL, MODULE_PATH_LIST_SEP, &save))
         {
             if (tok[0])
             {
@@ -231,7 +285,7 @@ static char *resolve_candidate(const char *dir, const char *name,
     struct stat st;
     if (stat(candidate, &st) == 0 && S_ISREG(st.st_mode))
     {
-        found = realpath(candidate, NULL);
+        found = path_canonical(candidate);
     }
     free(candidate);
     return found;
