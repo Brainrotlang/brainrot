@@ -272,7 +272,6 @@ Current limitations include:
   undefined behavior as a scalar pointer return in C
 - Arrays cannot be passed or returned by value (only via a pointer
   parameter, which aliases the caller's array like in C)
-- `ohio`/`based` (switch/default): `based` fires as soon as the interpreter's scan reaches it, so its position among the `sigma rule` cases matters — placing it before a case that would otherwise match currently pre-empts that match ([#179](https://github.com/Brainrotlang/brainrot/issues/179))
 
 ## 🗺️ Roadmap
 

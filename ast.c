@@ -2156,40 +2156,45 @@ bool check_and_mark_identifier(ASTNode *node, const String contextErrorMessage)
 void execute_switch_statement(ASTNode *node)
 {
     int switch_value = evaluate_expression(node->data.switch_stmt.expression);
-    CaseNode *current_case = node->data.switch_stmt.cases;
-    int matched = 0;
+
+    // Two-phase dispatch so a `based` (default) case doesn't win just because
+    // a single forward scan reaches it first (issue #179). Phase 1 picks the
+    // entry case: a `sigma rule` whose value equals the switch value, or
+    // `based` only if no numbered case matches -- so `based`'s position in the
+    // case list no longer decides whether it runs. Phase 2 executes from that
+    // entry case onward, falling through into later cases exactly like a C
+    // switch until a `bruh` (break) longjmps out.
+    CaseNode *entry = NULL;
+    CaseNode *default_case = NULL;
+
+    for (CaseNode *scan = node->data.switch_stmt.cases; scan; scan = scan->next)
+    {
+        if (scan->value)
+        {
+            if (evaluate_expression(scan->value) == switch_value)
+            {
+                entry = scan;
+                break;
+            }
+        }
+        else
+        {
+            default_case = scan;
+        }
+    }
+
+    if (!entry)
+        entry = default_case;
+
+    if (!entry)
+        return; // no matching case and no default: nothing to run
 
     PUSH_JUMP_BUFFER();
     if (setjmp(CURRENT_JUMP_BUFFER()) == 0)
     {
-        while (current_case)
-        {
-            if (current_case->value)
-            {
-                int case_value = evaluate_expression(current_case->value);
-                if (case_value == switch_value || matched)
-                {
-                    matched = 1;
-                    execute_statements(current_case->statements);
-                }
-            }
-            else
-            {
-                // Default case
-                // Known bug tracked in #179: a `based` default placed
-                // before a matching numbered case fires unconditionally
-                // instead of only as a true fallthrough/default. Fixing
-                // this is a switch/default semantics change that needs
-                // its own test_cases fixture; not addressed here.
-                // cppcheck-suppress incorrectLogicOperator
-                if (matched || !matched)
-                {
-                    execute_statements(current_case->statements);
-                    break;
-                }
-            }
-            current_case = current_case->next;
-        }
+        for (CaseNode *current_case = entry; current_case;
+             current_case = current_case->next)
+            execute_statements(current_case->statements);
     }
     else
     {
