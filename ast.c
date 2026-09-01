@@ -2192,7 +2192,8 @@ void execute_switch_statement(ASTNode *node)
     PUSH_JUMP_BUFFER();
     if (setjmp(CURRENT_JUMP_BUFFER()) == 0)
     {
-        for (CaseNode *current_case = entry; current_case; current_case = current_case->next)
+        for (CaseNode *current_case = entry; current_case;
+             current_case = current_case->next)
             execute_statements(current_case->statements);
     }
     else
