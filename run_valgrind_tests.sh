@@ -1,5 +1,23 @@
 #!/bin/bash
 
+# Valgrind is run against a NON-sanitized binary: ASan's shadow memory
+# collides with Valgrind's, so the sanitizer build (brainrot) either aborts
+# or reports bogus errors under Valgrind (PR #202). The Makefile `valgrind`
+# target builds `brainrot-valgrind` (VALGRIND_CFLAGS, no -fsanitize) and
+# passes it here; the default keeps a bare `./run_valgrind_tests.sh` working
+# for anyone who built that target first.
+TARGET="${1:-./brainrot-valgrind}"
+
+if ! command -v valgrind >/dev/null 2>&1; then
+    echo "Error: valgrind is not installed or not in PATH" >&2
+    exit 1
+fi
+
+if [[ ! -x "$TARGET" ]]; then
+    echo "Error: Valgrind target '$TARGET' is not executable (build it with 'make $(basename "$TARGET")')" >&2
+    exit 1
+fi
+
 for f in test_cases/*.brainrot; do
     echo "Running Valgrind on $f..."
     base=$(basename "$f" .brainrot)
@@ -40,9 +58,9 @@ for f in test_cases/*.brainrot; do
     # still be being written when the check below reads it.
     fd_log=$(mktemp)
     if [[ -n "$input" ]]; then
-        echo "$input" | valgrind --leak-check=full --track-fds=yes --error-exitcode=100 ./brainrot "$f" 2>"$fd_log"
+        echo "$input" | valgrind --leak-check=full --track-fds=yes --error-exitcode=100 "$TARGET" "$f" 2>"$fd_log"
     else
-        valgrind --track-origins=yes --leak-check=full --track-fds=yes --error-exitcode=100 ./brainrot "$f" 2>"$fd_log"
+        valgrind --track-origins=yes --leak-check=full --track-fds=yes --error-exitcode=100 "$TARGET" "$f" 2>"$fd_log"
     fi
 
     valgrind_exit_code=$?  # Capture only valgrind’s exit code
@@ -50,6 +68,23 @@ for f in test_cases/*.brainrot; do
 
     if [[ $valgrind_exit_code -eq 100 ]]; then
         echo "Valgrind detected memory issues in $f"
+        rm -f "$fd_log"
+        exit 1
+    fi
+
+    # Fail closed for the WHOLE run, not just the startup guard above (PR #202
+    # review). If Valgrind cannot exec the child at all -- the target went
+    # missing or non-executable mid-sweep, or exec otherwise failed -- it runs
+    # nothing and exits 126/127 (not 100), so without this every remaining
+    # fixture would print "Running Valgrind on ..." having executed nothing and
+    # the sweep would still exit 0. A child that itself exits 126/127 (e.g.
+    # ragequit(127)) is NOT this case: Valgrind passes that through silently,
+    # whereas a launch failure additionally prints its own `valgrind: <target>:
+    # <reason>` line (never the ==PID== trace prefix). Gate on both so a
+    # legitimate child exit code can never trip it.
+    if [[ $valgrind_exit_code -eq 126 || $valgrind_exit_code -eq 127 ]] \
+        && grep -q '^valgrind: ' "$fd_log"; then
+        echo "Valgrind could not execute '$TARGET' on $f (exit $valgrind_exit_code)"
         rm -f "$fd_log"
         exit 1
     fi
@@ -81,4 +116,3 @@ for f in test_cases/*.brainrot; do
 
     echo
 done
-
