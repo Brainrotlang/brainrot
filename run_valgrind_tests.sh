@@ -72,6 +72,23 @@ for f in test_cases/*.brainrot; do
         exit 1
     fi
 
+    # Fail closed for the WHOLE run, not just the startup guard above (PR #202
+    # review). If Valgrind cannot exec the child at all -- the target went
+    # missing or non-executable mid-sweep, or exec otherwise failed -- it runs
+    # nothing and exits 126/127 (not 100), so without this every remaining
+    # fixture would print "Running Valgrind on ..." having executed nothing and
+    # the sweep would still exit 0. A child that itself exits 126/127 (e.g.
+    # ragequit(127)) is NOT this case: Valgrind passes that through silently,
+    # whereas a launch failure additionally prints its own `valgrind: <target>:
+    # <reason>` line (never the ==PID== trace prefix). Gate on both so a
+    # legitimate child exit code can never trip it.
+    if [[ $valgrind_exit_code -eq 126 || $valgrind_exit_code -eq 127 ]] \
+        && grep -q '^valgrind: ' "$fd_log"; then
+        echo "Valgrind could not execute '$TARGET' on $f (exit $valgrind_exit_code)"
+        rm -f "$fd_log"
+        exit 1
+    fi
+
     # Valgrind lists each descriptor still open at exit. Only the ones this
     # program opened itself count: a CI runner hands its child unrelated
     # inherited descriptors (GitHub Actions passes several), and valgrind
