@@ -1,0 +1,8 @@
+🚽 Test case: a native call in a do-while (mewing/goon) condition must be
+🚽 checked statically -- NODE_DO_WHILE_STATEMENT was previously unvisited.
+skibidi main {
+    mewing {
+        yapping("body");
+    } goon (bet(2) && L);
+    bussin 0;
+}

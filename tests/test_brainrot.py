@@ -1,6 +1,9 @@
 import subprocess
 import json
 import os
+import shutil
+import struct
+import zlib
 import pytest
 
 # Get the absolute path to the directory containing the script
@@ -13,35 +16,46 @@ file_path = os.path.join(script_dir, "expected_results.json")
 with open(file_path, "r") as file:
     expected_results = json.load(file)
 
+# Single source of truth for which fixtures read stdin and what to feed
+# them -- an ordered list of [prefix, stdin] pairs, first startswith() match
+# wins. Shared verbatim with tests/run_wasm_tests.mjs (Node): both harnesses
+# load this same file rather than keeping their own copy, since a fixture
+# added to only one of them previously shipped broken (PR #230's wasm job
+# failed on 9 fixtures whose stdin only existed in this file's old inline
+# elif-chain, not in the wasm runner's separate hardcoded table).
+with open(os.path.join(script_dir, "stdin_fixtures.json"), "r") as file:
+    stdin_by_prefix = json.load(file)
+
+def stdin_for(example):
+    for prefix, stdin in stdin_by_prefix:
+        if example.startswith(prefix):
+            return stdin
+    return None
+
 @pytest.mark.parametrize("example,expected_output", expected_results.items())
 def test_brainrot_examples(example, expected_output):
     brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
     example_file_path = os.path.abspath(os.path.join(script_dir, f"../test_cases/{example}.brainrot"))
 
-    if example.startswith("slorp_int"):
-        command = f"echo '42' | {brainrot_path} {example_file_path}"
-    elif example.startswith("slorp_short"):
-        command = f"echo '69' | {brainrot_path} {example_file_path}"
-    elif example.startswith("slorp_float"):
-        command = f"echo '3.14' | {brainrot_path} {example_file_path}"
-    elif example.startswith("slorp_double"):
-        command = f"echo '3.141592' | {brainrot_path} {example_file_path}"
-    elif example.startswith("slorp_char"):
-        command = f"echo 'c' | {brainrot_path} {example_file_path}"
-    elif example.startswith("slorp_string"):
-        command = f"echo 'skibidi bop bop yes yes' | {brainrot_path} {example_file_path}"
-    elif example == "native_call_self_init":
-        command = f"echo '42' | {brainrot_path} {example_file_path}"
-    elif example == "native_call_loop":
-        command = f"printf '1\\n2\\n3\\n' | {brainrot_path} {example_file_path}"
-    elif example == "native_call_string_arg":
-        command = f"printf 'skibidi\\nq\\n' | {brainrot_path} {example_file_path}"
-    elif example == "native_call_do_while":
-        command = f"printf '5\\n50\\n6\\n150\\n' | {brainrot_path} {example_file_path}"
-    else:
-        command = f"{brainrot_path} {example_file_path}"
+    result = subprocess.run(
+        [brainrot_path, example_file_path],
+        input=stdin_for(example),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
 
-    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True)
+    # "ExitCode:N" asserts only the process's exit code -- for cases whose
+    # observable behavior *is* the exit code (e.g. ragequit(1.5) truncating
+    # to 1) and has no other way to surface a mismatch through stdout/stderr.
+    if expected_output.startswith("ExitCode:"):
+        expected_code = int(expected_output.split(":", 1)[1])
+        assert result.returncode == expected_code, (
+            f"Command for {example} exited {result.returncode}, expected {expected_code}\n"
+            f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+        )
+        return
+
     actual_output = result.stdout.strip() if result.stdout.strip() else result.stderr.strip()
 
     if "Stderr:" in expected_output and result.stdout.strip():
@@ -58,6 +72,1269 @@ def test_brainrot_examples(example, expected_output):
             f"Command for {example} failed with return code {result.returncode}\n"
             f"Stderr:\n{result.stderr}"
         )
+
+
+# Regression test for the canonical `yap[N]` buffer form (#229/#230):
+# `yap name[32]; slorp(name);` must not print the deprecated scalar
+# write-back warning (execute_func_call(), stdrot.c) -- that warning is
+# for the pre-#204 scalar witness convention (`rizz x; slorp(x);`), not
+# for a char-array buffer slorp() already wrote into in place. The
+# JSON-driven test above only inspects stderr when stdout is empty, so a
+# stray warning alongside real stdout would otherwise go unnoticed.
+def test_slorp_buffer_form_has_no_deprecation_warning():
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    example_file_path = os.path.abspath(
+        os.path.join(script_dir, "../test_cases/slorp_buffer_no_deprecation_warning.brainrot"))
+
+    result = subprocess.run(
+        [brainrot_path, example_file_path],
+        input="Chad\n",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    assert result.stdout.strip() == "hello Chad", (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert "deprecated" not in result.stderr, (
+        f"yap[N] buffer form should not warn as deprecated\n"
+        f"Stderr:\n{result.stderr}"
+    )
+
+
+# ── validate_native_registry() rejection tests ──────────────────────────────
+# Each tests/badnatives/*.c file (built by `make badnatives`) registers
+# exactly one deliberately malformed StdrotEntry; validate_native_registry()
+# (stdrot.c) must reject it during stdrot_load(), before test_cases/
+# trivial_no_op.brainrot's single statement ever runs. Unlike every other
+# test in this file, these override STDROT_LIB_PATH per-subprocess (never
+# the shared tests/libstdrot.so the rest of the suite uses) since the
+# malformed registry must not be visible to any other test.
+REGISTRY_REJECTION_CASES = [
+    ("identity_non_any.so",
+     "return_like_arg (0) names a parameter that isn't STDROT_ANY"),
+    ("null_fn.so", "fn is NULL"),
+    ("duplicate_name.so", "duplicate native export 'bad_duplicate'"),
+    ("negative_pointer_level.so",
+     "params[0].pointer_level (-1) must be >= 0"),
+    ("pointer_level_without_ptr.so",
+     "params[0].pointer_level (1) must be 0 when params[0].type isn't STDROT_PTR"),
+    ("none_typed_param.so",
+     "params[0].type must not be STDROT_NONE"),
+    ("struct_param_without_type_name.so",
+     "params[0].type is STDROT_STRUCT but type_name is missing"),
+    ("invalid_return_type.so",
+     "return_type.type (999) is not a valid StdrotType"),
+    ("invalid_param_type.so",
+     "params[0].type (999) is not a valid StdrotType"),
+    ("bad_api_table_negative_count.so",
+     "registry function_count (-1) is not a plausible value"),
+    ("bad_api_table_null_functions.so",
+     "registry function_count (1) is > 0 but functions is NULL"),
+]
+
+
+@pytest.mark.parametrize("bad_lib,expected_message", REGISTRY_REJECTION_CASES)
+def test_bad_registry_rejected_at_load(bad_lib, expected_message):
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    trivial_path = os.path.abspath(
+        os.path.join(script_dir, "../test_cases/trivial_no_op.brainrot"))
+    bad_lib_path = os.path.abspath(
+        os.path.join(script_dir, "badnatives", bad_lib))
+
+    assert os.path.exists(bad_lib_path), (
+        f"{bad_lib_path} not found -- run `make badnatives` first")
+
+    env = dict(os.environ, STDROT_LIB_PATH=bad_lib_path)
+    result = subprocess.run([brainrot_path, trivial_path],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env)
+
+    assert result.returncode == 1, (
+        f"Loading {bad_lib} should abort with exit code 1, got "
+        f"{result.returncode}\nStdout:\n{result.stdout}\n"
+        f"Stderr:\n{result.stderr}"
+    )
+    assert expected_message in result.stderr, (
+        f"Expected stderr for {bad_lib} to contain {expected_message!r}\n"
+        f"Actual stderr:\n{result.stderr}"
+    )
+
+
+# Round-16 review finding #1: tests/old_abi_sim/fake_pre_v2_registry.so
+# (built by `make old-abi-sim`) simulates a libstdrot.so built before
+# STDROT_ABI_VERSION/stdrot_get_api_v3() existed -- it exports only the
+# OLD "stdrot_get_api" symbol, under the OLD {name, fn} layout. Proves
+# stdrot_load() (stdrot.c) detects the missing versioned symbol and fails
+# loudly instead of reinterpreting this .so's actual memory as the
+# current ABI shape.
+def test_old_abi_rejected_at_load():
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    trivial_path = os.path.abspath(
+        os.path.join(script_dir, "../test_cases/trivial_no_op.brainrot"))
+    old_abi_lib_path = os.path.abspath(
+        os.path.join(script_dir, "old_abi_sim", "fake_pre_v2_registry.so"))
+
+    assert os.path.exists(old_abi_lib_path), (
+        f"{old_abi_lib_path} not found -- run `make old-abi-sim` first")
+
+    env = dict(os.environ, STDROT_LIB_PATH=old_abi_lib_path)
+    result = subprocess.run([brainrot_path, trivial_path],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env)
+
+    assert result.returncode == 1, (
+        f"Loading a pre-ABI-versioning .so should abort with exit code "
+        f"1, got {result.returncode}\nStdout:\n{result.stdout}\n"
+        f"Stderr:\n{result.stderr}"
+    )
+    assert "stdrot_get_api_v3" in result.stderr, (
+        f"Expected stderr to name the missing versioned entrypoint\n"
+        f"Actual stderr:\n{result.stderr}"
+    )
+
+
+# ── #cooked <name> module search path (lib/module_path.c) ──────────────────
+# test_cases/cooked_module_search_path.brainrot's own default run (no
+# $BRAINROT_PATH set, via the generic loop above) already covers the
+# "module not found" error path. Everything below needs a directory layout
+# or a $PATH-style invocation the generic loop can't express, so -- like the
+# badnatives/old_abi_sim tests above -- these run outside
+# expected_results.json with their own env/layout.
+#
+# Search order (module_path.h): $BRAINROT_PATH, then EXACTLY ONE of
+# {install module dir, in-tree "stdrot/" next to the running executable} --
+# never both, decided by whether the running executable's own directory is
+# the install bin directory. "The running executable" is resolved via
+# /proc/self/exe (or _NSGetExecutablePath on macOS), never argv[0]/cwd, so
+# these tests specifically exercise a bare $PATH-style invocation (argv[0]
+# with no directory component) and a decoy in cwd -- the exact case
+# argv[0]-based resolution would get wrong.
+
+MATHMOD_SOURCE = os.path.join(script_dir, "modules", "mathmod.brainrot")
+COOKED_MODULE_SEARCH_PATH_SOURCE = os.path.join(
+    script_dir, "..", "test_cases", "cooked_module_search_path.brainrot")
+
+
+def _copy_binary(dest_dir):
+    """Copies the built `brainrot` binary into dest_dir, returns its path."""
+    repo_root = os.path.abspath(os.path.join(script_dir, ".."))
+    copied_binary = dest_dir / "brainrot"
+    shutil.copy(os.path.join(repo_root, "brainrot"), copied_binary)
+    os.chmod(copied_binary, 0o755)
+    return copied_binary
+
+
+def test_module_search_path_hit():
+    """$BRAINROT_PATH pointed at tests/modules/ resolves #cooked <mathmod>."""
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    source_path = os.path.abspath(COOKED_MODULE_SEARCH_PATH_SOURCE)
+    modules_dir = os.path.abspath(os.path.join(script_dir, "modules"))
+
+    env = dict(os.environ, BRAINROT_PATH=modules_dir)
+    result = subprocess.run([brainrot_path, source_path],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env)
+
+    assert result.returncode == 0, (
+        f"Expected success with BRAINROT_PATH={modules_dir}, got "
+        f"{result.returncode}\nStdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert result.stdout == "42\n", f"Actual stdout:\n{result.stdout}"
+
+
+def test_module_in_tree_fallback(tmp_path):
+    """With no $BRAINROT_PATH, "stdrot/" next to the executable still resolves.
+
+    Copies the built binary into an empty tmp directory alongside a
+    stdrot/mathmod.brainrot of its own, then runs that copy with
+    $BRAINROT_PATH unset and while NOT the install bin directory (the
+    default -- BRAINROT_TEST_INSTALL_BIN_DIR is left unset here) --
+    module_path.c's in-tree tier is "stdrot/" next to the actual running
+    executable, resolved independently of argv[0]/cwd. Runs with cwd=repo
+    root so stdrot_load()'s own cwd-relative "./libstdrot.so" lookup
+    (stdrot.c) still finds the real library; STDROT_LIB_PATH (set by `make
+    test`, see the Makefile) takes priority over that lookup anyway and is
+    inherited from os.environ regardless of cwd.
+    """
+    repo_root = os.path.abspath(os.path.join(script_dir, ".."))
+    source_path = os.path.join(
+        repo_root, "test_cases", "cooked_module_search_path.brainrot")
+
+    copied_binary = _copy_binary(tmp_path)
+    (tmp_path / "stdrot").mkdir()
+    shutil.copy(MATHMOD_SOURCE, tmp_path / "stdrot" / "mathmod.brainrot")
+
+    env = dict(os.environ)
+    env.pop("BRAINROT_PATH", None)
+    env.pop("BRAINROT_TEST_INSTALL_BIN_DIR", None)
+    result = subprocess.run([str(copied_binary), source_path],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env, cwd=repo_root)
+
+    assert result.returncode == 0, (
+        f"Expected the in-tree fallback to resolve 'mathmod', got "
+        f"{result.returncode}\nStdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert result.stdout == "42\n", f"Actual stdout:\n{result.stdout}"
+
+
+def test_module_search_path_precedence(tmp_path):
+    """$BRAINROT_PATH outranks the in-tree "stdrot/" tier (module_path.c order).
+
+    Puts a DIFFERENT "mathmod" module in each tier (tests/modules_shadow/ vs
+    a copy of the binary's own stdrot/) and checks the $BRAINROT_PATH one
+    wins -- Appendix B Q11 (docs/ROADMAP.md): the two tiers must not
+    silently shadow each other in the wrong order.
+    """
+    repo_root = os.path.abspath(os.path.join(script_dir, ".."))
+    source_path = os.path.join(
+        repo_root, "test_cases", "cooked_module_search_path.brainrot")
+    shadow_dir = os.path.abspath(os.path.join(script_dir, "modules_shadow"))
+
+    copied_binary = _copy_binary(tmp_path)
+    (tmp_path / "stdrot").mkdir()
+    shutil.copy(MATHMOD_SOURCE, tmp_path / "stdrot" / "mathmod.brainrot")
+
+    env = dict(os.environ, BRAINROT_PATH=shadow_dir)
+    env.pop("BRAINROT_TEST_INSTALL_BIN_DIR", None)
+    result = subprocess.run([str(copied_binary), source_path],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env, cwd=repo_root)
+
+    assert result.returncode == 0, (
+        f"Expected success, got {result.returncode}\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert result.stdout == "63\n", (
+        f"Expected the $BRAINROT_PATH module (tripling) to win over the "
+        f"in-tree one (doubling)\nActual stdout:\n{result.stdout}"
+    )
+
+
+def test_module_bare_command_name_uses_real_executable_dir(tmp_path):
+    """A bare, $PATH-resolved invocation must not resolve modules via cwd.
+
+    Regression test for exactly the bug a naive argv[0]-based
+    implementation has: typing a bare command name (no "./", no absolute
+    path -- the same shape as running an installed `brainrot` from $PATH)
+    gives argv[0] with no directory component at all. Resolving the
+    in-tree tier from argv[0]+cwd would then silently search the *caller's*
+    current directory instead of the directory the executed binary
+    actually lives in.
+
+    Sets up two candidate "stdrot/mathmod.brainrot" modules with different,
+    distinguishable content: one next to the real copied binary (via
+    $PATH), one in the subprocess's cwd (a decoy). Only the $PATH one may
+    win.
+    """
+    bindir = tmp_path / "bindir"
+    bindir.mkdir()
+    cwd_dir = tmp_path / "cwd"
+    cwd_dir.mkdir()
+
+    _copy_binary(bindir)
+    (bindir / "stdrot").mkdir()
+    shutil.copy(MATHMOD_SOURCE, bindir / "stdrot" / "mathmod.brainrot")
+
+    (cwd_dir / "stdrot").mkdir()
+    shutil.copy(os.path.join(script_dir, "modules_shadow", "mathmod.brainrot"),
+                cwd_dir / "stdrot" / "mathmod.brainrot")
+
+    source_path = os.path.abspath(COOKED_MODULE_SEARCH_PATH_SOURCE)
+
+    env = dict(os.environ, PATH=f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
+    env.pop("BRAINROT_PATH", None)
+    env.pop("BRAINROT_TEST_INSTALL_BIN_DIR", None)
+    # subprocess.run resolves a slash-free executable name via $PATH itself
+    # (like a shell would) while leaving argv[0] as the bare name "brainrot"
+    # -- exactly the invocation shape this test exists to cover.
+    result = subprocess.run(["brainrot", source_path],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env, cwd=cwd_dir)
+
+    assert result.returncode == 0, (
+        f"Expected success, got {result.returncode}\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert result.stdout == "42\n", (
+        f"Expected the module next to the real executable (doubling) to "
+        f"win over cwd's decoy (tripling) -- got:\n{result.stdout}"
+    )
+
+
+def test_module_install_dir_skips_in_tree(tmp_path):
+    """Once the running binary IS the install bin dir, in-tree is skipped.
+
+    BRAINROT_TEST_INSTALL_BIN_DIR (module_path.c, test-only seam) stands in
+    for the real /usr/local/bin so this doesn't have to write there. With
+    the copied binary's own directory treated as "installed", its sibling
+    stdrot/mathmod.brainrot must NOT be found -- only the (real, empty in
+    this environment) install module directory tier applies -- proving the
+    two tiers are mutually exclusive, not just ordered.
+    """
+    repo_root = os.path.abspath(os.path.join(script_dir, ".."))
+    source_path = os.path.join(
+        repo_root, "test_cases", "cooked_module_search_path.brainrot")
+
+    copied_binary = _copy_binary(tmp_path)
+    (tmp_path / "stdrot").mkdir()
+    shutil.copy(MATHMOD_SOURCE, tmp_path / "stdrot" / "mathmod.brainrot")
+
+    env = dict(os.environ, BRAINROT_TEST_INSTALL_BIN_DIR=str(tmp_path))
+    env.pop("BRAINROT_PATH", None)
+    env.pop("BRAINROT_TEST_INSTALL_MODULE_DIR", None)
+    result = subprocess.run([str(copied_binary), source_path],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env, cwd=repo_root)
+
+    assert result.returncode == 1, (
+        f"Expected 'module not found' (in-tree must be skipped once "
+        f"treated as installed), got {result.returncode}\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert "cannot find module 'mathmod'" in result.stderr, (
+        f"Actual stderr:\n{result.stderr}"
+    )
+
+
+def test_module_install_dir_used_when_installed(tmp_path):
+    """The install module dir IS consulted, and wins, once "installed".
+
+    Combines BRAINROT_TEST_INSTALL_BIN_DIR with
+    BRAINROT_TEST_INSTALL_MODULE_DIR (both test-only seams standing in for
+    /usr/local/bin and /usr/local/lib/brainrot) to prove the positive half
+    of the install/in-tree split actually finds a module there -- not just
+    that it skips in-tree (test_module_install_dir_skips_in_tree, above).
+    """
+    repo_root = os.path.abspath(os.path.join(script_dir, ".."))
+    source_path = os.path.join(
+        repo_root, "test_cases", "cooked_module_search_path.brainrot")
+    fake_install_module_dir = tmp_path / "fake_install_lib_brainrot"
+    fake_install_module_dir.mkdir()
+    shutil.copy(os.path.join(script_dir, "modules_shadow", "mathmod.brainrot"),
+                fake_install_module_dir / "mathmod.brainrot")
+
+    copied_binary = _copy_binary(tmp_path)
+    (tmp_path / "stdrot").mkdir()
+    shutil.copy(MATHMOD_SOURCE, tmp_path / "stdrot" / "mathmod.brainrot")
+
+    env = dict(os.environ,
+              BRAINROT_TEST_INSTALL_BIN_DIR=str(tmp_path),
+              BRAINROT_TEST_INSTALL_MODULE_DIR=str(fake_install_module_dir))
+    env.pop("BRAINROT_PATH", None)
+    result = subprocess.run([str(copied_binary), source_path],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env, cwd=repo_root)
+
+    assert result.returncode == 0, (
+        f"Expected success, got {result.returncode}\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert result.stdout == "63\n", (
+        f"Expected the install-dir module (tripling) to win over the "
+        f"in-tree one (doubling), which must be skipped entirely -- got:\n"
+        f"{result.stdout}"
+    )
+
+
+# ── Native modules: #cooked <name> resolving to a ".so" (stdrot_load_module,
+# stdrot.c) ──────────────────────────────────────────────────────────────
+# tests/nativemodules/*.c (built by `make nativemodules`) are real modules
+# with a genuine brainrot_module_init_v3() entrypoint -- unlike
+# tests/badnatives/*.so above (which simulate a malformed CORE
+# libstdrot.so, loaded via STDROT_LIB_PATH to exercise stdrot_load()),
+# these exercise the #cooked <name>-to-native-module path specifically.
+# Driver source is written inline per test (via tmp_path) rather than as
+# test_cases/*.brainrot fixtures, since every one of these needs
+# $BRAINROT_PATH set -- the generic expected_results.json loop can't
+# express that, the same reason the module-search-path tests above don't
+# either.
+NATIVEMODULES_DIR = os.path.join(script_dir, "nativemodules")
+
+
+def _run_with_native_modules(source, tmp_path):
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    source_path = tmp_path / "prog.brainrot"
+    source_path.write_text(source)
+
+    env = dict(os.environ, BRAINROT_PATH=NATIVEMODULES_DIR)
+    return subprocess.run([brainrot_path, str(source_path)],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True, env=env)
+
+
+def _assert_nativemodules_built(*so_names):
+    for so in so_names:
+        path = os.path.join(NATIVEMODULES_DIR, so)
+        assert os.path.exists(path), (
+            f"{path} not found -- run `make nativemodules` first")
+
+
+def test_native_module_dual_load_and_include_once(tmp_path):
+    """A native module's exports are callable alongside the core library's,
+    and cooking the same module twice is a no-op -- matching a ".brainrot"
+    prelude's own include-once behavior (splice_cooked_file, lang.l)."""
+    _assert_nativemodules_built("testnative.so")
+
+    result = _run_with_native_modules(
+        '#cooked <testnative>\n'
+        '#cooked <testnative>\n'
+        'skibidi main {\n'
+        '    yapping("%d", tripled(2));\n'
+        '    bussin 0;\n'
+        '}\n', tmp_path)
+
+    assert result.returncode == 0, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert result.stdout == "6\n", f"Actual stdout:\n{result.stdout}"
+
+
+def test_native_module_two_modules_loaded_at_once(tmp_path):
+    """Two DIFFERENT, non-colliding native modules are both loaded and both
+    remain independently callable -- #207's own "two modules loaded at
+    once" DoD item specifically, distinct from the dual-load test above
+    (core + one module, one of them cooked twice) and from
+    test_native_module_duplicate_with_module below (two modules, but the
+    second load must FAIL)."""
+    _assert_nativemodules_built("testnative.so", "testnative2.so")
+
+    result = _run_with_native_modules(
+        '#cooked <testnative>\n'
+        '#cooked <testnative2>\n'
+        'skibidi main {\n'
+        '    yapping("%d", tripled(2));\n'
+        '    yapping("%d", halved(10));\n'
+        '    bussin 0;\n'
+        '}\n', tmp_path)
+
+    assert result.returncode == 0, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert result.stdout == "6\n5\n", f"Actual stdout:\n{result.stdout}"
+
+
+# ── STDROT_STRUCT: by-value aggregates across the native ABI (#208 Road B)
+# tests/nativemodules/structnative.c declares the C structs these `gang`s
+# mirror and _Static_asserts their real C sizes/offsets, so every value
+# below is only correct if compute_struct_layout() (ast.c) agrees with a
+# real C compiler about the layout -- that agreement is the premise the
+# whole generated-binding road rests on.
+STRUCT_ABI_PRELUDE = (
+    '#cooked <structnative>\n'
+    'gang Vec2 {\n'
+    '    chad x;\n'
+    '    chad y;\n'
+    '};\n'
+)
+
+
+def test_native_struct_arg_passed_by_value(tmp_path):
+    """A `gang` reaches a native as a correctly-laid-out byte image, and two
+    struct arguments in one call get independent copies."""
+    _assert_nativemodules_built("structnative.so")
+
+    result = _run_with_native_modules(
+        STRUCT_ABI_PRELUDE +
+        'skibidi main {\n'
+        '    gang Vec2 v;\n'
+        '    v.x = 3.0;\n'
+        '    v.y = 4.0;\n'
+        '    gang Vec2 w;\n'
+        '    w.x = 5.0;\n'
+        '    w.y = 6.0;\n'
+        '    yapping("%.1f", vec2_len2(v));\n'
+        '    yapping("%.1f", vec2_dot(v, w));\n'
+        '    bussin 0;\n'
+        '}\n', tmp_path)
+
+    assert result.returncode == 0, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    # 3*3 + 4*4 = 25; 3*5 + 4*6 = 39 (39 proves the two struct arguments
+    # did NOT share one scratch buffer -- if they had, both would read as
+    # whichever struct was copied last).
+    assert result.stdout == "25.0\n39.0\n", f"Actual stdout:\n{result.stdout}"
+
+
+def test_native_struct_arg_mutation_does_not_reach_caller(tmp_path):
+    """The native receives an adapter-owned COPY, so writing through it
+    leaves the caller's variable untouched -- C by-value semantics, and the
+    same value-copy rule struct assignment already follows. If
+    .val.blob.data ever went back to aliasing the live variable's storage,
+    the read-back below would print the scribbled values instead."""
+    _assert_nativemodules_built("structnative.so")
+
+    result = _run_with_native_modules(
+        STRUCT_ABI_PRELUDE +
+        'skibidi main {\n'
+        '    gang Vec2 v;\n'
+        '    v.x = 3.0;\n'
+        '    v.y = 4.0;\n'
+        '    yapping("%.1f", vec2_scribble(v));\n'
+        '    yapping("%.1f", v.x);\n'
+        '    yapping("%.1f", v.y);\n'
+        '    bussin 0;\n'
+        '}\n', tmp_path)
+
+    assert result.returncode == 0, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    # 111 + 222 = 333 is what the native wrote into its own copy; 3.0/4.0
+    # are the caller's own, unchanged.
+    assert result.stdout == "333.0\n3.0\n4.0\n", (
+        f"Actual stdout:\n{result.stdout}")
+
+
+def test_native_struct_arg_interior_offsets(tmp_path):
+    """A padded, offset-sensitive shape (cap/rizz/gigachad -- the same
+    struct Mixed used as ground truth in tests/abi/struct_layout_abi_
+    check.c) survives the boundary field by field, so a wrong INTERIOR
+    offset shows up as a wrong value, not just a wrong total size."""
+    _assert_nativemodules_built("structnative.so")
+
+    result = _run_with_native_modules(
+        '#cooked <structnative>\n'
+        'gang Mixed {\n'
+        '    cap flag;\n'
+        '    rizz n;\n'
+        '    gigachad d;\n'
+        '};\n'
+        'skibidi main {\n'
+        '    gang Mixed m;\n'
+        '    m.flag = W;\n'
+        '    m.n = 1234;\n'
+        '    m.d = 2.75;\n'
+        '    yapping("%d", mixed_probe(m));\n'
+        '    bussin 0;\n'
+        '}\n', tmp_path)
+
+    assert result.returncode == 0, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    # 1000000 (flag) + 1234 (n) + 2 ((int)2.75) -- every field read at its
+    # own C-correct offset.
+    assert result.stdout == "1001236\n", f"Actual stdout:\n{result.stdout}"
+
+
+def test_native_struct_arg_source_expressions(tmp_path):
+    """A native's struct parameter accepts the same source expressions a
+    Brainrot function's struct parameter does -- a plain variable, a
+    by-value member access of a nested struct, a struct-returning call,
+    and a member access ON a call result -- not just a bare identifier.
+
+    The bare-call form additionally proves the argument is evaluated
+    exactly ONCE ("called" appears a single time): routing a call-shaped
+    struct argument through the ordinary scalar marshaller would evaluate
+    it, then evaluate it again to get the blob, which is the
+    double-execution bug class of #303.
+
+    `make_body().pos` is the one form where resolve_by_value_struct_
+    source() reports it allocated the blob itself, and it is allocated
+    with plain calloc() while this call's own scratch is released with
+    SAFE_FREE -- so it specifically covers the allocator pairing in
+    marshal_struct_argument()."""
+    _assert_nativemodules_built("structnative.so")
+
+    result = _run_with_native_modules(
+        STRUCT_ABI_PRELUDE +
+        'gang Body {\n'
+        '    gang Vec2 pos;\n'
+        '    rizz id;\n'
+        '};\n'
+        'gang Vec2 make_vec() {\n'
+        '    yapping("called");\n'
+        '    gang Vec2 r;\n'
+        '    r.x = 3.0;\n'
+        '    r.y = 4.0;\n'
+        '    bussin r;\n'
+        '}\n'
+        'gang Body make_body() {\n'
+        '    gang Body mb;\n'
+        '    mb.pos.x = 6.0;\n'
+        '    mb.pos.y = 8.0;\n'
+        '    mb.id = 9;\n'
+        '    bussin mb;\n'
+        '}\n'
+        'skibidi main {\n'
+        '    gang Body b;\n'
+        '    b.pos.x = 3.0;\n'
+        '    b.pos.y = 4.0;\n'
+        '    b.id = 7;\n'
+        '    yapping("%.1f", vec2_len2(b.pos));\n'
+        '    yapping("%.1f", vec2_len2(make_vec()));\n'
+        '    yapping("%.1f", vec2_len2(make_body().pos));\n'
+        '    bussin 0;\n'
+        '}\n', tmp_path)
+
+    assert result.returncode == 0, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    # 3,4 -> 25; make_vec 3,4 -> 25; make_body 6,8 -> 100.
+    assert result.stdout == "25.0\ncalled\n25.0\n100.0\n", (
+        f"Actual stdout:\n{result.stdout}")
+
+
+NATIVE_STRUCT_REJECTION_CASES = [
+    pytest.param(
+        '    gang Other o;\n'
+        '    o.a = 1.0;\n'
+        '    o.b = 2.0;\n'
+        '    yapping("%.1f", vec2_len2(o));\n',
+        "expected struct 'Vec2', got struct 'Other'",
+        'gang Other {\n    chad a;\n    chad b;\n};\n',
+        id="tag_mismatch"),
+    pytest.param(
+        '    rizz n = 5;\n'
+        '    yapping("%.1f", vec2_len2(n));\n',
+        "expected struct 'Vec2' by value, got int",
+        '',
+        id="scalar_for_struct"),
+    pytest.param(
+        '    gang Vec2 v;\n'
+        '    v.x = 1.0;\n'
+        '    v.y = 2.0;\n'
+        '    gang Vec2 *p = &v;\n'
+        '    yapping("%.1f", vec2_len2(p));\n',
+        "expected struct 'Vec2' by value, got struct pointer",
+        '',
+        id="pointer_for_by_value"),
+    pytest.param(
+        '    gang Vec2 v = vec2_make();\n',
+        "native by-value struct return types are not marshalled yet",
+        '',
+        id="struct_return"),
+    # PR #307 review, finding 1. An ARRAY of structs passed where a single
+    # by-value struct is declared used to be accepted silently, handing the
+    # native element 0 of something the caller plainly wrote as an array --
+    # while `rizz a[2]` passed to a scalar parameter had always produced a
+    # clean diagnostic. infer_expression_type() reports an array
+    # identifier's ELEMENT type, so `gang Vec2 arr[4]` looked exactly like a
+    # `gang Vec2` to both the type check and the tag check.
+    pytest.param(
+        '    gang Vec2 arr[4];\n'
+        '    arr[0].x = 3.0;\n'
+        '    arr[0].y = 4.0;\n'
+        '    yapping("%.1f", vec2_len2(arr));\n',
+        "struct arrays cannot be passed where a by-value struct 'Vec2' is "
+        "expected",
+        '',
+        id="struct_array_for_by_value"),
+]
+
+
+@pytest.mark.parametrize("body,expected_message,extra_decls",
+                         NATIVE_STRUCT_REJECTION_CASES)
+def test_native_struct_arg_rejections(body, expected_message, extra_decls,
+                                      tmp_path):
+    """Static rejections around STDROT_STRUCT. The tag check is the one
+    check_type_compatibility_ex() structurally cannot make (every `gang` is
+    VAR_STRUCT), and the pointer case matters because STDROT_STRUCT carries
+    a byte image -- passing a pointer would copy the POINTER's bytes. The
+    struct-RETURN case pins the deliberate, documented gap: it is rejected
+    until an ownership model exists, not silently half-marshalled."""
+    _assert_nativemodules_built("structnative.so")
+
+    result = _run_with_native_modules(
+        STRUCT_ABI_PRELUDE + extra_decls +
+        'skibidi main {\n' + body +
+        '    bussin 0;\n'
+        '}\n', tmp_path)
+
+    assert result.returncode == 1, (
+        f"Expected a semantic error (exit 1), got {result.returncode}\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert expected_message in result.stdout + result.stderr, (
+        f"Expected {expected_message!r}\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+
+
+def test_native_struct_array_element_still_accepted(tmp_path):
+    """The array REJECTION above must not take the array-element form with
+    it: `arr[0]` is a perfectly good by-value struct source and has to keep
+    working, or the fix would have traded a silent wrong answer for a
+    false rejection."""
+    _assert_nativemodules_built("structnative.so")
+
+    result = _run_with_native_modules(
+        STRUCT_ABI_PRELUDE +
+        'skibidi main {\n'
+        '    gang Vec2 arr[3];\n'
+        '    arr[0].x = 3.0;\n'
+        '    arr[0].y = 4.0;\n'
+        '    arr[1].x = 6.0;\n'
+        '    arr[1].y = 8.0;\n'
+        '    yapping("%.1f", vec2_len2(arr[0]));\n'
+        '    yapping("%.1f", vec2_len2(arr[1]));\n'
+        '    bussin 0;\n'
+        '}\n', tmp_path)
+
+    assert result.returncode == 0, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert result.stdout == "25.0\n100.0\n", (
+        f"Actual stdout:\n{result.stdout}")
+
+
+def test_native_module_duplicate_with_core(tmp_path):
+    """A module exporting a name the core library already provides ('bet')
+    must be rejected, naming the core library as the existing source."""
+    _assert_nativemodules_built("testnative_dup_core.so")
+
+    result = _run_with_native_modules(
+        '#cooked <testnative_dup_core>\n'
+        'skibidi main { bussin 0; }\n', tmp_path)
+
+    assert result.returncode == 1, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert ("'bet' is already provided by the core standard library"
+            in result.stderr), f"Actual stderr:\n{result.stderr}"
+
+
+def test_native_module_duplicate_with_module(tmp_path):
+    """A module exporting a name an EARLIER cooked module already provides
+    must be rejected too, naming that earlier module (by its #cooked <name>
+    spelling) as the existing source -- not just the core library."""
+    _assert_nativemodules_built("testnative.so", "testnative_dup_module.so")
+
+    result = _run_with_native_modules(
+        '#cooked <testnative>\n'
+        '#cooked <testnative_dup_module>\n'
+        'skibidi main { bussin 0; }\n', tmp_path)
+
+    assert result.returncode == 1, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert "'tripled' is already provided by testnative" in result.stderr, (
+        f"Actual stderr:\n{result.stderr}"
+    )
+
+
+def test_native_module_missing_brainrot_module_init_v3(tmp_path):
+    """A structurally valid .so with no brainrot_module_init_v3() at all must
+    fail loudly and specifically, the same dlsym-failure posture
+    stdrot_load() already has for a pre-ABI-versioning libstdrot.so (see
+    test_old_abi_rejected_at_load above)."""
+    _assert_nativemodules_built("no_module_init.so")
+
+    result = _run_with_native_modules(
+        '#cooked <no_module_init>\n'
+        'skibidi main { bussin 0; }\n', tmp_path)
+
+    assert result.returncode == 1, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert "does not export brainrot_module_init_v3()" in result.stderr, (
+        f"Actual stderr:\n{result.stderr}"
+    )
+
+
+def test_native_module_internal_duplicate_rejected(tmp_path):
+    """stdrot_load_module() (stdrot.c) runs validate_native_registry() on a
+    cooked module's own table -- the same rejection
+    test_bad_registry_rejected_at_load above already proves for the core
+    library's table, exercised here via the module-loading path instead."""
+    _assert_nativemodules_built("testnative_internal_dup.so")
+
+    result = _run_with_native_modules(
+        '#cooked <testnative_internal_dup>\n'
+        'skibidi main { bussin 0; }\n', tmp_path)
+
+    assert result.returncode == 1, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+    assert "duplicate native export 'dup_within_module'" in result.stderr, (
+        f"Actual stderr:\n{result.stderr}"
+    )
+
+
+REPO_ROOT = os.path.abspath(os.path.join(script_dir, ".."))
+RAYROT_DIR = os.path.join(REPO_ROOT, "rayrot")
+
+
+def _raylib_available():
+    """True when pkg-config can find raylib, i.e. `make rayrot` can build
+    the optional binding. raylib is not a dependency of `make test`, so when
+    it is absent the rayrot test below skips (with a reason) rather than
+    failing -- matching #208's "make test does not require raylib"."""
+    if shutil.which("pkg-config") is None:
+        return False
+    return subprocess.run(
+        ["pkg-config", "--exists", "raylib"]).returncode == 0
+
+
+@pytest.mark.skipif(
+    not _raylib_available(),
+    reason="raylib not installed (pkg-config --exists raylib failed); "
+           "rayrot is an optional dependency, not required by make test")
+def test_rayrot_module_loads_when_raylib_present(tmp_path):
+    """When raylib IS present, `make rayrot` builds rayrot/raylib.so and
+    `#cooked <raylib>` loads it end to end. This proves the module exports
+    brainrot_module_init_v3(), the module search path resolves the native `.so`,
+    and every rl_* arity/type descriptor passes validate_native_registry() at
+    load time. It calls no rl_* function, so it needs no window or display --
+    the load itself (dlopen at parse time) is what is under test."""
+    build = subprocess.run(
+        ["make", "rayrot"], cwd=REPO_ROOT,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert build.returncode == 0, f"`make rayrot` failed:\n{build.stdout}"
+    assert os.path.exists(os.path.join(RAYROT_DIR, "raylib.so")), (
+        "make rayrot did not produce rayrot/raylib.so")
+
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    source_path = tmp_path / "prog.brainrot"
+    source_path.write_text("#cooked <raylib>\nskibidi main { bussin 0; }\n")
+
+    env = dict(os.environ, BRAINROT_PATH=RAYROT_DIR)
+    result = subprocess.run(
+        [brainrot_path, str(source_path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+
+    assert result.returncode == 0, (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
+
+
+@pytest.mark.skipif(
+    not _raylib_available() or not os.environ.get("DISPLAY"),
+    reason="needs raylib AND a display ($DISPLAY): raylib is optional and the "
+           "windowed run cannot open a window in headless CI")
+def test_rayrot_windowed_run_is_leak_clean(tmp_path):
+    """The windowed demo must exit clean under the default (ASan) build --
+    the regression guard for issue #267. rayrot brackets raylib's own calls
+    with __lsan_disable/__lsan_enable so the graphics stack's process-lifetime
+    globals are not reported, while rayrot's own allocations (the window
+    title, the texture table) stay tracked. A leak on either side -- a real
+    rayrot leak, or the bracketing being removed so raylib's globals surface
+    again -- makes ASan exit nonzero and prints "LeakSanitizer", failing here.
+
+    The program calls rl_draw_text_int/rl_measure_text_int on purpose: they are
+    the only wrappers besides rl_init_window that allocate, so a missing free()
+    in br_format_text_int() has to be visible somewhere, and this is that
+    somewhere. Both are called every iteration so a per-call leak accumulates.
+
+    Uses a frame-capped program (the shipped example loops until the window is
+    closed) so the run terminates on its own. Skips without raylib or a
+    display, so headless CI never runs it."""
+    build = subprocess.run(
+        ["make", "rayrot"], cwd=REPO_ROOT,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert build.returncode == 0, f"`make rayrot` failed:\n{build.stdout}"
+
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    source_path = tmp_path / "leak_smoke.brainrot"
+    source_path.write_text(
+        "#cooked <raylib>\n"
+        "skibidi main {\n"
+        "    rl_init_window(160, 120, \"leak smoke\");\n"
+        "    rizz n = 0;\n"
+        "    cap running = W;\n"
+        "    goon (running) {\n"
+        "        cap down = rl_is_key_down(32);\n"
+        "        rl_begin_drawing();\n"
+        "        rl_clear_background(20, 20, 20, 255);\n"
+        "        rl_draw_circle(80, 60, 20.0, 255, 0, 255, 255);\n"
+        "        rl_draw_text(\"cinema\", 10, 10, 16, 255, 255, 255, 255);\n"
+        "        rizz w = rl_measure_text_int(\"n \", n, 4, 16);\n"
+        "        rl_draw_text_int(\"n \", n, 4, w, 30, 16, 255, 255, 0, 255);\n"
+        "        rl_end_drawing();\n"
+        "        cap wc = rl_window_should_close();\n"
+        "        edgy (wc) { running = L; }\n"
+        "        n = n + 1;\n"
+        "        edgy (n > 5) { running = L; }\n"
+        "    }\n"
+        "    rl_close_window();\n"
+        "    bussin 0;\n"
+        "}\n")
+
+    # Default env: leak detection stays ON (no ASAN_OPTIONS override). A leak
+    # would make ASan exit nonzero; assert the clean exit and no LSan report.
+    env = dict(os.environ, BRAINROT_PATH=RAYROT_DIR)
+    result = subprocess.run(
+        [brainrot_path, str(source_path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+        timeout=60)
+
+    assert "LeakSanitizer" not in result.stderr, (
+        f"LeakSanitizer reported leaks on the windowed run:\n{result.stderr}")
+    assert result.returncode == 0, (
+        f"Nonzero exit {result.returncode}\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
+
+
+@pytest.mark.skipif(
+    not _raylib_available() or not os.environ.get("DISPLAY"),
+    reason="needs raylib AND a display ($DISPLAY): MeasureText only reports "
+           "real widths once InitWindow has loaded the default font")
+def test_rayrot_text_int_formatting_matches_docs(tmp_path):
+    """rl_draw_text_int/rl_measure_text_int exist to produce one specific
+    string -- prefix, then the number under printf's "%0*d". The leak smoke
+    above proves those wrappers allocate and free; it says nothing about what
+    they render, and would stay green against an implementation that ignored
+    `pad` and `value` entirely.
+
+    So check the rendered width against rl_measure_text() of the exact literals
+    documented in docs/rayrot.md's table. Every row is asserted, including
+    the negative one, which is the row that pins `pad` as a FIELD WIDTH rather
+    than a digit count: -450 at pad 6 is "-00450" (six columns) and not
+    "-000450" (six digits plus a sign). Those are different strings and
+    different HUD widths, and only one of them is what the code does.
+
+    What this can and cannot catch, stated plainly:
+
+      - CAN catch a dropped or misapplied `pad`, an ignored `value`, and a
+        join of the wrong length. The final distinctness assertion makes the
+        `pad` case airtight rather than incidental: padded and unpadded must
+        measure differently, which also fails loudly if MeasureText degenerates
+        to 0 for everything (a broken font would otherwise make every equality
+        above trivially true).
+      - CANNOT catch prefix/number order being swapped. Text width is the sum
+        of glyph widths, so "SCORE 450" and "450SCORE " measure identically.
+        Proving order needs the actual bytes, which raylib gives no way to read
+        back.
+
+    Both wrappers share br_format_text_int(), so measuring one validates the
+    formatting of both -- for as long as they keep sharing it."""
+    build = subprocess.run(
+        ["make", "rayrot"], cwd=REPO_ROOT,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert build.returncode == 0, f"`make rayrot` failed:\n{build.stdout}"
+
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    source_path = tmp_path / "text_int_format.brainrot"
+    source_path.write_text(
+        "#cooked <raylib>\n"
+        "skibidi main {\n"
+        "    rl_init_window(320, 200, \"text_int format\");\n"
+        # Each row of the table in docs/rayrot.md, as (call, literal).
+        "    rizz a1 = rl_measure_text_int(\"SCORE \", 450, 6, 16);\n"
+        "    rizz a2 = rl_measure_text(\"SCORE 000450\", 16);\n"
+        "    cap oka = a1 == a2;\n"
+        "    bet(oka, \"pad 6 of 450 must render SCORE 000450\");\n"
+        "    rizz b1 = rl_measure_text_int(\"SCORE \", 0 - 450, 6, 16);\n"
+        "    rizz b2 = rl_measure_text(\"SCORE -00450\", 16);\n"
+        "    cap okb = b1 == b2;\n"
+        "    bet(okb, \"pad 6 of -450 must render SCORE -00450, not -000450\");\n"
+        "    rizz c1 = rl_measure_text_int(\"SCORE \", 450, 0, 16);\n"
+        "    rizz c2 = rl_measure_text(\"SCORE 450\", 16);\n"
+        "    cap okc = c1 == c2;\n"
+        "    bet(okc, \"pad 0 must not pad\");\n"
+        "    rizz d1 = rl_measure_text_int(\"SCORE \", 0, 6, 16);\n"
+        "    rizz d2 = rl_measure_text(\"SCORE 000000\", 16);\n"
+        "    cap okd = d1 == d2;\n"
+        "    bet(okd, \"pad 6 of 0 must render SCORE 000000\");\n"
+        "    rizz e1 = rl_measure_text_int(\"\", 1234, 0, 16);\n"
+        "    rizz e2 = rl_measure_text(\"1234\", 16);\n"
+        "    cap oke = e1 == e2;\n"
+        "    bet(oke, \"an empty prefix must render the bare number\");\n"
+        # Padding must actually change the result. Guards against `pad` being
+        # dead code, and against MeasureText returning 0 for everything.
+        "    cap okf = a1 != c1;\n"
+        "    bet(okf, \"padded and unpadded must not measure the same\");\n"
+        "    rl_close_window();\n"
+        "    yapping(\"format ok\");\n"
+        "    bussin 0;\n"
+        "}\n")
+
+    env = dict(os.environ, BRAINROT_PATH=RAYROT_DIR)
+    result = subprocess.run(
+        [brainrot_path, str(source_path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+        timeout=60)
+
+    assert result.returncode == 0, (
+        f"a documented rl_draw_text_int row does not match what the binding "
+        f"renders (nonzero exit {result.returncode})\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
+    assert "format ok" in result.stdout, (
+        f"program did not reach the end; a bet() must have fired\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
+
+
+def _write_rgba_png(path, width, height, pixel):
+    """Write a minimal valid RGBA PNG, hand-rolled from zlib + struct.
+
+    rl_draw_texture_rec needs a real texture, and a real texture needs a real
+    image file. Encoding eight bytes of PNG here is cheaper than adding an
+    imaging library to this suite's dependencies for one fixture, and it keeps
+    the test hermetic -- nothing outside tmp_path, no checked-in binary."""
+    raw = b""
+    for _ in range(height):
+        raw += b"\x00" + bytes(pixel) * width   # filter byte 0, then the row
+
+    def chunk(kind, payload):
+        return (struct.pack(">I", len(payload)) + kind + payload
+                + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF))
+
+    png = b"\x89PNG\r\n\x1a\n"
+    png += chunk(b"IHDR",
+                 struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+    png += chunk(b"IDAT", zlib.compress(raw))
+    png += chunk(b"IEND", b"")
+    with open(path, "wb") as f:
+        f.write(png)
+
+
+@pytest.mark.skipif(
+    not _raylib_available() or not os.environ.get("DISPLAY"),
+    reason="needs raylib AND a display ($DISPLAY): loading a texture requires "
+           "a live GL context, so this cannot run on a headless runner")
+def test_rayrot_draw_texture_rec_handle_contract(tmp_path):
+    """rl_draw_texture_rec's handle contract, and an honest account of what
+    this can and cannot establish.
+
+    VERIFIED, in the sense that the assertion fails if the behaviour changes:
+
+      - a generated PNG loads to a non-negative handle;
+      - a missing file loads to -1, the documented failure sentinel (this had
+        no test before; flipping it to 0 makes this test fail);
+      - the whole sequence -- load, five draw forms, three guard cases,
+        unload, close -- exits 0 under ASan with no LeakSanitizer report, so
+        nothing in the new code path leaks or aborts.
+
+    NOT VERIFIED, and deliberately not claimed:
+
+      - Which pixels landed. rayrot cannot read the framebuffer or a texture
+        back, so "the source rectangle was respected" is not machine-checkable.
+        An implementation ignoring `rec` and blitting the whole texture would
+        pass. The sub-rect, the tint and both mirror directions were checked by
+        eye against a four-frame atlas instead; the image is in the PR.
+      - That the handle guards do their job. The out-of-range, negative and
+        post-unload draws below run without crashing, but that is not evidence:
+        SO_CFLAGS is `-fPIC -shared` with no sanitizers, as it is for every
+        shared object here including libstdrot.so, so an out-of-bounds read of
+        g_textures[] inside this module is invisible to ASan. Deleting the
+        bounds check entirely still passes this test -- confirmed by trying it.
+        The guards are here to match rl_draw_texture and to keep a bogus GPU id
+        away from raylib, and they are reviewed rather than tested.
+
+    Closing either gap needs something outside this PR: a pixel-readback
+    wrapper (LoadImageFromTexture / TakeScreenshot) for the first, and
+    sanitizer-instrumented shared objects for the second."""
+    build = subprocess.run(
+        ["make", "rayrot"], cwd=REPO_ROOT,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert build.returncode == 0, f"`make rayrot` failed:\n{build.stdout}"
+
+    atlas = tmp_path / "atlas.png"
+    # 8x4 of solid opaque magenta: two 4x4 "frames" side by side, so the
+    # sub-rect draws below address a real region of a real image.
+    _write_rgba_png(str(atlas), 8, 4, (255, 0, 255, 255))
+
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    source_path = tmp_path / "texture_rec.brainrot"
+    source_path.write_text(
+        "#cooked <raylib>\n"
+        "skibidi main {\n"
+        "    rl_init_window(160, 120, \"texture rec\");\n"
+        f"    rizz tex = rl_load_texture(\"{atlas}\");\n"
+        "    cap loaded = tex >= 0;\n"
+        "    bet(loaded, \"a valid PNG must load to a non-negative handle\");\n"
+        # The documented -1 sentinel for a load failure.
+        f"    rizz bad = rl_load_texture(\"{tmp_path}/does_not_exist.png\");\n"
+        "    cap failed = bad == 0 - 1;\n"
+        "    bet(failed, \"a missing file must load to -1\");\n"
+        "    rl_begin_drawing();\n"
+        "    rl_clear_background(20, 20, 20, 255);\n"
+        # whole frame, sub-rect, h-flip, v-flip, tinted
+        "    rl_draw_texture_rec(tex, 0.0, 0.0, 8.0, 4.0, 10.0, 10.0,"
+        " 255, 255, 255, 255);\n"
+        "    rl_draw_texture_rec(tex, 4.0, 0.0, 4.0, 4.0, 30.0, 10.0,"
+        " 255, 255, 255, 255);\n"
+        "    rl_draw_texture_rec(tex, 0.0, 0.0, 0.0 - 4.0, 4.0, 50.0, 10.0,"
+        " 255, 255, 255, 255);\n"
+        "    rl_draw_texture_rec(tex, 0.0, 0.0, 4.0, 0.0 - 4.0, 70.0, 10.0,"
+        " 255, 255, 255, 255);\n"
+        "    rl_draw_texture_rec(tex, 0.0, 0.0, 4.0, 4.0, 90.0, 10.0,"
+        " 255, 120, 120, 200);\n"
+        # guards: must draw nothing rather than crash or use a stale id
+        "    rl_draw_texture_rec(0 - 1, 0.0, 0.0, 4.0, 4.0, 10.0, 40.0,"
+        " 255, 255, 255, 255);\n"
+        "    rl_draw_texture_rec(999, 0.0, 0.0, 4.0, 4.0, 30.0, 40.0,"
+        " 255, 255, 255, 255);\n"
+        "    rl_end_drawing();\n"
+        # and after the handle is retired
+        "    rl_unload_texture(tex);\n"
+        "    rl_begin_drawing();\n"
+        "    rl_draw_texture_rec(tex, 0.0, 0.0, 4.0, 4.0, 50.0, 40.0,"
+        " 255, 255, 255, 255);\n"
+        "    rl_end_drawing();\n"
+        "    rl_close_window();\n"
+        "    yapping(\"texture rec ok\");\n"
+        "    bussin 0;\n"
+        "}\n")
+
+    env = dict(os.environ, BRAINROT_PATH=RAYROT_DIR)
+    result = subprocess.run(
+        [brainrot_path, str(source_path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+        timeout=60)
+
+    assert "LeakSanitizer" not in result.stderr, (
+        f"LeakSanitizer reported leaks:\n{result.stderr}")
+    assert result.returncode == 0, (
+        f"Nonzero exit {result.returncode}\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
+    assert "texture rec ok" in result.stdout, (
+        f"program did not reach the end; a bet() must have fired\n"
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}")
+
+
+def _write_sine_wav(path, seconds=3, rate=22050, freq=440.0):
+    """Write a small mono 16-bit PCM WAV.
+
+    The audio tests need a real decodable file, and hand-rolling a RIFF
+    header is cheaper than adding an encoder dependency or checking a binary
+    into the tree. raylib loads WAV for both Sound and Music."""
+    import math
+    frames = int(rate * seconds)
+    pcm = bytearray()
+    for i in range(frames):
+        v = int(12000 * math.sin(2.0 * math.pi * freq * i / rate))
+        pcm += struct.pack("<h", v)
+    hdr = b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt "
+    hdr += struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+    hdr += b"data" + struct.pack("<I", len(pcm))
+    with open(path, "wb") as f:
+        f.write(hdr + bytes(pcm))
+
+
+@pytest.mark.skipif(
+    not _raylib_available(),
+    reason="needs raylib; rayrot is an optional dependency")
+def test_rayrot_audio_handles_and_pump_contract(tmp_path):
+    """Audio, in two halves, so that a headless runner still proves something.
+
+    WITHOUT a playback device -- the normal case in CI -- both loaders must
+    refuse before they reach raylib and return the documented -1. That is not
+    a nicety: LoadMusicStream() reports a frame count from the file once the
+    decoder opens it, while attaching the playback stream is a separate step
+    that can leave the stream unusable. A handle minted from that would break
+    the module's central invariant (a live handle implies a live device) and a
+    later query would reach for a miniaudio mutex that CloseAudioDevice()
+    destroyed or that was never initialised. So this half is asserted on every
+    machine, device or not.
+
+    WITH a device, the pump contract. rl_update_music() refills the decode
+    buffer, must be called every frame, and raylib reports nothing when it is
+    not -- the track plays for a fraction of a second and stops, looking
+    exactly like a broken file. So this does not assert that pumping is
+    required, it measures it: two identical streams over the same wall clock,
+    one pumped and one not. The sound path (load, volume, play, unload) runs
+    here too, since B3 is as much about the one-shot as the stream."""
+    build = subprocess.run(
+        ["make", "rayrot"], cwd=REPO_ROOT,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert build.returncode == 0, f"`make rayrot` failed:\n{build.stdout}"
+
+    wav = tmp_path / "tone.wav"
+    _write_sine_wav(str(wav))
+
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    source_path = tmp_path / "audio.brainrot"
+    source_path.write_text(
+        "#cooked <raylib>\n"
+        "skibidi main {\n"
+        # Before any init at all: nothing may be loadable.
+        f"    rizz cold_m = rl_load_music(\"{wav}\");\n"
+        f"    rizz cold_s = rl_load_sound(\"{wav}\");\n"
+        "    yapping(\"cold %d %d\", cold_m, cold_s);\n"
+        "    rl_init_audio_device();\n"
+        "    cap ready = rl_is_audio_device_ready();\n"
+        "    yapping(\"ready %b\", ready);\n"
+        f"    rizz missing = rl_load_music(\"{tmp_path}/nope.wav\");\n"
+        "    yapping(\"missing %d\", missing);\n"
+        "    edgy (ready) {\n"
+        f"        rizz a = rl_load_music(\"{wav}\");\n"
+        "        cap la = a >= 0;\n"
+        "        bet(la, \"generated wav must load as music\");\n"
+        "        rl_set_music_looping(a, W);\n"
+        "        rl_set_music_volume(a, 0.0);\n"
+        "        rl_play_music(a);\n"
+        "        flex (rizz i = 0; i < 2; i = i + 1) {\n"
+        "            rl_update_music(a); chill(1); rl_update_music(a);\n"
+        "        }\n"
+        "        chad pumped = rl_music_time_played(a);\n"
+        "        rl_unload_music(a);\n"
+        f"        rizz b = rl_load_music(\"{wav}\");\n"
+        "        rl_set_music_volume(b, 0.0);\n"
+        "        rl_play_music(b);\n"
+        "        flex (rizz i = 0; i < 2; i = i + 1) { chill(1); }\n"
+        "        chad idle = rl_music_time_played(b);\n"
+        "        rl_unload_music(b);\n"
+        "        yapping(\"pumped %.2f idle %.2f\", pumped, idle);\n"
+        # guards: out of range, negative, and a handle past its unload
+        "        rl_play_music(999);\n"
+        "        rl_update_music(0 - 1);\n"
+        "        rl_play_music(b);\n"
+        # the one-shot half of B3
+        f"        rizz snd = rl_load_sound(\"{wav}\");\n"
+        "        cap ls = snd >= 0;\n"
+        "        bet(ls, \"generated wav must load as a sound\");\n"
+        "        rl_set_sound_volume(snd, 0.0);\n"
+        "        rl_play_sound(snd);\n"
+        "        cap sp = rl_is_sound_playing(snd);\n"
+        "        yapping(\"sound played %b\", sp);\n"
+        "        rl_unload_sound(snd);\n"
+        "        rl_play_sound(999);\n"
+        "    }\n"
+        "    amogus {\n"
+        # No device: the loaders are the contract, and CI can check it.
+        f"        rizz nm = rl_load_music(\"{wav}\");\n"
+        f"        rizz ns = rl_load_sound(\"{wav}\");\n"
+        "        yapping(\"nodevice %d %d\", nm, ns);\n"
+        "    }\n"
+        "    rl_close_audio_device();\n"
+        # And after the device is gone, still nothing.
+        f"    rizz post_m = rl_load_music(\"{wav}\");\n"
+        f"    rizz post_s = rl_load_sound(\"{wav}\");\n"
+        "    yapping(\"postclose %d %d\", post_m, post_s);\n"
+        "    yapping(\"audio ok\");\n"
+        "    bussin 0;\n"
+        "}\n")
+
+    env = dict(os.environ, BRAINROT_PATH=RAYROT_DIR)
+    result = subprocess.run(
+        [brainrot_path, str(source_path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+        timeout=120)
+    out = result.stdout
+
+    assert "LeakSanitizer" not in result.stderr, (
+        f"LeakSanitizer reported leaks:\n{result.stderr}")
+    assert result.returncode == 0, (
+        f"Nonzero exit {result.returncode}\nStdout:\n{out}\n"
+        f"Stderr:\n{result.stderr}")
+    assert "audio ok" in out, f"a bet() fired before the end:\n{out}"
+
+    # Asserted everywhere, device or not.
+    assert "cold -1 -1" in out, (
+        f"loading before rl_init_audio_device() must return -1 from both "
+        f"loaders; a handle from a dead device breaks the live-handle "
+        f"invariant.\n{out}")
+    assert "postclose -1 -1" in out, (
+        f"loading after rl_close_audio_device() must return -1 from both "
+        f"loaders.\n{out}")
+    assert "missing -1" in out, f"a missing file must load to -1\n{out}"
+
+    if "ready W" not in out:
+        assert "nodevice -1 -1" in out, (
+            f"with no playback device both loaders must return -1\n{out}")
+        return
+
+    line = [x for x in out.splitlines() if x.startswith("pumped ")][0]
+    pumped, idle = float(line.split()[1]), float(line.split()[3])
+    assert idle == 0.0, (
+        f"an unpumped stream reported {idle}s of playback; if this is no "
+        f"longer 0 then rl_update_music() is not what advances a stream and "
+        f"this test proves nothing")
+    assert pumped > 0.2, (
+        f"a pumped stream only advanced {pumped}s over ~2s of wall clock")
+
 
 if __name__ == "__main__":
     pytest.main(["-v", os.path.abspath(__file__)])

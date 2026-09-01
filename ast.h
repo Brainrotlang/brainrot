@@ -38,7 +38,9 @@ typedef struct
     size_t total_size;
 } ArrayDimensions;
 
-/* Define TypeModifiers first */
+/* Define TypeModifiers first. Stored type modifiers may be carried through
+   typedef aliases; parser context flags are reset with the same parser state
+   but are not alias storage. */
 typedef struct
 {
     bool is_volatile;
@@ -54,6 +56,18 @@ typedef struct
 typedef struct JumpBuffer
 {
     jmp_buf data;
+    /* True only for the buffer execute_function_call() pushes around a
+       function body. Every other push -- for/while/do-while/switch -- is a
+       BREAK target.
+       LONGJMP() always jumps to the innermost buffer, which is right for
+       `bruh` and wrong for `bussin`: a return from inside a loop landed in
+       the LOOP's setjmp, which then skipped its body, popped, and fell
+       through to the statement after the loop inside a function that was
+       supposed to have returned -- so `bussin` silently behaved as `break`
+       and the mismatched scope stack killed the process on the next
+       exit_scope() (#319). This flag is what lets handle_return_statement()
+       discard the intervening break targets and reach its own frame. */
+    bool is_function;
     struct JumpBuffer *next;
 } JumpBuffer;
 
@@ -76,22 +90,101 @@ typedef enum
     VAR_STRING,
     VAR_STRUCT,
     VAR_ENUM,
+    /* An opaque native pointer (STDROT_PTR): a real, known expression
+       category -- "this is a pointer, its base type is intentionally
+       erased" -- not to be confused with NONE ("unknown, skip
+       checking"). Deliberately its own VarType rather than reusing NONE:
+       every existing "type == NONE, don't validate" shortcut throughout
+       this analyzer (binary-op validation, declaration/assignment type
+       checks, native-argument checks) would otherwise silently wave a
+       real pointer expression through unchecked wherever it appears, and
+       whatever consumes it downstream (a scalar evaluator, a native
+       expecting a different type) would reinterpret its raw bits as
+       whatever that context assumed instead. VAR_PTR only ever appears
+       with pointer_level > 0; check_type_compatibility_ex() treats it as
+       wildcard-compatible with any base type once pointer_level already
+       matches, not as "give up checking." NOT the same guarantee as C's
+       void* conversion rule, despite the surface resemblance: void* <->
+       T* is sound for exactly one level of indirection, but opaque** <->
+       T** is not (see check_type_compatibility_ex()'s own comment,
+       semantic_analyzer.c, and STDROT_PTR's comment in stdrot_api.h, for
+       why this is an intentional simplification -- the base type is
+       erased uniformly at every depth, not just the outermost one). */
+    VAR_PTR,
+    /* A genuinely void expression -- a call whose descriptor return type
+       is STDROT_NONE, known with total certainty to produce no value.
+       Deliberately its own VarType, distinct from NONE, for exactly the
+       reason VAR_PTR (above) is distinct from NONE: NONE means "I do not
+       know what this expression returns" (epistemology), VAR_VOID means
+       "I know precisely what it returns: nothing" (semantics). Those are
+       not the same claim, and collapsing them into one sentinel meant
+       every "type == NONE, fail open" shortcut in this analyzer also
+       silently waved through an ACTUALLY KNOWN void expression wherever
+       one was used as a value -- `rizz x = yapping("hi");` type-checked,
+       because `yapping`'s return type read as NONE, and NONE always
+       means "can't tell, don't block it." A void-typed expression should
+       be rejected everywhere a real value is required, with the same
+       confidence any other declared type mismatch is rejected -- not
+       waved through because the checker mistook "certainly nothing" for
+       "unknown." check_type_compatibility_ex() treats VAR_VOID as
+       compatible with nothing (not even itself, since there's no context
+       where consuming "no value" as a value is ever correct). */
+    VAR_VOID,
     NONE,
 } VarType;
+
+/* A complete description of a value's type: base VarType, indirection,
+   width/signedness modifiers, the struct/union or enum tag when relevant,
+   and (for a fixed-size array declaration) its dimensions. Used both as a
+   transient value (the `lit` alias machinery, make_type_descriptor()) and,
+   since #206 3b, embedded in the stored declarations that used to carry
+   these as parallel scalar fields (StructField). Tag strings are a
+   non-owning view for a transient descriptor; a STORED declaration that
+   embeds one owns and frees its own copies (StructField: freed in
+   free_struct_registry). */
+typedef struct
+{
+    VarType type;
+    int pointer_level;
+    TypeModifiers modifiers;
+    String struct_name;
+    String enum_name;
+    /* Set for a fixed-size array declaration (`chad params[4];`); the
+       fields above then describe the ELEMENT type. is_array == false for a
+       plain scalar/pointer, with array_dimensions left zeroed. */
+    bool is_array;
+    ArrayDimensions array_dimensions;
+} TypeDescriptor;
 
 /* A single field inside a struct definition */
 typedef struct StructField
 {
     String name;
-    VarType type;
-    String struct_name; /* nested struct/union tag; set whenever
-                            type == VAR_STRUCT, including pointer-typed
-                            fields (pointer_level > 0) — e.g. a
-                            self-referential `gang Node *next;` field still
-                            needs its tag recorded even though chaining `.`
-                            through it isn't supported yet */
-    String enum_name;   /* nested enum tag; set whenever type == VAR_ENUM */
-    int pointer_level;
+    /* The field's full type (base VarType, pointer_level, modifiers,
+       struct/union or enum tag, and array-ness), collapsed from the
+       parallel scalar fields StructField used to carry into one
+       TypeDescriptor (#206 3b). Notes preserved from those fields:
+
+       - desc.struct_name: nested struct/union tag, set whenever
+         desc.type == VAR_STRUCT, INCLUDING pointer-typed fields
+         (pointer_level > 0) -- a self-referential `gang Node *next;` field
+         records its tag so `a.next.val` (#197) can resolve the pointee.
+         Heap-owned by this field (safe_strdup'd), freed in
+         free_struct_registry -- a StructField is a stored declaration, so
+         it owns its tag copies even though a transient TypeDescriptor's
+         are a non-owning view. desc.enum_name likewise, for VAR_ENUM.
+       - desc.modifiers (is_long/is_long_long/is_unsigned): reachable ONLY
+         via a `lit` alias field type (`lit giga rizz Meters; gang G {
+         Meters m; };`) -- struct_field has no modifier-prefixed grammar
+         production. get_struct_field_size()/get_struct_field_alignment()
+         key off it so a `giga`/`thicc`-aliased field's SLOT is 8 bytes at
+         an 8-aligned offset. Occupancy only: the value in that slot is
+         still loaded/stored through a 4-byte int (a pre-existing gap plain
+         giga/thicc variables share).
+       - desc.is_array / desc.array_dimensions: fixed-size array field
+         (`chad params[4];`); the rest of desc then describes the ELEMENT
+         type. Arrays of struct/union-typed elements are not supported. */
+    TypeDescriptor desc;
     size_t offset; /* byte offset within the struct blob */
     struct StructField *next;
 } StructField;
@@ -115,13 +208,26 @@ typedef struct EnumDef
     struct EnumDef *next_def;
 } EnumDef;
 
+typedef struct TypeAlias
+{
+    String name;
+    VarType type;
+    int pointer_level;
+    TypeModifiers modifiers;
+    /* Owned by the alias registry. */
+    String struct_name;
+    String enum_name;
+    struct TypeAlias *next_def;
+} TypeAlias;
+
 /* A struct/union definition (the "template"). Struct and union tags share
    this same registry, matching C's tag-namespace rules. */
 typedef struct StructDef
 {
     String name;
     StructField *fields;
-    size_t total_size; /* total byte size of one instance */
+    size_t total_size; /* total byte size of one instance, C-ABI padded */
+    size_t alignment;  /* max alignment of any field (C-ABI aligned) */
     bool is_union;     /* true: fields overlap at offset 0 (chungus/union) */
     struct StructDef *next_def;
 } StructDef;
@@ -132,27 +238,37 @@ ASTNode *arena_alloc_astnode(void);
 typedef struct Parameter
 {
     String name;
-    VarType type;
-    String struct_name; /* nested struct/union tag; set whenever
-                            type == VAR_STRUCT, including pointer-typed
-                            fields (pointer_level > 0) — e.g. a
-                            self-referential `gang Node *next;` field still
-                            needs its tag recorded even though chaining `.`
-                            through it isn't supported yet */
-    String enum_name;   /* enum tag; set whenever type == VAR_ENUM */
-    int pointer_level;
-    TypeModifiers modifiers;
+    /* The parameter's full type, collapsed from the parallel scalar
+       fields Parameter used to carry into one TypeDescriptor (#206 3b),
+       matching the same move on StructField. Notes preserved:
+
+       - desc.struct_name: struct/union tag, set whenever desc.type ==
+         VAR_STRUCT, INCLUDING pointer-typed parameters (pointer_level > 0)
+         -- a `gang Point *pp` parameter records its tag so `pp.field`
+         (#196) resolves the pointee, copied onto the bound Variable in
+         enter_function_scope(). desc.enum_name likewise for VAR_ENUM.
+         Parameter tag strings are arena-allocated (create_parameter_ex),
+         bulk-freed in free_ast -- no per-field free.
+       - desc.is_array / desc.array_dimensions: set only while this
+         Parameter is standing in for a struct_field (lang.y's `type
+         declarator dimensions SEMICOLON` rule) on its way to becoming a
+         StructField (build_struct_fields_from_params); a real function
+         parameter can't be array-typed (no `parameter` grammar production
+         accepts `dimensions`). */
+    TypeDescriptor desc;
     struct Parameter *next;
 } Parameter;
 
 typedef struct Function
 {
     String name;
-    VarType return_type;
-    int return_pointer_level;
-    String return_struct_name; /* struct/union tag; set when
-                                   return_type == VAR_STRUCT */
-    String return_enum_name;   /* enum tag; set when return_type == VAR_ENUM */
+    /* The function's return type, collapsed from the parallel scalar
+       fields (return_type, return_pointer_level, return_struct_name,
+       return_enum_name) into one TypeDescriptor (#206 3b). return_desc.
+       struct_name is the struct/union tag when return_desc.type ==
+       VAR_STRUCT (a pointer-to-struct return keeps its tag too, #193);
+       return_desc.enum_name for VAR_ENUM. */
+    TypeDescriptor return_desc;
     Parameter *parameters;
     ASTNode *body;
 } Function;
@@ -170,14 +286,37 @@ typedef struct
         String strvalue;
         uintptr_t pvalue;
     } value;
-    VarType type;
-    int pointer_level;
-    /* struct/union tag, set when type == VAR_STRUCT; value.pvalue then
-       points at a heap blob (malloc'd fresh in handle_return_statement,
-       NOT scope-owned) that the caller must copy out of and free -- see
-       the comment on handle_return_statement's VAR_STRUCT case. */
-    String struct_name;
-    String enum_name; /* enum tag, set when type == VAR_ENUM */
+    /* The return value's type, collapsed from the parallel scalar fields
+       (type, pointer_level, struct_name, enum_name) into one
+       TypeDescriptor (#206 3b). Notes preserved:
+       - desc.struct_name is the struct/union tag, set when desc.type ==
+         VAR_STRUCT *and* desc.pointer_level == 0 (a by-value struct
+         return): value.pvalue then points at a heap blob (malloc'd fresh
+         in handle_return_statement, NOT scope-owned) the caller must copy
+         out of and free -- see handle_return_statement's VAR_STRUCT case
+         and free_pending_return_value()'s pointer_level == 0 gate. For a
+         pointer-to-struct return (desc.type == VAR_STRUCT, desc.pointer_
+         level > 0, #193) value.pvalue is a BORROWED pointer to caller-owned
+         storage, NOT an owned blob, and desc.struct_name is left empty --
+         do not free it, and do not memcpy from it as if it were a blob.
+       - desc.enum_name is the enum tag, set when desc.type == VAR_ENUM. */
+    TypeDescriptor desc;
+    /* Set when type == VAR_STRING: true iff value.strvalue.data is a
+       heap buffer this ReturnValue is responsible for freeing once
+       consumed. Two independent sources set it true, both meaning the
+       same thing ("this specific buffer is freshly materialized and
+       nothing else references it"): a native call, via the owns_string
+       field of the NativeResult (stdrot.h) marshal_native_return_value()
+       consumed to populate this slot (see execute_native_call()'s own
+       comment for when that's true); and, since round 23, a Brainrot-
+       defined function's own `bussin "some string";` return statement
+       (handle_return_statement()'s VAR_STRING case), whose evaluate_
+       expression_string() result is always an independently safe_
+       strdup'd copy no one else holds. False for a native result that
+       doesn't own its string (a literal, a live variable's own backing
+       storage the ABI boundary is only borrowing), matching the
+       existing, deliberately conservative default. */
+    bool owns_strvalue;
 } ReturnValue;
 
 /* Symbol table structure */
@@ -195,14 +334,16 @@ typedef struct
         String strvalue;
         uintptr_t pvalue;
     } value;
-    TypeModifiers modifiers;
-    VarType var_type;
-    int pointer_level;
-    bool is_array;
+    /* The variable's full type, collapsed from the parallel scalar fields
+       Variable used to carry (var_type, pointer_level, modifiers,
+       is_array, array_dimensions, struct_name, enum_name) into one
+       TypeDescriptor (#206 3b), matching StructField/Parameter. Note the
+       base VarType is desc.type here (it was named var_type on Variable).
+       desc.struct_name is non-NULL when desc.type == VAR_STRUCT (heap-owned
+       via safe_strdup, freed with the Variable); desc.enum_name likewise
+       for VAR_ENUM. */
+    TypeDescriptor desc;
     int array_length; // lets keep it for now for backword compatibility
-    ArrayDimensions array_dimensions;
-    String struct_name; /* non-NULL when var_type == VAR_STRUCT */
-    String enum_name;   /* non-NULL when var_type == VAR_ENUM */
 } Variable;
 
 typedef union
@@ -238,6 +379,7 @@ typedef enum
     OP_AND,
     OP_OR,
     OP_NEG,
+    OP_NOT,
     OP_POST_INC,
     OP_POST_DEC,
     OP_PRE_INC,
@@ -276,6 +418,7 @@ typedef enum
     NODE_BREAK_STATEMENT,
     NODE_SIZEOF,
     NODE_ARRAY_ACCESS,
+    NODE_STRING_SLICE,
     NODE_FUNC_CALL,
     NODE_FUNCTION_DEF,
     NODE_RETURN,
@@ -286,7 +429,16 @@ typedef enum
 
 typedef struct
 {
+    /* Exactly one of `name`/`base` identifies what's being indexed.
+       `name`: the classic `IDENTIFIER multi_dimension_access` form --
+       look up a Variable by this name (evaluate_multi_array_access()
+       etc., ast.c). `base`: the `struct_access multi_dimension_access`
+       form (`foo.arr[i]`) -- `base` is that struct_access expression;
+       resolve it via resolve_struct_access() (ast.c) to find the
+       array field instead of a Variable. `base` is NULL for every
+       node built before array-typed struct fields existed. */
     String name;
+    ASTNode *base;
     ASTNode *index;
     ASTNode *indices[MAX_DIMENSIONS];
     int num_dimensions;
@@ -331,6 +483,19 @@ struct ASTNode
     int array_length;
     ArrayDimensions array_dimensions;
     int line_number; /* Line number for error reporting */
+    /* Diagnostic-only scratch field for a NODE_FUNC_CALL: the type
+       propagate_contextual_call_type() (semantic_analyzer.c) found in this
+       call's surrounding typed context, set whether or not that type was
+       actually usable (a synthetic type-witness argument was attached).
+       NONE until a context site has looked at this call. Lets semantic_
+       visit_function_call()'s "cannot infer type" diagnostic pick a
+       specific reason (e.g. a scalar rant needs a buffer instead) without
+       var_type -- which every other pass treats as "this node's actual,
+       resolved type" -- ever claiming a call resolved when no witness was
+       attached. Never read by infer_expression_type()/anything else: a
+       call's real type always comes from its (possibly still-empty)
+       argument list via return_like_arg. */
+    VarType contextual_type_hint;
     /* Array/struct declaration initializer values (e.g. the `{1, 2, 3}` in
        `rizz arr[3] = {1, 2, 3};`), carried from parse time to the runtime
        declaration visitor -- which allocates and populates storage in
@@ -345,6 +510,10 @@ struct ASTNode
        copy-init) -- evaluated at runtime by the declaration visitor. NULL
        for the no-initializer and braced-initializer declaration forms. */
     ASTNode *struct_init_expr;
+    /* Struct/union tag for declaration nodes whose var_type == VAR_STRUCT
+       and do not carry a NODE_STRUCT_DEF child, such as pointer arrays
+       declared through a typedef alias. */
+    String struct_name;
     /* Enum tag for a NODE_DECLARATION node with var_type == VAR_ENUM; not
        in the union below since it carries no blob/fields to go with it. */
     String enum_name;
@@ -358,6 +527,23 @@ struct ASTNode
         String strvalue;
         String name;
         Array array;
+        /* `s[i:j]` -- a half-open byte slice of a `rant`, yielding a new
+           `rant` (#251). Deliberately NOT folded into Array above: an
+           array access has one-or-more indices selecting an ELEMENT, a
+           slice has exactly two bounds selecting a RANGE, and giving them
+           the same node type would mean every existing NODE_ARRAY_ACCESS
+           site had to start asking which it was holding.
+
+           `name` is the sliced variable; the grammar admits only an
+           identifier base, matching array_access's own IDENTIFIER form.
+           Both bounds are required -- `s[:j]`/`s[i:]`/`s[:]` are not v1
+           syntax (issue #251, open question 1). */
+        struct
+        {
+            String name;
+            ASTNode *start;
+            ASTNode *end;
+        } slice;
         struct
         {
             String struct_name; /* name of the struct type */
@@ -502,7 +688,7 @@ CaseNode *create_case_node(ASTNode *value, ASTNode *statements);
 CaseNode *create_default_case_node(ASTNode *statements);
 CaseNode *append_case_list(CaseNode *list, CaseNode *case_node);
 ASTNode *create_break_node(void);
-ASTNode *create_default_node(VarType var_type);
+ASTNode *create_default_node(VarType var_type, int pointer_level);
 ASTNode *create_return_node(ASTNode *expr);
 ExpressionList *create_expression_list(ASTNode *expr);
 ExpressionList *append_expression_list(ExpressionList *list, ASTNode *expr);
@@ -517,7 +703,7 @@ ExpressionList *append_expression_list_node(ExpressionList *list,
                                             ExpressionList *node);
 void free_expression_list(ExpressionList *list);
 void populate_multi_array_variable(String name, ExpressionList *list,
-                                   int dimensions[], int num_dimensions);
+                                   const int dimensions[], int num_dimensions);
 /* Attaches a braced initializer to an array/struct declaration node so the
    runtime declaration visitor can populate storage once it exists (see
    ASTNode.pending_initializer). Takes ownership of `list` via an internal
@@ -533,6 +719,23 @@ int evaluate_expression_int(ASTNode *node);
 short evaluate_expression_short(ASTNode *node);
 bool evaluate_expression_bool(ASTNode *node);
 int evaluate_expression(ASTNode *node);
+bool ast_accept_evaluates_expression(const ASTNode *node);
+/* Zero-extends `raw` to what a scalar VAR_CHAR Variable's own 4-byte
+   union slot (value.ivalue -- there is no dedicated 1-byte member)
+   must always hold: upper 3 bytes zero, regardless of `raw`'s actual
+   range. This is what makes a later 1-byte write through a `yap *`
+   alias into that same slot (write_value_to_address()'s `packed_
+   storage` branch, taken whenever the write arrives via a dereference
+   -- there is no way to tell from the pointer alone whether it aliases
+   a scalar's slot or a genuinely packed array/struct byte) safe: it
+   only ever touches the low byte, and the upper three were already
+   zero and stay that way. Every write site that stores a fresh value
+   directly into a scalar char Variable's own slot must route through
+   this -- set_variable()'s own VAR_CHAR case does the equivalent
+   `*(unsigned char *)value` narrowing independently (it takes a
+   pointer, not a value, so can't share this exact helper) and does not
+   need converting. */
+int char_scalar_slot_value(int raw);
 bool is_const_variable(const String name);
 void check_const_assignment(const String name);
 void execute_statement(ASTNode *node);
@@ -555,14 +758,19 @@ size_t get_type_size(String name);
 size_t get_type_size_for_descriptor(VarType type, int pointer_level,
                                     TypeModifiers mods);
 void *handle_function_call(ASTNode *node);
-ASTNode *create_multi_array_declaration_node(String name, int dimensions[],
+ASTNode *create_multi_array_declaration_node(String name,
+                                             const int dimensions[],
                                              int num_dimensions, VarType type);
-bool set_multi_array_variable(const String name, int dimensions[],
+bool set_multi_array_variable(const String name, const int dimensions[],
                               int num_dimensions, TypeModifiers mods,
                               VarType type);
 ASTNode *create_array_access_node_single(String name, ASTNode *index);
+ASTNode *create_string_slice_node(String name, ASTNode *start, ASTNode *end);
 ASTNode *create_multi_array_access_node(String name, ASTNode *indices[],
                                         int num_indices);
+ASTNode *create_struct_field_array_access_node(ASTNode *base,
+                                               ASTNode *indices[],
+                                               int num_indices);
 
 /* User-defined functions */
 Function *create_function(String name, VarType return_type, Parameter *params,
@@ -593,27 +801,45 @@ ASTNode *create_function_def_node_enum(String name, String enum_name,
                                        int pointer_level, Parameter *params,
                                        ASTNode *body);
 void handle_return_statement(ASTNode *expr);
-/* Frees current_return_value's struct blob/tag (see handle_return_statement's
-   VAR_STRUCT case) if one is pending and unconsumed, and clears the slot.
-   Idempotent -- safe to call whether or not there's anything to free. Must
-   be called by whichever consumes or discards a struct-returning call's
-   result: interpreter_visit_declaration's struct_init_expr handling,
+/* Frees current_return_value's struct blob/tag or owned VAR_STRING buffer
+   (see handle_return_statement's VAR_STRUCT/VAR_STRING cases) if one is
+   pending and unconsumed, and clears the slot. Idempotent -- safe to call
+   whether or not there's anything to free. Must be called by whichever
+   consumes or discards a struct- or owned-string-returning call's result:
+   interpreter_visit_declaration's struct_init_expr handling,
    execute_function_call (for a leftover from a previous call), and any
-   context that gets a struct return but has nowhere to put it. */
-void free_pending_struct_return_value(void);
+   context that gets such a return but has nowhere to put it. */
+void free_pending_return_value(void);
 void *handle_binary_operation(ASTNode *node);
 void free_function_table(void);
 void free_static_variable_map(void);
 
 /* Struct types */
+/* Caller must have already called compute_struct_layout(def)/
+   compute_union_layout(def) -- both of this file's construction sites
+   (lang.y) do, before this call, and neither reads def->fields again
+   afterward. This is what makes a nested VAR_STRUCT field's alignment
+   lookup (get_struct_def(f->struct_name)->alignment, ast.c) safe: a def
+   is only ever reachable via get_struct_def() (i.e. registered) once
+   its own total_size/alignment are already final, so a struct embedding
+   an already-defined nested struct/union by value never sees a
+   0/uninitialized alignment -- consistent with the existing "unknown
+   struct/union type" parse error for referencing an undefined tag at
+   all (lang.y's struct_field rule). */
 void register_struct_def(StructDef *def);
 StructDef *get_struct_def(const String name);
 void free_struct_registry(void);
 StructField *find_struct_field(StructDef *def, const String name);
-size_t
-compute_struct_layout(StructField *fields); /* fills offsets, returns total */
-size_t compute_union_layout(
-    StructField *fields); /* offset 0 for all fields, returns max size */
+/* Both require def->fields (and, for compute_union_layout, def->is_union)
+   already populated. Each fills every field's offset and writes
+   def->total_size/def->alignment together as the single writer of both --
+   there is no optional out-param to forget, so a registered StructDef
+   can't end up with a total_size but a stale/zero alignment. */
+void compute_struct_layout(StructDef *def); /* C-ABI aligned, trailing
+                                                padding included */
+void compute_union_layout(
+    StructDef *def); /* offset 0 for all fields; total_size is the max
+                         member size rounded up to max member alignment */
 ASTNode *create_struct_def_node(String name, StructField *fields);
 ASTNode *create_struct_access_node(ASTNode *object, String member);
 void *evaluate_struct_member_address(ASTNode *node);
@@ -626,14 +852,42 @@ void validate_struct_initializer_shape(StructDef *def, ExpressionList *list);
    via recursion — to the StructDef/base-address/field describing the
    *object* being accessed (i.e. `*field_out` is the field named by this
    node's own member_name; `(char *)*base_out + (*field_out)->offset` is
-   its address). Returns false on any resolution failure (undefined
-   variable, wrong type, unknown member, or chaining through a
-   pointer-typed struct/union field, which isn't supported). When
+   its address). A single-level pointer-typed base variable (`gang Foo
+   *pp; pp.field`, #196) or intermediate field (`a.next.val` where `next`
+   is `gang Node *`, #197) is followed — the pointer value is read and
+   resolution continues from the pointee. Returns false on any resolution
+   failure (undefined variable, wrong type, unknown member, a null pointer
+   reached while following one of those, or a multi-level pointer
+   `pointer_level > 1` which would need an explicit `(*x)->`). When
    `report_errors` is true, failures are also reported via yyerror();
    pass false for speculative/best-effort callers (e.g. type inference)
    that shouldn't surface parse- or runtime-time diagnostics of their own. */
 bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                            StructField **field_out, bool report_errors);
+/* Resolve a by-value struct/union source expression -- a plain struct
+   variable (`p`) or a by-value struct/union member-access sub-expression
+   (`b.corner`, #193) -- to its blob address (*blob_out) and struct/union
+   tag (*tag_out, borrowed). This is the single shared "get me a by-value
+   struct blob" step behind the deep-copy that struct arguments, struct
+   returns, and struct copy-initializers all perform (enter_function_
+   scope(), handle_return_statement(), interpreter_visit_declaration()).
+   A member access transparently follows a pointer base or intermediate
+   field (resolve_struct_access(), #196/#197), but the *resolved* value
+   itself must be a by-value struct/union (pointer_level == 0 on both the
+   identifier and member forms): a struct POINTER where a by-value struct
+   is expected is a type error, not an implicit dereference. Returns false
+   on any failure, emitting exactly one diagnostic via yyerror() when
+   report_errors is true (callers must not add a second).
+
+   *owned_out tells the caller who owns *blob_out. False (the common case)
+   means the blob is borrowed from live storage -- a variable, an array
+   element, a field of one -- and must not be freed. True means the source
+   was a call result (`make_outer().inner`) copied into a fresh allocation,
+   because the call's own blob is released before this returns; the caller
+   must free() *blob_out once it has copied out of it. */
+bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
+                                    String *tag_out, bool *owned_out,
+                                    bool report_errors);
 /* Set when parsing produced a struct/union that's unusable (self-embedding
    by value, an unknown nested type, or — see populate_struct_fields() —
    a scalar/flattened value where a nested struct/union sub-initializer
@@ -641,6 +895,7 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
    same way it does for a hard parse failure; see lang.y's struct_field
    for why we don't YYABORT for these instead. */
 extern bool struct_def_had_error;
+extern bool typedef_had_error;
 
 /* Enum types (see the comment on EnumDef above for the registry split). */
 void register_enum_def(EnumDef *def);
@@ -655,6 +910,19 @@ bool finalize_enum_constants(EnumDef *def);
    unscoped enum constant. Returns NULL if none matches. */
 EnumConstant *find_global_enum_constant(const String name);
 ASTNode *create_enum_def_node(String name);
+
+/* Typedef aliases (`lit`). */
+TypeDescriptor make_type_descriptor(VarType type, int pointer_level,
+                                    TypeModifiers modifiers);
+/* Returned aggregate tag strings are borrowed from the alias registry. */
+TypeDescriptor type_descriptor_from_alias(const TypeAlias *alias);
+bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
+                          TypeModifiers *out, const String name);
+/* Copies `name` and any aggregate tag strings from `descriptor`; callers keep
+   ownership of their parser-token strings. */
+bool register_type_alias(String name, TypeDescriptor descriptor);
+TypeAlias *get_type_alias(const String name);
+void free_type_alias_registry(void);
 
 extern TypeModifiers current_modifiers;
 
@@ -711,10 +979,23 @@ extern Arena arena;
     } while (0)
 
 /* Macros for handling jump buffer */
+/* A BREAK target: for/while/do-while/switch. See JumpBuffer.is_function. */
 #define PUSH_JUMP_BUFFER()                                                     \
     do                                                                         \
     {                                                                          \
         JumpBuffer *jb = SAFE_MALLOC(JumpBuffer);                              \
+        jb->is_function = false;                                               \
+        jb->next = jump_buffer;                                                \
+        jump_buffer = jb;                                                      \
+    } while (0)
+
+/* A RETURN target: the frame execute_function_call() sets up around a
+   function body. Exactly one push site uses this. */
+#define PUSH_FUNCTION_JUMP_BUFFER()                                            \
+    do                                                                         \
+    {                                                                          \
+        JumpBuffer *jb = SAFE_MALLOC(JumpBuffer);                              \
+        jb->is_function = true;                                                \
         jb->next = jump_buffer;                                                \
         jump_buffer = jb;                                                      \
     } while (0)
@@ -760,5 +1041,5 @@ extern Arena arena;
      : (var_type) == VAR_BOOL   ? NODE_BOOLEAN                                 \
      : (var_type) == VAR_CHAR   ? NODE_CHAR                                    \
      : (var_type) == VAR_STRING ? NODE_STRING                                  \
-                                : (NodeType) - 1)
+                                : (NodeType)-1)
 #endif /* AST_H */

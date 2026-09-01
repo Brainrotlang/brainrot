@@ -1,0 +1,15 @@
+🚽 Test case: round-19 review finding #1 -- an `if` condition never
+🚽 required that the expression it recursively visited actually produced
+🚽 a value. `yapping("hello")` (a TYPED native whose descriptor return
+🚽 type is STDROT_NONE) statically resolves to VAR_VOID, but nothing
+🚽 checked that before letting it stand as a condition -- only rejected
+🚽 at runtime, once evaluate_expression_bool() actually tried to consume
+🚽 a "no value" result. Now caught statically by require_value_expression()
+🚽 (semantic_analyzer.c), called on an `if` condition right after it's
+🚽 recursively visited.
+skibidi main {
+    edgy (yapping("hello")) {
+        bussin 1;
+    }
+    bussin 0;
+}

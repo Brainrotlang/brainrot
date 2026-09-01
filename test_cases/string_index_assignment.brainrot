@@ -1,0 +1,100 @@
+🚽 Test case: issue #251 -- `s[i] = c` writes a byte of a rant IN PLACE.
+🚽
+🚽 This is a real language capability, not a side effect to be tolerated: on
+🚽 main `s[0]` does not even evaluate ("Variable 's' is not an array"), so
+🚽 the indexing work is what introduced in-place mutation of a rant. It was
+🚽 unpinned and undocumented when first submitted (PR #328 review), which is
+🚽 exactly how a capability quietly becomes a no-op, a hard error, or an
+🚽 UNCHECKED write in some later refactor with every test still green.
+🚽
+🚽 ── Why it is allowed rather than rejected ────────────────────────────
+🚽 It falls out of `s[i]` resolving to the address of a byte inside the
+🚽 variable's own buffer, and the assignment path using that same address.
+🚽 Keeping it is the deliberate choice: it matches `yap buf[i] = c` exactly
+🚽 (pinned below, so the two cannot drift apart), it is bounds-checked on
+🚽 write by the same rule as on read, and forbidding it would mean writing
+🚽 extra code to reject something useful that works correctly.
+🚽
+🚽 What it is NOT is a licence to call a rant immutable. The library's real
+🚽 guarantee is narrower and is pinned here too: the BUILTINS never modify
+🚽 their arguments, and a slice is a COPY, not a view.
+🚽
+🚽 ── What each group pins ──────────────────────────────────────────────
+🚽 `write` -- the byte changed and the length did NOT. Overwriting a byte is
+🚽 not splicing; a regression that reallocated or re-terminated the buffer
+🚽 would move `len 5`.
+🚽
+🚽 `literals` -- two rants initialised from the SAME literal are independent.
+🚽 This is the dangerous version of the feature and the reason it is safe to
+🚽 have: if both names shared the literal's storage, mutating one would
+🚽 silently rewrite the other, and every occurrence of that literal in the
+🚽 program with it.
+🚽
+🚽 `copy-init` -- `rant d = c;` copies rather than aliases, so mutating the
+🚽 source leaves the copy alone.
+🚽
+🚽 `slice both ways` -- mutating a slice does not touch its source AND
+🚽 mutating the source does not touch a slice taken earlier. Both directions
+🚽 are checked because a view would break only one of them depending on
+🚽 which side was written, and one-directional evidence would look like a
+🚽 pass.
+🚽
+🚽 `param` -- writing through a rant parameter does not reach the caller's
+🚽 string. That is #314's per-call copy still holding once bytes are
+🚽 writable; before parameters had their own copy this would have been an
+🚽 action at a distance.
+🚽
+🚽 `yap buf` -- the same operation on a char array, to pin that `s[i] = c`
+🚽 and `buf[i] = c` agree. If someone changes one, this line notices.
+🚽
+🚽 Out-of-range WRITES are refused, and are covered by
+🚽 string_index_write_out_of_bounds_fail.brainrot -- separate file, because
+🚽 that one has to stop the program.
+skibidi rewrite_first(rant p) {
+    p[0] = 90;
+    yapping("param inside [%s]", p);
+}
+
+skibidi main {
+    rant s = "hello";
+    s[0] = 74;
+    yapping("write [%s] len %d", s, yaplen(s));
+
+    🚽 the same literal, twice -- must not share storage
+    rant a = "hello";
+    rant b = "hello";
+    a[0] = 88;
+    yapping("literals [%s] [%s]", a, b);
+
+    🚽 copy initialization copies
+    rant c = "world";
+    rant d = c;
+    c[0] = 87;
+    yapping("copy-init [%s] [%s]", c, d);
+
+    🚽 a slice is a copy, checked in BOTH directions
+    rant src = "hello";
+    rant piece = src[0:3];
+    piece[0] = 88;
+    yapping("slice both ways [%s] [%s]", piece, src);
+    src[1] = 89;
+    yapping("slice both ways [%s] [%s]", piece, src);
+
+    🚽 a rant parameter gets its own copy (#314)
+    rant owned = "hello";
+    rewrite_first(owned);
+    yapping("param caller [%s]", owned);
+
+    🚽 and the char-array form this deliberately matches
+    yap buf[4];
+    buf[0] = 104;
+    buf[1] = 105;
+    buf[2] = 0;
+    buf[0] = 72;
+    yapping("yap buf [%s]", buf);
+
+    🚽 the builtins still never modify what they are given
+    rant keep = "abc";
+    yapping("builtin [%s] [%s]", yapcat(keep, "d"), keep);
+    bussin 0;
+}

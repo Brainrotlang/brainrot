@@ -1,0 +1,20 @@
+🚽 Test case: #196 + #197 composition -- a pointer-typed struct VARIABLE
+🚽 base (`pp`, #196) whose member is itself a pointer-typed FIELD (`next`,
+🚽 #197): `pp.next.val` follows both pointers. Proves the two halves of
+🚽 Slice 3 compose, not just each in isolation.
+gang Node {
+    rizz val;
+    gang Node *next;
+};
+
+skibidi main {
+    gang Node a;
+    gang Node b;
+    a.val = 1;
+    b.val = 2;
+    a.next = &b;
+    gang Node *pp = &a;
+    yapping("%d", pp.next.val);
+    pp.next.val = 55;
+    yapping("%d", b.val);
+}

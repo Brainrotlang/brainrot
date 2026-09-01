@@ -1,0 +1,23 @@
+🚽 Test case: #193 -- a pointer-to-struct return must match the declared
+🚽 return struct/union tag. `gang Point *bad(gang Rect *r) { bussin r; }`
+🚽 returns a `gang Rect *` where a `gang Point *` is declared -- rejected,
+🚽 not silently returned (a later `bad(&rc).x` would read Rect storage
+🚽 through Point's layout). Same tag check as pointer-struct declarations,
+🚽 assignments, and arguments (#248/#253).
+gang Point {
+    rizz x;
+};
+gang Rect {
+    rizz w;
+};
+
+gang Point *bad(gang Rect *r) {
+    bussin r;
+}
+
+skibidi main {
+    gang Rect rc;
+    rc.w = 1;
+    gang Point *p = bad(&rc);
+    yapping("%d", p.x);
+}

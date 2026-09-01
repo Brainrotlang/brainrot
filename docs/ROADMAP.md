@@ -65,7 +65,7 @@ everything that makes it *typed* and *composable*.
 | L5 | `StdrotValue` has no pointer, struct, or handle representation — only `int/float/double/short/bool/char/String/void`. | [stdrot/stdrot_api.h:49](../stdrot/stdrot_api.h#L49) |
 | L6 | `compute_struct_layout()` packs fields sequentially with no alignment or padding, so `gang` layouts do not match C. | [ast.c:3948](../ast.c#L3948) |
 | L7 | Struct member access only resolves when the base is a plain identifier; `a.b.c` is rejected outright. | [ast.c:346](../ast.c#L346) |
-| L8 | Functions can take/return a struct by value, but only as a plain struct variable of the exact matching type — not a sub-expression (chained call, member access). | [ast.c:4480](../ast.c#L4480) |
+| L8 | Functions can take/return a struct by value as a plain struct variable, a by-value member-access sub-expression (`take(b.corner)`, `bussin b.corner;`), or a struct-returning call result (`take(make_point())`, `bussin make_point();`) of the exact matching type, and can return a pointer to a struct (`gang Point *f()`). Resolved. | [ast.c:6606](../ast.c#L6606) (`enter_function_scope`) |
 | L9 | `StructField` keeps `VarType + pointer_level + offset` only — no struct type name, no arrays, no modifiers, so nested-struct and fixed-array fields are unrepresentable. | [ast.h:82](../ast.h#L82) |
 | L10 | Exactly one native library is ever loaded, hardcoded as `libstdrot.so`. | [Makefile:52](../Makefile#L52) |
 
@@ -110,7 +110,7 @@ skibidi main {
 
 ## Phase 1 — The keystone: native calls as expressions
 
-**Status: in review (#217) · Priority: P0 · Blocks: literally everything else**
+**Status: merged (#217) · Priority: P0 · Blocks: literally everything else**
 
 This is the single highest-leverage change in the entire roadmap. Until a native
 call is an ordinary expression, none of the rest is worth starting.
@@ -152,7 +152,7 @@ lands. Suggested path: support both forms for one release, warn on the old one.
 
 ## Phase 2 — A typed native ABI
 
-**Status: not started · Priority: P0 · Depends on: Phase 1**
+**Status: merged (#223) · Priority: P0 · Depends on: Phase 1**
 
 Right now the semantic analyzer cannot check a single builtin argument. Making
 native exports self-describing fixes that and unlocks generated bindings.
@@ -205,10 +205,27 @@ at [semantic_analyzer.c:352](../semantic_analyzer.c#L352).
 ### The string boundary
 
 Brainrot uses `String { char *data; size_t len; }`; C libraries want
-`const char *`. Define the conversion **once**, in the ABI layer, rather than
-scattering `malloc(len+1)/memcpy/'\0'` through every wrapper. Ownership rule to
-decide up front: adapter-owned scratch buffer, freed after the call, unless the
-signature is annotated as escaping.
+`const char *`. Defined **once**, in the ABI layer (`coerce_arg_to_param()`,
+`stdrot.c`), rather than scattering `malloc(len+1)/memcpy/'\0'` through every
+wrapper. Ownership rule, as actually implemented: `STDROT_CSTRING` arguments
+are **strictly non-escaping** -- adapter-owned scratch, freed immediately
+after the call (see `STDROT_CSTRING`'s own comment, `stdrot_api.h`). Return
+values get the mirror treatment: a native's `STDROT_STRING` return is
+materialized (deep-copied) into independent memory before any of that call's
+own argument scratch is released, so an identity-style native (`T -> T`,
+`STDROT_EXPORT_SIG_IDENTITY`) can safely hand back one of its own string
+arguments unchanged without triggering a use-after-free once the adapter's
+cleanup runs.
+
+**Deliberately out of scope for Phase 2**: an escaping-string annotation (a
+native's C implementation retaining a `const char *` past its own return --
+e.g. a C API like `set_global_name(const char *)` that keeps the pointer).
+Nothing in `StdrotParam` currently expresses that a parameter escapes, and
+none of Phase 2's natives need it. A future phase needs to either add an
+explicit `escapes` flag to `StdrotParam` with a defined ownership-transfer
+mechanism, or otherwise formally support escaping strings, before any native
+requiring one is written -- writing one against the current ABI is a
+guaranteed use-after-free, not an oversight to work around silently.
 
 ### Definition of done
 
@@ -220,7 +237,31 @@ signature is annotated as escaping.
 
 ## Phase 3 — C-compatible aggregates
 
-**Status: not started · Priority: P0 · Depends on: Phase 2**
+**Status: complete (#206) · Priority: P0 · Depends on: Phase 2**
+
+All five sub-items landed; the sections below are kept as the design record.
+
+- **3a** layout (alignment + trailing padding, `_Static_assert`/`offsetof`
+  ABI check) — #242.
+- **3b** unified `TypeDescriptor` in use across all five type carriers
+  (StructField, Parameter, Variable, Function return, ReturnValue) — #258,
+  #259, #260, #261.
+- **3c** `gang` as a first-class type: struct-typed fields/params/returns,
+  struct arguments and returns including member-access/call-result
+  sub-expressions and pointer-to-struct returns (#193) — #253, #254, #255.
+- **3d** address-based recursive member access, incl. as an assignment
+  target and through pointer fields (#196/#197) — #248, #252. (Member
+  access `.` precedence bug, surfaced by this work, fixed in #257.)
+- **3e** remaining C field types: unsigned/fixed-width scalars, pointer
+  fields, nested struct fields, fixed arrays in structs (incl. `lit`-alias
+  element types with correct stride), struct aliases — #247, #256. "Fixed
+  arrays in structs" meant SCALAR element types only until #311; a
+  struct/union-typed array field (`gang Pool { gang Entity es[8]; };`) was
+  a parse error, and is now supported.
+
+Struct assignment is value-copy (C semantics), decided and tested. Arrays
+of by-value structs as standalone declarations, and arrays as by-value
+function params/returns, remain out of scope here (the latter is #194).
 
 This is the big one. raylib is struct city: `Vector2`, `Vector3`, `Color`,
 `Rectangle`, `Texture2D`, `Image`, `Camera2D`, `Camera3D`, `Matrix`, and further
@@ -309,36 +350,69 @@ ordinary Brainrot integer constants. They stay on the wishlist.
 
 ## Phase 4 — Native modules and `#cooked`
 
-**Status: not started · Priority: P1 · Depends on: Phase 2**
+**Status: mechanism complete · Priority: P1 · Depends on: Phase 2**
 
 Today exactly one `.so` is loaded, by hardcoded name. Generalize to a module
 directory, each exporting a discovery entrypoint:
 
 ```
-stdrot/     brainray/     brainsql/     braincurl/
+stdrot/     rayrot/     brainsql/     braincurl/
 ```
 
 ```c
-StdrotAPI brainrot_module_init(void);
+StdrotAPI brainrot_module_init_v3(void);
 ```
 
 Then `#cooked <raylib>`, currently listed as unimplemented in the README, means:
 locate module → `dlopen` → fetch metadata → register types, constants, and
 functions. That is a far better fate for the directive than textual inclusion.
 
+**Landed:** the full mechanism. The angle-bracket directive and the module
+search path resolve `#cooked <name>` to either a `.brainrot` prelude or a
+native `.so`, checking the former before the latter within each directory.
+Search order: `$BRAINROT_PATH`, then exactly one of {the install module
+directory, `stdrot/` next to the running executable} — never both, decided
+by whether the running executable (resolved via
+`/proc/self/exe`/`_NSGetExecutablePath`, not `argv[0]`) is itself the
+installed binary (Appendix B Q11's resolution has the full reasoning). A
+resolved `.so` is `dlopen`'d and must export `StdrotAPI
+brainrot_module_init_v3(void)` (`stdrot_load_module()`, `stdrot.c`) — the exact
+signature this phase originally specified, given a collision-free exported
+name of its own (see `stdrot/registry.c`'s own comment: a naive same-named
+wrapper calling `stdrot_get_api_v3()` from inside a module is silently
+interposed by the always-loaded core library's own copy of that symbol).
+Its functions are registered alongside the core library's and any other
+already-cooked module's, with a load-time error on any name collision
+between them. The first real native module built on this mechanism is
+`rayrot` (raylib), shipped by Phase 5 Road A (#208) — this phase delivered
+the loader, not a binding, which was never its DoD. Types/constants
+registration is deferred past
+this phase entirely: `StdrotAPI` only carries a function table today, and
+nothing in-tree needs more than that yet — see
+[issue #207](https://github.com/Brainrotlang/brainrot/issues/207).
+
 ---
 
 ## Phase 5 — Bindings and the first cursed game
 
-**Status: not started · Priority: P1**
+**Status: Road A shipped (#208) · Road B shipped (#208) · Priority: P1**
 
 There are two roads here and we should walk both, in order.
 
 ### Road A — maximum brainrot, immediately (needs only Phase 1)
 
-Link raylib into `libstdrot.so` and hand-write ~20 wrappers over primitives
-only. Textures become integer handles; C owns the `Texture2D textures[]` array
-and Brainrot holds an ID.
+**Status: shipped (#208).** Delivered as a hand-written raylib native module,
+`rayrot/raylib.so`, loaded with `#cooked <raylib>` and built by the optional
+`make rayrot` target — *not* linked into `libstdrot.so` as this section
+originally proposed, because Phase 4's native-module mechanism (which landed
+after this was written) is the cleaner home and keeps raylib out of the core
+library's build. raylib stays an optional dependency: `make` / `make test` /
+`make valgrind` never build the module and don't need raylib installed. Ships
+~20 primitive wrappers plus `examples/raylib/ohio_engine.brainrot`; see
+[docs/rayrot.md](rayrot.md). The original design sketch follows.
+
+Hand-write ~20 wrappers over primitives only. Textures become integer handles;
+C owns the `Texture2D textures[]` array and Brainrot holds an ID.
 
 ```c
 skibidi main {
@@ -356,7 +430,8 @@ skibidi main {
 }
 ```
 
-The joke language runs a game loop. Ships as `examples/ohio_engine.brainrot`.
+The joke language runs a game loop. Ships as
+`examples/raylib/ohio_engine.brainrot`.
 
 ### Road B — generate the real binding (needs Phases 2–4)
 
@@ -364,7 +439,7 @@ raylib ships `tools/rlparser/output/raylib_api.json`, a machine-readable
 description of its entire API. Point a generator at it:
 
 ```
-raylib_api.json → brainray-gen → { C adapters, native descriptors,
+raylib_api.json → rayrot-gen → { C adapters, native descriptors,
                                    Brainrot constants/types, docs, ABI tests }
 ```
 
@@ -379,9 +454,50 @@ static StdrotValue br_LoadTexture(StdrotValue *args, int argc)
 Generated C is compile-time correct and vastly easier to reason about than a
 dynamic call machine. Once this works, raylib is merely the first client: SDL,
 SQLite, libcurl, OpenSSL, PortAudio, Lua, FFmpeg, and libgit2 are the same
-problem. Phase 11's `gamba()` is **not** that generated OpenSSL binding — it is
+problem.
+
+**Delivered (#208).** In two parts.
+
+*The ABI.* `STDROT_STRUCT` (`stdrot/stdrot_api.h`), ABI v3 — the by-value
+aggregate the sketch above assumes. A parameter declared
+`{STDROT_STRUCT, "Vector2", 0}` receives the `gang`'s C-ABI byte image,
+tag-checked both statically and at the runtime boundary, copied so the call is
+genuinely by value. **Argument direction only**, and the sketch above is
+deliberately still not implementable as written: its
+`stdrot_struct("Texture2D", &tex, sizeof(tex))` returns the address of a local
+that dies with the call. Struct returns stay rejected until Appendix B Q6
+(ownership of native resources) has an answer.
+
+*The generator.* `rayrot/rayrot_gen.py`, reading a vendored
+`rayrot/raylib_api.json` pinned by upstream commit SHA, emitting **378 of
+617 functions, 16 of 35 struct types, 305 constants** — plus an
+`_Static_assert`/`offsetof` translation unit whose compilation *is* the ABI
+drift check against real raylib headers. `make rayrot-gen-sources`
+(generate; raylib not required) and `make rayrot-gen` (also compile and
+verify) are opt-in and never prerequisites of `all`/`test`/`valgrind`.
+Demonstrated by `examples/raylib/ohio_engine_gen.brainrot`, which runs a real
+game loop passing `gang Vector2`/`gang Color`/`gang Rectangle` by value — the
+non-handle-hack demo this phase's DoD asked for.
+
+Two design notes worth carrying forward:
+
+- **Type/constant registration in `StdrotAPI` turned out to be unnecessary**,
+  which is why this phase shipped without it despite the DoD implying it. A
+  module name resolves a `<name>.brainrot` prelude *before* a `<name>.so`, and
+  a prelude may itself `#cooked` a native module — so the generator emits
+  types and constants as ordinary Brainrot source (`gang Vector2 { chad x;
+  chad y; }`, `gyatt KeyboardKey { KEY_SPACE = 32, ... }`) and only functions
+  go through the C ABI. Phase 4's deferral of that registration
+  ([#207](https://github.com/Brainrotlang/brainrot/issues/207)) cost nothing.
+- **Struct returns are the dominant coverage cost**, quantified: 113 of the
+  239 skipped functions. Answering Appendix B Q6 is the single highest-value
+  follow-up for this binding, worth more than the other five skip categories
+  combined.
+
+Road A's hand-written `rayrot/raylib.so` is untouched and still works;
+the generated binding is a separate module (`#cooked <raylibgen>`). Phase 11's `gamba()` is **not** that generated OpenSSL binding — it is
 a thin, hand-written `RAND_bytes` wrapper that ships earlier, the same way
-Road A ships a cursed game before Road B generates `brainray`.
+Road A ships a cursed game before Road B generates `rayrot`.
 
 ---
 
@@ -606,29 +722,33 @@ skibidi main {
 opt in by cooking it, which keeps twelve common words out of every program's
 namespace and gives the library a place to live that isn't "more builtins".
 
-That requires the angle-bracket form of the directive, which does not exist yet:
-[lang.l:406](../lang.l#L406) matches only `#cooked "path"`, and anything else
-falls through to the malformed-directive rule at [lang.l:415](../lang.l#L415) and
-dies. So this phase owns a small, self-contained extension:
+That requires the angle-bracket form of the directive, which **landed as part of
+#207** (`lib/module_path.c`, `lang.l`'s `#cooked <name>` rule) rather than in this
+phase — Phase 4 needed the same search path Phase 9a was going to build, so it
+built it first. What remains for this phase specifically is `sussybaka` itself
+existing as a `.brainrot` prelude the resolver can find, not the resolver:
 
 | Form | Meaning | Status |
 | ---- | ------- | ------ |
 | `#cooked "path/to/file.brainrot"` | textual include, resolved relative to the including file | **implemented** |
-| `#cooked <name>` | resolve `name` on the **module search path** | new in this phase |
+| `#cooked <name>` | resolve `name` on the **module search path** | **implemented** (#207) |
 
 Search-path resolution tries, in order:
 
 1. `$BRAINROT_PATH` entries, if set.
-2. The install prefix's library directory (`$PREFIX/lib/brainrot/`).
-3. The in-tree `stdrot/` directory, so a build from source works with no install
-   step — which the test-suite rewrite in §9c depends on.
+2. Exactly ONE of the install module directory (`/usr/local/lib/brainrot`) or
+   the in-tree `stdrot/` directory next to the running executable — never
+   both; see Appendix B Q11's resolution for why the choice between them is
+   decided by which binary is actually running, not by trying both in a
+   fixed order. The in-tree half is what lets `#cooked <sussybaka>` resolve
+   `stdrot/sussybaka.brainrot` from a build with no install step, which the
+   test-suite rewrite in §9c depends on.
 
-A resolved name may be either a `.brainrot` **prelude** or, once Phase 4 lands, a
-native `.so` **module**. That is deliberate: one syntax, one search path, two
-possible artifact kinds. It also settles what the roadmap previously left vague —
-Phase 4's `#cooked <raylib>` and this phase's `#cooked <sussybaka>` are the same
-mechanism, and Phase 4 becomes "teach the existing resolver about `.so` files"
-rather than a whole new directive.
+A resolved name may be either a `.brainrot` **prelude** (implemented) or, once
+the rest of Phase 4 lands, a native `.so` **module**. That is deliberate: one
+syntax, one search path, two possible artifact kinds. It also settles what the
+roadmap previously left vague — Phase 4's `#cooked <raylib>` and this phase's
+`#cooked <sussybaka>` are the same mechanism.
 
 **How v1 splits:**
 
@@ -1172,9 +1292,11 @@ vocabulary stays single-token throughout.
 
 None of these collide with a keyword currently in `lang.l`, with a registered
 builtin (`yapping`, `yappin`, `baka`, `bet`, `chill`, `ragequit`, `slorp`),
-with Phase 11's `gamba` / `gamba_bytes`, or with a proposed preprocessor
-directive. `letcook` is deliberately one word so it cannot be confused with
-the `#cooked` directive.
+with Phase 11's `gamba` / `gamba_bytes`, or with `#cooked` — which is the
+only preprocessor directive there is, and the only one planned (see the
+README's own note on why the `#ifdef`/`#define`/`#pragma` family was dropped
+rather than left as a TODO). `letcook` is deliberately one word so it cannot
+be confused with the `#cooked` directive.
 
 `bruh` was considered and rejected: it is already `break`
 ([lang.l:71](../lang.l#L71)).
@@ -1211,10 +1333,13 @@ per keyword, and default to "library function" when in doubt.
 
 1. **Write-back removal (Phase 1).** Does `slorp(x);` keep working? Deprecation
    window, or clean break?
-2. **`TypeDesc` migration (Phase 3b).** One large refactor, or incremental with
-   both representations alive? The latter is safer and uglier.
-3. **Struct assignment.** Value copy (C semantics) or reference? Affects
-   everything downstream.
+2. **`TypeDesc` migration (Phase 3b).** ~~One large refactor, or incremental with
+   both representations alive?~~ **Resolved:** incremental, one carrier per PR
+   (StructField, Parameter, Variable, Function return, ReturnValue — #258–#261),
+   each a mechanical, compiler-verified, behavior-neutral rename.
+3. **Struct assignment.** ~~Value copy (C semantics) or reference?~~ **Resolved:**
+   value copy, matching C — deep-copied on assignment, argument passing, and
+   return; tested.
 4. **Threading model (Phase 6).** Green threads, GIL, or thread-local state?
    Recommendation above is GIL-first, but this is a real fork in the road.
 5. **`grindset` generics (Phase 7).** String-keyed monomorphic, or a real type
@@ -1222,10 +1347,47 @@ per keyword, and default to "library function" when in doubt.
 6. **Ownership of native resources.** Textures, sockets, and map entries all
    outlive statements. Brainrot has no destructors and no GC. Handles sidestep
    this by keeping ownership in C — is that the general answer?
-7. **Generated code in-tree or built?** `raylib_api.json` output could be
+7. **Generated code in-tree or built?** ~~`raylib_api.json` output could be
    committed or generated at build time. `AGENTS.md` forbids committing
    generated files; does that rule extend to bindings, and if so, does raylib
-   become a build dependency?
+   become a build dependency?~~ **Resolved (#208):** the rule extends to
+   bindings — generator *output* is never committed — but the question
+   conflates two artifacts that get opposite answers, and separating them
+   dissolves most of the dependency worry.
+   - **`raylib_api.json` is a committed source input, not generated output.**
+     It is raylib's own published description of its API, vendored and pinned
+     to a specific raylib version, the same way a schema or a `.proto` is
+     vendored. Nothing in this repo derives it; it is regenerated upstream by
+     raylib's `tools/rlparser`, which we deliberately do not want to run at
+     build time. Committing it is what makes the generator's output
+     reproducible from a clean checkout and reviewable as a diff when the
+     pinned version moves.
+   - **The C adapters the generator emits are derived, and are not
+     committed.** They are `lang.tab.c` by another name: produced into the
+     build tree (`rayrot/generated/`) by the `rayrot-gen-sources` and
+     `rayrot-gen` targets only -- NOT by `rayrot`, which builds Road A's
+     hand-written module and never runs the generator -- gitignored, never
+     hand-edited, and excluded from `make format-check` exactly as the
+     Bison/Flex output already is (a generator that has to satisfy
+     clang-format is a generator nobody wants to change).
+
+   So the answer to "does raylib become a build dependency?" is: no more than
+   it already is. `make rayrot` has required a pkg-config-visible raylib
+   since Road A, and Road B does not widen that — it needs raylib's *headers*
+   at adapter-compile time, which any installed raylib already provides, and
+   the pinned JSON for the generation step, which is in-tree. `make`, `make
+   test`, `make valgrind`, and `make format-check` continue to neither run the
+   generator nor require raylib, which is the constraint that actually matters
+   and is a Road B definition-of-done item in its own right.
+
+   Rejected alternatives: committing the adapters (option 1) buys a
+   raylib-free `rayrot` build that cannot exist anyway — the adapters
+   `#include <raylib.h>` and link against it — in exchange for carving a
+   permanent exception into a rule whose whole value is being absolute.
+   Generating in CI and committing nothing at all, not even the JSON (option
+   3 as originally sketched), makes a clean checkout unable to build
+   `rayrot` without network access and turns every upstream API change into
+   an invisible, unreviewable build-time surprise.
 8. **Should `npc` be its own phase (Phase 9b)?** Function references are a
    language feature that Phases 5, 6, and 8 all want for callbacks, and they are
    the largest item inside a phase otherwise made of library code. Leaving them
@@ -1244,10 +1406,23 @@ per keyword, and default to "library function" when in doubt.
     has, or is a runner-owned restore list enough? The general mechanism would
     also serve `logoff`, `gatekeep`/`letcook` (Phase 6), and `ghost` (Phase 8),
     which all have the same "must run even on abnormal exit" shape.
-11. **Module search path (Phase 9a).** `$BRAINROT_PATH` + install prefix +
+11. **Module search path (Phase 4/9a).** ~~`$BRAINROT_PATH` + install prefix +
     in-tree `stdrot/` is proposed. Does the in-tree fallback apply always, or
-    only for an uninstalled build? Getting this wrong means a system install
-    silently shadows the working tree, or vice versa.
+    only for an uninstalled build?~~ **Resolved (#207):** not "always, in a
+    fixed order" — exactly ONE of {install module directory, in-tree
+    `stdrot/`} is ever consulted for a given run, chosen by which binary is
+    actually running, so the two structurally cannot shadow each other in
+    either direction. The running executable's own directory is compared
+    against the install bin directory (`/usr/local/bin`); a match means this
+    IS the installed binary, so only the install module directory applies;
+    otherwise this is a source/dev build, so only `stdrot/` next to the
+    executable applies. "The running executable" is resolved via
+    `/proc/self/exe` (Linux) or `_NSGetExecutablePath` (macOS) —
+    deliberately not `argv[0]`, which for a bare `$PATH`-resolved command
+    name (typing `brainrot` after `make install`) has no directory
+    component at all and would resolve against cwd instead of the binary
+    that's actually running. `$BRAINROT_PATH` remains the highest-precedence
+    tier, checked before either half of this split.
 12. **Prelude versus builtins (Phase 9a).** The split is "primitives in
     `libstdrot.so`, surface in a cooked `.brainrot` prelude". The primitives are
     still globally visible builtins even when nobody cooks `sussybaka` — do they

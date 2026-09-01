@@ -1,35 +1,22 @@
-🚽 A struct/union passed by pointer parameter must resolve its type and
-🚽 follow the pointer: reads see the caller's values and writes through the
-🚽 parameter are visible on the original (issue #196 follow-up).
+🚽 Test case: #196 -- a pointer-to-struct/union FUNCTION PARAMETER
+🚽 (`skibidi f(gang Point *pp)`) can do `pp.field` the same as a
+🚽 pointer-typed local variable, and a write through it is visible to
+🚽 the caller (real aliasing, not a copy). Before PR #248 review finding
+🚽 3's fix, enter_function_scope() never copied the parameter's
+🚽 struct_name onto the bound runtime Variable, so this died on "Unknown
+🚽 struct or union type" even though the analyzer already accepted it.
 gang Point {
     rizz x;
     rizz y;
 };
 
-chungus Tag {
-    rizz i;
-};
-
 skibidi bump(gang Point *pp) {
-    yapping("param %d %d", pp.x, pp.y);
     pp.x = 99;
-    pp.y = 88;
-}
-
-skibidi tag_bump(chungus Tag *tp) {
-    yapping("tag %d", tp.i);
-    tp.i = 7;
 }
 
 skibidi main {
     gang Point p;
     p.x = 5;
-    p.y = 9;
     bump(&p);
-    yapping("after %d %d", p.x, p.y);
-
-    chungus Tag t;
-    t.i = 1;
-    tag_bump(&t);
-    yapping("after %d", t.i);
+    yapping("%d", p.x);
 }

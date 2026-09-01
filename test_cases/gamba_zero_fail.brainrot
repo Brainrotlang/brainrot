@@ -1,0 +1,7 @@
+🚽 gamba(n) with n <= 0 has no valid [0, n) range: it must abort rather than
+🚽 divide by zero or wrap (issue #215).
+skibidi main {
+    rizz bad = gamba(0);
+    yapping("unreachable=%d", bad);
+    bussin 0;
+}

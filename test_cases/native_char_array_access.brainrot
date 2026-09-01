@@ -1,0 +1,21 @@
+🚽 Test case: round-13 review finding #3 -- buf[0] (NODE_ARRAY_ACCESS on a
+🚽 char array) is an ordinary char lvalue in C, the same as any other char
+🚽 expression; `takes_char(buf[0])` must type-check successfully as a char
+🚽 argument, not be rejected. C only promotes a char argument to int for an
+🚽 unprototyped call or the variadic tail of a variadic one (default
+🚽 argument promotions) -- never merely because the argument expression
+🚽 happens to be an array subscript passed to a normally-prototyped
+🚽 parameter, which is every Brainrot native call. stdrot_char_narrows_
+🚽 to_int() (stdrot.h) previously narrowed NODE_ARRAY_ACCESS unconditionally
+🚽 to int -- both the static checker and the runtime marshaller agreed with
+🚽 each other, but both were wrong, and a prior round's tests enshrined
+🚽 that agreement as "correct" behavior. Fixed on both sides; this fixture
+🚽 replaces the old semantic_error_native_char_array_access.brainrot, which
+🚽 asserted the rejection this fix removes.
+skibidi main {
+    yap buf[32];
+    slorp(buf);
+    rizz r = takes_char(buf[0]);
+    yapping("%d", r);
+    bussin 0;
+}

@@ -1,0 +1,7 @@
+🚽 #cooked <> — empty module name, distinct from the generic "malformed
+🚽 directive" catch-all since the brackets themselves are well-formed.
+#cooked <>
+
+skibidi main {
+    bussin 0;
+}

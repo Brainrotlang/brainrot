@@ -17,7 +17,8 @@ typedef enum
     SEMANTIC_ERROR_ARRAY_BOUNDS,
     SEMANTIC_ERROR_REDEFINITION,
     SEMANTIC_ERROR_SCOPE_ERROR,
-    SEMANTIC_ERROR_INVALID_OPERATION
+    SEMANTIC_ERROR_INVALID_OPERATION,
+    SEMANTIC_ERROR_ARITY_MISMATCH
 } SemanticErrorType;
 
 /* Semantic error structure */
@@ -47,6 +48,18 @@ typedef struct SymbolEntry
     int pointer_level;
     bool is_const;
     bool is_function;
+    /* Set for a `T name[N]` declaration (NODE_DECLARATION's own
+       ASTNode.is_array, see ast.h) -- distinct from pointer_level: this
+       language doesn't decay arrays to pointers, so an array identifier
+       reports pointer_level 0, the same as a scalar. type still holds
+       the ELEMENT type (VAR_INT for `rizz arr[N]`), so callers that need
+       to tell "array of T" from "a single T" apart (e.g. STDROT_ANY
+       argument checking, where Variable's value union aliases a
+       scalar's own value with an array's backing pointer) must check
+       this flag too, not just type. Not set for function/parameter
+       symbols -- those don't track array-ness in Parameter (ast.h) at
+       all yet. */
+    bool is_array;
     VarType return_type; /* For functions */
     int return_pointer_level;
     int line_number;
@@ -92,7 +105,7 @@ bool semantic_analyze(ASTNode *root);
 void add_symbol(SemanticAnalyzer *analyzer, const String name, VarType type,
                 int pointer_level, bool is_const, bool is_function,
                 VarType return_type, int return_pointer_level, int line_number,
-                const String struct_name);
+                const String struct_name, bool is_array);
 SymbolEntry *find_symbol(SemanticAnalyzer *analyzer, const String name);
 void free_symbol_table(SymbolEntry *symbols);
 

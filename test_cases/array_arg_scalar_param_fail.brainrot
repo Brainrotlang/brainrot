@@ -1,0 +1,54 @@
+🚽 Test case: issue #308 -- an array argument to a user-defined function's
+🚽 SCALAR parameter. This is the shape the issue was filed for, and the
+🚽 most dangerous of the family, because the failure was not "the callee
+🚽 gets element 0" but "the callee gets the array's own address".
+🚽
+🚽 enter_function_scope() (ast.c) binds a scalar parameter from
+🚽 arg_values[i].ivalue / .fvalue / .bvalue, and Variable's value union
+🚽 aliases those members with array_data -- so the callee received the
+🚽 backing POINTER reinterpreted as its declared type. `twice(a)` printed
+🚽 1984 on one build and 2080 on another: the low bits of a heap address,
+🚽 not anything the program computed.
+🚽
+🚽 Every scalar element type is covered here, and `cap` is the reason this
+🚽 is a correctness bug rather than a cosmetic one -- reading an arbitrary
+🚽 byte as _Bool is undefined behavior, which UBSan reported as
+🚽 "load of value 144, which is not a valid value for type '_Bool'".
+🚽
+🚽 The equivalent mistake against a NATIVE has always been reported
+🚽 (is_unmarshallable_array_arg(), semantic_analyzer.c): `slorp(a)` gives
+🚽 "int arrays cannot be passed where a scalar/string is expected". That
+🚽 helper was correct and simply never wired into the user-defined call
+🚽 path. Note the `yap` case below specifically: it is why #308 needed its
+🚽 own helper rather than reusing that one, which deliberately exempts
+🚽 VAR_CHAR arrays because a `yap[N]` IS marshallable for a native (as a
+🚽 STDROT_STRING/STDROT_CSTRING) -- a Brainrot-defined callee has no such
+🚽 conversion, so the exemption would have let exactly that case through.
+rizz twice(rizz n) {
+    bussin n * 2;
+}
+
+chad half(chad f) {
+    bussin f / 2.0;
+}
+
+cap flip(cap b) {
+    bussin b;
+}
+
+yap pick(yap c) {
+    bussin c;
+}
+
+skibidi main {
+    rizz ia[2];
+    chad fa[2];
+    cap ba[2];
+    yap ca[4];
+
+    yapping("%d", twice(ia));
+    yapping("%.2f", half(fa));
+    yapping("%d", flip(ba));
+    yapping("%d", pick(ca));
+    bussin 0;
+}

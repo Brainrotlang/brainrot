@@ -1,0 +1,24 @@
+🚽 Test case: #193 -- a pointer-to-struct return can itself be returned by
+🚽 another function (`bussin pick(a, b);`), the pointer counterpart of the
+🚽 by-value relay. The inner call's result is a borrowed pointer that flows
+🚽 straight through the relay to its caller without being freed.
+gang Point {
+    rizz x;
+};
+
+gang Point *pick(gang Point *a, gang Point *b) {
+    bussin a;
+}
+
+gang Point *relay(gang Point *a, gang Point *b) {
+    bussin pick(a, b);
+}
+
+skibidi main {
+    gang Point p;
+    p.x = 5;
+    gang Point q;
+    q.x = 9;
+    gang Point *r = relay(&p, &q);
+    yapping("%d", r.x);
+}

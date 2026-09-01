@@ -1,0 +1,13 @@
+🚽 Test case: legacy_int() is a legacy/untyped export (STDROT_EXPORT,
+🚽 return_type == STDROT_ANY) whose actual runtime result is a plain
+🚽 STDROT_INT. enforce_return_type() correctly lets this through (ANY
+🚽 genuinely doesn't know the type ahead of time) -- but the evaluator
+🚽 consuming it (evaluate_expression_double here) must still read the
+🚽 result through its ACTUAL boxed type (int) and numerically coerce it,
+🚽 not blindly reinterpret the box as a double and read past its real
+🚽 (smaller) size.
+skibidi main {
+    gigachad x = legacy_int();
+    yapping("%f", x);
+    bussin 0;
+}

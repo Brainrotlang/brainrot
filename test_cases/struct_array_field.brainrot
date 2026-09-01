@@ -1,0 +1,21 @@
+🚽 Test case: #206 (3e) -- fixed-size arrays as struct fields, e.g.
+🚽 `chad params[4];`. Exercises the core path: declare a struct with an
+🚽 array field, read/write individual elements by index, and confirm the
+🚽 layout (element size * count, correctly offset among the struct's
+🚽 other fields) via maxxing().
+gang Vec {
+    chad params[4];
+    rizz n;
+};
+
+skibidi main {
+    gang Vec v;
+    v.n = 42;
+    v.params[0] = 1.5;
+    v.params[1] = 2.5;
+    v.params[2] = 3.5;
+    v.params[3] = 4.5;
+    yapping("%f %f %f %f %d", v.params[0], v.params[1], v.params[2],
+           v.params[3], v.n);
+    yapping("%lu", maxxing(v)); 🚽 4 floats (16) + 1 int (4) = 20
+}

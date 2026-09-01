@@ -1,0 +1,7 @@
+🚽 Test case: a native call inside a maxxing (sizeof) operand must be
+🚽 checked statically.
+skibidi main {
+    rizz x = maxxing(bet(2));
+    yapping("%d", x);
+    bussin 0;
+}

@@ -1,0 +1,10 @@
+🚽 Test case: lying_ptr_return() declares a STDROT_PTR return but its C
+🚽 implementation actually constructs a plain STDROT_INT -- STDROT_PTR
+🚽 isn't in the numeric-coercion group either, so execute_native_call()
+🚽 must abort rather than box a non-pointer value as if it were a real
+🚽 address.
+skibidi main {
+    rizz *p = lying_ptr_return();
+    yapping("%d", *p);
+    bussin 0;
+}

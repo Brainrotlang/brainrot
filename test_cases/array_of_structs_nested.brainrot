@@ -1,0 +1,24 @@
+🚽 Test case: an array of structs whose fields are themselves structs,
+🚽 `gang Line lines[2];` with `gang Point a, b;`. Confirms member-access
+🚽 chains (`lines[i].a.x`) resolve through an array element into a nested
+🚽 struct blob.
+gang Point {
+    rizz x;
+    chad y;
+};
+
+gang Line {
+    gang Point a;
+    gang Point b;
+};
+
+skibidi main {
+    gang Line lines[2];
+    lines[0].a.x = 7;
+    lines[0].b.y = 1.5;
+    lines[1].a.x = 70;
+    lines[1].b.y = 3.25;
+    yapping("line0 %d %.2f", lines[0].a.x, lines[0].b.y);
+    yapping("line1 %d %.2f", lines[1].a.x, lines[1].b.y);
+    bussin 0;
+}

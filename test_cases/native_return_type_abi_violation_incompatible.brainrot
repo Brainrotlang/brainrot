@@ -1,0 +1,13 @@
+🚽 Test case: lying_bool() declares a cap (STDROT_BOOL) return but its C
+🚽 implementation actually constructs a STDROT_STRING -- not in the
+🚽 numeric-coercion group, so this is a genuine ABI violation. The native
+🚽 binding's own bug, not something a Brainrot program can trigger by
+🚽 construction (the call itself type-checks against the declared
+🚽 signature) -- execute_native_call() must abort with a diagnostic
+🚽 instead of letting evaluate_expression_bool() read a bool out of a
+🚽 String's backing bytes.
+skibidi main {
+    cap b = lying_bool();
+    yapping("%d", b);
+    bussin 0;
+}

@@ -1,0 +1,11 @@
+🚽 Test case: poke_int's STDROT_PTR parameter is declared at pointer_level
+🚽 0 (a plain rizz*, expected pointer level 1) -- passing a rizz** must be
+🚽 rejected statically, not silently truncated/reinterpreted to whatever
+🚽 the wrong indirection level happens to point at.
+skibidi main {
+    rizz value = 10;
+    rizz *p = &value;
+    rizz **pp = &p;
+    poke_int(pp, 5);
+    bussin 0;
+}

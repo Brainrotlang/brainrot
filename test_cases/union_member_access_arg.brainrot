@@ -1,0 +1,24 @@
+🚽 Test case: #193 -- a by-value struct member reached through a `chungus`
+🚽 (union) works as a struct argument (`show(s.pt)`) exactly as for a
+🚽 `gang`, since resolve_by_value_struct_source() treats both uniformly
+🚽 (PR #253 review, finding 3 -- the union case the comments advertised
+🚽 but the suite didn't cover).
+gang Point {
+    rizz x;
+    rizz y;
+};
+chungus Shape {
+    gang Point pt;
+    rizz raw;
+};
+
+skibidi show(gang Point p) {
+    yapping("%d %d", p.x, p.y);
+}
+
+skibidi main {
+    chungus Shape s;
+    s.pt.x = 3;
+    s.pt.y = 4;
+    show(s.pt);
+}

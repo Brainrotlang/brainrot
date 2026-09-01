@@ -1,0 +1,16 @@
+🚽 Test case: takes_cstring() declares a STDROT_CSTRING parameter, which
+🚽 stdrot_type_to_vartype() maps to VAR_STRING for static checking. A
+🚽 char-array argument (`yap path[256]`) is source-level VAR_CHAR (the
+🚽 element type), but the runtime bridge already accepts it for a
+🚽 STDROT_CSTRING param (ast_expr_to_stdrot_value()'s VAR_CHAR/is_array
+🚽 branch produces STDROT_STRING, and coerce_arg_to_param() already
+🚽 converts STDROT_STRING -> STDROT_CSTRING) -- rejecting the call on the
+🚽 strength of the array's plain element type would be a false negative
+🚽 against a call the ABI can actually service.
+skibidi main {
+    yap path[256];
+    slorp(path);
+    rizz len = takes_cstring(path);
+    yapping("%d", len);
+    bussin 0;
+}

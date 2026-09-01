@@ -1,0 +1,12 @@
+🚽 Test case: `!` yields cap, and cap does not become rizz implicitly.
+🚽
+🚽 C would allow `int k = !n;`. Brainrot already refuses `rizz k = W;` and
+🚽 arithmetic on a cap, so refusing this is the existing design being
+🚽 consistent rather than a gap in the operator. Recorded as a fixture so
+🚽 the choice is deliberate and cannot drift silently.
+skibidi main {
+    rizz n = 5;
+    rizz k = !n;
+    yapping("%d", k);
+    bussin 0;
+}

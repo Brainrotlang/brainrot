@@ -1,0 +1,17 @@
+🚽 Test case: round-23 review finding #4 -- VAR_PTR is explicitly
+🚽 documented as pointee-erased (ast.h's own comment), so `opaque_ptr + 1`
+🚽 has no defined element stride. validate_binary_operation()'s pointer-
+🚽 arithmetic branch accepted any pointer plus an integer-ish scalar with
+🚽 no VAR_PTR/VAR_VOID exclusion; at runtime, get_type_size_for_
+🚽 descriptor() returns 0 for an erased pointee (evaluate_expression_
+🚽 pointer()'s own NODE_OPERATION case), and the old code silently
+🚽 defaulted that unknown scale to 1 -- meaning `test_ptr_source() + 1`
+🚽 quietly meant "advance exactly one byte" for a type the ABI explicitly
+🚽 documents as pointee-erased, not "ask the type system before
+🚽 guessing." Now rejected statically, before arithmetic is even
+🚽 considered valid; a defensive runtime check backs it up too, matching
+🚽 every other statically-rejected shape in this codebase.
+skibidi main {
+    rizz x = test_ptr_source() + 1;
+    bussin 0;
+}

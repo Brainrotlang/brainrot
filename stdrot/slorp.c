@@ -115,8 +115,28 @@ double slorp_double(double var)
     exit(EXIT_FAILURE);
 }
 
+bool slorp_bool(bool var)
+{
+    input_status status = input_bool(&var);
+    if (status == INPUT_SUCCESS)
+        return var;
+    if (status == INPUT_CONVERSION_ERROR)
+    {
+        fprintf(stderr, "Error: Invalid boolean format (expected 0 or 1).\n");
+        exit(EXIT_FAILURE);
+    }
+    fprintf(stderr, "Error reading boolean: %d\n", status);
+    exit(EXIT_FAILURE);
+}
+
 static StdrotValue stdrot_slorp(StdrotValue *args, int argc)
 {
+    /* Defensive only: the semantic analyzer rewrites a contextual
+     * `slorp()` (issue #229) into a synthetic 1-argument call, or rejects
+     * the program outright when no typed context resolves one -- see
+     * propagate_contextual_call_type()/semantic_visit_function_call() in
+     * semantic_analyzer.c. A program that passed semantic analysis never
+     * calls this native with argc == 0. */
     if (argc <= 0)
     {
         return (StdrotValue){STDROT_NONE, {0}};
@@ -141,6 +161,10 @@ static StdrotValue stdrot_slorp(StdrotValue *args, int argc)
         out.type = STDROT_SHORT;
         out.val.s = slorp_short(args[0].val.s);
         break;
+    case STDROT_BOOL:
+        out.type = STDROT_BOOL;
+        out.val.b = slorp_bool(args[0].val.b);
+        break;
     case STDROT_CHAR:
         out.type = STDROT_CHAR;
         out.val.c = slorp_char(args[0].val.c);
@@ -162,4 +186,26 @@ static StdrotValue stdrot_slorp(StdrotValue *args, int argc)
     return out;
 }
 
-STDROT_EXPORT("slorp", stdrot_slorp);
+/* slorp is identity-polymorphic: slorp<T>(T) -> T, dispatching on the
+ * runtime type of its one argument. STDROT_EXPORT_SIG_IDENTITY declares
+ * that relationship explicitly (return_like_arg == 0), rather than the
+ * semantic analyzer inferring it from return_type/params happening to
+ * both say STDROT_ANY -- that shape is ambiguous on its own (a legacy
+ * STDROT_EXPORT() also has an STDROT_ANY return, for an entirely
+ * different reason: genuinely unknown, not "same as argument 0"). The
+ * STDROT_ANY on slorp_params[0] still does its usual job of accepting any
+ * scalar/string argument type. */
+static const StdrotParam slorp_params[] = {
+    {STDROT_ANY, NULL, 0},
+};
+
+/* min_args stays 1 (a mandatory argument -- required by the registry's own
+ * "return_like_arg must name a mandatory argument" validation): the
+ * contextual form `slorp()` (issue #229) parses with zero AST-level
+ * arguments, but the semantic analyzer rewrites it into a synthetic
+ * 1-argument call -- or rejects the program outright when no surrounding
+ * typed context can supply a type -- before it ever reaches a native-call
+ * arity check (propagate_contextual_call_type()/semantic_visit_function_
+ * call(), semantic_analyzer.c). This native itself never sees argc == 0
+ * from a program that passed semantic analysis. */
+STDROT_EXPORT_SIG_IDENTITY("slorp", stdrot_slorp, slorp_params, 1, 1);

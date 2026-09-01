@@ -1,0 +1,39 @@
+🚽 Test case: regression for #206 (3a) code review -- StructField dropped
+🚽 modifiers entirely (no field to hold them), so a field reached through
+🚽 a `lit giga` alias silently sized/aligned as a plain 4-byte int instead
+🚽 of an 8-byte long. get_struct_field_size()/get_struct_field_alignment()
+🚽 (ast.c) now both read f->modifiers -- this is an LP64 claim, not a
+🚽 platform-independent one: `giga` (long) is 4 bytes on wasm32's ILP32
+🚽 (see tests/run_wasm_tests.mjs's override for this fixture); `thicc`
+🚽 (long long) would be 8 on both, untested here.
+🚽
+🚽 A second regression, caught in the same review round: create_struct_
+🚽 access_node()/its semantic_analyzer.c counterpart copied fld->type and
+🚽 fld->pointer_level onto the NODE_STRUCT_ACCESS node but not fld->
+🚽 modifiers, so `maxxing(d.value)` alone (member access, not the whole
+🚽 struct) still reported 4 even after the fix above -- the member's own
+🚽 sizeof disagreed with the slot the outer struct had just reserved for
+🚽 it. Both now copy modifiers too.
+🚽
+🚽 What this test does NOT prove: that `d.value` is stored as a real
+🚽 8-byte C `long`. It isn't -- evaluate_expression_int()/write_value_to_
+🚽 address() still load/store every VAR_INT through a 4-byte `int`,
+🚽 struct field or not. That is a pre-existing gap in `giga`/`thicc`
+🚽 outside of structs too (a bare top-level `giga rizz x = 5000000000;`
+🚽 already truncates the same way), not something introduced or fixed by
+🚽 this PR. This test only proves the *slot* -- its size and its member's
+🚽 own reported sizeof -- is C-correct; it deliberately does not assign a
+🚽 value outside int range to `d.value`, because that would demonstrate
+🚽 the still-open truncation, not this fix.
+lit giga rizz Meters;
+
+gang Distance {
+    yap unit;    🚽 char,        1 byte, align 1 -> offset 0
+    Meters value; 🚽 long (giga), 8 bytes, align 8 -> offset 8 (7 bytes padding)
+};              🚽 total: 16, not 5 (1 + 4, if Meters were misread as int)
+
+skibidi main {
+    gang Distance d;
+    yapping("%lu", maxxing(d));
+    yapping("%lu", maxxing(d.value));
+}

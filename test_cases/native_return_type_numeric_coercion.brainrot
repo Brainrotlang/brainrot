@@ -1,0 +1,11 @@
+🚽 Test case: lying_double() declares a gigachad (STDROT_DOUBLE) return
+🚽 but its C implementation actually constructs a STDROT_INT (42) --
+🚽 numerically coercible, so execute_native_call()'s return-type
+🚽 enforcement must silently convert it (42 -> 42.0) rather than treating
+🚽 this as an ABI violation, mirroring the coercion the argument side
+🚽 already gets.
+skibidi main {
+    gigachad x = lying_double();
+    yapping("%f", x);
+    bussin 0;
+}

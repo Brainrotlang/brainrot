@@ -1,0 +1,14 @@
+🚽 Test case: #193 -- copy-initializing a by-value struct from a struct
+🚽 POINTER variable (`gang Point c = pp;` with `gang Point *pp`) is a type
+🚽 error, not an implicit dereference (PR #253 review, finding 1).
+gang Point {
+    rizz x;
+};
+
+skibidi main {
+    gang Point q;
+    q.x = 5;
+    gang Point *pp = &q;
+    gang Point c = pp;
+    bussin 0;
+}

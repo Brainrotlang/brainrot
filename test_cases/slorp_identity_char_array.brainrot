@@ -1,0 +1,14 @@
+🚽 Test case: slorp<T>(T) -> T is identity-polymorphic on its argument's
+🚽 runtime type. For a char array (`yap buf[32]`), the source-level
+🚽 VarType is VAR_CHAR, but ast_expr_to_stdrot_value() marshals it as
+🚽 STDROT_STRING (its own VAR_CHAR/is_array branch), and slorp's own
+🚽 dispatch returns STDROT_STRING right back -- so `rant s = slorp(buf);`
+🚽 must type-check statically (infer_expression_abi_type(), not plain
+🚽 infer_expression_type(), for the return_like_arg identity inference)
+🚽 and actually produce a real string at runtime.
+skibidi main {
+    yap buf[32];
+    rant s = slorp(buf);
+    yapping("%s", s);
+    bussin 0;
+}

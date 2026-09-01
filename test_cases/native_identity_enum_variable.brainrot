@@ -1,0 +1,24 @@
+🚽 Test case: round-14 review finding #2 -- infer_expression_abi_type()
+🚽 claims to report the type a native-ABI marshalling call will actually
+🚽 produce, but previously left VAR_ENUM untouched (it only normalized
+🚽 VAR_CHAR-related shapes). ast_expr_to_stdrot_value() (stdrot.c) has no
+🚽 STDROT_ENUM -- StdrotType has no such member -- so an enum-typed
+🚽 expression always marshals as STDROT_INT, the same as a bare int.
+🚽 identity<T>(T)'s static T (infer_expression_type()'s NODE_FUNC_CALL case,
+🚽 via infer_expression_abi_type() on the identity argument) must report
+🚽 VAR_INT for an enum argument to match, not VAR_ENUM. Deliberately uses an
+🚽 enum VARIABLE, not a bare enum constant -- find_global_enum_constant()
+🚽 already reports a constant's type as plain int, which would hide this
+🚽 gap entirely.
+gyatt Color {
+    RED,
+    GREEN,
+    BLUE
+};
+
+skibidi main {
+    gyatt Color favorite = GREEN;
+    rizz r = identity(favorite);
+    yapping("%d", r);
+    bussin 0;
+}

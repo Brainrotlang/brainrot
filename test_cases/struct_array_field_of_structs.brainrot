@@ -1,0 +1,216 @@
+🚽 Test case: issue #311 -- a struct/union-typed ARRAY field inside a
+🚽 struct (`gang Pool { gang Entity es[8]; };`).
+🚽
+🚽 The SCALAR-element counterpart (`chad params[4];`, #206 3e) lives in
+🚽 struct_array_field.brainrot; this file is the struct-element case, and
+🚽 the two are deliberately separate fixtures rather than one merged file.
+🚽
+🚽 A SCALAR array field (`rizz nums[4];`) and an array of structs as a
+🚽 VARIABLE (`gang Point pts[3];`) each already worked; their intersection
+🚽 was a parse error: "unexpected LBRACKET, expecting SEMICOLON". Only the
+🚽 grammar was missing -- get_struct_field_size() already takes a
+🚽 VAR_STRUCT field's element size from the nested definition's total_size
+🚽 and multiplies by the dimension product when is_array is set, and
+🚽 get_struct_field_alignment() already returns the nested alignment while
+🚽 correctly ignoring is_array (a C array needs no more alignment than its
+🚽 element).
+🚽
+🚽 ── The sizes below are checked against a C compiler ──────────────────
+🚽 Every `gang` here has a matching C struct in
+🚽 tests/abi/struct_layout_abi_check.c, whose _Static_assert/offsetof
+🚽 establish what a real C compiler produces for the same field lists.
+🚽 That file is ground truth for these numbers; this fixture is what
+🚽 proves Brainrot agrees with it.
+🚽
+🚽 ── Why the neighbouring scalar fields matter ─────────────────────────
+🚽 An array field lives inline in the enclosing struct's single blob, so a
+🚽 wrong element stride does not merely misindex its own array -- it
+🚽 reads and writes into whatever field follows. Every struct below keeps
+🚽 a scalar field after its array and checks it, so a striding regression
+🚽 shows up as corruption of that field rather than only as a wrong
+🚽 element value.
+gang Entity {
+    chad x;
+    chad y;
+    cap alive;
+};
+
+gang Pool {
+    gang Entity es[3];
+    rizz count;
+    chad speed;
+};
+
+gang Cell {
+    rizz v;
+};
+
+gang Grid {
+    gang Cell cells[2][3];
+    rizz tag;
+};
+
+🚽 Inner carries a nested STRUCT member, not just a scalar. That is what
+🚽 makes `o.m.many[0].deep.z` below a SECOND hop off an array-field
+🚽 element -- the hop that needs the static dispatch in
+🚽 semantic_analyzer.c, which #315's first revision did not update. With
+🚽 only a scalar member the fixture reached one hop and stopped, and the
+🚽 rejection went unnoticed (PR #315 review).
+gang Deep {
+    chad z;
+};
+
+gang Inner {
+    chad a;
+    gang Deep deep;
+};
+
+gang Mid {
+    gang Inner one;
+    gang Inner many[2];
+};
+
+gang Outer {
+    gang Mid m;
+    rizz tag;
+};
+
+🚽 A helper that walks the whole pool -- the thing this feature exists
+🚽 for. Before it, the loop had to be inlined at every call site because
+🚽 there was no struct to hand over.
+skibidi scroll_all(gang Pool *p) {
+    flex (rizz i = 0; i < 3; i = i + 1) {
+        edgy (p.es[i].alive) {
+            p.es[i].x = p.es[i].x - p.speed;
+        }
+    }
+}
+
+🚽 Passing an element BY VALUE, and the rejection that must come with it.
+🚽 The fixture originally only ever read THROUGH the new syntax
+🚽 (`pool.es[i].x`) and never passed one of these things anywhere, which
+🚽 is why it stayed green while both directions were broken: the element
+🚽 form was refused and the whole-array form was silently accepted as
+🚽 element 0 (PR #315 review). Both are checked below.
+chad len2(gang Entity e) {
+    bussin e.x * e.x + e.y * e.y;
+}
+
+🚽 Two by-value struct parameters, so the two-argument UAF shape has
+🚽 somewhere to land: with a call base, argument 2's own call is what
+🚽 frees the blob argument 1 still points into.
+chad dot(gang Entity a, gang Entity b) {
+    bussin a.x * b.x + a.y * b.y;
+}
+
+🚽 A pool whose elements are distinguishable, returned BY VALUE so a
+🚽 `make_pool().es[i]` base resolves through the pending-return slot.
+gang Pool make_pool() {
+    gang Pool t;
+    t.es[0].x = 3.0;
+    t.es[0].y = 4.0;
+    t.es[1].x = 6.0;
+    t.es[1].y = 8.0;
+    t.count = 2;
+    t.speed = 0.5;
+    bussin t;
+}
+
+🚽 The return form: a struct-array-field element returned out of a
+🚽 function whose own base was a call.
+gang Entity grab() {
+    bussin make_pool().es[1];
+}
+
+skibidi main {
+    gang Pool pool;
+    yapping("sizeof Pool: %lu", maxxing(pool));
+
+    pool.speed = 1.5;
+    pool.count = 3;
+    flex (rizz i = 0; i < 3; i = i + 1) {
+        pool.es[i].x = 10.0;
+        pool.es[i].y = 2.0;
+        pool.es[i].alive = W;
+    }
+    pool.es[1].alive = L;
+
+    scroll_all(&pool);
+    flex (rizz i = 0; i < 3; i = i + 1) {
+        yapping("es[%d] x=%.1f y=%.1f alive=%d",
+                i, pool.es[i].x, pool.es[i].y, pool.es[i].alive);
+    }
+    🚽 neighbours intact after all that element traffic
+    yapping("count=%d speed=%.1f", pool.count, pool.speed);
+
+    🚽 two-dimensional struct array field
+    gang Grid g;
+    g.tag = 42;
+    g.cells[0][0].v = 1;
+    g.cells[1][2].v = 6;
+    yapping("sizeof Grid: %lu", maxxing(g));
+    yapping("grid %d %d tag=%d", g.cells[0][0].v, g.cells[1][2].v, g.tag);
+
+    🚽 An ELEMENT of a struct-array field is a by-value struct value
+    🚽 anywhere one is accepted. All such sites go through
+    🚽 resolve_by_value_struct_source(), but they arrive with DIFFERENT
+    🚽 LIFETIMES, so "by extension" is not a safe thing to assert -- an
+    🚽 earlier version of this comment did, and the forms it waved at were
+    🚽 exactly the ones that were broken (PR #315 review). Each is
+    🚽 exercised explicitly below instead.
+    pool.es[0].x = 3.0;
+    pool.es[0].y = 4.0;
+    yapping("len2 element: %.1f", len2(pool.es[0]));
+
+    🚽 ... and the WHOLE array is not. Without this line a regression that
+    🚽 silently passed es[0] again would go unnoticed -- it would print
+    🚽 25.0 here instead of being refused.
+    yapping("len2 whole:   %.1f", len2(pool.es));
+
+    🚽 ── A CALL BASE: the shape where the lifetimes diverge ────────────
+    🚽 `make_pool().es[0]` resolves through a base that points INTO the
+    🚽 pending-return slot, which dies at the next
+    🚽 free_pending_return_value(). Handing that back borrowed was a
+    🚽 heap-use-after-free with two arguments (the second argument's own
+    🚽 call freed the blob before the bind loop copied from it) and a leak
+    🚽 with one. The plain-variable base above cannot catch it, because its
+    🚽 blob lives in an ordinary variable that nothing frees mid-call.
+    🚽
+    🚽 All three consumer shapes are exercised, since it is precisely here
+    🚽 that they stop being interchangeable: argument, two-argument
+    🚽 (the UAF form), copy-initializer, and return.
+    yapping("call arg:     %.1f", len2(make_pool().es[0]));
+    yapping("call 2-arg:   %.1f", dot(make_pool().es[0], make_pool().es[1]));
+    gang Entity ce = make_pool().es[1];
+    yapping("call copyinit: %.1f", ce.x);
+    yapping("call return:   %.1f", grab().x);
+
+    🚽 The intersection with #316 (struct pointer arithmetic, which landed
+    🚽 first): a pointer taken INTO a struct-array field, then walked. Each
+    🚽 feature is tested on its own elsewhere; this is the shape neither
+    🚽 fixture covers, and it is the one a real pool-walking helper writes.
+    gang Entity *ep = &pool.es[0];
+    yapping("ep    x=%.1f", ep.x);
+    ep = ep + 2;
+    yapping("ep+2  x=%.1f", ep.x);
+    yapping("ep[0] x=%.1f", ep[0].x);
+
+    🚽 a struct-array field nested two levels down, beside a by-value
+    🚽 struct field of the same element type
+    gang Outer o;
+    o.m.one.a = 1.5;
+    o.m.many[0].a = 2.5;
+    o.m.many[1].a = 3.5;
+    o.tag = 7;
+    yapping("sizeof Outer: %lu", maxxing(o));
+    yapping("nested %.1f %.1f %.1f tag=%d",
+            o.m.one.a, o.m.many[0].a, o.m.many[1].a, o.tag);
+
+    🚽 A SECOND hop off an array-field element, read and written. One hop
+    🚽 (`o.m.many[0].a`, above) is resolved at runtime; this one needs the
+    🚽 static member-access dispatch to know the element is struct-typed.
+    o.m.many[0].deep.z = 1.5;
+    o.m.many[1].deep.z = 2.5;
+    yapping("second hop %.1f %.1f", o.m.many[0].deep.z, o.m.many[1].deep.z);
+    bussin 0;
+}

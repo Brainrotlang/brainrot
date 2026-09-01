@@ -1,0 +1,15 @@
+🚽 Test case: round-13 review finding #3 -- *cptr (NODE_UNARY_OPERATION,
+🚽 OP_DEREFERENCE, on a char*) is an ordinary char lvalue in C: the pointed-
+🚽 to object's type IS char, with no promotion of its own. Before this
+🚽 round, stdrot_char_narrows_to_int() treated every NODE_UNARY_OPERATION
+🚽 identically regardless of which operator occurred -- too coarse an
+🚽 abstraction to tell "*cptr" (stays char) apart from "-c" (promotes to
+🚽 int, genuinely correct C semantics). `takes_char(*cptr)` must type-check
+🚽 successfully as a char argument.
+skibidi main {
+    yap c = 'x';
+    yap *cptr = &c;
+    rizz r = takes_char(*cptr);
+    yapping("%d", r);
+    bussin 0;
+}

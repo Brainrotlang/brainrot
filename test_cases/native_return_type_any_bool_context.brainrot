@@ -1,0 +1,9 @@
+🚽 Test case: legacy_int() (legacy STDROT_ANY, actual STDROT_INT) used
+🚽 where a cap (bool) is expected. VAR_BOOL has no numeric-coercion group
+🚽 (unlike int/short/float/double/enum), so evaluate_expression_bool()
+🚽 must reject this outright at runtime rather than reinterpret the boxed
+🚽 int's low byte as the whole truth value.
+skibidi main {
+    cap b = legacy_int();
+    bussin 0;
+}

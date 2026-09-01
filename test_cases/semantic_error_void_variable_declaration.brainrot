@@ -1,0 +1,14 @@
+🚽 Test case: round-20 review finding #1, the grammar-boundary half --
+🚽 `type` (lang.y) is the SAME nonterminal a variable declaration's own
+🚽 type comes from, so mapping `skibidi` to VAR_VOID (instead of NONE)
+🚽 means `skibidi x = 5;` now parses to a VAR_VOID-typed declaration,
+🚽 unless something rejects it -- ast.h's own VAR_VOID comment already
+🚽 promised "no declaration syntax produces a void-typed Variable."
+🚽 semantic_visit_declaration() (semantic_analyzer.c) now rejects a
+🚽 VAR_VOID-typed declaration unconditionally (not just when the
+🚽 initializer's type is incompatible), making that promise actually
+🚽 true instead of merely assumed.
+skibidi main {
+    skibidi x = 5;
+    bussin 0;
+}

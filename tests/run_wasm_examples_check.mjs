@@ -49,6 +49,22 @@ const exampleFiles = readdirSync(examplesDir).filter((f) => f.endsWith(".brainro
 // example gets against native, just not diffed against native's directly.
 const KNOWN_NATIVE_ONLY_STDERR = new Set(["sieve_of_eras.brainrot"]);
 
+// modules_named.brainrot demonstrates #cooked <name> resolved via
+// $BRAINROT_PATH (see its own file comment: it's meant to be run as
+// `BRAINROT_PATH=examples ./brainrot examples/modules_named.brainrot`) --
+// neither runNative() nor runWasm() below sets that env var, so both
+// deterministically fail to find the "mathutils" module. That's expected
+// here (this checker isn't set up to exercise the BRAINROT_PATH-set case),
+// but lang.l's "cannot find module" diagnostic is deliberately worded
+// differently under STDROT_STATIC (wasm) vs. native -- native additionally
+// mentions ".so" as a candidate, wasm doesn't, since module_path_resolve()
+// (module_path.c) never looks for a native module in a build with no
+// dynamic loader at all. An exact stderr match would fail on that wording
+// difference alone even though both sides are reporting the identical
+// underlying failure, so this file is checked for stderr *content*
+// (both name the same missing module) instead of exact equality.
+const KNOWN_STDERR_WORDING_DIVERGENCE = new Set(["modules_named.brainrot"]);
+
 // #cooked (Brainrot's #include) resolves relative to the including file's
 // own directory (see resolve_cooked_path in lang.l) — modules.brainrot
 // #cookeds mathutils.brainrot as a sibling, so the whole examples/ directory,
@@ -106,6 +122,16 @@ for (const file of exampleFiles) {
     if (wasmErr !== "") {
       failures++;
       console.error(`✗ examples/${file} (stderr): expected empty, got ${JSON.stringify(wasmErr)}`);
+      continue;
+    }
+  } else if (KNOWN_STDERR_WORDING_DIVERGENCE.has(file)) {
+    const nativeErr = native.stderr.trim();
+    const commonPrefix = "Error: modules_named.brainrot:5: cannot find module 'mathutils'";
+    if (!nativeErr.startsWith(commonPrefix) || !wasmErr.startsWith(commonPrefix)) {
+      failures++;
+      console.error(
+        `✗ examples/${file} (stderr): expected both to start with ${JSON.stringify(commonPrefix)}\n  native: ${JSON.stringify(nativeErr)}\n  wasm:   ${JSON.stringify(wasmErr)}`,
+      );
       continue;
     }
   } else {

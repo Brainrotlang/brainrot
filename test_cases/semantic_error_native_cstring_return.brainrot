@@ -1,0 +1,11 @@
+🚽 Test case: cstring_return() declares a STDROT_CSTRING return type, but
+🚽 marshal_native_return_value() has no code path that actually
+🚽 constructs a Brainrot String from a returned const char* -- the
+🚽 semantic analyzer must reject any call to it outright (the same way it
+🚽 already rejects a STDROT_HANDLE return), rather than let the call
+🚽 execute and hand back whatever stale state happens to be sitting in
+🚽 the return-value union.
+skibidi main {
+    cstring_return();
+    bussin 0;
+}

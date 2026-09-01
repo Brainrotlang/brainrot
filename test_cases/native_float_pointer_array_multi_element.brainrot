@@ -1,0 +1,20 @@
+🚽 Test case: round-23 review finding #1, a third base type -- the
+🚽 review specifically warned that "pointer-width accidentally equals
+🚽 some scalar widths on some targets and not others" (native x86-64:
+🚽 uintptr_t is 8 bytes; wasm32: 4), so a fix verified only against
+🚽 `rizz *` (int, 4 bytes on both targets) could still hide a stride bug
+🚽 for a base type whose width diverges from uintptr_t differently.
+🚽 `chad *` (float, always 4 bytes, same as wasm32's uintptr_t but half
+🚽 of native's) exercises a genuinely different scalar width than the
+🚽 int-array fixture.
+skibidi main {
+    chad a = 1.5;
+    chad b = 2.5;
+    chad *ptrs[2];
+    ptrs[0] = &a;
+    ptrs[1] = &b;
+    yappin("%.1f %.1f\n", *ptrs[0], *ptrs[1]);
+    *ptrs[1] = 9.5;
+    yappin("%.1f %.1f\n", a, b);
+    bussin 0;
+}

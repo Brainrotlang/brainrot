@@ -1,0 +1,85 @@
+🚽 ohio_engine.brainrot — the first cursed game (Issue #208, Phase 5 Road A).
+🚽
+🚽 The joke language runs a raylib game loop: a bouncing "ABSOLUTE CINEMA"
+🚽 orb over a dark background, with live FPS. Move it faster by holding SPACE;
+🚽 quit with ESC or the window's close button.
+🚽
+🚽 raylib bindings come from the OPTIONAL rayrot native module, not the core
+🚽 library. Build and run it with:
+🚽
+🚽     make rayrot
+🚽     BRAINROT_PATH=rayrot ./brainrot examples/raylib/ohio_engine.brainrot
+🚽
+🚽 Colors are passed as four separate r,g,b,a integers (the ABI does not carry
+🚽 C structs by value yet), and textures would be integer handles — see
+🚽 examples/raylib/README.md.
+
+#cooked <raylib>
+
+skibidi main {
+    rizz width = 1280;
+    rizz height = 720;
+
+    rl_init_window(width, height, "Ohio Engine");
+    rl_set_target_fps(60);
+
+    🚽 Orb state: integer position + velocity (pixels per frame).
+    rizz x = 640;
+    rizz y = 360;
+    rizz vx = 6;
+    rizz vy = 5;
+    rizz radius = 60;
+
+    🚽 A native cap result is consumed by landing it in a cap variable first,
+    🚽 then testing that variable — the sanctioned way to use one in a
+    🚽 condition (see test_cases/native_call_expr.brainrot).
+    cap running = W;
+
+    goon (running) {
+        🚽 Hold SPACE (keycode 32) for a speed boost.
+        cap boost = rl_is_key_down(32);
+        rizz step = 1;
+        edgy (boost) {
+            step = 2;
+        }
+
+        x = x + vx * step;
+        y = y + vy * step;
+
+        🚽 Bounce off the walls.
+        edgy (x < radius) {
+            x = radius;
+            vx = 0 - vx;
+        }
+        edgy (x > width - radius) {
+            x = width - radius;
+            vx = 0 - vx;
+        }
+        edgy (y < radius) {
+            y = radius;
+            vy = 0 - vy;
+        }
+        edgy (y > height - radius) {
+            y = height - radius;
+            vy = 0 - vy;
+        }
+
+        rl_begin_drawing();
+        rl_clear_background(20, 20, 20, 255);
+        rl_draw_circle(x, y, 60.0, 255, 0, 255, 255);
+        rl_draw_text("ABSOLUTE CINEMA", x - 130, y - 16, 32, 255, 255, 255, 255);
+        rl_draw_text("hold SPACE to go faster, ESC to quit", 20, 20, 20,
+                     200, 200, 200, 255);
+        rl_draw_fps(20, 50);
+        rl_end_drawing();
+
+        🚽 Quit on ESC or the window's close button.
+        cap wants_close = rl_window_should_close();
+        edgy (wants_close) {
+            running = L;
+        }
+    }
+
+    rl_close_window();
+    bussin 0;
+}

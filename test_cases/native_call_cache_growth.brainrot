@@ -1,0 +1,24 @@
+🚽 Test case: round-17 review finding #3 -- the native-call memo cache
+🚽 (ast.c) previously had a fixed NATIVE_CALL_CACHE_SIZE (16) capacity;
+🚽 once every slot was occupied by a simultaneously-pending type-probe
+🚽 (get_expression_type()'s NODE_OPERATION case recursively probes every
+🚽 leaf's type before any of them are evaluated for a value), the next
+🚽 native call's type silently degraded to STDROT_NONE/unknown instead of
+🚽 its real type -- meaning a chain's PROMOTED type (and therefore its
+🚽 computed VALUE) depended on how many OTHER pending probes happened to
+🚽 already be in flight, not on the expression's actual content. This
+🚽 chain has 18 native-call leaves (17 legacy_int() + 1 legacy_half()),
+🚽 more than the old fixed capacity; the cache now grows dynamically
+🚽 instead of capping out, so legacy_half()'s fractional STDROT_DOUBLE
+🚽 result survives correctly regardless of chain length: 17 * 42 + 0.5 =
+🚽 714.5, not silently truncated to a whole number because legacy_half()'s
+🚽 type couldn't be determined while 16+ other calls were already pending.
+skibidi main {
+    gigachad total = legacy_int() + legacy_int() + legacy_int() +
+        legacy_int() + legacy_int() + legacy_int() + legacy_int() +
+        legacy_int() + legacy_int() + legacy_int() + legacy_int() +
+        legacy_int() + legacy_int() + legacy_int() + legacy_int() +
+        legacy_int() + legacy_int() + legacy_half();
+    yapping("%.1f", total);
+    bussin 0;
+}

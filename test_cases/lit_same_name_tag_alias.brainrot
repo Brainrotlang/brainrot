@@ -1,0 +1,27 @@
+lit gang Point {
+    rizz x;
+    rizz y;
+} Point;
+
+gyatt Color {
+    RED,
+    GREEN
+};
+
+lit gyatt Color Color;
+
+Point make_point(rizz x, rizz y) {
+    Point p = {x, y};
+    bussin p;
+}
+
+skibidi main {
+    Point p = make_point(5, 6);
+    gang Point tagged = {7, 8};
+    Color c = GREEN;
+    gyatt Color tagged_color = RED;
+
+    yapping("%d %d %d %d %d %d", p.x, p.y, tagged.x, tagged.y, c,
+            tagged_color);
+    bussin 0;
+}

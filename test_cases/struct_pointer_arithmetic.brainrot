@@ -1,0 +1,137 @@
+🚽 Test case: issue #311 -- pointer arithmetic and indexing on struct
+🚽 pointers. Both forms failed before:
+🚽
+🚽   p = p + 1;   Error: Cannot perform pointer arithmetic on a
+🚽                type-erased pointer -- its pointee size is unknown
+🚽   p[1].x       Error: Member access on a non-struct/union array element
+🚽
+🚽 The cost was that a helper could not walk a pool -- it could only be
+🚽 handed one already-resolved `&pool[i]`, so the loops stayed inlined at
+🚽 every call site.
+🚽
+🚽 ── Where the pointee size comes from ─────────────────────────────────
+🚽 The issue proposed carrying a struct tag on the pointer's descriptor.
+🚽 That turned out to be unnecessary: the tag is already on the Variable.
+🚽 get_type_size_for_descriptor() takes only (VarType, pointer_level,
+🚽 modifiers), so it genuinely cannot tell `gang Vec2 *` from
+🚽 `gang Matrix *` -- both are VAR_STRUCT at pointer_level 1 -- and
+🚽 correctly returns 0 rather than guessing. pointer_arith_scale() (ast.c)
+🚽 does the second lookup that recovers the tag for exactly that case.
+🚽
+🚽 ── Why there are TWO struct shapes here ──────────────────────────────
+🚽 Entity is {chad x; rizz id;} = 8 bytes. That is NOT enough on its own,
+🚽 and an earlier version of this fixture was blind for exactly that
+🚽 reason: sizeof(void *) is also 8, so replacing the whole struct-tag
+🚽 lookup in pointer_arith_scale() with `return sizeof(void *)` -- i.e.
+🚽 deleting the feature -- still passed every assertion (PR #316 review,
+🚽 demonstrated by mutation).
+🚽
+🚽 Big is {gigachad a; gigachad b; gigachad c;} = 24 bytes, which is
+🚽 neither sizeof(void *) (8) nor sizeof(rizz) (4) nor sizeof(gigachad)
+🚽 (8). It is the shape that makes the assertions mean something: only a
+🚽 stride that genuinely came from the pointee's StructDef lands on the
+🚽 right element. Keep a struct of that kind here; do not "simplify" it
+🚽 back to one whose size coincides with a pointer's.
+🚽
+🚽 Neither struct is a single field, either: a stride bug using the FIRST
+🚽 FIELD's size would still read element 0 correctly and only diverge from
+🚽 element 1 on, which is what the multi-element walks are for.
+🚽
+🚽 ── Deliberately absent ───────────────────────────────────────────────
+🚽 `(p + 1).x` -- member access directly on a parenthesized expression --
+🚽 is still unsupported, and is a pre-existing general limitation of
+🚽 resolve_struct_access() rather than anything specific to struct
+🚽 pointers: it resolves identifier, member-access, array-access and
+🚽 call bases, not arbitrary operations. Both forms this issue asked for
+🚽 (`p = p + 1` then `p.x`, and `p[i].x`) work without it.
+gang Entity {
+    chad x;
+    rizz id;
+};
+
+🚽 24 bytes -- see the note above on why a size that collides with
+🚽 sizeof(void *) is not sufficient.
+gang Big {
+    gigachad a;
+    gigachad b;
+    gigachad c;
+};
+
+🚽 The motivating case: a helper that walks a pool it was handed as a
+🚽 bare pointer, reading every element.
+skibidi walk(gang Entity *p, rizz n) {
+    flex (rizz i = 0; i < n; i = i + 1) {
+        yapping("  [%d] x=%.1f id=%d", i, p[i].x, p[i].id);
+    }
+}
+
+🚽 ... and one that WRITES through the same pointer, so the element
+🚽 addresses are proven to be lvalues, not just readable copies.
+skibidi bump(gang Entity *p, rizz n) {
+    flex (rizz i = 0; i < n; i = i + 1) {
+        p[i].x = p[i].x + 100.0;
+    }
+}
+
+skibidi main {
+    gang Entity pool[3];
+    flex (rizz i = 0; i < 3; i = i + 1) {
+        pool[i].x = i;
+        pool[i].id = i * 10;
+    }
+
+    yapping("walk:");
+    walk(&pool[0], 3);
+
+    bump(&pool[0], 3);
+    yapping("after bump:");
+    walk(&pool[0], 3);
+
+    🚽 the writes landed in the caller's own array, not a copy
+    yapping("caller sees: %.1f %.1f %.1f",
+            pool[0].x, pool[1].x, pool[2].x);
+
+    🚽 arithmetic on the pointer itself, forwards and backwards
+    gang Entity *p = &pool[0];
+    yapping("p    x=%.1f", p.x);
+    p = p + 2;
+    yapping("p+2  x=%.1f", p.x);
+    p = p - 1;
+    yapping("p-1  x=%.1f", p.x);
+
+    🚽 indexing relative to a pointer that is no longer at element 0
+    yapping("p[1] x=%.1f", p[1].x);
+
+    🚽 ── The 24-byte shape: the one that actually tests the stride ──────
+    🚽 Only a stride taken from Big's own StructDef (24) lands on the
+    🚽 right element here. A pointer-sized stride (8) would read a third
+    🚽 of the way into element 0, and an int-sized one (4) a sixth.
+    gang Big arr[3];
+    flex (rizz i = 0; i < 3; i = i + 1) {
+        arr[i].a = 10.0 * (i + 1);
+        arr[i].b = 20.0 * (i + 1);
+        arr[i].c = i;
+    }
+    yapping("sizeof Big: %lu", maxxing(arr[0]));
+
+    gang Big *bp = &arr[0];
+    yapping("bp[0] a=%.1f c=%.1f", bp[0].a, bp[0].c);
+    yapping("bp[2] a=%.1f c=%.1f", bp[2].a, bp[2].c);
+    bp = bp + 1;
+    yapping("bp+1  a=%.1f c=%.1f", bp.a, bp.c);
+    bp = bp + 1;
+    yapping("bp+2  a=%.1f c=%.1f", bp.a, bp.c);
+
+    🚽 and a write through the far element, read back via the array
+    bp[0].a = 99.0;
+    yapping("wrote arr[2].a = %.1f", arr[2].a);
+
+    🚽 an ordinary scalar pointer is unaffected by any of this
+    rizz nums[2];
+    nums[0] = 4;
+    nums[1] = 9;
+    rizz *q = &nums[0];
+    q = q + 1;
+    yapping("scalar q=%d", *q);
+    bussin 0;
+}

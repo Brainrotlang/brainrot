@@ -1,0 +1,11 @@
+🚽 Test case: a STDROT_ANY parameter (slorp's) accepts any scalar/string
+🚽 type, but not a pointer -- slorp has no notion of "read a pointer from
+🚽 stdin". A pointer argument must be rejected statically, not silently
+🚽 misinterpreted as whatever the generic scalar marshalling fallback
+🚽 would have produced from the raw address.
+skibidi main {
+    rizz x = 5;
+    rizz *p = &x;
+    slorp(p);
+    bussin 0;
+}

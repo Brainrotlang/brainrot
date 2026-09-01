@@ -1,0 +1,12 @@
+🚽 Test case: #196 -- dereferencing a pointer-typed struct/union VARIABLE
+🚽 that has never been assigned (still NULL, per its zero-initialized
+🚽 slot) through member access must fail cleanly, not crash or silently
+🚽 calloc a disconnected blob.
+gang Foo {
+    rizz n;
+};
+
+skibidi main {
+    gang Foo *pp;
+    pp.n = 1;
+}

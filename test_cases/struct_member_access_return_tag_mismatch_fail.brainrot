@@ -1,0 +1,25 @@
+🚽 Test case: #193 -- returning a by-value struct member whose type does
+🚽 not match the declared return type (`bussin b.s;` where `s` is a `gang
+🚽 Small` but the function returns `gang Point`) is rejected at the return
+🚽 statement -- the member-access counterpart of struct_return_type_
+🚽 mismatch_fail (PR #253 review, finding 3).
+gang Small {
+    rizz x;
+};
+gang Point {
+    rizz a;
+    rizz b;
+};
+gang Box {
+    gang Small s;
+};
+
+gang Point wrong_return(gang Box b) {
+    bussin b.s;
+}
+
+skibidi main {
+    gang Box bx;
+    gang Point p = wrong_return(bx);
+    bussin 0;
+}

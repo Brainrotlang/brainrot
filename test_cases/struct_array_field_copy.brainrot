@@ -1,0 +1,24 @@
+🚽 Test case: #206 (3e) -- an array field lives inline in the struct's own
+🚽 blob (never a separate array_data allocation), so struct-by-value copy
+🚽 (assignment, function parameter) must give the array field its own
+🚽 independent storage, not alias the source's. Both paths checked here:
+🚽 `gang Vec b = a;` (copy-init) and passing `a` to a function that
+🚽 mutates its own (by-value) copy -- neither may be visible through `a`.
+gang Vec {
+    chad params[4];
+};
+
+skibidi mutate(gang Vec v) {
+    v.params[0] = 999.0;
+}
+
+skibidi main {
+    gang Vec a;
+    a.params[0] = 1.0;
+    gang Vec b = a;
+    b.params[0] = 2.0;
+    yapping("a=%f b=%f", a.params[0], b.params[0]);
+
+    mutate(a);
+    yapping("after mutate: a=%f", a.params[0]);
+}

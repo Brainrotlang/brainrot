@@ -1,0 +1,18 @@
+🚽 Test case: C-style named inline aggregate typedef aliases.
+lit gang point {
+    rizz x;
+    rizz y;
+} Point;
+
+Point make_point(rizz x, rizz y) {
+    Point p = {x, y};
+    bussin p;
+}
+
+skibidi main {
+    Point p = make_point(8, 9);
+    gang point tagged = {1, 2};
+
+    yapping("%d %d %d %d", p.x, p.y, tagged.x, tagged.y);
+    bussin 0;
+}

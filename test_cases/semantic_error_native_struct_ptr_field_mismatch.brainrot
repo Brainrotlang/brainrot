@@ -1,0 +1,22 @@
+🚽 Test case: round-21 review finding #2, the opposite-direction exhibit
+🚽 -- `ragequit` wants STDROT_INT. Static checking previously saw `b.p`
+🚽 (a `rizz *` field) as pointer_level 0 (the same unpopulated-node bug
+🚽 native_struct_ptr_field_arg.brainrot's poke_int exhibit hits), so a
+🚽 genuinely pointer-typed argument was falsely APPROVED against a
+🚽 scalar INT parameter -- only caught later by runtime ABI enforcement,
+🚽 with a message that explicitly said "static type checking approved
+🚽 this call without knowing the argument's real type." Now rejected
+🚽 statically. Also exercises the corrected error message: the base
+🚽 VarType alone ("int") is identical on both sides of this mismatch --
+🚽 only pointer_level differs -- so the message now reports pointer
+🚽 level explicitly instead of the nonsensical "expected int, got int".
+gang Box {
+    rizz *p;
+};
+
+skibidi main {
+    rizz x = 5;
+    gang Box b = { &x };
+    ragequit(b.p);
+    bussin 0;
+}

@@ -1,0 +1,7 @@
+🚽 Test case: a native call in an assignment's left-hand-side array index
+🚽 must be checked statically.
+skibidi main {
+    rizz arr[3];
+    arr[bet(2)] = 1;
+    bussin 0;
+}

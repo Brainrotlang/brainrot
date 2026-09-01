@@ -1,0 +1,9 @@
+🚽 Test case: a zero-argument slorp() used as a sub-expression (not the
+🚽 entire initializer/argument/return value) at a typed context site has
+🚽 no context propagated into it -- v1 (issue #229) only resolves slorp()
+🚽 when it IS the whole expression at a supported site, not an operand
+🚽 nested inside a larger one.
+skibidi main {
+    rizz i = slorp() + 1;
+    bussin 0;
+}

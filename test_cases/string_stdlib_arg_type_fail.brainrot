@@ -1,0 +1,24 @@
+🚽 Test case: issue #251 -- the string builtins declare real `rant`
+🚽 parameters, so passing a non-string is rejected before the native runs.
+🚽
+🚽 What this pins is the StdrotParam declarations in stdrot/yaplen.c and
+🚽 friends, not the checking machinery itself (that is stdrot.c's
+🚽 enforce_arg_type(), already exercised elsewhere). Exporting these
+🚽 builtins with STDROT_ANY parameters -- or with the legacy untyped
+🚽 STDROT_EXPORT() rather than STDROT_EXPORT_SIG() -- would compile, load
+🚽 and run, and would hand yaplen an int in the .val.str union member to
+🚽 dereference as a char*. This fixture is what makes that fail loudly
+🚽 instead.
+🚽
+🚽 It matters here specifically because none of the four builtins re-checks
+🚽 its own argument types: stdrot.c's own comment states that "a native
+🚽 wrapper is entitled to trust its own StdrotParam blindly", and these
+🚽 wrappers take it at its word. The declaration IS the check, so the
+🚽 declaration is what gets a test.
+🚽
+🚽 The program exits nonzero and prints nothing of its own -- reaching the
+🚽 yapping at all would mean the argument was accepted.
+skibidi main {
+    yapping("unreachable %d", yaplen(5));
+    bussin 0;
+}

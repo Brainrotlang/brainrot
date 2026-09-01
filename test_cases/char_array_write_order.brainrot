@@ -1,0 +1,19 @@
+🚽 Test case: regression -- write_value_to_address()'s VAR_CHAR case did
+🚽 `*(int *)address = ...` unconditionally, correct only for a scalar
+🚽 variable's own union slot (a real 4-byte `int`), not for a packed
+🚽 `char` array element (a real 1-byte slot with real neighbors on both
+🚽 sides). Writing a[0] LAST used to stomp a[1]/a[2]/a[3] with the three
+🚽 zero bytes of the wrongly-widened int write -- silently, no crash,
+🚽 just wrong data, only visible when a *later* write clobbers an
+🚽 *earlier* one's already-correct bytes. evaluate_expression_int()'s own
+🚽 NODE_ARRAY_ACCESS case had the matching read-side bug (`*(int *)` over
+🚽 a 1-byte slot); both are exercised here since every element is both
+🚽 written and read back.
+skibidi main {
+    yap a[4];
+    a[1] = 'i';
+    a[2] = 'z';
+    a[3] = 'z';
+    a[0] = 'r';
+    yapping("%c%c%c%c", a[0], a[1], a[2], a[3]);
+}

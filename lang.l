@@ -3,13 +3,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include <libgen.h>
 #include <sys/stat.h>
+#if !defined(_WIN32)
+#include <libgen.h> /* dirname/basename -- POSIX only; Windows uses the helpers below */
+#endif
+/* Deliberately NOT <windows.h> here even on Windows: it typedefs CHAR (and
+ * other names) that collide with this grammar's token enum in lang.tab.h,
+ * included just below. _fullpath() is in <stdlib.h> and existence is checked
+ * with stat() (already included), so the Win32 path helper needs neither. */
 #include "ast.h"
 #include "lib/mem.h"
 #include "lib/arena.h"
+#include "lib/module_path.h"
 #include "lib/string_value.h"
 #include "lang.tab.h"
+#include "stdrot.h"
 
 VarType current_var_type = NONE;
 
@@ -23,6 +31,10 @@ VarType current_var_type = NONE;
 #define MAX_INCLUDE_DEPTH 32
 #define MAX_COOKED_FILES  128
 
+/* MODULE_NATIVE_LOADER / MODULE_NATIVE_SUFFIX (module_path.h) drive the
+ * "cannot find module" diagnostic below: whether a native module is even
+ * loadable here, and which extension (.dll/.so) to name if so. */
+
 typedef struct {
     FILE *file;
     char *filename;
@@ -31,6 +43,52 @@ typedef struct {
 
 static IncludeFrame include_stack[MAX_INCLUDE_DEPTH];
 static int include_stack_top = 0;
+
+/* Portable path helpers: dirname()/basename()/realpath() are POSIX and absent
+ * on Windows. These mirror lib/module_path.c's equivalents so this subsystem
+ * stays self-contained (its comment above already notes it owns its own
+ * strings rather than sharing). '/'-vs-'\\' handling is Windows-only; POSIX
+ * behavior is byte-for-byte what libgen/realpath gave. */
+
+/* Canonical absolute path of an EXISTING file, malloc'd, or NULL if it does
+ * not exist -- realpath()'s contract, which the callers below depend on. */
+static char *br_path_canonical(const char *path) {
+#if defined(_WIN32)
+    struct stat st;
+    if (stat(path, &st) != 0) return NULL; /* mirror realpath: NULL if absent */
+    return _fullpath(NULL, path, 0);       /* malloc'd; caller free()s */
+#else
+    return realpath(path, NULL);
+#endif
+}
+
+/* Is `p` an absolute path? POSIX: leading '/'. Windows also: leading '\\' or a
+ * drive prefix ("C:\\" / "C:/"). */
+static int br_path_is_absolute(const char *p) {
+    if (p[0] == '/') return 1;
+#if defined(_WIN32)
+    if (p[0] == '\\') return 1;
+    if (p[0] && p[1] == ':' &&
+        ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')))
+        return 1;
+#endif
+    return 0;
+}
+
+/* Offset of the last path separator in `path`, or -1 if none. '\\' is a
+ * separator only on Windows. */
+static long br_path_last_sep(const char *path) {
+    long idx = -1;
+    for (long i = 0; path[i]; i++) {
+        if (path[i] == '/'
+#if defined(_WIN32)
+            || path[i] == '\\'
+#endif
+        )
+            idx = i;
+    }
+    return idx;
+}
 
 static char *visited_paths[MAX_COOKED_FILES];
 static int visited_count = 0;
@@ -58,11 +116,8 @@ static void cooked_die(void) {
  * (this repo can be checked out anywhere), which makes error output
  * non-reproducible across machines/CI. Caller frees the result. */
 static char *basename_copy(const char *path) {
-    char *copy = strdup(path);
-    if (!copy) { fprintf(stderr, "out of memory\n"); exit(1); }
-    char *base = basename(copy); /* may alias copy, or point to static storage */
-    char *result = strdup(base);
-    free(copy);
+    long sep = br_path_last_sep(path);
+    char *result = strdup(sep >= 0 ? path + sep + 1 : path);
     if (!result) { fprintf(stderr, "out of memory\n"); exit(1); }
     return result;
 }
@@ -80,18 +135,40 @@ static char *extract_quoted_filename(const char *text) {
     return name;
 }
 
+/* Extracts the bare name out of the angle-bracket form, #cooked <name> --
+ * NULL only for a malformed match (empty <>), which the empty-name check
+ * in handle_cooked_module_directive() below reports with a clearer message
+ * than "malformed directive" would. */
+static char *extract_angle_name(const char *text) {
+    const char *open_angle = strchr(text, '<');
+    if (!open_angle) return NULL;
+    const char *close_angle = strchr(open_angle + 1, '>');
+    if (!close_angle) return NULL;
+    size_t len = (size_t)(close_angle - open_angle - 1);
+    char *name = malloc(len + 1);
+    if (!name) { fprintf(stderr, "out of memory\n"); exit(1); }
+    memcpy(name, open_angle + 1, len);
+    name[len] = '\0';
+    return name;
+}
+
 /* Resolves `raw` relative to the directory of current_filename (or as-is if
  * absolute), then canonicalizes it. Returns a libc-malloc'd absolute path;
  * exits with a diagnostic on failure. */
 static char *resolve_cooked_path(const char *raw) {
     char *joined;
-    if (raw[0] == '/') {
+    if (br_path_is_absolute(raw)) {
         joined = strdup(raw);
         if (!joined) { fprintf(stderr, "out of memory\n"); exit(1); }
     } else {
+        /* Directory of current_filename = everything before its last
+         * separator; "." if it has none. Replaces POSIX dirname(). */
         char *dir_copy = strdup(current_filename);
         if (!dir_copy) { fprintf(stderr, "out of memory\n"); exit(1); }
-        char *dir = dirname(dir_copy); /* may alias dir_copy; read before freeing */
+        long sep = br_path_last_sep(dir_copy);
+        const char *dir;
+        if (sep >= 0) { dir_copy[sep] = '\0'; dir = dir_copy; }
+        else { dir = "."; }
         size_t len = strlen(dir) + 1 + strlen(raw) + 1;
         joined = malloc(len);
         if (!joined) { fprintf(stderr, "out of memory\n"); exit(1); }
@@ -99,7 +176,7 @@ static char *resolve_cooked_path(const char *raw) {
         free(dir_copy);
     }
 
-    char *resolved = realpath(joined, NULL);
+    char *resolved = br_path_canonical(joined);
     if (!resolved) {
         char *base = basename_copy(current_filename);
         fprintf(stderr, "Error: %s:%d: cannot open #cooked file \"%s\": %s\n",
@@ -125,20 +202,15 @@ static char *resolve_cooked_path(const char *raw) {
     return resolved;
 }
 
-static void handle_cooked_directive(const char *text) {
-    char *raw_name = extract_quoted_filename(text);
-    if (!raw_name) {
-        char *base = basename_copy(current_filename);
-        fprintf(stderr, "Error: %s:%d: malformed #cooked directive "
-                "(expected: #cooked \"path/to/file.brainrot\")\n",
-                base, yylineno);
-        free(base);
-        cooked_die();
-    }
-
-    char *resolved = resolve_cooked_path(raw_name);
-    free(raw_name);
-
+/* Shared tail of both #cooked forms once each has independently resolved
+ * `resolved` to an absolute path -- the quoted form via resolve_cooked_path()
+ * (relative to the including file), the angle-bracket form via
+ * module_path_resolve_prelude() (via the module search path, module_path.h).
+ * From here on the two forms are indistinguishable: self/circular/visited
+ * checks, depth limit, and splicing the file in via flex's buffer stack.
+ * Takes ownership of `resolved` (frees it on every path, including error
+ * paths that call cooked_die()). */
+static void splice_cooked_file(char *resolved) {
     if (strcmp(current_filename, resolved) == 0) {
         char *base = basename_copy(current_filename);
         fprintf(stderr, "Error: %s:%d: #cooked includes itself\n", base, yylineno);
@@ -231,9 +303,148 @@ static void handle_cooked_directive(const char *text) {
     yypush_buffer_state(yy_create_buffer(inc, YY_BUF_SIZE));
 }
 
+static void handle_cooked_directive(const char *text) {
+    char *raw_name = extract_quoted_filename(text);
+    if (!raw_name) {
+        char *base = basename_copy(current_filename);
+        fprintf(stderr, "Error: %s:%d: malformed #cooked directive "
+                "(expected: #cooked \"path/to/file.brainrot\" or "
+                "#cooked <module_name>)\n",
+                base, yylineno);
+        free(base);
+        cooked_die();
+    }
+
+    char *resolved = resolve_cooked_path(raw_name);
+    free(raw_name);
+    splice_cooked_file(resolved);
+}
+
+/* Whether `resolved` (an absolute path) has already been cooked earlier in
+ * this compilation -- shared by splice_cooked_file()'s own visited-path
+ * loop (a ".brainrot" file, either quoted-form or angle-bracket-resolved)
+ * and handle_cooked_native_module() below (a dlopen'd ".so"): the same
+ * include-once behavior applies to both artifact kinds, they just have
+ * different things to do on a first visit (splice tokens vs. dlopen). */
+static bool already_visited(const char *resolved) {
+    for (int i = 0; i < visited_count; i++) {
+        if (strcmp(visited_paths[i], resolved) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Records `resolved` as visited. Callers must already have checked
+ * visited_count < MAX_COOKED_FILES (splice_cooked_file() and
+ * handle_cooked_native_module() each report that error themselves, with
+ * their own file:line context). */
+static void mark_visited(const char *resolved) {
+    char *copy = strdup(resolved);
+    if (!copy) {
+        fprintf(stderr, "out of memory\n");
+        cooked_die();
+    }
+    visited_paths[visited_count] = copy;
+    visited_count++;
+}
+
+/* A `name` resolving to a native ".so" module (module_path.h's
+ * MODULE_ARTIFACT_NATIVE): unlike a ".brainrot" prelude, there are no
+ * tokens to splice and so no self/circular-include concept (dlopen'ing a
+ * .so doesn't re-enter the lexer) -- only include-once dedup applies.
+ * Takes ownership of `resolved`. */
+static void handle_cooked_native_module(const char *name, char *resolved) {
+    if (already_visited(resolved)) {
+        /* Already loaded elsewhere in this compilation: no-op, matching
+           the ".brainrot" prelude's own include-once behavior. */
+        free(resolved);
+        return;
+    }
+    if (visited_count >= MAX_COOKED_FILES) {
+        char *base = basename_copy(current_filename);
+        fprintf(stderr, "Error: %s:%d: too many distinct #cooked "
+                "files/modules (max %d)\n", base, yylineno, MAX_COOKED_FILES);
+        free(base);
+        free(resolved);
+        cooked_die();
+    }
+
+    stdrot_load_module(name, resolved); /* exits with a diagnostic on failure */
+    mark_visited(resolved);
+    free(resolved);
+}
+
+/* Angle-bracket form: #cooked <name>. Resolves `name` via the module
+ * search path (module_path.h) to either a ".brainrot" prelude -- spliced in
+ * exactly like the quoted form, same self/circular/visited handling, same
+ * include-once behavior -- or a native ".so" module, dlopen'd and
+ * registered via handle_cooked_native_module() above. */
+static void handle_cooked_module_directive(const char *text) {
+    char *name = extract_angle_name(text);
+    if (!name) {
+        char *base = basename_copy(current_filename);
+        fprintf(stderr, "Error: %s:%d: malformed #cooked directive "
+                "(expected: #cooked \"path/to/file.brainrot\" or "
+                "#cooked <module_name>)\n",
+                base, yylineno);
+        free(base);
+        cooked_die();
+    }
+    if (name[0] == '\0') {
+        char *base = basename_copy(current_filename);
+        fprintf(stderr, "Error: %s:%d: #cooked <>: module name must not "
+                "be empty\n", base, yylineno);
+        free(base);
+        free(name);
+        cooked_die();
+    }
+    if (strchr(name, '/')) {
+        char *base = basename_copy(current_filename);
+        fprintf(stderr, "Error: %s:%d: #cooked <%s>: module name must not "
+                "contain '/' -- use #cooked \"path\" to include a file by "
+                "path\n", base, yylineno, name);
+        free(base);
+        free(name);
+        cooked_die();
+    }
+
+    ModuleArtifactKind kind;
+    char *resolved = module_path_resolve(name, &kind);
+    if (!resolved) {
+        char *base = basename_copy(current_filename);
+#ifndef MODULE_NATIVE_LOADER
+        /* wasm: only .brainrot preludes resolve -- no native module loader. */
+        fprintf(stderr, "Error: %s:%d: cannot find module '%s' (looked "
+                "for '%s.brainrot' via $BRAINROT_PATH, then either the "
+                "install module directory or a 'stdrot' directory next to "
+                "this executable, whichever applies)\n", base, yylineno,
+                name, name);
+#else
+        fprintf(stderr, "Error: %s:%d: cannot find module '%s' (looked "
+                "for '%s.brainrot' or '%s" MODULE_NATIVE_SUFFIX "' via "
+                "$BRAINROT_PATH, then either the install module directory or "
+                "a 'stdrot' directory next to this executable, whichever "
+                "applies)\n", base, yylineno, name, name, name);
+#endif
+        free(base);
+        free(name);
+        cooked_die();
+    }
+
+    if (kind == MODULE_ARTIFACT_NATIVE) {
+        handle_cooked_native_module(name, resolved);
+        free(name);
+        return;
+    }
+
+    free(name);
+    splice_cooked_file(resolved);
+}
+
 /* Called once from main() before yyparse(). */
 void cooked_init(const char *initial_filename) {
-    char *resolved = realpath(initial_filename, NULL);
+    char *resolved = br_path_canonical(initial_filename);
     if (!resolved) {
         fprintf(stderr, "Error: cannot resolve source file '%s': %s\n",
                 initial_filename, strerror(errno));
@@ -335,7 +546,7 @@ extern int yylineno;
 
 %%
 
-"skibidi"        { return SKIBIDI; }
+"skibidi"        { current_var_type = VAR_VOID; return SKIBIDI; }
 "bussin"         { return BUSSIN; }
 "flex"           { return FLEX; }
 "rizz"           { current_var_type = VAR_INT; return RIZZ; }
@@ -349,9 +560,7 @@ extern int yylineno;
 "mewing"         { return DO; }
 "gigachad"       { current_var_type = VAR_DOUBLE; return GIGACHAD; }
 "gyatt"          { return ENUM; }
-"whopper"        { return EXTERN; }
 "chad"           { current_var_type = VAR_FLOAT; return CHAD; }
-"cringe"         { return GOTO; }
 "edgy"           { return IF; }
 "amogus"         { return ELSE; }
 "giga"           { return LONG; }
@@ -361,6 +570,7 @@ extern int yylineno;
 "maxxing"        { return SIZEOF; }
 "salty"          { return STATIC; }
 "gang"           { return STRUCT; }
+"lit"            { return TYPEDEF; }
 "."              { return DOT; }
 "ohio"           { return SWITCH; }
 "chungus"        { return UNION; }
@@ -371,9 +581,22 @@ extern int yylineno;
 "slorp"          { return SLORP; }
 "cap"            { current_var_type = VAR_BOOL; return CAP; }
 "rant"           { current_var_type = VAR_STRING; return RANT; }
+ /* SAUCE -- an opaque native RESOURCE handle (FILE *, #213). Only ever
+    written with a star (`SAUCE *f`), because the token IS the resource and
+    a bare `SAUCE` would be a value the type system has no representation
+    for; semantic analysis rejects the starless form. VAR_PTR because that
+    is already this codebase's "opaque address, base type deliberately
+    erased" category -- what separates a SAUCE from any other opaque
+    pointer is its ABI kind tag and the owning library's live-handle
+    registry, not a distinct VarType. NOT a grammar keyword in the README
+    table sense: it names a type, not an operation, and the twelve file
+    OPERATIONS (crackopen, peaceout, ...) are ordinary stdrot natives with
+    no lexer entry at all. */
+"SAUCE"          { current_var_type = VAR_PTR; return SAUCE; }
 
 "=="             { return EQ; }
 "!="             { return NE; }
+"!"              { return NOT; }
 "<="             { return LE; }
 ">="             { return GE; }
 "&&"             { return AND; }
@@ -412,10 +635,16 @@ extern int yylineno;
      * afterward, on its own turn. */
     handle_cooked_directive(yytext);
 }
+^[ \t]*"#cooked"[ \t]+"<"[^>\n]*">"[ \t]* {
+    /* Same yylineno-ordering rationale as the quoted form above -- don't
+     * consume the trailing newline here either. */
+    handle_cooked_module_directive(yytext);
+}
 ^[ \t]*"#cooked"[^\n]* {
     char *base = basename_copy(current_filename);
     fprintf(stderr, "Error: %s:%d: malformed #cooked directive "
-            "(expected: #cooked \"path/to/file.brainrot\")\n",
+            "(expected: #cooked \"path/to/file.brainrot\" or "
+            "#cooked <module_name>)\n",
             base, yylineno);
     free(base);
     cooked_die();
@@ -476,6 +705,9 @@ extern int yylineno;
 '.' { yylval.ival = yytext[1]; return CHAR; }
 [a-zA-Z_][a-zA-Z0-9_]* {
     yylval.strval = copy_bytes(yytext, (size_t)yyleng);
+    if (get_type_alias(yylval.strval)) {
+        return TYPE_NAME;
+    }
     return IDENTIFIER;
 }
 \"([^\\\"]|\\.)*\" {

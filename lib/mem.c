@@ -365,6 +365,20 @@ String safe_strdup(const String *str)
     String out;
     out.len = str->len;
     out.data = safe_malloc(out.len + 1);
+    /* Round-20 review, finding #4 -- safe_malloc() genuinely can return
+       NULL (documented above: OOM, or out.len + 1 exceeding
+       MAX_ALLOC_SIZE for a pathologically large string), and this used
+       to proceed straight to memcpy() regardless -- a guaranteed NULL-
+       pointer write, not merely a leaked/mishandled failure. Every
+       caller that treats "this owns a valid independent copy now"
+       (finalize_native_string_result(), stdrot.c, is the sharpest
+       example: it's the ABI's own string-return ownership boundary)
+       depends on this actually meaning that, not crashing instead. */
+    if (!out.data)
+    {
+        errno = ENOMEM;
+        return (String){.data = NULL, .len = 0};
+    }
 
     memcpy(out.data, str->data, out.len);
     out.data[out.len] = '\0'; // optional
