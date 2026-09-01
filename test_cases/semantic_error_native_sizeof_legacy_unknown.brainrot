@@ -6,11 +6,13 @@
 🚽 that as NONE, and handle_sizeof() (ast.c) must reject the call rather
 🚽 than falling back to actually running it: sizeof's operand is never
 🚽 evaluated, so "the type is only knowable by running it" has to mean
-🚽 "reject as unknowable," not "run it anyway." (handle_sizeof() is
-🚽 invoked twice per sizeof expression -- once via the interpreter's
-🚽 generic AST pre-visit, interpreter_visit_sizeof(), once via the real
-🚽 evaluation -- a pre-existing characteristic of this codebase unrelated
-🚽 to this fix, which is why the error below is reported twice.)
+🚽 "reject as unknowable," not "run it anyway." (The error is reported
+🚽 ONCE. It used to appear twice, because ast_accept()'s pre-visit
+🚽 evaluated the declaration's initializer and interpreter_visit_
+🚽 declaration() then evaluated it again -- the same double evaluation
+🚽 func_call_evaluated_once.brainrot pins for calls. visitor.c now skips
+🚽 that pre-visit for any shape ast_accept_evaluates_expression() reports
+🚽 it would compute, sizeof among them.)
 skibidi main {
     rizz n = maxxing(legacy_int());
     bussin 0;

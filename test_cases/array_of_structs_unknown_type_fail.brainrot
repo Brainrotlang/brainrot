@@ -1,0 +1,7 @@
+🚽 Test case (error): declaring an array of an undefined struct/union
+🚽 tag must be rejected at parse time, not silently accepted.
+skibidi main {
+    gang Nope arr[3];
+    arr[0].x = 1;
+    bussin 0;
+}

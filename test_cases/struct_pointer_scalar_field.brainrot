@@ -1,0 +1,23 @@
+🚽 Test case: #196 -- a pointer-typed struct/union VARIABLE used as the
+🚽 base of member access follows the pointer for a plain SCALAR field
+🚽 (not just an array field, which struct_pointer_array_field.brainrot
+🚽 already covers) -- PR #248 review, finding 4: the original test set
+🚽 only exercised the array-field shape. Also covers assignment-after-
+🚽 declaration (`pp = &f;` as a separate statement, not folded into the
+🚽 declarator) and write-through visibility from the original variable.
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+skibidi main {
+    gang Point p;
+    p.x = 1;
+    p.y = 2;
+
+    gang Point *pp;
+    pp = &p;
+    pp.x = 42;
+
+    yapping("%d %d %d", pp.x, pp.y, p.x);
+}

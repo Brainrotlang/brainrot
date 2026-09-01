@@ -12,9 +12,8 @@
 🚽 infer_runtime_expression_type_noeval() (ast.c) recursing into the
 🚽 operation and propagating NONE up from the unknowable nested call
 🚽 before get_expression_type() (which alone would have executed it) is
-🚽 ever reached. (Reported twice, same reason as semantic_error_native_
-🚽 sizeof_legacy_unknown's own comment: handle_sizeof() runs once via the
-🚽 interpreter's generic AST pre-visit and once via the real evaluation.)
+🚽 ever reached. (Reported once -- see semantic_error_native_sizeof_
+🚽 legacy_unknown's own comment for why it used to be twice.)
 skibidi main {
     rizz n = maxxing(legacy_int_prints() + 1);
     bussin 0;

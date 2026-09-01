@@ -1,4 +1,5 @@
 #include "arena.h"
+#include <stdbool.h>
 
 /*
  * @brref Create a new arena with a given size.
@@ -9,6 +10,10 @@ Region *region_new(size_t size)
 {
     size_t total_size = sizeof(Region) + sizeof(uintptr_t) * size;
     Region *region = (Region *)malloc(total_size);
+    if (region == NULL)
+    {
+        return (Region *)handle_malloc_error(total_size);
+    }
     region->capacity = size;
     region->count = 0;
     region->next = NULL;
@@ -32,11 +37,17 @@ void region_free(Region *region)
  */
 void *arena_alloc(Arena *arena, size_t size_bytes)
 {
+    bool owns_arena = false;
     if (arena == NULL)
     {
         arena = (Arena *)malloc(sizeof(struct Arena));
+        if (arena == NULL)
+        {
+            return handle_malloc_error(sizeof(struct Arena));
+        }
         arena->start = NULL;
         arena->end = NULL;
+        owns_arena = true;
     }
     size_t size = (size_bytes + sizeof(uintptr_t) - 1) / sizeof(uintptr_t);
     if (arena->end == NULL)
@@ -46,6 +57,12 @@ void *arena_alloc(Arena *arena, size_t size_bytes)
         if (size > capacity)
             capacity = size;
         arena->end = region_new(capacity);
+        if (arena->end == NULL)
+        {
+            if (owns_arena)
+                free(arena);
+            return NULL;
+        }
         arena->start = arena->end;
     }
 
@@ -62,11 +79,24 @@ void *arena_alloc(Arena *arena, size_t size_bytes)
         if (size > cap)
             cap = size;
         arena->end->next = region_new(cap);
+        if (arena->end->next == NULL)
+        {
+            return NULL;
+        }
         arena->end = arena->end->next;
     }
 
     void *result = &arena->end->data[arena->end->count];
-    arena->end->count += size;
+    /* Flags the owns_arena==true success path -- the Arena this function
+     * just malloc'd for a caller that passed NULL is never handed back to
+     * that caller, so it can never be freed. Every call site in this
+     * codebase goes through ARENA_ALLOC()/ARENA_STRDUP() (ast.h), which
+     * always pass the address of the file-scope `arena` global, never NULL,
+     * so owns_arena is unreachable today -- but this is a real latent leak
+     * in arena_alloc's own documented NULL-arena convenience path, not a
+     * false positive. Fixing it needs an API change (e.g. returning the
+     * Arena* too), out of scope for this CI-adoption pass. */
+    arena->end->count += size; // NOLINT(clang-analyzer-unix.Malloc)
     return result;
 }
 
@@ -89,20 +119,24 @@ String arena_strdup(Arena *arena, String str)
 }
 
 /*
- * @brief reset the arena.
- * @param arena The arena to reset.
+ * @brief Reset the arena for reuse.
+ * Frees nothing: every region stays allocated with count = 0, and end is
+ * rewound to start, so the arena refills without reallocating and remains
+ * safe to arena_free(). Safe on NULL and on a never-allocated arena.
+ * @param arena The arena to reset (may be NULL).
  */
-
 void arena_reset(Arena *arena)
 {
-    arena->end = arena->start;
-    while (arena->end->next != NULL)
+    if (arena == NULL)
     {
-        Region *next = arena->end->next;
-        region_free(arena->end);
-        arena->end = next;
+        return;
     }
-    arena->end->count = 0;
+
+    for (Region *r = arena->start; r != NULL; r = r->next)
+    {
+        r->count = 0;
+    }
+    arena->end = arena->start;
 }
 
 /*

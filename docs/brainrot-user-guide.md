@@ -317,11 +317,14 @@ Q: 10 20 0.0
 
 ### Current Limitations
 
-- Nested struct access (`p.inner.x`) is not yet supported.
 - A struct/union can be passed as a function parameter or returned from a
-  function, but only as a plain variable of the exact matching type (not a
-  sub-expression like a chained call or a member access) — arguments and
-  return values are deep-copied, never aliased.
+  function by value as a plain variable, a by-value member-access
+  sub-expression (`take(b.corner)`), or a struct-returning call result
+  (`take(make_point())`, `bussin make_point();`) of the exact matching
+  type; by-value arguments and returns are deep-copied, never aliased. A
+  function may also return a pointer to a struct (`gang Point *f()`) — a
+  pointer value such as a parameter or longer-lived storage; returning
+  `&local` dangles once the call returns, as in C.
 
 ---
 
@@ -372,6 +375,12 @@ Brainrot includes some built-in functions for convenience:
 | **chill**    | -           | -            | Sleeps for an integer number of seconds.                              |
 | **slorp**    | `stdin`     | -            | Reads user input.                                                     |
 | **bet**      | `stderr`    | No           | Tests conditions and terminates with error message if false.          |
+| **gamba**    | -           | -            | Cryptographically safe random integers (OpenSSL `RAND_bytes`).        |
+| **yaplen**   | -           | -            | Length of a `rant`, in bytes.                                         |
+| **yapcat**   | -           | -            | Joins two `rant`s into a new one.                                     |
+| **yapcmp**   | -           | -            | Lexicographic comparison: `-1`, `0` or `1`.                           |
+| **yapidx**   | -           | -            | Byte index of one `rant` inside another, or `-1`.                     |
+| **file I/O** | files       | -            | `crackopen`/`peaceout`/`skim`/`yapto`/… — see [docs/file-io.md](file-io.md). |
 
 ## 10.1. yapping
 
@@ -574,6 +583,130 @@ skibidi main {
 Output:
 ```
 Error: bet: assertion failed at line 2: this assertion must fail
+```
+
+---
+
+## 10.8. gamba
+
+**Prototype**
+
+```c
+rizz gamba();                  /* unbiased value in [0, INT_MAX]        */
+rizz gamba(rizz n);            /* unbiased value in [0, n)              */
+rizz gamba(rizz lo, rizz hi);  /* unbiased value in [lo, hi], inclusive */
+```
+
+**Key Points**
+
+- `gamba` is the **cryptographically safe** random number generator, backed by
+  OpenSSL's `RAND_bytes`. It is a standard-library builtin -- globally
+  available, no `#cooked`, not a keyword.
+- The ranged forms are **unbiased**: they use rejection sampling, so you never
+  need `gamba() % n` (which would reintroduce modulo bias).
+- A CSPRNG failure is a **hard error**, never a silent `0`. There is no
+  fallback to C's `rand()`/`random()` and no seed function -- OpenSSL seeds
+  itself.
+- Invalid ranges abort: `gamba(n)` requires `n > 0`, and `gamba(lo, hi)`
+  requires `hi >= lo`.
+- Because `libcrypto` is a required native dependency, building `libstdrot.so`
+  needs OpenSSL development headers (e.g. `libssl-dev` on Ubuntu/Debian). The
+  WebAssembly build stays OpenSSL-free, and `gamba` errors there.
+
+### Example
+
+```c
+skibidi main {
+    rizz roll = gamba(1, 6);
+    yapping("you rolled %d", roll);
+
+    rizz nonce = gamba();
+    yapping("nonce %d", nonce);
+    bussin 0;
+}
+```
+
+---
+
+## 10.9. yaplen, yapcat, yapcmp, yapidx, s[i], s[i:j]
+
+**Prototypes**
+
+```c
+rizz yaplen(rant s);                  /* length in BYTES                     */
+rant yapcat(rant a, rant b);          /* a joined to b, as a new string      */
+rizz yapcmp(rant a, rant b);          /* -1 if a < b, 0 if equal, 1 if a > b */
+rizz yapidx(rant hay, rant needle);   /* byte index of needle, or -1         */
+
+yap  c   = s[i];                      /* one byte, as a yap  -- SYNTAX       */
+rant sub = s[i:j];                    /* half-open [i, j)    -- SYNTAX       */
+```
+
+**Description**
+
+- The v1 string library: measure, join, compare, search. All four are
+  standard-library builtins -- no `#cooked`, no keyword.
+- **Byte-oriented, not character-oriented.** `yaplen("é")` is `2`, because
+  that is two bytes of UTF-8. Comparison and searching work on bytes for the
+  same reason.
+- Bytes compare as **unsigned**, matching C's `strcmp` and Go's
+  `strings.Compare`, so non-ASCII bytes sort after every ASCII one.
+- ⚠️ **A `yap[N]` buffer always reports length `N`.** A `rant` carries a real
+  length, but a character buffer — what `slorp` fills — reports its declared
+  capacity, so with `yap buf[32]; slorp(buf);` and the user typing `hi`:
+  `yaplen(buf)` is `32`, `yapcmp(buf, "hi")` is `1` ("greater", because it is
+  32 long), and `yapcat(buf, "!")` builds a real 33-byte string that merely
+  *prints* as `hi` because output stops at the first NUL. Only `yapidx` is
+  unaffected. Measure and compare a `rant`, not a buffer — and there is no
+  conversion: `rant r = buf;` is a type error. This comes from how character
+  arrays are marshalled to builtins, not from these functions.
+- **The builtins never modify their arguments.** `yapcat` touches neither and
+  returns a new string independent of both, so an earlier result stays valid
+  after later calls. A slice is likewise a **copy, not a view**. Note this is
+  narrower than "strings are immutable" -- `s[i] = c` does write in place.
+- `yaplen` reads the stored length rather than scanning, so it is O(1) and
+  stays correct for a string containing an embedded NUL.
+- `yapcmp` returns exactly `-1`, `0` or `1`. When one string is a prefix of
+  the other the **shorter sorts first**: `yapcmp("app", "apple")` is `-1`.
+- `yapidx` reports the **first** match. A missing needle gives `-1`; an
+  **empty** needle gives `0`, so `yapidx(h, n) >= 0` is a correct "contains"
+  test for every needle.
+- **`s[i]` yields a `yap`** (the byte at offset `i`) and **`s[i:j]` yields a
+  new `rant`** (the half-open range `[i, j)`, length `j - i`). These are
+  syntax, not builtins.
+  - Index in `[0, len)`; slice bounds `0 <= i <= j <= len`. Out of range is a
+    runtime error, not a clamp.
+  - **`s[i]` is assignable** — `s[0] = 74;` overwrites that byte in place,
+    like `yap buf[0] = 74;`. Writes are bounds-checked the same as reads, and
+    the length never changes. This is the only way to modify a rant's
+    contents; the builtins all return new strings.
+  - **Both slice bounds are required** — no `s[:j]`, `s[i:]` or `s[:]` — and
+    there are **no negative indices**; use `s[yaplen(s) - 1]`.
+  - `s[len]` is an error but `s[len:len]` is legal and empty: a slice's upper
+    bound is exclusive, so `len` is a valid boundary though not a valid index.
+  - Only a **named** rant can be indexed or sliced; `yapcat(a, b)[0:2]` does
+    not parse, so bind it to a variable first.
+- Not in v1: split, replace, trim, case conversion, omitted slice bounds, and
+  negative indices.
+
+### Example
+
+```c
+skibidi main {
+    rant name = yapcat(yapcat("Big", " "), "Chungus");
+
+    yapping("%s", name);              🚽 Big Chungus
+    yapping("%d", yaplen(name));      🚽 11
+    yapping("%d", yapidx(name, " ")); 🚽 3
+
+    yapping("%c", name[0]);           🚽 B
+    yapping("%s", name[4:11]);        🚽 Chungus
+
+    edgy (yapidx(name, "Chungus") >= 0) {
+        yapping("certified");
+    }
+    bussin 0;
+}
 ```
 
 ---

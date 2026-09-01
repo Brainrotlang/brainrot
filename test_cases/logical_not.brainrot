@@ -1,0 +1,119 @@
+🚽 Test case: the logical NOT operator.
+🚽
+🚽 `!` had no token at all. lang.l's catch-all rule silently discarded any
+🚽 unrecognized character, so `!a` lexed as plain `a` and every negation
+🚽 evaluated to its own operand: `!L` was L, and `edgy (!done)` ran the
+🚽 wrong branch, with no diagnostic anywhere.
+🚽
+🚽 Covers every operand type, because `!` cannot borrow the caller's
+🚽 context type the way `-` can. A chad must be judged in float precision
+🚽 (0.5 is true, so !0.5 is L -- truncating to int would call it false),
+🚽 and reading a rizz back through a bool is a type-punned load that UBSan
+🚽 rejects outright.
+gang Point { rizz x; };
+gang Box { rizz *ptr; };
+
+rizz takes_int(rizz x) { bussin x + 1; }
+chad takes_float(chad x) { bussin x * 2.0; }
+smol takes_short(smol x) { bussin x; }
+
+skibidi main {
+    cap a = L;
+    rizz n = 5;
+    rizz z = 0;
+    chad f = 0.5;
+    gigachad d = 0.0;
+    smol s = 3;
+
+    yapping("%b %b", !a, !W);
+    yapping("%b %b", !n, !z);
+    yapping("%b", !f);
+    yapping("%b", !d);
+    yapping("%b", !s);
+
+    🚽 A truth value, never a pointer: `!p` is the null check it looks
+    🚽 like. Reporting pointer level 1 here made callers evaluate the
+    🚽 result as an address.
+    🚽
+    🚽 BOTH sides are reachable, so both are checked. There is no null
+    🚽 pointer *literal* -- `rizz *p = 0;`, a bare `rizz *p;` and NULL are
+    🚽 all rejected -- but that is not the same as no null pointer. A
+    🚽 struct-pointer declaration skips the pointer-level check entirely,
+    🚽 and variable_new() zeroes pvalue, so `gang Point *pp;` is null. A
+    🚽 pointer-typed struct FIELD gets there too, and that one is a null
+    🚽 `rizz *` rather than a struct pointer.
+    rizz *p = &n;
+    yapping("%b", !p);
+
+    gang Point *pp;
+    yapping("%b", !pp);
+
+    gang Box bx;
+    yapping("%b", !bx.ptr);
+
+    🚽 Same precedence as unary minus, as in C: these are (!a) == W,
+    🚽 (!a) && (!W), and !(!a) -- not negations of the whole expression.
+    yapping("%b %b %b", !a == W, !a && !W, !!a);
+
+    🚽 A smol is stored packed at sizeof(short), so judging it through
+    🚽 the int evaluator reads four bytes out of a two-byte slot. This
+    🚽 line answered L before expression_is_truthy() learned to dispatch
+    🚽 VAR_SHORT: arr[0] is 0, but the load pulled in arr[1] and saw
+    🚽 0x00010000. Both the array and the pointer form are covered because
+    🚽 they reach the packed storage by different routes -- a scalar smol
+    🚽 sits in zeroed union storage and passes either way, which is what
+    🚽 made this look fine.
+    smol packed[2] = {0, 1};
+    yapping("%b", !packed[0]);
+    smol *sp = &packed[0];
+    yapping("%b", !(*sp));
+
+    🚽 A yap is a single byte and gets no dispatch arm of its own, because
+    🚽 evaluate_expression_int() already special-cases VAR_CHAR in its own
+    🚽 array path and reads that byte correctly. Covered here rather than
+    🚽 asserted in a comment -- the packed-smol bug above is what one
+    🚽 unverified "this one is fine" claim costs.
+    yap letters[2];
+    letters[0] = 0;
+    letters[1] = 65;
+    yapping("%b %b", !letters[0], !letters[1]);
+
+    🚽 `!` yields cap, and cap does not silently become rizz here
+    🚽 (`rizz k = W;` is a type error too -- see
+    🚽 logical_not_cap_to_rizz_fail). Untyped integer contexts still get
+    🚽 C's 0/1: an array index and a switch selector below.
+    🚽
+    🚽 The three calls after them are NOT a checked conversion -- this
+    🚽 analyzer does not type-check user-defined call arguments against
+    🚽 their parameters. They are here because the runtime evaluates each
+    🚽 argument in the PARAMETER's type, which is the only way to reach
+    🚽 the chad, gigachad and smol OP_NOT intercepts at all.
+    rizz arr[2] = {7, 9};
+    yapping("%d", arr[!z]);
+
+    ohio (!a) {
+        sigma rule 1:
+            yapping("switch: one");
+            bruh;
+        based:
+            yapping("switch: default");
+    }
+
+    yapping("%d", takes_int(!z));
+    yapping("%.1f", takes_float(!z));
+    yapping("%d", takes_short(!z));
+
+    🚽 The shape the bug actually broke in real code.
+    cap done = L;
+    rizz i = 0;
+    goon (!done) {
+        i = i + 1;
+        edgy (i >= 3) { done = W; }
+    }
+    yapping("%d", i);
+
+    🚽 `!=` must still lex as one token, not `!` followed by `=`.
+    edgy (n != z) { yapping("ne ok"); }
+
+    bussin 0;
+}

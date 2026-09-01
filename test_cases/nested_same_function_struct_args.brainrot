@@ -1,0 +1,23 @@
+🚽 Test case: #193 -- nesting a call to the SAME struct-taking function as
+🚽 one of its own arguments (`pick(pick(p, q), q)`) must bind parameters in
+🚽 source order. enter_function_scope() used to reverse func->parameters in
+🚽 place and then evaluate arguments (which re-enters that same list for the
+🚽 inner call), binding the inner call's a/b swapped -- returning q (2)
+🚽 instead of p (1). PR #254 snapshots the parameter order first, so the
+🚽 inner pick returns its first argument p.
+gang N {
+    rizz v;
+};
+
+gang N pick(gang N a, gang N b) {
+    bussin a;
+}
+
+skibidi main {
+    gang N p;
+    p.v = 1;
+    gang N q;
+    q.v = 2;
+    gang N r = pick(pick(p, q), q);
+    yapping("%d", r.v);
+}

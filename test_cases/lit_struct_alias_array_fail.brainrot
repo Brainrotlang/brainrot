@@ -1,0 +1,15 @@
+🚽 Test case (error): a `lit` struct/union VALUE alias array can be
+🚽 declared (see lit_struct_alias_array), but a BRACE INITIALIZER for one
+🚽 is not supported yet -- the same scope limit the direct
+🚽 `gang Point pts[2] = {...}` spelling has. Declare and assign instead.
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+lit gang Point PointVal;
+
+skibidi main {
+    PointVal arr[2] = {1, 2, 3, 4};
+    bussin 0;
+}

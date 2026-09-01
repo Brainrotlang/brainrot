@@ -8,8 +8,6 @@
 
 extern int yylineno;
 extern void yyerror(const char *s);
-extern String safe_strdup(const String *str);
-extern Scope *current_scope;
 
 /* Forward declaration: infer_expression_type()'s own NODE_FUNC_CALL/
    return_like_arg case needs this (mutual recursion -- see
@@ -378,7 +376,7 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
         if (symbol)
             return symbol->pointer_level;
         Variable *var = get_variable(node->data.name);
-        return var ? var->pointer_level : node->pointer_level;
+        return var ? var->desc.pointer_level : node->pointer_level;
     }
     case NODE_ARRAY_ACCESS:
     {
@@ -398,13 +396,55 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
            mismatch until runtime ABI enforcement caught it) -- the
            identical bug NODE_STRUCT_ACCESS had (round 21, finding #2),
            just for arrays instead of struct fields. */
+        if (node->data.array.base)
+        {
+            /* `foo.arr[i]` -- mirrors NODE_STRUCT_ACCESS's own case
+               below exactly (runtime resolve_struct_access() first,
+               static infer_struct_def_static()+find_struct_field()
+               fallback for Phase 1, before any runtime Variable
+               exists), since Array.base is itself a NODE_STRUCT_ACCESS
+               node (`foo.arr`) and needs the identical two-path
+               resolution. Both branches require is_array: a resolved-
+               but-not-actually-an-array field (e.g. indexing a scalar)
+               must be treated as unresolved here, matching ast.c's
+               resolve_array_access_element() -- returning a "valid"
+               pointer_level for `f.n[0]` on a scalar `rizz n` would let
+               this disagree with infer_expression_type()'s own gate on
+               the identical node. */
+            StructDef *def = NULL;
+            void *base = NULL;
+            StructField *fld = NULL;
+            if (resolve_struct_access(node->data.array.base, &def, &base, &fld,
+                                      false) &&
+                fld->desc.is_array)
+                return fld->desc.pointer_level;
+
+            StructDef *static_def = infer_struct_def_static(
+                node->data.array.base->data.struct_access.object, analyzer);
+            if (!static_def)
+                return node->pointer_level;
+            StructField *f = find_struct_field(
+                static_def,
+                node->data.array.base->data.struct_access.member_name);
+            return f && f->desc.is_array ? f->desc.pointer_level
+                                         : node->pointer_level;
+        }
         SymbolEntry *symbol = find_symbol(analyzer, node->data.array.name);
-        if (symbol)
+        if (symbol && symbol->is_array)
             return symbol->pointer_level;
         Variable *var = get_variable(node->data.array.name);
-        return var ? var->pointer_level : node->pointer_level;
+        return var && var->desc.is_array ? var->desc.pointer_level
+                                         : node->pointer_level;
     }
     case NODE_UNARY_OPERATION:
+        /* A truth value is never a pointer, whatever the operand was.
+           Without this `!p` reports pointer level 1 and downstream code
+           tries to evaluate it as an address ("Invalid pointer
+           expression"), even though the answer it computes is correct. */
+        if (node->data.unary.op == OP_NOT)
+        {
+            return 0;
+        }
         if (node->data.unary.op == OP_ADDRESS_OF)
         {
             return infer_expression_pointer_level(node->data.unary.operand,
@@ -425,14 +465,20 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
         {
             const StdrotEntry *entry =
                 get_native_function(node->data.func_call.function_name);
-            /* Only STDROT_PTR has a pointer_level to report -- an opaque
-               pointer is inherently one level of indirection
-               (param->pointer_level counts any *further* indirection
-               beyond that, e.g. a "pointer to a pointer"). Every other
-               native return (including the unmarshalled STDROT_HANDLE,
-               rejected elsewhere) is pointer_level 0 as far as static
-               analysis is concerned. */
-            if (entry && entry->return_type.type == STDROT_PTR)
+            /* Only STDROT_PTR and STDROT_HANDLE have a pointer_level to
+               report -- an opaque address is inherently one level of
+               indirection (param->pointer_level counts any *further*
+               indirection beyond that, e.g. a "pointer to a pointer").
+               Every other native return is pointer_level 0 as far as
+               static analysis is concerned. */
+            /* STDROT_HANDLE alongside STDROT_PTR (#213): a handle is an
+               opaque address too, so `SAUCE *f = crackopen(...)` needs
+               the same pointer_level. A handle declares pointer_level 0,
+               giving level 1 -- one indirection, and never more: the
+               token is the resource, there is nothing behind it to
+               reach through. */
+            if (entry && (entry->return_type.type == STDROT_PTR ||
+                          entry->return_type.type == STDROT_HANDLE))
                 return entry->return_type.pointer_level + 1;
             return 0;
         }
@@ -441,7 +487,7 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
         if (symbol && symbol->is_function)
             return symbol->return_pointer_level;
         Function *func = get_function(node->data.func_call.function_name);
-        return func ? func->return_pointer_level : 0;
+        return func ? func->return_desc.pointer_level : 0;
     }
     case NODE_OPERATION:
         switch (node->data.op.op)
@@ -495,7 +541,7 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
         void *base = NULL;
         StructField *fld = NULL;
         if (resolve_struct_access(node, &def, &base, &fld, false))
-            return fld->pointer_level;
+            return fld->desc.pointer_level;
 
         StructDef *static_def =
             infer_struct_def_static(node->data.struct_access.object, analyzer);
@@ -503,7 +549,7 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
             return 0;
         StructField *f =
             find_struct_field(static_def, node->data.struct_access.member_name);
-        return f ? f->pointer_level : 0;
+        return f ? f->desc.pointer_level : 0;
     }
     default:
         return node->pointer_level;
@@ -532,10 +578,13 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
  * about it. Recursing independently here, purely off static type
  * metadata, doesn't depend on visit order at all.
  *
- * Returns NULL if `expr` doesn't statically resolve to a struct-typed
- * value this way (unknown symbol, non-struct type, or a pointer-typed
- * intermediate field -- chaining `.` through a pointer isn't supported,
- * matching semantic_analyze_with_scope_tracking()'s own rejection of it).
+ * A single-level pointer-typed intermediate field (`gang Node *next` in
+ * `a.next.val`, #197) resolves through to the pointee's definition, the
+ * same way resolve_struct_access() follows it at runtime. Returns NULL if
+ * `expr` doesn't statically resolve to a struct-typed value this way
+ * (unknown symbol, non-struct type, or a multi-level pointer field
+ * `pointer_level > 1`, which needs an explicit `(*x)->` and is rejected by
+ * both this helper and semantic_analyze_with_scope_tracking()).
  */
 static StructDef *infer_struct_def_static(ASTNode *expr,
                                           SemanticAnalyzer *analyzer)
@@ -548,14 +597,29 @@ static StructDef *infer_struct_def_static(ASTNode *expr,
         /* No pointer_level check here, matching resolve_struct_access()'s
            own top-level NODE_IDENTIFIER case (ast.c) and semantic_
            analyze_with_scope_tracking()'s NODE_STRUCT_ACCESS case (this
-           file) -- neither rejects a pointer-typed *object* itself, only
-           a pointer-typed *intermediate field* partway through a chain
-           (checked below, for the NODE_STRUCT_ACCESS branch, matching
-           both of those). */
+           file): a single-level pointer-typed base or intermediate field
+           is followed, not rejected (#196/#197); only a multi-level
+           pointer field (`pointer_level > 1`) is rejected, in the
+           NODE_STRUCT_ACCESS branch below, matching both of those. */
         SymbolEntry *sym = find_symbol(analyzer, expr->data.name);
         if (!sym || sym->type != VAR_STRUCT || !sym->struct_name.data)
             return NULL;
         return get_struct_def(sym->struct_name);
+    }
+
+    if (expr->type == NODE_FUNC_CALL)
+    {
+        /* `f().x`, and as a base for a chain, `f().inner.x`. The return
+           type is declared, so this is answerable statically without
+           running anything -- which matters, because this is the analyzer.
+           A pointer-to-struct return is excluded for the same reason a
+           multi-level pointer field is below: `.` does not follow it. */
+        Function *func = get_function(expr->data.func_call.function_name);
+        if (!func || func->return_desc.type != VAR_STRUCT ||
+            func->return_desc.pointer_level != 0 ||
+            !func->return_desc.struct_name.data)
+            return NULL;
+        return get_struct_def(func->return_desc.struct_name);
     }
 
     if (expr->type == NODE_STRUCT_ACCESS)
@@ -567,13 +631,181 @@ static StructDef *infer_struct_def_static(ASTNode *expr,
 
         StructField *fld =
             find_struct_field(parent_def, expr->data.struct_access.member_name);
-        if (!fld || fld->type != VAR_STRUCT || fld->pointer_level > 0 ||
-            !fld->struct_name.data)
+        /* #197: a single-level pointer field (`gang Node *next`) is now a
+           resolvable intermediate -- resolve_struct_access() (ast.c)
+           follows it at runtime -- so only reject `pointer_level > 1`
+           (needs an explicit `(*x)->`), matching that function's own rule.
+           struct_name is populated for pointer-typed struct fields too, so
+           get_struct_def() below still finds the pointee's definition. */
+        if (!fld || fld->desc.type != VAR_STRUCT ||
+            fld->desc.pointer_level > 1 || !fld->desc.struct_name.data)
             return NULL;
-        return get_struct_def(fld->struct_name);
+        return get_struct_def(fld->desc.struct_name);
+    }
+
+    if (expr->type == NODE_ARRAY_ACCESS && expr->data.array.name.data)
+    {
+        /* An element of an array of struct/union values or single-level
+           pointers (`pts[i].field`) resolves to the array's element tag --
+           mirrors resolve_struct_access()'s own NODE_ARRAY_ACCESS object
+           branch (ast.c). A `pointer_level > 1` array element would need an
+           explicit dereference and is rejected there, so reject it here too. */
+        SymbolEntry *sym = find_symbol(analyzer, expr->data.array.name);
+        if (sym && sym->is_array)
+        {
+            if (sym->type != VAR_STRUCT || sym->pointer_level > 1 ||
+                !sym->struct_name.data)
+                return NULL;
+            return get_struct_def(sym->struct_name);
+        }
+        Variable *var = get_variable(expr->data.array.name);
+        if (var && var->desc.is_array && var->desc.type == VAR_STRUCT &&
+            var->desc.pointer_level <= 1 && var->desc.struct_name.data)
+            return get_struct_def(var->desc.struct_name);
+        return NULL;
     }
 
     return NULL;
+}
+
+/* Best-effort resolution of the struct/union TAG a pointer-typed
+   expression's pointee statically has -- not just "is this a struct
+   pointer" (infer_expression_type()/infer_expression_pointer_level()
+   already answer that), but which ONE. VAR_STRUCT is a category, not a
+   type: two different struct tags of the same or different size are
+   both VAR_STRUCT, pointer_level 1, and check_type_compatibility_ex()
+   (which has no struct_name parameter at all) calls them compatible.
+   `gang Point *pp = &some_rect;` therefore passed the category check
+   check_declaration_initializer_compatibility() runs and then followed
+   the pointer using Point's layout on an actually Rect-shaped blob (PR
+   #248 review, round 2, finding 1) -- for two structs of different size
+   that is a real out-of-bounds read/write, not just a wrong value.
+   Returns an empty String when the tag can't be determined statically
+   (e.g. a function call's return struct tag isn't tracked anywhere) --
+   callers must treat that as "unknown, don't block," the same fail-open
+   convention every other NONE-typed case in this analyzer already
+   follows, not as "confirmed no struct." */
+static String infer_expression_struct_name(ASTNode *expr,
+                                           SemanticAnalyzer *analyzer)
+{
+    if (!expr)
+        return (String){0};
+
+    switch (expr->type)
+    {
+    case NODE_IDENTIFIER:
+    {
+        SymbolEntry *symbol = find_symbol(analyzer, expr->data.name);
+        if (symbol)
+            return symbol->struct_name;
+        Variable *var = get_variable(expr->data.name);
+        return var ? var->desc.struct_name : (String){0};
+    }
+    case NODE_UNARY_OPERATION:
+        /* Neither &x nor *x changes which struct tag is at the other end
+           -- `&r` still refers to r's own tag, `*pp` still refers to
+           whatever pp points at. */
+        if (expr->data.unary.op == OP_ADDRESS_OF ||
+            expr->data.unary.op == OP_DEREFERENCE)
+            return infer_expression_struct_name(expr->data.unary.operand,
+                                                analyzer);
+        return (String){0};
+    case NODE_STRUCT_ACCESS:
+    {
+        StructDef *parent_def =
+            infer_struct_def_static(expr->data.struct_access.object, analyzer);
+        if (!parent_def)
+            return (String){0};
+        StructField *fld =
+            find_struct_field(parent_def, expr->data.struct_access.member_name);
+        return fld ? fld->desc.struct_name : (String){0};
+    }
+    case NODE_ARRAY_ACCESS:
+    {
+        /* Mirrors infer_expression_pointer_level()'s own NODE_ARRAY_ACCESS
+           case (above in this file) exactly -- an array of struct/union
+           POINTERS (`PointPtr values[2]; values[0] = &r;`) needs its
+           element tag resolved the same two-path way (struct-field-backed
+           via Array.base, or a plain array Variable/SymbolEntry), or an
+           array-element assignment target silently skipped this whole
+           tag check (empty struct_name looked exactly like "unknown,"
+           the same conflation finding 2 flagged for the source side --
+           PR #248 review, round 3). */
+        if (expr->data.array.base)
+        {
+            StructDef *def = NULL;
+            void *base = NULL;
+            StructField *fld = NULL;
+            if (resolve_struct_access(expr->data.array.base, &def, &base, &fld,
+                                      false) &&
+                fld->desc.is_array)
+                return fld->desc.struct_name;
+
+            StructDef *static_def = infer_struct_def_static(
+                expr->data.array.base->data.struct_access.object, analyzer);
+            if (!static_def)
+                return (String){0};
+            StructField *f = find_struct_field(
+                static_def,
+                expr->data.array.base->data.struct_access.member_name);
+            return f && f->desc.is_array ? f->desc.struct_name : (String){0};
+        }
+        SymbolEntry *symbol = find_symbol(analyzer, expr->data.array.name);
+        if (symbol && symbol->is_array)
+            return symbol->struct_name;
+        Variable *var = get_variable(expr->data.array.name);
+        return var && var->desc.is_array ? var->desc.struct_name : (String){0};
+    }
+    case NODE_FUNC_CALL:
+    {
+        /* A user-defined function's declared return struct/union tag lives
+           on its Function object (return_struct_name, set at registration),
+           and IS the tag a pointer-to-struct call result points at
+           (`bussin get_rect(r);`, `gang Point *p = get_rect(&rc);`, `p =
+           get_rect(&rc);`, #193). Without this arm the helper fail-opened
+           on every call, so a wrong-tag relay/init/assignment through a
+           call type-punned silently (PR #255 review). A native call has no
+           user Function and no tracked struct tag, so it stays unknown
+           (fail-open), same as any other unresolvable source. */
+        if (is_builtin_function(expr->data.func_call.function_name))
+            return (String){0};
+        Function *fn = get_function(expr->data.func_call.function_name);
+        return fn ? fn->return_desc.struct_name : (String){0};
+    }
+    default:
+        return (String){0};
+    }
+}
+
+/* Checks that a pointer-typed struct/union destination's declared TAG
+   matches a pointer-typed source expression's own tag, when both are
+   statically knowable -- the piece check_declaration_initializer_
+   compatibility()/check_type_compatibility_ex() cannot express (neither
+   takes a struct_name; VAR_STRUCT is a category, not a type, so `gang
+   Point *pp = &some_rect;` passes both of those and then follows the
+   pointer using Point's layout on an actually Rect-shaped blob -- PR
+   #248 review, round 2). Silent (no error) when either tag can't be
+   determined statically -- same fail-open convention
+   infer_expression_struct_name() itself documents; this is a best-effort
+   catch, not a complete type system. */
+static void check_pointer_struct_tag_match(SemanticAnalyzer *analyzer,
+                                           String declared_tag,
+                                           ASTNode *source_expr,
+                                           const char *message_prefix,
+                                           int line_number)
+{
+    if (!declared_tag.data || !source_expr)
+        return;
+    String source_tag = infer_expression_struct_name(source_expr, analyzer);
+    if (!source_tag.data || strcmp(declared_tag.data, source_tag.data) == 0)
+        return;
+
+    char error_msg[MAX_BUFFER_LEN];
+    snprintf(error_msg, sizeof(error_msg),
+             "%s: expected pointer to struct/union '%s', got pointer to '%s'",
+             message_prefix, declared_tag.data, source_tag.data);
+    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                       STRING_LITERAL(error_msg), line_number);
 }
 
 /* Infer the type of an expression */
@@ -613,7 +845,7 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
         Variable *var = get_variable(node->data.name);
         if (var)
         {
-            return var->var_type;
+            return var->desc.type;
         }
         /* Not a variable -- an enum constant has type int in C. */
         if (find_global_enum_constant(node->data.name))
@@ -622,6 +854,10 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
         }
         return NONE;
     }
+
+    case NODE_STRING_SLICE:
+        /* `s[i:j]` yields a rant unconditionally (#251). */
+        return VAR_STRING;
 
     case NODE_ARRAY_ACCESS:
     {
@@ -636,17 +872,54 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
            as NODE_IDENTIFIER just above) -- infer_expression_abi_type()
            is what narrows a VAR_CHAR one to VAR_INT to match how
            ast_expr_to_stdrot_value() (stdrot.c) actually marshals it. */
+        if (node->data.array.base)
+        {
+            /* Same two-path resolution as infer_expression_pointer_
+               level()'s own NODE_ARRAY_ACCESS case above -- see that
+               case's comment, including why both branches require
+               is_array. */
+            StructDef *def = NULL;
+            void *base = NULL;
+            StructField *fld = NULL;
+            if (resolve_struct_access(node->data.array.base, &def, &base, &fld,
+                                      false) &&
+                fld->desc.is_array)
+                return fld->desc.type;
+
+            StructDef *static_def = infer_struct_def_static(
+                node->data.array.base->data.struct_access.object, analyzer);
+            if (!static_def)
+                return NONE;
+            StructField *f = find_struct_field(
+                static_def,
+                node->data.array.base->data.struct_access.member_name);
+            return f && f->desc.is_array ? f->desc.type : NONE;
+        }
+
         const String array_name = node->data.array.name;
         if (!array_name.data)
             return NONE;
 
         SymbolEntry *symbol = find_symbol(analyzer, array_name);
-        if (symbol)
+        if (symbol && symbol->is_array)
             return symbol->type;
+        /* `s[i]` on a `rant` is a byte index yielding a `yap` (#251). The
+           static mirror of resolve_array_access_element()'s VAR_STRING
+           branch (ast.c) -- that one decides what width the RUNTIME reads,
+           this one is what argument type-checking sees, and the two
+           disagreeing is how a native call silently stops being checked
+           (semantic_check_native_call() fails open on NONE). A rant is not
+           an array, so both is_array tests around this deliberately do not
+           cover it. */
+        if (symbol && symbol->type == VAR_STRING && !symbol->is_array)
+            return VAR_CHAR;
 
         Variable *var = get_variable(array_name);
-        if (var)
-            return var->var_type;
+        if (var && var->desc.is_array)
+            return var->desc.type;
+        if (var && var->desc.type == VAR_STRING && !var->desc.is_array &&
+            var->desc.pointer_level == 0)
+            return VAR_CHAR;
 
         return NONE;
     }
@@ -697,6 +970,15 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
     }
 
     case NODE_UNARY_OPERATION:
+        /* `!x` is a truth value whatever x was, so unlike `-x` it does not
+           inherit the operand's type. Must agree with ast.c's
+           get_expression_type(), or `cap b = !n;` is rejected here as
+           "expected bool, got int" while the interpreter would have
+           produced a perfectly good cap. */
+        if (node->data.unary.op == OP_NOT)
+        {
+            return VAR_BOOL;
+        }
         return infer_expression_type(node->data.unary.operand, analyzer);
 
     case NODE_FUNC_CALL:
@@ -754,7 +1036,7 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
         Function *func = get_function(node->data.func_call.function_name);
         if (func)
         {
-            return func->return_type;
+            return func->return_desc.type;
         }
 
         return NONE;
@@ -766,7 +1048,7 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
         void *base = NULL;
         StructField *fld = NULL;
         if (resolve_struct_access(node, &def, &base, &fld, false))
-            return fld->type;
+            return fld->desc.type;
 
         /* resolve_struct_access() only works at runtime -- its object
            resolution goes through get_variable(), which is always NULL
@@ -791,7 +1073,7 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
 
         StructField *f =
             find_struct_field(static_def, node->data.struct_access.member_name);
-        return f ? f->type : NONE;
+        return f ? f->desc.type : NONE;
     }
 
     default:
@@ -1088,27 +1370,28 @@ bool validate_binary_operation(ASTNode *left, ASTNode *right, OperatorType op,
         {
             return true;
         }
-        else
-        {
-            /* Only report errors for clearly incompatible types */
-            if ((left_type == VAR_STRING || left_type == VAR_BOOL) ||
-                (right_type == VAR_STRING || right_type == VAR_BOOL))
-            {
-                char error_msg[MAX_BUFFER_LEN];
-                snprintf(error_msg, sizeof(error_msg),
-                         "Relational comparison requires numeric types, got %s "
-                         "and %s",
-                         vartype_to_string(left_type),
-                         vartype_to_string(right_type));
-                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
-                                   STRING_LITERAL(error_msg), 1);
-                return false;
-            }
-            return true;
-        }
 
-    case OP_AND:
-    case OP_OR:
+        /* Only report errors for clearly incompatible types */
+        if ((left_type == VAR_STRING || left_type == VAR_BOOL) ||
+            (right_type == VAR_STRING || right_type == VAR_BOOL))
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Relational comparison requires numeric types, got %s "
+                     "and %s",
+                     vartype_to_string(left_type),
+                     vartype_to_string(right_type));
+            add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                               STRING_LITERAL(error_msg), 1);
+            return false;
+        }
+        return true;
+
+    // Same effect as `default` below, kept as an explicit case to document
+    // that logical ops accepting any type is deliberate, not an unhandled
+    // operator falling through.
+    case OP_AND: // NOLINT(bugprone-branch-clone)
+    case OP_OR:  // NOLINT(bugprone-branch-clone)
         /* Logical operations work with any type (truthiness) */
         return true;
 
@@ -1209,6 +1492,37 @@ static bool is_unmarshallable_array_arg(ASTNode *expr,
     return sym && sym->is_array && sym->type != VAR_CHAR;
 }
 
+/* The same "is this argument an array identifier" question as
+ * is_unmarshallable_array_arg() above, WITHOUT its VAR_CHAR exemption, for
+ * callers where that exemption does not apply (issue #308).
+ *
+ * That exemption is correct where it lives: a `yap buf[32]` handed to a
+ * NATIVE has a real representation -- ast_expr_to_stdrot_value()'s
+ * VAR_CHAR/is_array case produces a STDROT_STRING, and coerce_arg_to_param()
+ * can convert that to a STDROT_CSTRING -- so a char array is genuinely
+ * marshallable there and must not be rejected.
+ *
+ * A Brainrot-defined callee has no equivalent. enter_function_scope()
+ * (ast.c) rejects VAR_STRING parameters outright, and its VAR_CHAR case
+ * reads `arg_values[i].ivalue` like every other scalar -- which, for an
+ * array, is the union slot the backing pointer occupies. So `yap buf[4]`
+ * passed to a `yap` parameter yields the low byte of an address, exactly
+ * like `rizz a[2]` to a `rizz` parameter does. Sharing the native helper
+ * here would have let precisely that one case through.
+ *
+ * Returns the symbol (so the caller can name the element type in its
+ * diagnostic) or NULL.
+ */
+static SymbolEntry *array_identifier_symbol(ASTNode *expr,
+                                            SemanticAnalyzer *analyzer)
+{
+    if (!expr || expr->type != NODE_IDENTIFIER)
+        return NULL;
+
+    SymbolEntry *sym = find_symbol(analyzer, expr->data.name);
+    return (sym && sym->is_array) ? sym : NULL;
+}
+
 /* True when `expr` has NO valid StdrotValue representation ast_expr_to_
  * stdrot_value() (stdrot.c) can honestly construct for it -- generalizes
  * is_unmarshallable_array_arg() from "one specific representation bug"
@@ -1225,6 +1539,19 @@ static bool is_unmarshallable_array_arg(ASTNode *expr,
  * receives "no value" where source code plainly supplied one, and (for
  * a variadic consumer with no fixed parameter to have rejected this
  * argument earlier) nothing downstream would otherwise notice.
+ *
+ * That absence is deliberate and load-bearing, not an oversight waiting
+ * to be filled in. #208 briefly added such a branch, on the theory that
+ * a struct reaching an unchecked variadic/legacy tail should marshal
+ * rather than vanish -- but THIS function rejects a struct argument
+ * before any tail is reached, on every route (a plain `yapping("%d",
+ * v)`, a legacy STDROT_EXPORT export, a member access), so that branch
+ * was unreachable and was removed again. A by-value struct argument
+ * reaches a native through exactly one path: a declared STDROT_STRUCT
+ * parameter, marshalled by marshal_struct_argument() (stdrot.c). If you
+ * are about to add a VAR_STRUCT case to ast_expr_to_stdrot_value(),
+ * first write the program that reaches it -- and if one exists, this
+ * function is what's wrong, not that one.
  *
  * A pointer-level expression is NOT flagged here, unlike STDROT_ANY's
  * own additional pointer rejection (semantic_check_native_call()'s
@@ -1435,29 +1762,24 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
         return;
     }
 
-    if (entry->return_type.type == STDROT_HANDLE)
-    {
-        /* STDROT_HANDLE exists in the ABI as reserved groundwork (see
-           stdrot_api.h) but nothing marshals a handle-valued return yet,
-           and -- unlike STDROT_PTR -- a handle isn't just a raw address:
-           it needs a resource-identity/ownership model (type_name-based
-           type checking, who frees it, GC vs manual release) that Phase 2
-           deliberately hasn't designed yet (see the roadmap's Appendix B
-           Q6, "ownership of native resources"). Silently treating that as
-           unchecked would make the descriptor decorative -- claim a type
-           it can't actually deliver. Reject it outright instead of
-           guessing at a design that hasn't been made. STDROT_PTR (a plain
-           opaque address, which this pipeline *can* honestly represent
-           with the existing pointer_level machinery) is handled below,
-           not rejected. */
-        char error_msg[MAX_BUFFER_LEN];
-        snprintf(error_msg, sizeof(error_msg),
-                 "'%s': native handle return types are not marshalled yet",
-                 func_name.data);
-        add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
-                           STRING_LITERAL(error_msg), line);
-        return;
-    }
+    /* STDROT_HANDLE returns are legal (#213). This used to be an outright
+       rejection, on the grounds that a handle "needs a resource-identity/
+       ownership model (type_name-based type checking, who frees it, GC vs
+       manual release) that Phase 2 deliberately hasn't designed yet". That
+       model now exists and is written down on STDROT_HANDLE itself
+       (stdrot_api.h), answering the roadmap's Appendix B Q6: ownership
+       stays in C, release is manual through the owning library, the
+       library keeps a registry of live handles and validates against it,
+       and anything still live at unload is released by the library.
+
+       The three questions the old comment named, answered concretely:
+       type_name-based checking happens in enforce_arg_type() (stdrot.c),
+       the owning LIBRARY frees, and release is manual-but-registered
+       rather than collected. What made this safe to allow before the
+       other deferred returns is that a handle is a TOKEN, not memory the
+       caller must free -- so unlike STDROT_STRUCT there is no "who owns
+       the bytes" question to answer first. STDROT_CSTRING and
+       STDROT_STRUCT stay rejected below for exactly that reason. */
 
     if (entry->return_type.type == STDROT_CSTRING)
     {
@@ -1484,6 +1806,34 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
         return;
     }
 
+    if (entry->return_type.type == STDROT_STRUCT)
+    {
+        /* Argument-direction groundwork only, exactly like STDROT_HANDLE
+           and STDROT_CSTRING above. A by-value aggregate ARGUMENT has a
+           complete, safe story (the adapter copies it, the native gets
+           the copy, the copy dies with the call -- see STDROT_STRUCT's
+           comment in stdrot_api.h); a by-value aggregate RETURN does
+           not. The natural sketch, a native returning a pointer to its
+           own local, dangles the instant it returns, and the
+           deep-copy-immediately trick that rescues STDROT_STRING cannot
+           rescue it: that trick relies on the borrowed storage still
+           being alive at the moment of return, which a dead stack frame
+           is not. marshal_native_return_value() (ast.c) correspondingly
+           has no STDROT_STRUCT case, so approving such a call here would
+           hand the interpreter a struct-typed value nothing ever
+           constructed. Reject it outright rather than guess at an
+           ownership design that hasn't been made (roadmap Appendix B
+           Q6). */
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "'%s': native by-value struct return types are not "
+                 "marshalled yet",
+                 func_name.data);
+        add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                           STRING_LITERAL(error_msg), line);
+        return;
+    }
+
     cur = node->data.func_call.arguments;
     for (int i = 0; i < entry->param_count && cur; i++, cur = cur->next)
     {
@@ -1499,7 +1849,7 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
            checks below run, so they see the desugared 1-argument call
            like any other. A no-op for anything that isn't such a call. */
         if (param->type != STDROT_ANY && param->type != STDROT_PTR &&
-            param->type != STDROT_HANDLE)
+            param->type != STDROT_HANDLE && param->type != STDROT_STRUCT)
         {
             propagate_contextual_call_type(cur->expr,
                                            stdrot_type_to_vartype(param->type),
@@ -1527,14 +1877,109 @@ static void semantic_check_native_call(SemanticAnalyzer *analyzer,
 
         if (param->type == STDROT_HANDLE)
         {
-            /* Same reasoning as the return-type check above. */
-            char error_msg[MAX_BUFFER_LEN];
-            snprintf(error_msg, sizeof(error_msg),
-                     "'%s' argument %d: native handle parameters are not "
-                     "marshalled yet",
-                     func_name.data, i + 1);
-            add_semantic_error(analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
-                               STRING_LITERAL(error_msg), line);
+            /* An opaque native resource handle (#213). Statically this is
+               the same shape as STDROT_PTR below -- a `SAUCE *` is
+               VAR_PTR at pointer level 1 -- so the checkable property is
+               the indirection depth, and exactly one level of it: the
+               token IS the resource, so there is nothing behind it to
+               reach through and `SAUCE **` is not a thing.
+
+               What this check deliberately does NOT do is verify the
+               handle's KIND. A Variable stores an address and no tag, so
+               there is nothing here to compare against param->type_name;
+               claiming otherwise would be a check that always passes.
+               Kinds are kept apart at the source level by `SAUCE *`
+               being its own type spelling, and at runtime by the owning
+               library refusing any address that is not one of its own
+               live handles -- see STDROT_HANDLE's comment in
+               stdrot_api.h. */
+            int actual_pl = infer_expression_pointer_level(cur->expr, analyzer);
+            if (actual_pl != 1)
+            {
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: expected a handle such as "
+                         "SAUCE * (pointer level 1), got pointer level %d",
+                         func_name.data, i + 1, actual_pl);
+                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                   STRING_LITERAL(error_msg), line);
+            }
+            continue;
+        }
+
+        if (param->type == STDROT_STRUCT)
+        {
+            /* Two things have to hold, and VarType alone expresses
+               neither: the argument must be a by-value aggregate (not a
+               pointer to one -- STDROT_STRUCT carries a byte image, so
+               `gang Point *p` passed here would copy the POINTER's
+               bytes, not the struct's), and its tag must match, since
+               every `gang` is VAR_STRUCT and check_type_compatibility_ex()
+               has no struct_name parameter to tell two of them apart (the
+               same gap check_pointer_struct_tag_match() exists to cover
+               on the pointer side). */
+            int actual_pl = infer_expression_pointer_level(cur->expr, analyzer);
+            VarType actual_type = infer_expression_type(cur->expr, analyzer);
+            if (actual_pl != 0 || actual_type != VAR_STRUCT)
+            {
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: expected struct '%s' by value, "
+                         "got %s%s",
+                         func_name.data, i + 1,
+                         param->type_name ? param->type_name : "?",
+                         vartype_to_string(actual_type),
+                         actual_pl > 0 ? " pointer" : "");
+                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                   STRING_LITERAL(error_msg), line);
+                continue;
+            }
+
+            /* An array of structs passes BOTH checks above --
+               infer_expression_type() reports an array identifier's
+               ELEMENT type, so `gang Color pal[4]` looks exactly like a
+               `gang Color` here, at pointer level 0, with the matching
+               tag. Without this the call is approved and the native
+               silently receives pal[0] (PR #307 review, finding 1).
+               resolve_by_value_struct_source() (ast.c) now rejects it at
+               the runtime boundary too, which is what closes the same
+               hole for Brainrot-defined struct parameters; this check
+               exists so a native call reports it at ANALYSIS time, the
+               way every other parameter type already does via the same
+               helper (see the STDROT_ANY and fixed-scalar branches
+               below, which have called it all along). */
+            if (is_unmarshallable_array_arg(cur->expr, analyzer))
+            {
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: struct arrays cannot be passed "
+                         "where a by-value struct '%s' is expected",
+                         func_name.data, i + 1,
+                         param->type_name ? param->type_name : "?");
+                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                   STRING_LITERAL(error_msg), line);
+                continue;
+            }
+
+            /* Fail-open on an unknowable tag, matching check_pointer_
+               struct_tag_match()'s documented convention -- the runtime
+               boundary (enforce_arg_type(), stdrot.c) re-checks the tag
+               against the value that actually shows up, so a static
+               "don't know" costs a late diagnostic, not a wrong call. */
+            String actual_tag =
+                infer_expression_struct_name(cur->expr, analyzer);
+            if (param->type_name && actual_tag.data &&
+                strcmp(param->type_name, actual_tag.data) != 0)
+            {
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "'%s' argument %d: expected struct '%s', got "
+                         "struct '%s'",
+                         func_name.data, i + 1, param->type_name,
+                         actual_tag.data);
+                add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                   STRING_LITERAL(error_msg), line);
+            }
             continue;
         }
 
@@ -1835,17 +2280,98 @@ propagate_contextual_type_into_struct_initializer(ExpressionList *list,
         {
             if (current->expr)
             {
-                propagate_contextual_call_type(current->expr, field->type,
-                                               field->pointer_level);
+                propagate_contextual_call_type(current->expr, field->desc.type,
+                                               field->desc.pointer_level);
             }
-            else if (current->sublist && field->type == VAR_STRUCT &&
-                     field->pointer_level == 0)
+            else if (current->sublist && field->desc.type == VAR_STRUCT &&
+                     field->desc.pointer_level == 0)
             {
-                StructDef *nested_def = get_struct_def(field->struct_name);
+                StructDef *nested_def = get_struct_def(field->desc.struct_name);
                 propagate_contextual_type_into_struct_initializer(
                     current->sublist, nested_def ? nested_def->fields : NULL);
             }
             field = field->next;
+        }
+        current = current->next;
+    } while (current != list);
+}
+
+/* Validates each leaf of a by-value struct's braced initializer (`gang
+   Holder h = {&r};`) against its own field's declared type -- the
+   validation counterpart of propagate_contextual_type_into_struct_
+   initializer() just above, which only ever propagates a contextual TYPE
+   HINT into slorp()-shaped leaves and never compares an already-typed
+   leaf (like `&r`) against the field it initializes. Walks StructField in
+   the identical positional lockstep as that function, and recurses into a
+   nested-struct-typed field's own sublist the same way -- so a
+   pointer-typed field nested arbitrarily deep (`gang Outer o = { {&r} };`)
+   is still checked, not just a top-level one. Only pointer-typed
+   struct/union fields are checked (category via infer_expression_type/
+   pointer_level, tag via check_pointer_struct_tag_match()) -- a by-value
+   struct-typed field's own tag mismatch remains the separate,
+   pre-existing, runtime-only gap check_declaration_initializer_
+   compatibility()'s own comment already documents as out of scope. PR
+   #248 review, round 5, finding 1: `gang Holder { gang Point *pt; }; gang
+   Holder h = {&r};` stored a Rect* into a field every later read/call
+   treats as Point*, with no analyzer-time check at all until now. */
+static void check_struct_initializer_pointer_tags(SemanticAnalyzer *analyzer,
+                                                  ExpressionList *list,
+                                                  StructField *field, int line)
+{
+    if (!list || !field)
+        return;
+
+    ExpressionList *current = list;
+    StructField *fld = field;
+    do
+    {
+        if (fld)
+        {
+            if (current->expr && fld->desc.type == VAR_STRUCT &&
+                fld->desc.pointer_level > 0 &&
+                !is_unresolved_contextual_call(current->expr))
+            {
+                VarType elem_type =
+                    infer_expression_type(current->expr, analyzer);
+                int elem_pl =
+                    infer_expression_pointer_level(current->expr, analyzer);
+                if ((elem_type != NONE && elem_type != VAR_STRUCT) ||
+                    elem_pl != fld->desc.pointer_level)
+                {
+                    char error_msg[MAX_BUFFER_LEN];
+                    snprintf(error_msg, sizeof(error_msg),
+                             "Type mismatch initializing field '%s': "
+                             "expected pointer to struct/union '%s' (level "
+                             "%d), got %s pointer level %d",
+                             fld->name.data ? fld->name.data : "?",
+                             fld->desc.struct_name.data
+                                 ? fld->desc.struct_name.data
+                                 : "?",
+                             fld->desc.pointer_level,
+                             vartype_to_string(elem_type), elem_pl);
+                    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                       STRING_LITERAL(error_msg), line);
+                }
+                else
+                {
+                    char prefix[MAX_BUFFER_LEN];
+                    snprintf(prefix, sizeof(prefix),
+                             "Type mismatch initializing field '%s'",
+                             fld->name.data ? fld->name.data : "?");
+                    check_pointer_struct_tag_match(analyzer,
+                                                   fld->desc.struct_name,
+                                                   current->expr, prefix, line);
+                }
+            }
+            else if (current->sublist && fld->desc.type == VAR_STRUCT &&
+                     fld->desc.pointer_level == 0)
+            {
+                StructDef *nested_def = get_struct_def(fld->desc.struct_name);
+                check_struct_initializer_pointer_tags(
+                    analyzer, current->sublist,
+                    nested_def ? nested_def->fields : NULL, line);
+            }
+            fld = fld->next;
         }
         current = current->next;
     } while (current != list);
@@ -1959,16 +2485,176 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
                generic per-argument recursion (this function's caller,
                semantic_analyze_with_scope_tracking()'s NODE_FUNC_CALL
                case) walks into it. */
-            Parameter *param = func->parameters;
-            ArgumentList *arg = node->data.func_call.arguments;
-            while (param && arg)
+            /* func->parameters is stored in REVERSE source order: every
+               `param_list COMMA ...` rule in lang.y hangs the accumulated
+               list off the NEW node's `next`, so `f(a, b, c)` is kept as
+               c -> b -> a. enter_function_scope() (ast.c) knows this and
+               snapshots a call-order view before it binds anything; this
+               loop did not, and walked the declaration list backwards
+               against a forward argument list -- checking argument 1
+               against the LAST parameter.
+
+               Invisible whenever a function's parameters share one type,
+               which is why it survived. But for
+               `skibidi step(gang Enemy *e, gang World *w)` it rejected the
+               correct call AND accepted the swapped one, and since the
+               runtime binds positionally (correctly), a user who trusted
+               the diagnostic and reordered the arguments got a program
+               that type-checked while writing one struct's field offsets
+               through the other struct's pointer. Silent cross-type
+               corruption out of a "helpful" error message.
+
+               Pair each argument with its source-order parameter here.
+               Note this array is NOT laid out like ast.c's `ordered[]`,
+               despite the shared name and purpose: that one reverses the
+               shared list first, so its ordered[0] is the FIRST source
+               parameter and it can index straight through. This one copies
+               the stored list as-is, so ordered[0] is the LAST source
+               parameter and the index arithmetic below is what compensates.
+               Reading rather than reversing is deliberate -- it never
+               mutates the shared list, so unlike the runtime's version
+               there is no window in which a nested call could observe it
+               reversed, and nothing to restore. */
+            Parameter *ordered[MAX_ARGUMENTS];
+            int param_count = 0;
+            for (Parameter *p = func->parameters;
+                 p && param_count < MAX_ARGUMENTS; p = p->next)
             {
+                ordered[param_count++] = p;
+            }
+
+            ArgumentList *arg = node->data.func_call.arguments;
+            int arg_index = 0;
+            while (arg && arg_index < param_count)
+            {
+                /* ordered[] holds the stored (reversed) order, so the
+                   argument at 0-based `arg_index` pairs with the parameter
+                   that many places from the END. */
+                Parameter *param = ordered[param_count - 1 - arg_index];
+                arg_index++;
                 if (arg->expr)
                 {
-                    propagate_contextual_call_type(arg->expr, param->type,
-                                                   param->pointer_level);
+                    propagate_contextual_call_type(arg->expr, param->desc.type,
+                                                   param->desc.pointer_level);
+
+                    /* An ARRAY argument (issue #308). A parameter can never
+                       itself be an array -- `rizz sum(rizz a[2])` is a
+                       syntax error (#194) -- and array-to-pointer decay
+                       isn't implemented either (`first(a)` for a `rizz *p`
+                       parameter already reports "Expression is not a
+                       pointer"), so there is no shape where passing an
+                       array identifier here is meaningful. What happened
+                       instead was silence: enter_function_scope() (ast.c)
+                       binds a scalar parameter from `arg_values[i].ivalue`
+                       / `.fvalue` / `.bvalue`, and Variable's value union
+                       aliases those with `array_data`, so the callee
+                       received the array's backing POINTER reinterpreted
+                       as its declared type. `twice(a)` printed 1984 -- the
+                       low bits of a heap address, changing between builds.
+
+                       For a `cap` parameter that is undefined behavior
+                       outright, not merely a wrong number: UBSan reports
+                       "load of value 144, which is not a valid value for
+                       type '_Bool'".
+
+                       Reported here rather than at the runtime binding site
+                       so the diagnostic matches what a native call has
+                       always produced for the identical mistake (see
+                       is_unmarshallable_array_arg()'s use in
+                       semantic_check_native_call()) -- that helper existed
+                       and was correct; it was simply never wired into this
+                       path. */
+                    SymbolEntry *arr_sym =
+                        array_identifier_symbol(arg->expr, analyzer);
+                    if (arr_sym)
+                    {
+                        int line =
+                            node->line_number > 0 ? node->line_number : 1;
+                        char error_msg[MAX_BUFFER_LEN];
+                        snprintf(error_msg, sizeof(error_msg),
+                                 "'%s' argument %d: %s arrays cannot be "
+                                 "passed to a function -- pass an element "
+                                 "(`%s[0]`) or its address (`&%s[0]`)",
+                                 func_name.data, arg_index,
+                                 vartype_to_string(arr_sym->type),
+                                 arg->expr->data.name.data,
+                                 arg->expr->data.name.data);
+                        add_semantic_error(analyzer,
+                                           SEMANTIC_ERROR_TYPE_MISMATCH,
+                                           STRING_LITERAL(error_msg), line);
+                        arg = arg->next;
+                        continue;
+                    }
+
+                    /* Struct/union pointer parameters: this analyzer does
+                       not type-check user-defined call arguments against
+                       their parameters at all otherwise (a separate,
+                       much larger, pre-existing gap out of scope here) --
+                       but a `gang Point *pp` parameter silently accepting
+                       `&some_rect` is the call-argument reproduction of
+                       the same struct-tag hole the declaration/assignment
+                       checks above just closed (PR #248 review, round 2,
+                       finding 1), and enter_function_scope() (ast.c) then
+                       follows that address using the PARAMETER's declared
+                       tag's layout on an actually differently-shaped
+                       blob -- a real out-of-bounds read/write for two
+                       structs of different size, not just a wrong value. */
+                    if (param->desc.type == VAR_STRUCT &&
+                        param->desc.pointer_level > 0)
+                    {
+                        int line =
+                            node->line_number > 0 ? node->line_number : 1;
+                        VarType actual_type =
+                            infer_expression_type(arg->expr, analyzer);
+                        int actual_pl =
+                            infer_expression_pointer_level(arg->expr, analyzer);
+                        /* check_pointer_struct_tag_match() alone fail-opens
+                           on an argument whose struct TAG it can't
+                           determine -- correct for a genuinely unknown
+                           expression, but infer_expression_struct_name()
+                           also (necessarily) returns empty for an
+                           expression that is DEFINITELY NOT a struct at
+                           all (e.g. `rizz n; bump(&n);` -- &n is VAR_INT,
+                           pointer_level 1, no struct_name to report), so
+                           the tag helper alone can't tell "unknown" from
+                           "confirmed not a struct" and silently passed the
+                           latter (PR #248 review, round 3, finding 2).
+                           declaration/assignment already have this
+                           category check for free via check_type_
+                           compatibility_ex(); this call-argument path
+                           needs its own, since it was never wired to run
+                           any category check, only the tag one. */
+                        if ((actual_type != NONE &&
+                             actual_type != VAR_STRUCT) ||
+                            actual_pl != param->desc.pointer_level)
+                        {
+                            char error_msg[MAX_BUFFER_LEN];
+                            snprintf(error_msg, sizeof(error_msg),
+                                     "'%s' argument %d: expected pointer to "
+                                     "struct/union '%s' (level %d), got %s "
+                                     "pointer level %d",
+                                     func_name.data, arg_index,
+                                     param->desc.struct_name.data
+                                         ? param->desc.struct_name.data
+                                         : "?",
+                                     param->desc.pointer_level,
+                                     vartype_to_string(actual_type), actual_pl);
+                            add_semantic_error(analyzer,
+                                               SEMANTIC_ERROR_TYPE_MISMATCH,
+                                               STRING_LITERAL(error_msg), line);
+                        }
+                        else
+                        {
+                            char prefix[MAX_BUFFER_LEN];
+                            snprintf(prefix, sizeof(prefix),
+                                     "'%s' argument %d: type mismatch",
+                                     func_name.data, arg_index);
+                            check_pointer_struct_tag_match(
+                                analyzer, param->desc.struct_name, arg->expr,
+                                prefix, line);
+                        }
+                    }
                 }
-                param = param->next;
                 arg = arg->next;
             }
         }
@@ -1997,6 +2683,52 @@ void *semantic_visit_binary_operation(Visitor *self, ASTNode *node)
                               node->data.op.op, analyzer);
 
     return NULL;
+}
+
+/* Shared by both branches of semantic_visit_declaration() below: checks
+   an initializer expression's inferred type/pointer-level against a
+   declaration's declared type/pointer-level, reporting a type-mismatch
+   error if they disagree. Pointer-level is checked first and
+   independently of the base-type check (see the pointer-level branch's
+   own comment at its original call site for why -- a NONE-typed but
+   still pointer-level-known initializer, e.g. a legacy STDROT_ANY-
+   returning native call, must still be checked against a pointer-typed
+   destination). */
+static void check_declaration_initializer_compatibility(
+    SemanticAnalyzer *analyzer, String var_name, VarType declared_type,
+    int declared_pointer_level, ASTNode *init_expr, int line_number)
+{
+    if (!init_expr || is_unresolved_contextual_call(init_expr))
+        return;
+
+    int init_pointer_level =
+        infer_expression_pointer_level(init_expr, analyzer);
+    if (declared_pointer_level > 0 &&
+        declared_pointer_level != init_pointer_level)
+    {
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "Type mismatch in initialization of '%s': expected a "
+                 "pointer (level %d), got pointer level %d",
+                 var_name.data, declared_pointer_level, init_pointer_level);
+        add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                           STRING_LITERAL(error_msg), line_number);
+        return;
+    }
+
+    VarType init_type = infer_expression_type(init_expr, analyzer);
+    if (declared_type != NONE && init_type != NONE &&
+        !check_type_compatibility_ex(declared_type, declared_pointer_level,
+                                     init_type, init_pointer_level))
+    {
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "Type mismatch in initialization of '%s': expected %s, got %s",
+                 var_name.data, vartype_to_string(declared_type),
+                 vartype_to_string(init_type));
+        add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                           STRING_LITERAL(error_msg), line_number);
+    }
 }
 
 /* Validates this declaration node only -- pending_initializer/
@@ -2046,6 +2778,32 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node)
                 STRING_LITERAL("Union initializer must have exactly one value"),
                 node->line_number > 0 ? node->line_number : 1);
         }
+        /* data.op.right here is only the NODE_STRUCT_DEF type marker, not
+           an initializer expression, so the general check below (which
+           reads data.op.right as the initializer) never runs for this
+           production -- meaning a pointer-typed struct/union
+           declaration's REAL initializer (struct_init_expr, set by
+           lang.y's `struct_or_union name_token declarator EQUALS
+           expression` production) went completely untyped: `gang Point
+           *pp = &some_int;` parsed and ran, silently aliasing an int as
+           a Point (PR #248 review, finding 1). Scoped to pointer-typed
+           declarations only -- a by-value struct initializer's tag match
+           (`gang Point p = make_other_struct();`) is a separate,
+           pre-existing gap caught at runtime (interpreter.c's own
+           struct_name comparison), not something this fix takes on. */
+        if (node->pointer_level > 0)
+        {
+            int line = node->line_number > 0 ? node->line_number : 1;
+            check_declaration_initializer_compatibility(
+                analyzer, var_name, node->var_type, node->pointer_level,
+                node->struct_init_expr, line);
+            char prefix[MAX_BUFFER_LEN];
+            snprintf(prefix, sizeof(prefix),
+                     "Type mismatch in initialization of '%s'", var_name.data);
+            check_pointer_struct_tag_match(
+                analyzer, node->data.op.right->data.struct_def.name,
+                node->struct_init_expr, prefix, line);
+        }
         return;
     }
 
@@ -2055,63 +2813,50 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node)
        error from semantic_visit_function_call() when the switch's own
        recursion above reaches it. Comparing its necessarily NONE/0
        inferred type/pointer-level against the declared type here would
-       raise a second, misleading error for the same node. */
-    if (node->data.op.right &&
-        !is_unresolved_contextual_call(node->data.op.right))
+       raise a second, misleading error for the same node. Pointer-level
+       compatibility is knowable even when the base type isn't (e.g. a
+       legacy STDROT_ANY-returning native call used as an initializer, whose
+       actual scalar type the analyzer genuinely can't predict) -- see
+       check_declaration_initializer_compatibility()'s own comment for why
+       that's still checked independently of the base-type check. */
+    /* This hardcoded `1` (not node->line_number) is pre-existing behavior
+       from before this PR touched this function -- several unrelated
+       fixtures (semantic_error_native_ptr_return_scalar_init and siblings)
+       already encode "at line 1" as their expected output for THIS check
+       specifically. Switching it to the real line number is a correct fix
+       in isolation but has a blast radius well beyond struct pointers (7
+       unrelated fixtures broke when tried), so it's left alone here --
+       only the NEW check below (struct-tag match, added by this PR) uses
+       the real line number, since nothing pre-existing depends on its
+       line being wrong. */
+    check_declaration_initializer_compatibility(
+        analyzer, var_name, node->var_type, node->pointer_level,
+        node->data.op.right, 1);
+    /* Same struct-tag check as the NODE_STRUCT_DEF branch above, for the
+       OTHER declaration shape that reaches a pointer-typed struct/union
+       variable: a `lit`-aliased pointer type used as a plain declarator
+       (`lit gang Point *PointPtr; PointPtr pp = &r;`). That grammar
+       production never carries a NODE_STRUCT_DEF marker on data.op.right
+       -- data.op.right IS the real initializer here, same as any
+       non-struct pointer -- so it falls through to this general branch,
+       whose only check until now was the category one just above.
+       node->struct_name is where the declared tag lives for this shape
+       (ast.h's own comment: "for declaration nodes ... that do not carry
+       a NODE_STRUCT_DEF child, such as pointer arrays declared through a
+       typedef alias" -- create_alias_declaration already populates it).
+       Without this, `PointPtr pp = &some_rect;` passed the category
+       check above (both VAR_STRUCT pointers) and was never tag-checked
+       at all (PR #248 review, round 3, finding 1). Uses the real line
+       number (PR #248 review, round 4, finding 2 -- this check is new,
+       nothing pre-existing depends on it reporting the wrong one). */
+    if (node->var_type == VAR_STRUCT && node->pointer_level > 0)
     {
-        VarType declared_type = node->var_type;
-        int declared_pointer_level = node->pointer_level;
-        VarType init_type =
-            infer_expression_type(node->data.op.right, analyzer);
-        int init_pointer_level =
-            infer_expression_pointer_level(node->data.op.right, analyzer);
-
-        /* Pointer-level compatibility is knowable even when the base
-           type isn't (init_type == NONE -- e.g. a legacy STDROT_ANY-
-           returning native call used as an initializer, whose actual
-           scalar type the analyzer genuinely can't predict). What IS
-           always knowable is whether the call's own descriptor declared
-           a pointer result at all: infer_expression_pointer_level()
-           reports pointer_level > 0 only for an entry whose return_type.
-           type is literally STDROT_PTR (see its own NODE_FUNC_CALL
-           case), and enforce_return_type() (stdrot.c) already guarantees
-           a legacy STDROT_ANY export can never actually return one --
-           there is no legitimate dynamic case where "unknown base type"
-           should also mean "unknown pointer-ness." Checked before, and
-           independently of, the base-type compatibility check below, so
-           `rizz *p = legacy_int();` (declared_pointer_level=1,
-           init_pointer_level=0) is rejected instead of silently
-           skipping all checking because init_type happens to be NONE
-           too. declared_pointer_level == 0 with any init_pointer_level
-           falls through to the ordinary check below unaffected (a
-           pointer-valued initializer for a non-pointer destination is
-           already caught there via check_type_compatibility_ex()'s own
-           pointer_level comparison). */
-        if (declared_pointer_level > 0 &&
-            declared_pointer_level != init_pointer_level)
-        {
-            char error_msg[MAX_BUFFER_LEN];
-            snprintf(error_msg, sizeof(error_msg),
-                     "Type mismatch in initialization of '%s': expected a "
-                     "pointer (level %d), got pointer level %d",
-                     var_name.data, declared_pointer_level, init_pointer_level);
-            add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
-                               STRING_LITERAL(error_msg), 1);
-        }
-        else if (declared_type != NONE && init_type != NONE &&
-                 !check_type_compatibility_ex(declared_type,
-                                              declared_pointer_level, init_type,
-                                              init_pointer_level))
-        {
-            char error_msg[MAX_BUFFER_LEN];
-            snprintf(
-                error_msg, sizeof(error_msg),
-                "Type mismatch in initialization of '%s': expected %s, got %s",
-                var_name.data, vartype_to_string(declared_type),
-                vartype_to_string(init_type));
-            add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
-                               STRING_LITERAL(error_msg), 1);
-        }
+        int line = node->line_number > 0 ? node->line_number : 1;
+        char prefix[MAX_BUFFER_LEN];
+        snprintf(prefix, sizeof(prefix),
+                 "Type mismatch in initialization of '%s'", var_name.data);
+        check_pointer_struct_tag_match(analyzer, node->struct_name,
+                                       node->data.op.right, prefix, line);
     }
 }
 
@@ -2194,7 +2939,7 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node)
                 return;
             }
 
-            if (var->modifiers.is_const)
+            if (var->desc.modifiers.is_const)
             {
                 char error_msg[MAX_BUFFER_LEN];
                 snprintf(error_msg, sizeof(error_msg),
@@ -2260,6 +3005,22 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node)
                            STRING_LITERAL("Assignment type mismatch"),
                            node->line_number > 0 ? node->line_number : 1);
     }
+    else if (target_pointer_level > 0 && target_type == VAR_STRUCT &&
+             value_type == VAR_STRUCT &&
+             !is_unresolved_contextual_call(node->data.op.right))
+    {
+        /* check_type_compatibility_ex() above already passed -- both
+           sides are VAR_STRUCT pointers at the same level -- but that
+           check has no struct_name parameter, so `pp = &some_rect;`
+           (pp declared `gang Point *`) sails through it too (PR #248
+           review, round 2, finding 1: the assignment-form reproduction of
+           the same tag hole the declaration form has). */
+        check_pointer_struct_tag_match(
+            analyzer,
+            infer_expression_struct_name(node->data.op.left, analyzer),
+            node->data.op.right, "Assignment type mismatch",
+            node->line_number > 0 ? node->line_number : 1);
+    }
 }
 
 void semantic_visit_function_definition(Visitor *self, ASTNode *node)
@@ -2312,6 +3073,7 @@ SymbolEntry *find_symbol(SemanticAnalyzer *analyzer, const String name)
         return NULL;
 
     SymbolEntry *entry = analyzer->symbol_table;
+    SymbolEntry *fallback = NULL;
 
     while (entry)
     {
@@ -2335,15 +3097,83 @@ SymbolEntry *find_symbol(SemanticAnalyzer *analyzer, const String name)
                 analyzer->current_function_name.data &&
                 strcmp(entry->function_name.data,
                        analyzer->current_function_name.data) == 0;
-            if (is_global || same_function)
+            if (same_function)
             {
-                return entry; /* Symbol is accessible */
+                /* An entry belonging to the function being analyzed wins
+                   outright: it is the innermost declaration of that name,
+                   and it SHADOWS any global of the same name (#312, #321).
+
+                   This mattered because `skibidi main`'s locals are
+                   globals here. `skibidi_function` (lang.y) reduces to a
+                   bare statement list -- `$$ = $4`, with no function-def
+                   node -- so main's body is analyzed with no
+                   current_function_name, and add_symbol() records its
+                   locals with function_name == {0}, indistinguishable
+                   from a real global. Returning whichever matched first
+                   therefore let `gang P bm;` in main answer a lookup for
+                   the parameter `bm` inside an unrelated function:
+
+                     chad wid(gang P *bm) { ... }   <- pointer_level 1
+                     skibidi main { gang P bm; ... }  <- pointer_level 0
+
+                   which rejected a correct call with "expected pointer to
+                   struct/union 'P' (level 1), got struct pointer level 0",
+                   naming a type that is correct inside the callee; and in
+                   the member-access form gave "Struct 'Bag' has no member
+                   'x'" for a parameter whose own type does have it.
+                   Renaming either variable made both go away, which is the
+                   tell.
+
+                   Preferring the in-function entry is the right rule
+                   regardless of how main is represented -- a parameter or
+                   local shadows a global in any language with lexical
+                   scope -- so this fixes the symptom without depending on
+                   the grammar quirk that exposed it. */
+                return entry;
+            }
+            if (is_global && !fallback)
+            {
+                /* Remember the first global match, but keep looking: an
+                   in-function entry later in the table must still win.
+
+                   The FIRST match, not the last, deliberately: that is
+                   the exact entry the old `return entry` handed back, so
+                   a program with no in-function declaration of the name
+                   behaves bit-for-bit as before. This is a refinement of
+                   the old rule, not a replacement for it.
+
+                   ── "Keep looking" is not free, and was measured ───────
+                   It costs the early exit: every lookup that resolves to
+                   a global now walks the table to the end. That is not a
+                   rare path here -- since main's locals ARE globals (see
+                   above), every variable reference inside main takes it.
+
+                   Timed on a generated main with N declarations plus N/4
+                   assignments, same build flags on both sides:
+
+                     N=2000   0.07s -> 0.11s
+                     N=6000   0.53s -> 0.93s
+
+                   so ~1.6-1.8x, a constant factor rather than a new
+                   complexity class: 3x the input costs ~8x the time on
+                   BOTH sides, because this lookup is already quadratic
+                   either way. It makes an existing scaling problem
+                   somewhat worse; it does not create one.
+
+                   Stated here because "keep looking" reads as free, and
+                   re-adding a `return entry` for the global case as an
+                   obvious optimization would quietly reintroduce #312.
+                   If the symbol table ever gets an index -- it is a
+                   linked list today, and lib/hm.c is right there -- this
+                   is one of the call sites that would benefit most. */
+                fallback = entry;
             }
         }
         entry = entry->next;
     }
 
-    return NULL; /* Symbol not found or not accessible */
+    /* No in-function declaration of this name -- a global is correct. */
+    return fallback;
 }
 
 void free_symbol_table(SymbolEntry *symbols)
@@ -2359,6 +3189,27 @@ void free_symbol_table(SymbolEntry *symbols)
         SAFE_FREE(symbols);
         symbols = next;
     }
+}
+
+/* lit aliases occupy the ordinary identifier namespace. Reverse collisions
+   (a later variable, function, or parameter reusing an alias name) are
+   diagnosed here because the lexer classifies the name as TYPE_NAME after
+   the alias is registered, and the parser still accepts that token as a
+   declarator so we can report a semantic error instead of a parse fail. */
+static bool report_alias_name_conflict(SemanticAnalyzer *analyzer,
+                                       const String name, int line_number)
+{
+    if (!get_type_alias(name))
+        return false;
+
+    char error_msg[MAX_BUFFER_LEN];
+    snprintf(error_msg, sizeof(error_msg),
+             "Typedef alias '%s' is already defined",
+             name.data ? name.data : "?");
+    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                       STRING_LITERAL(error_msg),
+                       line_number > 0 ? line_number : 1);
+    return true;
 }
 
 /* Phase 1: Collect all declarations */
@@ -2388,12 +3239,16 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
                 node->data.op.right &&
                         node->data.op.right->type == NODE_STRUCT_DEF
                     ? node->data.op.right->data.struct_def.name
-                    : (String){0};
+                    : node->struct_name;
 
-            add_symbol(analyzer, var_name, var_type, node->pointer_level,
-                       is_const, false, NONE, 0,
-                       node->line_number > 0 ? node->line_number : 1,
-                       struct_name, node->is_array);
+            if (!report_alias_name_conflict(analyzer, var_name,
+                                            node->line_number))
+            {
+                add_symbol(analyzer, var_name, var_type, node->pointer_level,
+                           is_const, false, NONE, 0,
+                           node->line_number > 0 ? node->line_number : 1,
+                           struct_name, node->is_array);
+            }
         }
         if (node->data.op.right)
         {
@@ -2406,7 +3261,12 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
         {
             SymbolEntry *existing =
                 find_symbol(analyzer, node->data.function_def.name);
-            if (existing && existing->is_function)
+            /* Reverse ordinary-identifier collision: lit aliases are parsed
+               before this collection pass, so a later function definition
+               cannot reuse an alias name. */
+            bool alias_conflict = report_alias_name_conflict(
+                analyzer, node->data.function_def.name, node->line_number);
+            if (!alias_conflict && existing && existing->is_function)
             {
                 char error_msg[MAX_BUFFER_LEN];
                 snprintf(error_msg, sizeof(error_msg),
@@ -2417,7 +3277,7 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
                                    node->line_number > 0 ? node->line_number
                                                          : 1);
             }
-            else
+            else if (!alias_conflict)
             {
                 add_symbol(analyzer, node->data.function_def.name, NONE, 0,
                            false, true, node->data.function_def.return_type,
@@ -2436,12 +3296,14 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
             Parameter *param = node->data.function_def.parameters;
             while (param)
             {
-                if (param->name.data)
+                if (param->name.data &&
+                    !report_alias_name_conflict(analyzer, param->name,
+                                                node->line_number))
                 {
-                    add_symbol(analyzer, param->name, param->type,
-                               param->pointer_level, false, false, NONE, 0,
+                    add_symbol(analyzer, param->name, param->desc.type,
+                               param->desc.pointer_level, false, false, NONE, 0,
                                node->line_number > 0 ? node->line_number : 1,
-                               param->struct_name, false);
+                               param->desc.struct_name, false);
                 }
                 param = param->next;
             }
@@ -2498,14 +3360,6 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
         break;
 
     case NODE_WHILE_STATEMENT:
-        analyzer->scope_depth++;
-        if (node->data.while_stmt.body)
-        {
-            collect_declarations(analyzer, node->data.while_stmt.body);
-        }
-        analyzer->scope_depth--;
-        break;
-
     case NODE_DO_WHILE_STATEMENT:
         analyzer->scope_depth++;
         if (node->data.while_stmt.body)
@@ -2558,6 +3412,47 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
  * its children) may call infer_expression_type()/infer_expression_pointer_
  * level() -- those are pure queries, not traversal, and are safe to call
  * as many times as needed. */
+/* `!` needs a scalar truth value; struct/union and rant do not have one.
+ *
+ * Rejecting them is not pedantry. infer_expression_type() reports VAR_BOOL
+ * for a `!` expression whatever the operand was -- correct for the scalars,
+ * but it also means a struct operand stops tripping the checks that would
+ * otherwise catch it. `yapping("%b", -s)` is refused with "struct has no
+ * supported native ABI representation"; `!s` looks like an ordinary cap and
+ * sails straight through to an int evaluator that has no int to read, then
+ * dies on a null load. A rant is refused for the quieter version of the same
+ * problem: it is not int-width, so judging it as one reads the wrong bytes
+ * instead of crashing.
+ *
+ * Called from both unary sites -- semantic_analyze_with_scope_tracking() and
+ * semantic_analyze_node() -- because they are parallel implementations and a
+ * check in only one of them is a check in neither, depending on how the
+ * expression was reached. */
+static void check_logical_not_operand(SemanticAnalyzer *analyzer, ASTNode *node)
+{
+    if (!node || node->data.unary.op != OP_NOT || !node->data.unary.operand)
+    {
+        return;
+    }
+    if (infer_expression_pointer_level(node->data.unary.operand, analyzer) != 0)
+    {
+        return; /* `!p` is a null check, which is fine. */
+    }
+    VarType operand_type =
+        infer_expression_type(node->data.unary.operand, analyzer);
+    if (operand_type != VAR_STRUCT && operand_type != VAR_STRING)
+    {
+        return;
+    }
+    char error_msg[MAX_BUFFER_LEN];
+    snprintf(error_msg, sizeof(error_msg),
+             "Logical not requires a scalar or pointer operand, got %s",
+             vartype_to_string(operand_type));
+    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                       STRING_LITERAL(error_msg),
+                       node->line_number > 0 ? node->line_number : 1);
+}
+
 void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                                           ASTNode *node)
 {
@@ -2800,6 +3695,7 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
             semantic_analyze_with_scope_tracking(analyzer,
                                                  node->data.unary.operand);
         }
+        check_logical_not_operand(analyzer, node);
         if (node->data.unary.op == OP_ADDRESS_OF)
         {
             ASTNode *operand = node->data.unary.operand;
@@ -2915,13 +3811,17 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                node() never does) is what tells the two apart here, and
                carries the struct tag needed to look up each field's real
                type. */
-            if (node->var_type == VAR_STRUCT && node->data.op.right &&
-                node->data.op.right->type == NODE_STRUCT_DEF)
+            bool is_struct_brace_init =
+                node->var_type == VAR_STRUCT && node->data.op.right &&
+                node->data.op.right->type == NODE_STRUCT_DEF;
+            StructDef *struct_init_def = NULL;
+            if (is_struct_brace_init)
             {
-                StructDef *def =
+                struct_init_def =
                     get_struct_def(node->data.op.right->data.struct_def.name);
                 propagate_contextual_type_into_struct_initializer(
-                    node->pending_initializer, def ? def->fields : NULL);
+                    node->pending_initializer,
+                    struct_init_def ? struct_init_def->fields : NULL);
             }
             else
             {
@@ -2930,6 +3830,98 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                     node->pointer_level);
             }
             semantic_check_expression_list(analyzer, node->pending_initializer);
+
+            /* By-value struct brace-init of a pointer-typed FIELD (`gang
+               Holder { gang Point *pt; }; gang Holder h = {&r};`) is a
+               FIFTH place a pointer-to-struct value gets stored, distinct
+               from the array-element brace-init check just below (that one
+               guards pointer_level > 0 on the DECLARATION itself; this one
+               is pointer_level == 0 at the declaration level -- a by-value
+               struct -- with the pointer nested inside one of its FIELDS).
+               PR #248 review, round 5, finding 1. */
+            if (is_struct_brace_init)
+                check_struct_initializer_pointer_tags(
+                    analyzer, node->pending_initializer,
+                    struct_init_def ? struct_init_def->fields : NULL,
+                    node->line_number > 0 ? node->line_number : 1);
+
+            /* Brace-initialized array of struct/union POINTERS (`lit gang
+               Point *PointPtr; PointPtr values[2] = {&r};`) is a FOURTH
+               place a pointer-to-struct value gets stored, distinct from
+               struct_init_expr/data.op.right/plain-assignment -- this
+               grammar has no array-of-structs-BY-VALUE declaration syntax
+               at all (struct declarators have no `dimensions` production),
+               so var_type == VAR_STRUCT with pointer_level > 0 on an array
+               declaration always means "array of struct/union pointers,"
+               unambiguously. semantic_check_expression_list() just above
+               only visits each element (undefined-variable/native-call
+               checks); it never compares an element's inferred type/tag
+               against the array's own declared type the way struct_init_
+               expr/data.op.right do via check_declaration_initializer_
+               compatibility()/check_pointer_struct_tag_match() elsewhere
+               in this function. Without this, `values[0] = &some_rect;`
+               (checked, PR #248 review round 3) is a semantic error but
+               `PointPtr values[2] = {&some_rect};` (this brace-init form)
+               silently stored a Rect* into a slot every later read treats
+               as Point* -- for two structs of different size, an
+               ASan-visible heap-buffer-overflow, not a wrong integer (PR
+               #248 review, round 4, finding 1). */
+            if (node->var_type == VAR_STRUCT && node->pointer_level > 0)
+            {
+                int line = node->line_number > 0 ? node->line_number : 1;
+                const char *var_name =
+                    node->data.op.left && node->data.op.left->data.name.data
+                        ? node->data.op.left->data.name.data
+                        : "?";
+                /* ExpressionList is a circular doubly-linked list (see
+                   create_expression_list()/append_expression_list_node(),
+                   ast.c -- a single element's next/prev both point back to
+                   itself), not NULL-terminated -- matching semantic_check_
+                   expression_list()'s own traversal just above, this has
+                   to stop on returning to the start, not on next == NULL. */
+                ExpressionList *elem = node->pending_initializer;
+                do
+                {
+                    if (!elem->expr ||
+                        is_unresolved_contextual_call(elem->expr))
+                    {
+                        elem = elem->next;
+                        continue;
+                    }
+
+                    VarType elem_type =
+                        infer_expression_type(elem->expr, analyzer);
+                    int elem_pl =
+                        infer_expression_pointer_level(elem->expr, analyzer);
+                    if ((elem_type != NONE && elem_type != VAR_STRUCT) ||
+                        elem_pl != node->pointer_level)
+                    {
+                        char error_msg[MAX_BUFFER_LEN];
+                        snprintf(error_msg, sizeof(error_msg),
+                                 "Type mismatch in initialization of '%s': "
+                                 "expected pointer to struct/union '%s' (level "
+                                 "%d), got %s pointer level %d",
+                                 var_name,
+                                 node->struct_name.data ? node->struct_name.data
+                                                        : "?",
+                                 node->pointer_level,
+                                 vartype_to_string(elem_type), elem_pl);
+                        add_semantic_error(analyzer,
+                                           SEMANTIC_ERROR_TYPE_MISMATCH,
+                                           STRING_LITERAL(error_msg), line);
+                        elem = elem->next;
+                        continue;
+                    }
+
+                    char prefix[MAX_BUFFER_LEN];
+                    snprintf(prefix, sizeof(prefix),
+                             "Type mismatch in initialization of '%s'",
+                             var_name);
+                    check_pointer_struct_tag_match(analyzer, node->struct_name,
+                                                   elem->expr, prefix, line);
+                    elem = elem->next;
+                } while (elem != node->pending_initializer);
+            }
         }
         if (node->struct_init_expr)
         {
@@ -2976,11 +3968,13 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         if (obj && obj->type == NODE_IDENTIFIER)
         {
             VarType obj_type = NONE;
+            int obj_pointer_level = 0;
             String obj_struct_name = {0};
             SymbolEntry *symbol = find_symbol(analyzer, obj->data.name);
             if (symbol)
             {
                 obj_type = symbol->type;
+                obj_pointer_level = symbol->pointer_level;
                 obj_struct_name = symbol->struct_name;
             }
             else
@@ -2988,10 +3982,29 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                 Variable *var = get_variable(obj->data.name);
                 if (!var)
                     break; /* undefined variable is reported elsewhere */
-                obj_type = var->var_type;
-                obj_struct_name = var->struct_name;
+                obj_type = var->desc.type;
+                obj_pointer_level = var->desc.pointer_level;
+                obj_struct_name = var->desc.struct_name;
             }
             parent_is_struct_typed = (obj_type == VAR_STRUCT);
+            /* Same restriction as resolve_struct_access()'s own runtime
+               check (ast.c, PR #248 review finding 2): `.` as an implicit
+               `->` only makes sense for exactly one level of indirection
+               (`gang Foo *pp; pp.field`); `gang Foo **pp; pp.field` needs
+               an explicit double-dereference in C and must be rejected
+               here too, not just at runtime -- this static path is what
+               currently lets `pp.field` on a `Foo **` reach interpretation
+               at all. */
+            if (parent_is_struct_typed && obj_pointer_level > 1)
+            {
+                add_semantic_error(
+                    analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                    STRING_LITERAL(
+                        "Member access via '.' through a multi-level "
+                        "pointer (pointer_level > 1) is not supported"),
+                    node->line_number > 0 ? node->line_number : 1);
+                break;
+            }
             if (parent_is_struct_typed)
                 parent_def = get_struct_def(obj_struct_name);
         }
@@ -3000,20 +4013,21 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
             if (obj->var_type == NONE)
                 break; /* obj's own access already failed and was reported */
             parent_is_struct_typed = (obj->var_type == VAR_STRUCT);
-            if (parent_is_struct_typed && obj->pointer_level > 0)
+            /* Same single-level implicit-`->` rule as the NODE_IDENTIFIER-
+               object branch just above (and resolve_struct_access(),
+               ast.c): #197 lets `.` chain through a pointer-typed
+               struct/union FIELD (`n.next.v` where `next` is `gang Node
+               *`, obj->pointer_level == 1) by following the pointer at
+               runtime, but `gang Node **next` (pointer_level > 1) needs an
+               explicit `(*x)->` and is rejected here so interpretation
+               never starts. */
+            if (parent_is_struct_typed && obj->pointer_level > 1)
             {
-                /* obj is a pointer-typed struct/union field (e.g. the
-                   `n.next` in `n.next.v` where `next` is `gang Node *`).
-                   Chaining `.` through it isn't supported (see
-                   resolve_struct_access's doc comment) — catch it here so
-                   interpretation never starts, rather than letting every
-                   runtime evaluator independently hit and report the same
-                   failure. */
                 add_semantic_error(
                     analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
                     STRING_LITERAL(
-                        "Chained member access through a pointer-typed "
-                        "struct/union field is not supported"),
+                        "Member access via '.' through a multi-level "
+                        "pointer (pointer_level > 1) is not supported"),
                     node->line_number > 0 ? node->line_number : 1);
                 break;
             }
@@ -3021,6 +4035,132 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                 obj->data.struct_access.struct_name.data)
                 parent_def =
                     get_struct_def(obj->data.struct_access.struct_name);
+        }
+        else if (obj && obj->type == NODE_ARRAY_ACCESS &&
+                 obj->data.array.name.data)
+        {
+            /* `pts[i].field`: the object is an element of an array of
+               struct/union values (or single-level pointers). Resolve the
+               element's tag from the array symbol, mirroring resolve_struct_
+               access()'s runtime NODE_ARRAY_ACCESS branch (ast.c). */
+            VarType obj_type = NONE;
+            int obj_pointer_level = 0;
+            String obj_struct_name = {0};
+            SymbolEntry *symbol = find_symbol(analyzer, obj->data.array.name);
+            if (symbol && symbol->is_array)
+            {
+                obj_type = symbol->type;
+                obj_pointer_level = symbol->pointer_level;
+                obj_struct_name = symbol->struct_name;
+            }
+            else
+            {
+                Variable *var = get_variable(obj->data.array.name);
+                if (!var || !var->desc.is_array)
+                    break;
+                obj_type = var->desc.type;
+                obj_pointer_level = var->desc.pointer_level;
+                obj_struct_name = var->desc.struct_name;
+            }
+            parent_is_struct_typed = (obj_type == VAR_STRUCT);
+            if (parent_is_struct_typed && obj_pointer_level > 1)
+            {
+                add_semantic_error(
+                    analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                    STRING_LITERAL(
+                        "Member access via '.' through a multi-level "
+                        "pointer (pointer_level > 1) is not supported"),
+                    node->line_number > 0 ? node->line_number : 1);
+                break;
+            }
+            if (parent_is_struct_typed)
+                parent_def = get_struct_def(obj_struct_name);
+        }
+        else if (obj && obj->type == NODE_ARRAY_ACCESS && obj->data.array.base)
+        {
+            /* `b.pts[i].field`: the object is an element of a struct-typed
+               ARRAY FIELD (#311/#315). Without this arm the whole shape
+               fell through to `break` and then to "Member access on
+               non-struct/union value" -- which is not merely unhelpful but
+               wrong, because the value IS a struct.
+
+               The symptom was that the field form worked for one hop and
+               died on the second: `b.pts[0].y` resolved (the runtime
+               resolver in ast.c handles it), while `b.pts[0].core.v` was
+               rejected here at analysis time, leaving the new field form
+               strictly less capable than the `arr[0].core.v` name-based
+               form it was modelled on (PR #315 review).
+
+               infer_struct_def_static() already answers "what struct does
+               this member-access base denote", and for an array field it
+               returns the ELEMENT's definition -- a field's struct_name is
+               its element type whether or not is_array is set -- which is
+               exactly the tag an indexed element has. The is_array check
+               below is still needed: without it `b.solo[0].v` on a
+               non-array struct field would be accepted here. */
+            StructDef *elem_def =
+                infer_struct_def_static(obj->data.array.base, analyzer);
+            if (!elem_def)
+                break;
+
+            StructDef *outer_def = infer_struct_def_static(
+                obj->data.array.base->type == NODE_STRUCT_ACCESS
+                    ? obj->data.array.base->data.struct_access.object
+                    : NULL,
+                analyzer);
+            if (outer_def && obj->data.array.base->type == NODE_STRUCT_ACCESS)
+            {
+                StructField *arr_fld = find_struct_field(
+                    outer_def,
+                    obj->data.array.base->data.struct_access.member_name);
+                if (!arr_fld || !arr_fld->desc.is_array ||
+                    arr_fld->desc.pointer_level != 0)
+                    break;
+            }
+
+            parent_is_struct_typed = true;
+            parent_def = elem_def;
+        }
+        else if (obj && obj->type == NODE_FUNC_CALL)
+        {
+            /* `f().x`, and as the base of `f().inner.x`. The return type is
+               declared, so this is answerable statically -- which is the
+               only option here, since the analyzer must not run the call.
+               Without this arm the case fell through to `break` below and
+               validated nothing: a non-struct `f().x` reached the
+               interpreter with no semantic error, and the node's var_type /
+               struct_name were only ever whatever create_struct_access_
+               node()'s parse-time resolve happened to leave behind.
+
+               Same rules as infer_struct_def_static(): a by-value struct
+               return only. `.` does not follow a pointer-to-struct return,
+               matching resolve_struct_access()'s own pointer_level == 0
+               requirement at runtime. */
+            if (is_builtin_function(obj->data.func_call.function_name))
+            {
+                /* No native returns a struct across the Road A ABI. */
+                add_semantic_error(
+                    analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                    STRING_LITERAL("Member access on the result of a "
+                                   "built-in function"),
+                    node->line_number > 0 ? node->line_number : 1);
+                break;
+            }
+            Function *func = get_function(obj->data.func_call.function_name);
+            if (!func)
+                break; /* undefined function is reported elsewhere */
+            parent_is_struct_typed = (func->return_desc.type == VAR_STRUCT);
+            if (parent_is_struct_typed && func->return_desc.pointer_level > 0)
+            {
+                add_semantic_error(
+                    analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                    STRING_LITERAL("Member access via '.' on a call "
+                                   "returning a pointer is not supported"),
+                    node->line_number > 0 ? node->line_number : 1);
+                break;
+            }
+            if (parent_is_struct_typed)
+                parent_def = get_struct_def(func->return_desc.struct_name);
         }
         else
         {
@@ -3054,10 +4194,58 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
             break;
         }
 
-        node->var_type = fld->type;
-        node->pointer_level = fld->pointer_level;
-        if (fld->type == VAR_STRUCT && fld->struct_name.data)
-            node->data.struct_access.struct_name = fld->struct_name;
+        node->var_type = fld->desc.type;
+        node->pointer_level = fld->desc.pointer_level;
+        node->modifiers = fld->desc.modifiers;
+        if (fld->desc.type == VAR_STRUCT && fld->desc.struct_name.data)
+            node->data.struct_access.struct_name = fld->desc.struct_name;
+        break;
+    }
+
+    case NODE_STRING_SLICE:
+    {
+        /* `s[i:j]` (#251). Two things are checked here, and only one of
+           them is possible at runtime.
+
+           The bounds are ordinary subexpressions, so they get the same
+           analysis and value-expression requirement every subscript gets
+           -- that is what makes `s[0:yapping("x")]` a static error rather
+           than a void value silently used as a length.
+
+           The sliced NAME is checked to be a rant here rather than left
+           entirely to evaluate_string_slice(), because a static answer is
+           strictly better when one is available: `rizz n; n[0:1]` is
+           wrong no matter what the program does, and saying so before it
+           runs beats saying so only if that line is reached. The runtime
+           check stays regardless -- find_symbol() sees only what has been
+           declared so far in this pass, so a genuinely unknown name is
+           left alone here and reported there. */
+        if (node->data.slice.start)
+        {
+            semantic_analyze_with_scope_tracking(analyzer,
+                                                 node->data.slice.start);
+            require_value_expression(analyzer, node->data.slice.start,
+                                     "slice bound");
+        }
+        if (node->data.slice.end)
+        {
+            semantic_analyze_with_scope_tracking(analyzer,
+                                                 node->data.slice.end);
+            require_value_expression(analyzer, node->data.slice.end,
+                                     "slice bound");
+        }
+
+        SymbolEntry *sliced = find_symbol(analyzer, node->data.slice.name);
+        if (sliced && !(sliced->type == VAR_STRING && !sliced->is_array &&
+                        sliced->pointer_level == 0))
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Cannot slice '%.100s': only a rant can be sliced",
+                     node->data.slice.name.data);
+            add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                               STRING_LITERAL(error_msg), node->line_number);
+        }
         break;
     }
 
@@ -3068,6 +4256,15 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
            in use, otherwise it's the single-dimension index. Needed so an
            index expression like `arr[bet(2)]` gets the same native-call
            arity/type checking as any other expression. */
+        if (node->data.array.base)
+        {
+            /* `foo.arr[i]` -- visit the struct_access base itself so it
+               gets NODE_STRUCT_ACCESS's own validation (unknown struct
+               type, unknown field, etc.), exactly as if `foo.arr` had
+               been used standalone. */
+            semantic_analyze_with_scope_tracking(analyzer,
+                                                 node->data.array.base);
+        }
         if (node->data.array.num_dimensions > 0)
         {
             for (int i = 0; i < node->data.array.num_dimensions; i++)
@@ -3125,8 +4322,8 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
             if (current_func)
             {
                 propagate_contextual_call_type(
-                    node->data.op.left, current_func->return_type,
-                    current_func->return_pointer_level);
+                    node->data.op.left, current_func->return_desc.type,
+                    current_func->return_desc.pointer_level);
             }
 
             semantic_analyze_with_scope_tracking(analyzer, node->data.op.left);
@@ -3161,13 +4358,14 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                call(); comparing its necessarily NONE/0 inferred type/
                pointer-level against the declared return type here would
                raise a second, misleading error for the same node. */
-            if (current_func && current_func->return_type != VAR_STRUCT &&
-                !(current_func->return_type == VAR_VOID &&
-                  current_func->return_pointer_level == 0) &&
+            if (current_func && current_func->return_desc.type != VAR_STRUCT &&
+                !(current_func->return_desc.type == VAR_VOID &&
+                  current_func->return_desc.pointer_level == 0) &&
                 !is_unresolved_contextual_call(node->data.op.left))
             {
-                VarType declared_type = current_func->return_type;
-                int declared_pointer_level = current_func->return_pointer_level;
+                VarType declared_type = current_func->return_desc.type;
+                int declared_pointer_level =
+                    current_func->return_desc.pointer_level;
                 VarType actual_type =
                     infer_expression_type(node->data.op.left, analyzer);
                 int actual_pointer_level = infer_expression_pointer_level(
@@ -3203,6 +4401,54 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                                        STRING_LITERAL(error_msg),
                                        node->line_number > 0 ? node->line_number
                                                              : 1);
+                }
+            }
+
+            /* Pointer-to-struct return (VAR_STRUCT, return_pointer_level >
+               0, #193) is the one VAR_STRUCT return shape the runtime does
+               NOT tag-check -- handle_return_statement's declared_pointer_
+               level > 0 branch just boxes the pointer, so `gang Point *f()
+               { bussin some_rect_ptr; }` would otherwise return a Rect*
+               that a later `f().x` reads through Point's layout. Check the
+               pointee's tag (and category/level) here, reusing the same
+               helpers as the pointer-struct declaration/assignment/argument
+               checks (#248/#253); the by-value VAR_STRUCT return still
+               defers to handle_return_statement's own struct-name check. */
+            if (current_func && current_func->return_desc.type == VAR_STRUCT &&
+                current_func->return_desc.pointer_level > 0 &&
+                !is_unresolved_contextual_call(node->data.op.left))
+            {
+                VarType actual_type =
+                    infer_expression_type(node->data.op.left, analyzer);
+                int actual_pl = infer_expression_pointer_level(
+                    node->data.op.left, analyzer);
+                int line = node->line_number > 0 ? node->line_number : 1;
+                if ((actual_type != NONE && actual_type != VAR_STRUCT) ||
+                    actual_pl != current_func->return_desc.pointer_level)
+                {
+                    char error_msg[MAX_BUFFER_LEN];
+                    snprintf(
+                        error_msg, sizeof(error_msg),
+                        "Return type mismatch in '%s': expected pointer to "
+                        "struct/union '%s' (level %d), got %s pointer level %d",
+                        current_func->name.data,
+                        current_func->return_desc.struct_name.data
+                            ? current_func->return_desc.struct_name.data
+                            : "?",
+                        current_func->return_desc.pointer_level,
+                        vartype_to_string(actual_type), actual_pl);
+                    add_semantic_error(analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                                       STRING_LITERAL(error_msg), line);
+                }
+                else
+                {
+                    char prefix[MAX_BUFFER_LEN];
+                    snprintf(prefix, sizeof(prefix),
+                             "Return type mismatch in '%s'",
+                             current_func->name.data);
+                    check_pointer_struct_tag_match(
+                        analyzer, current_func->return_desc.struct_name,
+                        node->data.op.left, prefix, line);
                 }
             }
         }
@@ -3541,6 +4787,7 @@ void semantic_analyze_node(SemanticAnalyzer *analyzer, ASTNode *node)
         {
             semantic_analyze_node(analyzer, node->data.unary.operand);
         }
+        check_logical_not_operand(analyzer, node);
         if (node->data.unary.op == OP_ADDRESS_OF)
         {
             ASTNode *operand = node->data.unary.operand;

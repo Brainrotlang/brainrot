@@ -1,0 +1,11 @@
+🚽 Test case: the same-function argument reentrancy fix (PR #254, #193's
+🚽 struct work) also repairs the long-standing SCALAR form: `sub(sub(10,
+🚽 3), 1)` must be (10-3)-1 = 6. The in-place parameter-list reversal used
+🚽 to bind the inner sub's a/b swapped, computing 3-10 then 1-(-7) = -8.
+rizz sub(rizz a, rizz b) {
+    bussin a - b;
+}
+
+skibidi main {
+    yapping("%d", sub(sub(10, 3), 1));
+}

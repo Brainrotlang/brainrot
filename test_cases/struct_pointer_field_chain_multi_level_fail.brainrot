@@ -1,0 +1,15 @@
+🚽 Test case: #197 -- chaining `.` through a MULTI-level pointer field
+🚽 (`gang Node **next`) is rejected, the field counterpart of #196's
+🚽 multi-level pointer VARIABLE rejection. `.` as an implicit `->` only
+🚽 makes sense for one level of indirection; `next`'s slot at
+🚽 pointer_level 2 holds a `gang Node *`, not a `gang Node` blob, so C
+🚽 would require an explicit `(*n.next)->val`.
+gang Node {
+    rizz val;
+    gang Node **next;
+};
+
+skibidi main {
+    gang Node n;
+    n.next.val = 1;
+}

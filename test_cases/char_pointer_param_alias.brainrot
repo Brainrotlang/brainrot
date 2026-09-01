@@ -1,0 +1,24 @@
+🚽 Test case: regression -- enter_function_scope() bound every VAR_CHAR
+🚽 parameter via set_int_variable(), which calls set_variable(...,
+🚽 VAR_INT, ...): that overwrites the parameter's var_type to VAR_INT
+🚽 (clobbering the VAR_CHAR set moments earlier in the same function) and
+🚽 stores the raw, unmasked argument value -- reintroducing the exact
+🚽 stale-high-bytes hazard write_value_to_address()'s zero-extension
+🚽 fixes this PR closed, now reachable through an ordinary function call
+🚽 instead of a pointer alias into a variable's own scope. Nothing
+🚽 rejects an out-of-byte-range argument for a `yap` parameter.
+🚽
+🚽 Confirmed: before the fix, this printed 888 (0x03 left over from
+🚽 1000's own representation, plus 'x's 0x78) instead of 120. Fixed by
+🚽 using set_char_variable() (already existed, just wasn't called here),
+🚽 which keeps var_type correctly VAR_CHAR and zero-extends the stored
+🚽 value the same way every other scalar VAR_CHAR write site does.
+skibidi foo(yap c) {
+    yap *p = &c;
+    *p = 'x';
+    yapping("%d", c + 0);
+}
+
+skibidi main {
+    foo(1000);
+}

@@ -1,0 +1,21 @@
+🚽 Test case: regression -- write_value_to_address()'s `packed_storage`
+🚽 flag is true for any dereferenced-pointer target, including a `yap *`
+🚽 that happens to alias a scalar variable's own 4-byte union slot (not
+🚽 a packed array/struct byte) -- there is no way to tell which from the
+🚽 pointer alone. A 1-byte write through such an alias is still correct
+🚽 (see this file's own struct/array write-order fixtures for why the
+🚽 narrow write itself is right), but only if the slot's upper 3 bytes
+🚽 were already zero and stay that way; otherwise a later *raw* (non-
+🚽 char-narrowed) read of the scalar, like plain arithmetic, sees
+🚽 whatever was left behind. `c = 1000` deliberately exceeds char range
+🚽 to populate those upper bytes with something a naive fix would leave
+🚽 stale: before the fix, `c + 0` read 888 (0x03 leftover in byte 1 from
+🚽 1000's own representation, plus 'x's 0x78 in byte 0) instead of the
+🚽 correct 120 ('x').
+skibidi main {
+    yap c;
+    c = 1000;
+    yap *p = &c;
+    *p = 'x';
+    yapping("%d", c + 0);
+}

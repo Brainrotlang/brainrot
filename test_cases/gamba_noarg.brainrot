@@ -1,0 +1,11 @@
+🚽 Zero-argument gamba(). Native draws an unbiased value in [0, INT_MAX] (the
+🚽 assertion is a property, never a fixed roll). On the OpenSSL-free wasm build
+🚽 gamba() is an erroring stub, and because it takes no arguments its error line
+🚽 can only come from the CALL node itself -- this guards that the no-arg abort
+🚽 reports line 8, not "line 0" (issue #215 review; see the wasm override in
+🚽 tests/run_wasm_tests.mjs).
+skibidi main {
+    rizz nonce = gamba();
+    yapping("nonneg=%b", nonce >= 0);
+    bussin 0;
+}

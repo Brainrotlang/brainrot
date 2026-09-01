@@ -1,0 +1,25 @@
+🚽 Test case: #193 -- a by-value struct/union member-access sub-expression
+🚽 (`bussin b.corner;`) can be returned, symmetric with the argument side.
+🚽 The member's blob is copied into a fresh heap allocation before the
+🚽 function's scope (where `b` lives) is torn down, then copied into the
+🚽 caller's destination -- so the returned value is independent of the
+🚽 (now-gone) source.
+gang Point {
+    rizz x;
+    rizz y;
+};
+gang Box {
+    gang Point corner;
+};
+
+gang Point get_corner(gang Box b) {
+    bussin b.corner;
+}
+
+skibidi main {
+    gang Box b;
+    b.corner.x = 11;
+    b.corner.y = 22;
+    gang Point c = get_corner(b);
+    yapping("%d %d", c.x, c.y);
+}

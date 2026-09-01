@@ -1,0 +1,11 @@
+🚽 Demonstrates #cooked <name> (the angle-bracket form): resolves "mathutils"
+🚽 by searching $BRAINROT_PATH, then the install module directory, then the
+🚽 directory containing the brainrot executable, for mathutils.brainrot.
+🚽 Run with: BRAINROT_PATH=examples ./brainrot examples/modules_named.brainrot
+#cooked <mathutils>
+
+skibidi main {
+    yapping("square(6) = %d", square(6));
+    yapping("cube(3) = %d", cube(3));
+    bussin 0;
+}

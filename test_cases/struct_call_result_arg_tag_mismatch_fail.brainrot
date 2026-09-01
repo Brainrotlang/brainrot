@@ -1,0 +1,24 @@
+🚽 Test case: #193 -- passing a struct-returning call result whose type
+🚽 does not match the parameter (`show(mk())` where `mk` returns a `gang
+🚽 Other` but `show` wants a `gang Point`) is rejected, and the temporary
+🚽 return blob is released cleanly (no leak).
+gang Point {
+    rizz x;
+};
+gang Other {
+    rizz z;
+};
+
+gang Other mk() {
+    gang Other o;
+    o.z = 1;
+    bussin o;
+}
+
+skibidi show(gang Point p) {
+    yapping("%d", p.x);
+}
+
+skibidi main {
+    show(mk());
+}

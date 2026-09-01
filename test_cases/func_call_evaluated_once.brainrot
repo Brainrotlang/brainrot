@@ -1,0 +1,240 @@
+🚽 Test case: a user-defined function call must run exactly once, whatever
+🚽 syntactic position it appears in.
+🚽
+🚽 ast_accept()'s generic pre-visit used to execute user-defined calls, and
+🚽 the statement's own visitor then evaluated the same node again for real.
+🚽 So a declaration, an assignment, or a call buried in a right-hand
+🚽 expression ran the body TWICE and kept the second result. Pure functions
+🚽 were unaffected, which is why it survived; anything with a side effect
+🚽 was not. Loading a resource loaded it twice.
+🚽
+🚽 The sharpest version is the last case here. A function that reports
+🚽 whether it did something returns the SECOND attempt's answer -- the one
+🚽 that found the work already done and declined -- so the side effect
+🚽 happens exactly once while the report says it did not happen at all.
+🚽 A void function whose `bussin` expression is discarded: the value-bearing
+🚽 return arms never see it, so the void arm is the only thing that can run
+🚽 it for its side effect.
+skibidi void_ret(rizz *n) { bussin bump(n) + 0; }
+
+🚽 The mirror hazard. ast_accept()'s pre-visit DOES evaluate an array access,
+🚽 so the void arm must not evaluate this a second time.
+skibidi void_arr(rizz *n) { rizz a[3] = {7, 8, 9}; bussin a[bump(n)]; }
+
+🚽 Two fields on purpose: sizeof(Pt) is then 8, distinct from sizeof(rizz),
+🚽 so the layout assertion below cannot be satisfied by the scalar answer.
+gang Pt { rizz x; rizz y; };
+gang Fl { chad f; };
+gang Outer { gang Pt inner; };
+
+🚽 A chad field, so the TYPE path is pinned and not just the value path.
+🚽 Every static type query resolves a member access by walking storage, which
+🚽 a call base has none of until it runs -- and those queries are forbidden
+🚽 to run it. So they reported no type, and the variadic marshaller fell
+🚽 through to STDROT_INT: this printed 3.000000 through %f. Declared types
+🚽 answer it without evaluating anything.
+gang Fl make_fl() { gang Fl q; q.f = 3.5; bussin q; }
+gang Outer make_outer(rizz *n) { gang Outer o; o.inner.x = bump(n) + 6; bussin o; }
+
+🚽 The field is bump()+6, so the VALUE distinguishes "the call ran" from
+🚽 "the call ran and its struct survived long enough to read". Counting calls
+🚽 alone hid a version of this that invoked handle_function_call(), whose
+🚽 VAR_STRUCT case is discard-and-free: the count was right and every field
+🚽 read produced 0.
+gang Pt make_pt(rizz *n) { gang Pt p; p.x = bump(n) + 6; bussin p; }
+
+🚽 A void `bussin` of a field read off a call, and of an ASSIGNMENT.
+🚽 ast_accept()'s assignment visitor already performs the write, so the void
+🚽 arm must not evaluate it again -- that is the third visitor exception,
+🚽 alongside the increments and array access.
+skibidi v_field(rizz *n) { bussin make_pt(n).x; }
+skibidi v_assign(rizz *n) { rizz x = 0; bussin x = bump(n); }
+
+🚽 A by-value struct SOURCE read off a call -- `make_outer(n).inner` where a
+🚽 whole struct value is expected, not a scalar field. All three of these
+🚽 keep the blob past the read: the argument binder copies into the
+🚽 parameter later, in its bind loop; the return arm copies into a fresh
+🚽 slot; the declaration copies into the variable's storage. But the call's
+🚽 own blob lives in the shared pending-return slot, which the NEXT call
+🚽 releases. So `take_pt(make_outer(&n).inner, bump(&n))` read freed memory
+🚽 -- bump's cleanup freed the Outer, then the bind loop copied out of it --
+🚽 and `bussin make_outer(n).inner;` leaked it, because that arm overwrites
+🚽 the slot's pointer with its own fresh blob. The resolver hands back an
+🚽 OWNED copy for this shape now; the scalar `f().x` reads above still
+🚽 borrow, which is safe because they read before anything else runs.
+skibidi take_pt(gang Pt v, rizz k) { yapping("field arg    %d %d", v.x, k); }
+gang Pt pass_inner(rizz *n) { bussin make_outer(n).inner; }
+
+rizz bump(rizz *n) {
+    *n = *n + 1;
+    bussin *n;
+}
+
+🚽 `rizz` rather than `cap` for the flag, because dereferencing a cap
+🚽 pointer is rejected. And the parameter is `flag`, not `done`: if it
+🚽 shares a name with the CALLER's local, `*flag` inside here resolves
+🚽 against the caller's non-pointer variable and the call is rejected --
+🚽 a separate scoping bug, avoided here rather than exercised.
+cap try_once(rizz *flag) {
+    edgy (*flag != 0) { bussin L; }
+    *flag = 1;
+    bussin W;
+}
+
+skibidi main {
+    rizz calls = 0;
+    rizz a = bump(&calls);
+    yapping("declaration %d %d", calls, a);
+
+    calls = 0;
+    rizz b = 0;
+    b = bump(&calls);
+    yapping("assignment  %d %d", calls, b);
+
+    calls = 0;
+    rizz c = bump(&calls) + 0;
+    yapping("expression  %d %d", calls, c);
+
+    calls = 0;
+    yapping("argument    %d", bump(&calls) * 0 + calls);
+
+    calls = 0;
+    bump(&calls);
+    yapping("statement   %d", calls);
+
+    calls = 0;
+    edgy (bump(&calls) > 0) { }
+    yapping("condition   %d", calls);
+
+    rizz done = 0;
+    cap fired = try_once(&done);
+    yapping("reported    %b (must be W)", fired);
+
+    🚽 Exactly once, not zero. These are the shapes where nothing on the
+    🚽 ast_accept() path evaluates the expression, so making the pre-visit a
+    🚽 no-op removed their ONLY evaluator rather than their second one. A
+    🚽 bare call is special-cased elsewhere; a call inside any larger
+    🚽 expression in statement position is not.
+    calls = 0;
+    bump(&calls) + 0;
+    yapping("expr stmt   %d", calls);
+
+    calls = 0;
+    0 - bump(&calls);
+    yapping("unary stmt  %d", calls);
+
+    calls = 0;
+    flex (rizz k = 0; k < 2; bump(&calls) + 0) { k = k + 1; }
+    yapping("for-incr    %d", calls);
+
+    calls = 0;
+    void_ret(&calls);
+    yapping("void bussin %d", calls);
+
+    🚽 A field read off a call result, in every position that reaches the
+    🚽 same owner. resolve_struct_access() executes the call itself, so a
+    🚽 bare statement, a larger expression and a void `bussin` all work
+    🚽 through one path rather than one special case each.
+    🚽
+    🚽 The nested form works too, and is pinned below -- it turned out to be
+    🚽 the same defect rather than a separate one, since typing a chain reads
+    🚽 the var_type the eager parse-time resolve fills in.
+    calls = 0;
+    make_pt(&calls).x;
+    yapping("field stmt  %d", calls);
+
+    calls = 0;
+    rizz fv = make_pt(&calls).x;
+    yapping("field decl  %d %d", calls, fv);
+
+    calls = 0;
+    rizz fa = 0;
+    fa = make_pt(&calls).x;
+    yapping("field assign %d %d", calls, fa);
+
+    calls = 0;
+    rizz fe = make_pt(&calls).x + 0;
+    yapping("field expr  %d %d", calls, fe);
+
+    calls = 0;
+    cap fc = make_pt(&calls).x == 7;
+    yapping("field cond  %d %b", calls, fc);
+
+    calls = 0;
+    yapping("field print %d", make_pt(&calls).x);
+
+    calls = 0;
+    v_field(&calls);
+    yapping("field bussin %d", calls);
+
+    🚽 The type path, not the value path: a chad field through %f, and
+    🚽 maxxing(), whose operand is never evaluated so a static answer is the
+    🚽 only kind allowed.
+    yapping("field chad  %f", make_fl().f);
+    yapping("field sizeof %d", maxxing(make_pt(&calls).x));
+
+    🚽 Nested. Typing a chain reads the var_type filled in by the eager
+    🚽 parse-time resolve, which cannot run a call -- so this needed the same
+    🚽 static fallback rather than a fifth special case.
+    calls = 0;
+    yapping("field nested %d %d", make_outer(&calls).inner.x, calls);
+
+    🚽 maxxing() of a struct-typed field off a call. Unlike the scalar case
+    🚽 above this needs a LAYOUT, not a VarType, so it goes through a sixth
+    🚽 site -- and once the type gate started passing, that site failed
+    🚽 instead with "Invalid type in sizeof", printing 0. A scalar field
+    🚽 cannot pin it, and neither can a one-field struct whose size happens
+    🚽 to equal a rizz.
+    yapping("field layout %d", maxxing(make_outer(&calls).inner));
+
+    calls = 0;
+    take_pt(make_outer(&calls).inner, bump(&calls));
+
+    calls = 0;
+    gang Pt pc = make_outer(&calls).inner;
+    yapping("field copy   %d %d", calls, pc.x);
+
+    calls = 0;
+    gang Pt pr = pass_inner(&calls);
+    yapping("field return %d %d", calls, pr.x);
+
+    calls = 0;
+    v_assign(&calls);
+    yapping("void assign %d", calls);
+
+    🚽 An array access inside a void `bussin`. The pre-visit already ran it,
+    🚽 so the void arm must not.
+    🚽
+    🚽 This used to have to come last: a `bussin arr[f()]` in a void function
+    🚽 followed by a struct-returning call segfaulted in
+    🚽 free_pending_return_value(), reproducing on origin/main untouched.
+    🚽 Blanking the pending slot's union fixed that, so the ordering here is
+    🚽 no longer load-bearing.
+    calls = 0;
+    void_arr(&calls);
+    yapping("void arr    %d", calls);
+
+    🚽 The array mirror of the declaration/assignment double-eval. The
+    🚽 pre-visit evaluates an array access, and the declaration's own visitor
+    🚽 then evaluated the initializer again -- so the INDEX call ran twice and
+    🚽 `arr[bump(&n) - 1]` read arr[1] instead of arr[0]. Fixing only the void
+    🚽 `bussin` arm would have left this, which is why the declaration and
+    🚽 assignment pre-visits consult the same predicate.
+    calls = 0;
+    rizz arr[3] = {7, 8, 9};
+    rizz ai = arr[bump(&calls) - 1];
+    yapping("array decl   %d %d", calls, ai);
+
+    calls = 0;
+    rizz aa = 0;
+    aa = arr[bump(&calls) - 1];
+    yapping("array assign %d %d", calls, aa);
+
+    🚽 And the two the visitor DOES evaluate, which must not now run twice.
+    rizz i = 0;
+    i++;
+    ++i;
+    yapping("inc stmts   %d", i);
+
+    bussin 0;
+}

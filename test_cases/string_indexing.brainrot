@@ -1,0 +1,97 @@
+🚽 Test case: issue #251 -- `s[i]` and `s[i:j]`, the two SYNTAX halves of
+🚽 string stdlib v1. The four builtins (yaplen/yapcat/yapcmp/yapidx) landed
+🚽 first; this is the indexing that reads the same byte buffer they measure.
+🚽
+🚽 ── Byte semantics, same as the builtins ──────────────────────────────
+🚽 A `rant` is the length-prefixed String of lib/string_value.h. Indices and
+🚽 slice bounds are BYTE offsets, not characters, which is why the two-byte
+🚽 UTF-8 "é" is here: `utf8 len 2` and the two halves coming out as separate
+🚽 (individually meaningless) bytes pin that v1 does not decode codepoints.
+🚽 Making `s[i]` rune-aware later is a real possible change; it just has to
+🚽 be a deliberate one.
+🚽
+🚽 Those two halves print as NEGATIVE numbers (-61 -87, not 195 169), and
+🚽 that is pre-existing behaviour being inherited, not something indexing
+🚽 introduces: a `yap` reaching a native is marshalled through a signed
+🚽 `char` (ast_expr_to_stdrot_value(), stdrot.c), so every byte >= 128 comes
+🚽 out negative. Verified that `yap arr[2]; arr[0] = 195;` prints exactly
+🚽 the same -61 through yapping's %d. What is pinned here is therefore that
+🚽 `s[i]` AGREES with an ordinary yap array element -- if the two ever
+🚽 diverge, one of them has changed and this line says so.
+🚽
+🚽 ── What `s[i]` yields ────────────────────────────────────────────────
+🚽 A `yap` (char). Both spellings are covered -- stored into a `yap`
+🚽 variable and used inline -- because they reach the runtime by different
+🚽 routes, and an earlier version of this feature had only the second one
+🚽 working. `as int 101` pins that a `yap` read in an integer context is the
+🚽 byte value, agreeing with the existing `yap` scalar rules rather than
+🚽 inventing new ones for strings.
+🚽
+🚽 ── What `s[i:j]` yields ──────────────────────────────────────────────
+🚽 A new `rant`, half-open [i, j), so its length is j - i. Both bounds are
+🚽 required in v1 -- `s[:j]`, `s[i:]` and `s[:]` are not syntax (issue #251,
+🚽 open question 1), and there are no negative indices (question 2).
+🚽
+🚽 `i == j` is legal and yields the empty string. That is load-bearing
+🚽 rather than a curiosity: it is what makes a slice usable as a loop's
+🚽 starting accumulator, and `empty at end` covers the awkward corner where
+🚽 both bounds sit at len -- in range, because the upper bound is exclusive.
+🚽
+🚽 ── The line that ties the two halves together ────────────────────────
+🚽 `agree` compares `s[6]` against `s[6:7]`. They are separate code paths --
+🚽 one returns the address of a byte, the other allocates a new string --
+🚽 and nothing else here would notice if they disagreed about which byte
+🚽 offset 6 is.
+🚽
+🚽 ── Composition with the builtins ─────────────────────────────────────
+🚽 The rebuilt line reassembles the original out of two slices, and is
+🚽 checked with yapcmp rather than by eye: `rebuilt 0` means byte-for-byte
+🚽 equal to the source, which is a stronger claim than the printed text
+🚽 looking right.
+🚽
+🚽 Deliberately absent: any REASSIGNMENT of a rant (`acc = yapcat(acc, x)`).
+🚽 That shape leaks a buffer per assignment -- issue #277, pre-existing and
+🚽 nothing to do with indexing -- and using it here would make this fixture
+🚽 fail under ASan for an unrelated reason. Verified that declaring from a
+🚽 slice and passing a slice as an argument are both leak-free.
+skibidi main {
+    rant s = "hello world";
+
+    🚽 s[i] -- yields a yap
+    yap first = s[0];
+    yapping("stored [%c]", first);
+    yapping("inline [%c]", s[10]);
+    yapping("as int %d", s[1]);
+    rizz k = 4;
+    yapping("varidx [%c]", s[k]);
+
+    🚽 s[i:j] -- yields a new rant, half-open
+    rant hello = s[0:5];
+    yapping("slice  [%s]", hello);
+    yapping("len    %d", yaplen(hello));
+    yapping("inline [%s]", s[6:11]);
+    yapping("whole  [%s]", s[0:11]);
+    yapping("one    [%s]", s[4:5]);
+
+    🚽 empty slices are legal, including at the very end
+    yapping("empty  [%s]", s[3:3]);
+    yapping("empty at end [%s]", s[11:11]);
+
+    🚽 computed bounds
+    rizz a = 2;
+    yapping("expr   [%s]", s[a:a+3]);
+
+    🚽 index and slice must agree about what offset 6 is
+    yapping("agree  [%c] [%s]", s[6], s[6:7]);
+
+    🚽 composes with the v1 builtins
+    yapping("cat    [%s]", yapcat(s[0:6], s[6:11]));
+    yapping("rebuilt %d", yapcmp(yapcat(s[0:6], s[6:11]), s));
+    yapping("idx    %d", yapidx(s[6:11], "orl"));
+
+    🚽 bytes, not characters
+    rant e = "é";
+    yapping("utf8 len %d", yaplen(e));
+    yapping("utf8 halves %d %d", e[0], e[1]);
+    bussin 0;
+}

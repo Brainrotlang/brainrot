@@ -1,0 +1,83 @@
+🚽 Test case: issue #251 -- string stdlib v1. The four builtins yaplen,
+🚽 yapcat, yapcmp and yapidx, pinned together because their contracts are
+🚽 defined against each other (yapidx's answer is an index into what yaplen
+🚽 measures, and both index the same byte buffer yapcat produces).
+🚽
+🚽 ── Byte semantics, not runes ─────────────────────────────────────────
+🚽 A `rant` is the length-prefixed String { char *data; size_t len; } of
+🚽 lib/string_value.h. v1 measures and indexes it as a flat byte buffer,
+🚽 and the two-byte UTF-8 "é" pins that: `utf8 len 2` fails the moment
+🚽 anyone makes yaplen codepoint-aware without saying so. That is a real
+🚽 possible future change, not a hypothetical -- it just has to be a
+🚽 deliberate one.
+🚽
+🚽 ── Why these are not the obvious libc calls ──────────────────────────
+🚽 A `rant` is NOT NUL-terminated, so strlen/strcmp/strstr would read past
+🚽 the buffer and would each stop early at an embedded NUL. Every builtin
+🚽 here works from the length prefix instead. This fixture cannot construct
+🚽 an embedded-NUL string to prove that directly -- there is no escape for
+🚽 one in the lexer -- so what it pins is the length-derived behaviour that
+🚽 the same implementations produce.
+🚽
+🚽 ── Empty operands, and why each answer is the one it is ──────────────
+🚽 `idx empty needle 0` is load-bearing and NOT a degenerate case falling
+🚽 out of a loop: an empty needle returns 0, matching Go's strings.Index,
+🚽 so that `yapidx(h, n) >= 0` stays a correct "contains" test even when n
+🚽 is empty. Returning -1 there is the plausible wrong choice, and it would
+🚽 flip this line.
+🚽
+🚽 `cmp prefix -1` / `cmp longer 1` pin the length tie-break: when one
+🚽 string is a prefix of the other, the shorter sorts first. An
+🚽 implementation that compared only min(alen, blen) bytes and stopped
+🚽 would return 0 for both of those lines.
+🚽
+🚽 ── Normalized results, not raw memcmp deltas ─────────────────────────
+🚽 yapcmp returns exactly -1, 0 or 1. memcmp's magnitude is unspecified
+🚽 beyond its sign, so a wrapper returning the delta unchanged would print
+🚽 an implementation-defined number here and make this fixture libc-
+🚽 dependent -- which is precisely why it is pinned.
+🚽
+🚽 `cmp high byte -1` pins UNSIGNED byte ordering: 'z' is 0x7A and "é"
+🚽 begins 0xC3. Plain char is signed on x86-64, so a hand-rolled loop over
+🚽 `char` would sort every non-ASCII byte BELOW every ASCII one and print
+🚽 1 here instead.
+🚽
+🚽 ── What this fixture does NOT pin ────────────────────────────────────
+🚽 Nothing here proves yapcat allocates rather than aliases an argument;
+🚽 every result is consumed immediately. That property has its own fixture
+🚽 (string_stdlib_result_independence.brainrot), because it is the one that
+🚽 the shipped implementation's reused scratch buffer could actually break.
+skibidi main {
+    rant greeting = "hello";
+    rant name = "world";
+
+    yapping("len %d", yaplen(greeting));
+    rant full = yapcat(greeting, name);
+    yapping("cat %s", full);
+    yapping("idx %d", yapidx(full, name));
+    yapping("cmp %d", yapcmp("apple", "banana"));
+
+    yapping("empty len %d", yaplen(""));
+    yapping("cat empty left [%s]", yapcat("", "x"));
+    yapping("cat empty right [%s]", yapcat("x", ""));
+    yapping("cat both empty [%s]", yapcat("", ""));
+
+    yapping("idx empty needle %d", yapidx("abc", ""));
+    yapping("idx absent %d", yapidx("abc", "zz"));
+    yapping("idx needle longer %d", yapidx("ab", "abc"));
+    yapping("idx first %d", yapidx("abcabc", "abc"));
+    yapping("idx at end %d", yapidx("abc", "c"));
+
+    yapping("cmp equal %d", yapcmp("a", "a"));
+    yapping("cmp prefix %d", yapcmp("app", "apple"));
+    yapping("cmp longer %d", yapcmp("apple", "app"));
+    yapping("cmp greater %d", yapcmp("b", "a"));
+    yapping("cmp empty %d", yapcmp("", ""));
+
+    yapping("utf8 len %d", yaplen("é"));
+    yapping("cmp high byte %d", yapcmp("z", "é"));
+
+    yapping("nested [%s]", yapcat(yapcat("a", "b"), "c"));
+    yapping("len of cat %d", yaplen(yapcat(greeting, name)));
+    bussin 0;
+}

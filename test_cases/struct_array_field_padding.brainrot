@@ -1,0 +1,29 @@
+🚽 Test case: #206 (3e) -- an array field's trailing padding toward a
+🚽 wider-aligned neighbor, the layout claim `maxxing()` on the whole
+🚽 struct alone can't fully verify (a struct that packed `n` right after
+🚽 `a` with no interior padding, then padded only the *total* to the same
+🚽 final size, would report the same maxxing() result -- matching #206's
+🚽 own "layout correctness is testable -- so test it" principle and the
+🚽 read-back-without-corruption pattern struct_layout_padding.brainrot
+🚽 (#242) already established for scalar fields).
+🚽
+🚽 `yap a[3]` is 3 bytes at align 1 -> offset 0. `rizz n` is 4 bytes at
+🚽 align 4 -> offset 4 (1 byte of padding after a[2], not offset 3).
+🚽 Total: 8 (already 4-aligned). Writing a[2] LAST (after n) makes a
+🚽 regression that put n at offset 3 instead of 4 visible: n's 4-byte
+🚽 write at the wrong offset would overlap a[2] and get silently
+🚽 clobbered by a[2]'s own later write.
+gang Padded {
+    yap a[3];
+    rizz n;
+};
+
+skibidi main {
+    gang Padded p;
+    p.n = 1234567;
+    p.a[0] = 'r';
+    p.a[1] = 'i';
+    p.a[2] = 'z';
+    yapping("%c%c%c %d", p.a[0], p.a[1], p.a[2], p.n);
+    yapping("%lu", maxxing(p));
+}

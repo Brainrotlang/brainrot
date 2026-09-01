@@ -7,36 +7,9 @@
 #include <stdio.h>
 
 extern void yyerror(const char *s);
-extern String safe_strdup(const String *str);
-extern void execute_func_call(const String func_name, ArgumentList *args);
-
-/* External functions we need from the original implementation */
-extern Variable *variable_new(String name);
-extern void add_variable_to_scope(const String name, Variable *var);
-extern Variable *get_variable(const String name);
-extern Function *get_function(const String name);
-extern bool is_builtin_function(const String name);
-extern void execute_builtin_function(const String name, ArgumentList *args);
-extern void execute_assignment(ASTNode *node);
-extern void execute_for_statement(ASTNode *node);
-extern void execute_while_statement(ASTNode *node);
-extern void execute_do_while_statement(ASTNode *node);
 extern void execute_switch_statement(ASTNode *node);
-extern void handle_return_statement(ASTNode *expr);
-extern Function *create_function(String name, VarType return_type,
-                                 Parameter *params, ASTNode *body);
-extern void bruh(void);
-
-/* For now, use the original evaluation system with visitor wrappers */
-extern int evaluate_expression_int(ASTNode *node);
-extern float evaluate_expression_float(ASTNode *node);
-extern double evaluate_expression_double(ASTNode *node);
-extern short evaluate_expression_short(ASTNode *node);
-extern bool evaluate_expression_bool(ASTNode *node);
 extern String evaluate_expression_string(ASTNode *node);
 extern void *evaluate_multi_array_access(ASTNode *node);
-extern void *handle_function_call(ASTNode *node);
-extern size_t handle_sizeof(ASTNode *node);
 
 /* Global pointer to current interpreter for function calls */
 Interpreter *current_interpreter = NULL;
@@ -107,15 +80,12 @@ void interpret(ASTNode *root, Interpreter *interp)
     if (!root || !interp)
         return;
 
-    extern Scope *current_scope;
-
     /* Set global interpreter pointer for function calls */
     current_interpreter = interp;
 
     /* Ensure there's a global scope for the visitor pattern */
     if (!current_scope)
     {
-        extern void enter_scope();
         enter_scope();
     }
 
@@ -255,7 +225,7 @@ void *interpreter_visit_array_access(Visitor *self, ASTNode *node)
     {
         /* Get the variable to determine expected dimensions */
         Variable *var = get_variable(node->data.array.name);
-        if (!var || !var->is_array)
+        if (!var || !var->desc.is_array)
         {
             return NULL;
         }
@@ -304,7 +274,10 @@ static void interpreter_execute_call_statement(ASTNode *node)
 
     if (is_builtin_function(func_name))
     {
-        execute_builtin_function(func_name, args);
+        /* Pass the call node's line so a zero-argument native (e.g. a bare
+           `gamba();`) that aborts reports its call site, not "line 0" -- this
+           statement path never populated g_exec_context.line_number. */
+        execute_builtin_function(func_name, args, node->line_number);
     }
     else
     {
@@ -320,42 +293,30 @@ static void interpreter_execute_call_statement(ASTNode *node)
     }
 }
 
-/* ast_accept()'s generic pre-visit runs this on a NODE_FUNC_CALL reached as
-   part of a declaration/assignment/return/print/error statement's
-   right-hand expression, or (via visitor.c's NODE_DO_WHILE_STATEMENT case)
-   a do-while condition -- in every one of those cases, the statement's own
-   dedicated visitor (interpreter_visit_declaration et al., or this
-   interpreter's own per-iteration evaluate_expression_int() condition
-   check) is about to evaluate this exact node for real via
-   evaluate_expression_* / handle_function_call. That pre-visit exists so
-   shared visitors (e.g. the semantic analyzer, validating the call exists)
-   get a chance to look at it; it is not itself a place where executing the
-   call is correct. Doing so anyway is actively wrong, not just redundant:
-   for a self-referential declaration like `rizz n = slorp(n);`, the
-   pre-visit runs before interpreter_visit_declaration has created `n`, so
-   the argument silently evaluates to nothing and the (wrong) result gets
-   cached; for a do-while condition, the pre-visit runs before the loop
-   body has executed even once, so the first real check reads a stale
-   pre-loop value instead of re-evaluating. Do nothing here and let the
-   downstream evaluate_expression_*() call populate the memo cache itself,
-   at the right time. (Bare statement-position and for-loop init/incr
-   calls never reach here at all -- see interpreter_execute_call_statement()
-   above.) User-defined functions have no such cache and are still invoked
-   from both places -- a pre-existing gap, not introduced here, tracked
-   separately from native-call support. */
+/* INVARIANT: a pre-visit must not execute the call.
+ *
+ * ast_accept() reaches a NODE_FUNC_CALL as part of a declaration /
+ * assignment / return / print statement's right-hand expression, or a
+ * do-while condition. In every one of those the statement's own visitor
+ * (interpreter_visit_declaration et al., or the per-iteration condition
+ * check) evaluates this exact node for real afterwards, so executing here
+ * would run it twice. The pre-visit exists only so shared visitors -- the
+ * semantic analyzer -- get a look at the node.
+ *
+ * Twice is not merely wasteful, because the second result is the one that
+ * survives: `cap fired = try_fire(&p);` would report the attempt that
+ * found the work already done. And a pre-visit runs at the wrong time --
+ * before interpreter_visit_declaration creates `n` in `rizz n = slorp(n);`,
+ * and before a do-while body has run once.
+ *
+ * Natives are no different: the downstream evaluate_expression_* populates
+ * their memo cache itself, at the right time. Bare statement-position and
+ * for-loop init/incr calls never reach here -- see
+ * interpreter_execute_call_statement() above. */
 void *interpreter_visit_function_call(Visitor *self, ASTNode *node)
 {
     (void)self;
-    if (!node)
-        return NULL;
-
-    if (!is_builtin_function(node->data.func_call.function_name))
-    {
-        execute_function_call(node->data.func_call.function_name,
-                              node->data.func_call.arguments);
-        free_pending_return_value();
-    }
-
+    (void)node;
     return NULL;
 }
 
@@ -368,14 +329,53 @@ void *interpreter_visit_function_call(Visitor *self, ASTNode *node)
    wrapping a call is unaffected: it still goes through ast_accept()
    normally, since interpreter_visit_declaration() et al. *are* that real
    evaluation. */
+/* Is this node an expression standing alone as a statement?
+ *
+ * `f() + 0;`, `-f();`, `f().x;` and a bare identifier all parse as
+ * `expression SEMICOLON`, and nothing on the ast_accept() path evaluates
+ * them -- so without this they would silently never run. NODE_ARRAY_ACCESS
+ * and the increments are expressions too, but ast_accept DOES evaluate
+ * those, which is why the caller consults
+ * ast_accept_evaluates_expression() rather than this predicate alone. */
+static bool interpreter_is_expression_statement(const ASTNode *node)
+{
+    switch (node->type)
+    {
+    case NODE_OPERATION:
+    case NODE_UNARY_OPERATION:
+    case NODE_IDENTIFIER:
+    case NODE_INT:
+    case NODE_SHORT:
+    case NODE_FLOAT:
+    case NODE_DOUBLE:
+    case NODE_CHAR:
+    case NODE_BOOLEAN:
+    case NODE_SIZEOF:
+    case NODE_STRUCT_ACCESS:
+    case NODE_ARRAY_ACCESS:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static void interpreter_accept_or_execute_call(ASTNode *node, Visitor *self)
 {
     if (!node)
         return;
     if (node->type == NODE_FUNC_CALL)
+    {
         interpreter_execute_call_statement(node);
+    }
+    else if (interpreter_is_expression_statement(node) &&
+             !ast_accept_evaluates_expression(node))
+    {
+        evaluate_expression(node);
+    }
     else
+    {
         ast_accept(node, self);
+    }
 }
 
 void *interpreter_visit_sizeof(Visitor *self, ASTNode *node)
@@ -407,14 +407,16 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
      * parse time, into whatever scope happened to be active while parsing)
      * is what gives each call its own array instance and makes a
      * function-local array visible inside the function that declares it. */
-    if (node->is_array && node->var_type != VAR_STRUCT)
+    if (node->is_array)
     {
         if (node->modifiers.is_static && get_variable(name))
             return;
 
         Variable *var = variable_new(name);
-        var->pointer_level = node->pointer_level;
-        var->modifiers = node->modifiers;
+        var->desc.pointer_level = node->pointer_level;
+        var->desc.modifiers = node->modifiers;
+        if (node->var_type == VAR_STRUCT)
+            var->desc.struct_name = safe_strdup(&node->struct_name);
         add_variable_to_scope(name, var);
         SAFE_FREE(var);
 
@@ -441,8 +443,9 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
     /* Struct/union declarations: same reasoning as arrays above -- create
      * the Variable and its data blob here, at runtime, in the current
      * scope, instead of at parse time. */
-    if (node->var_type == VAR_STRUCT ||
-        (node->data.op.right && node->data.op.right->type == NODE_STRUCT_DEF))
+    if (node->pointer_level == 0 &&
+        (node->var_type == VAR_STRUCT ||
+         (node->data.op.right && node->data.op.right->type == NODE_STRUCT_DEF)))
     {
         const String struct_type =
             node->data.op.right ? node->data.op.right->data.struct_def.name
@@ -454,10 +457,10 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
             return;
 
         Variable *var = variable_new(name);
-        var->var_type = VAR_STRUCT;
-        var->pointer_level = node->pointer_level;
-        var->modifiers = node->modifiers;
-        var->struct_name = safe_strdup(&struct_type);
+        var->desc.type = VAR_STRUCT;
+        var->desc.pointer_level = node->pointer_level;
+        var->desc.modifiers = node->modifiers;
+        var->desc.struct_name = safe_strdup(&struct_type);
         add_variable_to_scope(name, var);
         SAFE_FREE(var);
 
@@ -477,7 +480,7 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
                         src_expr->data.func_call.function_name,
                         src_expr->data.func_call.arguments);
                     if (current_return_value.has_value &&
-                        current_return_value.type == VAR_STRUCT)
+                        current_return_value.desc.type == VAR_STRUCT)
                     {
                         void *blob = (void *)current_return_value.value.pvalue;
                         /* Guard against copying a differently-shaped struct
@@ -488,8 +491,8 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
                            this is the last line of defense against an
                            out-of-bounds memcpy. */
                         if (blob && sv->value.array_data &&
-                            current_return_value.struct_name.data &&
-                            strcmp(current_return_value.struct_name.data,
+                            current_return_value.desc.struct_name.data &&
+                            strcmp(current_return_value.desc.struct_name.data,
                                    struct_type.data) == 0)
                         {
                             memcpy(sv->value.array_data, blob, def->total_size);
@@ -505,21 +508,44 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
                         free_pending_return_value();
                     }
                 }
-                else if (src_expr->type == NODE_IDENTIFIER)
+                else
                 {
-                    Variable *src = get_variable(src_expr->data.name);
-                    if (src && src->var_type == VAR_STRUCT &&
-                        src->value.array_data && sv->value.array_data &&
-                        src->struct_name.data &&
-                        strcmp(src->struct_name.data, struct_type.data) == 0)
+                    /* Copy-initialize from a by-value struct/union source
+                       -- a plain struct variable (`gang Point c = other;`)
+                       or a member-access sub-expression (`gang Point c =
+                       b.corner;`, #193, following pointer bases/fields via
+                       #196/#197). Both go through the same shared helper
+                       enter_function_scope()/handle_return_statement() use,
+                       so all three sites enforce the identical pointer_
+                       level == 0 invariant and single-diagnostic error path
+                       (PR #253 review, findings 1 & 2). Before this, a
+                       member-access initializer was handled by a separate
+                       hand-written arm, and a plain identifier by yet
+                       another (which silently accepted a struct-pointer
+                       variable). */
+                    void *msrc_blob = NULL;
+                    String msrc_tag = {0};
+                    bool msrc_owned = false;
+                    if (resolve_by_value_struct_source(
+                            src_expr, &msrc_blob, &msrc_tag, &msrc_owned, true))
                     {
-                        memcpy(sv->value.array_data, src->value.array_data,
-                               def->total_size);
-                    }
-                    else if (src && src->var_type == VAR_STRUCT)
-                    {
-                        yyerror("Cannot copy-initialize from a struct "
-                                "variable of a different type");
+                        if (msrc_tag.data && sv->value.array_data &&
+                            strcmp(msrc_tag.data, struct_type.data) == 0)
+                        {
+                            if (msrc_blob)
+                                memcpy(sv->value.array_data, msrc_blob,
+                                       def->total_size);
+                        }
+                        else
+                        {
+                            yyerror("Cannot copy-initialize from a struct/"
+                                    "union value of a different type");
+                        }
+                        /* `gang Inner c = make_outer().inner;` -- the blob
+                           is our copy of a call result whose own storage
+                           the helper already released. */
+                        if (msrc_owned)
+                            free(msrc_blob);
                     }
                 }
             }
@@ -527,9 +553,9 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
         return;
     }
     Variable *var = variable_new(name);
-    var->modifiers = node->modifiers;
-    var->var_type = node->var_type;
-    var->pointer_level = node->pointer_level;
+    var->desc.modifiers = node->modifiers;
+    var->desc.type = node->var_type;
+    var->desc.pointer_level = node->pointer_level;
 
     /* If static and already exists in static map, skip entirely */
     if (node->modifiers.is_static)
@@ -545,13 +571,15 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
     /* Must come after the static-already-exists check above: that early
        return frees only the wrapper Variable, not enum_name's heap string. */
     if (node->var_type == VAR_ENUM)
-        var->enum_name = safe_strdup(&node->enum_name);
+        var->desc.enum_name = safe_strdup(&node->enum_name);
+    if (node->var_type == VAR_STRUCT && node->struct_name.data)
+        var->desc.struct_name = safe_strdup(&node->struct_name);
 
     /* Detect struct declaration: right node is a NODE_STRUCT_DEF */
     if (node->data.op.right && node->data.op.right->type == NODE_STRUCT_DEF)
     {
-        var->var_type = VAR_STRUCT;
-        var->struct_name =
+        var->desc.type = VAR_STRUCT;
+        var->desc.struct_name =
             safe_strdup(&node->data.op.right->data.struct_def.name);
     }
 
@@ -562,29 +590,65 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
     if (node->data.op.right)
     {
         Variable *scope_var = get_variable(name);
-        if (scope_var && scope_var->var_type == VAR_STRUCT)
-        {
-            if (!scope_var->value.array_data)
-            {
-                StructDef *def = get_struct_def(scope_var->struct_name);
-                if (def)
-                {
-                    scope_var->value.array_data = calloc(1, def->total_size);
-                    hm_put(current_scope->variables, name.data, name.len,
-                           scope_var, sizeof(Variable));
-                }
-            }
-            return;
-        }
         if (scope_var)
         {
-            if (scope_var->pointer_level > 0)
+            if (scope_var->desc.pointer_level > 0)
             {
-                scope_var->value.pvalue =
-                    evaluate_expression_pointer(node->data.op.right);
+                /* For a struct/union-tagged pointer declared via the
+                   `struct_or_union name_token declarator ...` grammar
+                   (lang.y) -- `gang Foo *pp;` / `gang Foo *pp = &f;` --
+                   data.op.right always points at a NODE_STRUCT_DEF type
+                   marker (the struct tag) regardless of whether an
+                   initializer was given, including the no-initializer
+                   form; the real initializer, when present, lives
+                   separately in struct_init_expr (see that grammar's
+                   `EQUALS expression` production). evaluate_expression_
+                   pointer() doesn't handle NODE_STRUCT_DEF, so blindly
+                   evaluating data.op.right here either silently left the
+                   pointer NULL for `gang Foo *pp = &f;` (the real
+                   initializer was never read) or, for a bare `gang Foo
+                   *pp;`, spuriously reported "Invalid pointer expression"
+                   even though no initializer was ever written and
+                   pvalue's zero default (variable_new() memsets the whole
+                   Variable) is already correct. A `lit`-aliased struct
+                   pointer (`PointPtr first = &p;`) is declared through a
+                   *different*, generic type-declarator grammar path where
+                   data.op.right already holds the real initializer
+                   directly, same as any non-struct pointer (`rizz *p =
+                   &x;`) -- so only reroute through struct_init_expr when
+                   data.op.right is genuinely that type marker, not for
+                   every VAR_STRUCT pointer declaration. */
+                if (node->var_type == VAR_STRUCT && node->data.op.right &&
+                    node->data.op.right->type == NODE_STRUCT_DEF)
+                {
+                    if (node->struct_init_expr)
+                        scope_var->value.pvalue =
+                            evaluate_expression_pointer(node->struct_init_expr);
+                }
+                else
+                {
+                    scope_var->value.pvalue =
+                        evaluate_expression_pointer(node->data.op.right);
+                }
                 return;
             }
-            switch (scope_var->var_type)
+            if (scope_var->desc.type == VAR_STRUCT)
+            {
+                if (!scope_var->value.array_data)
+                {
+                    StructDef *def =
+                        get_struct_def(scope_var->desc.struct_name);
+                    if (def)
+                    {
+                        scope_var->value.array_data =
+                            calloc(1, def->total_size);
+                        hm_put(current_scope->variables, name.data, name.len,
+                               scope_var, sizeof(Variable));
+                    }
+                }
+                return;
+            }
+            switch (scope_var->desc.type)
             {
             case VAR_INT:
             {
@@ -608,8 +672,13 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
             }
             case VAR_CHAR:
             {
+                /* char_scalar_slot_value() (ast.h/ast.c): every write
+                   into a scalar VAR_CHAR Variable's own slot must zero-
+                   extend, not plain-widen, so a later narrower 1-byte
+                   write through a `yap *` alias into this same slot
+                   can't leave stale bytes behind. */
                 int int_value = evaluate_expression_int(node->data.op.right);
-                scope_var->value.ivalue = int_value;
+                scope_var->value.ivalue = char_scalar_slot_value(int_value);
                 break;
             }
             case VAR_SHORT:
@@ -680,9 +749,6 @@ void interpreter_visit_for_statement(Visitor *self, ASTNode *node)
     if (!node)
         return;
 
-    extern void enter_scope();
-    extern void exit_scope();
-
     PUSH_JUMP_BUFFER();
     if (setjmp(CURRENT_JUMP_BUFFER()) == 0)
     {
@@ -730,9 +796,6 @@ void interpreter_visit_while_statement(Visitor *self, ASTNode *node)
     if (!node)
         return;
 
-    extern void enter_scope();
-    extern void exit_scope();
-
     PUSH_JUMP_BUFFER();
     enter_scope();
     while (evaluate_expression_int(node->data.while_stmt.cond) &&
@@ -755,10 +818,6 @@ void interpreter_visit_do_while_statement(Visitor *self, ASTNode *node)
 {
     if (!node)
         return;
-
-    /* Add external function declarations */
-    extern void enter_scope();
-    extern void exit_scope();
 
     /* Use setjmp/longjmp for break handling like the old code */
     PUSH_JUMP_BUFFER();
@@ -816,23 +875,6 @@ void interpreter_visit_function_definition(Visitor *self, ASTNode *node)
     if (!node)
         return;
 
-    if (node->data.function_def.return_type == VAR_STRUCT &&
-        node->pointer_level > 0)
-    {
-        /* Pointer-to-struct returns are rejected at parse time (see
-           create_function_def_node_struct) and deliberately left
-           unregistered there. create_function()/create_function_ex()
-           below have no knowledge of that rejection and would happily
-           register the function anyway -- the unconditional call a few
-           lines down registers it with return_pointer_level 0 regardless,
-           and the pointer_level > 0 branch after it would then "fix" that
-           up to the real pointer_level, undoing the rejection and letting
-           the function run with a silently-wrong by-value return. Skip
-           registration entirely so get_function() stays NULL and any call
-           site reports a clear "Undefined function" instead. */
-        return;
-    }
-
     Function *func = create_function(
         node->data.function_def.name, node->data.function_def.return_type,
         node->data.function_def.parameters, node->data.function_def.body);
@@ -876,7 +918,7 @@ void interpreter_visit_print_statement(Visitor *self, ASTNode *node)
     ASTNode *expr = node->data.op.left;
     ArgumentList args = {expr, NULL};
     execute_func_call((String){.data = "yapping", .len = sizeof("yapping")},
-                      &args);
+                      &args, node->line_number);
 }
 
 void interpreter_visit_error_statement(Visitor *self, ASTNode *node)
@@ -887,5 +929,6 @@ void interpreter_visit_error_statement(Visitor *self, ASTNode *node)
 
     ASTNode *expr = node->data.op.left;
     ArgumentList args = {expr, NULL};
-    execute_func_call((String){.data = "baka", .len = sizeof("baka")}, &args);
+    execute_func_call((String){.data = "baka", .len = sizeof("baka")}, &args,
+                      node->line_number);
 }

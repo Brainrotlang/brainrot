@@ -1,0 +1,49 @@
+🚽 Test case: a call's arguments must be checked against the parameters in
+🚽 SOURCE order.
+🚽
+🚽 func->parameters is stored reversed (lang.y's param_list rules hang the
+🚽 accumulated list off the new node's next), and enter_function_scope()
+🚽 compensates when it binds. The semantic analyzer did not, so it walked
+🚽 the declaration list backwards against a forward argument list and
+🚽 checked argument 1 against the LAST parameter.
+🚽
+🚽 That is invisible when every parameter shares a type, so this exercises
+🚽 the shapes where it is not: two different struct-pointer types, a
+🚽 struct pointer beside a scalar in both orders, and three distinct
+🚽 struct pointers. Each of these was a false "type mismatch" before.
+gang World { chad dt; };
+gang Enemy { chad x; };
+gang A { rizz a; };
+gang B { rizz b; };
+gang C { rizz c; };
+
+skibidi step(gang Enemy *e, gang World *w) { e.x = e.x - w.dt; }
+skibidi shrink(gang Enemy *e, rizz n) { e.x = e.x - n; }
+skibidi nudge(chad d, gang Enemy *e) { e.x = e.x + d; }
+skibidi sum3(gang A *x, gang B *y, gang C *z) { x.a = y.b + z.c; }
+
+skibidi main {
+    gang World wd;
+    wd.dt = 0.5;
+    gang Enemy en;
+    en.x = 10.0;
+
+    step(&en, &wd);
+    yapping("%.1f", en.x);
+
+    shrink(&en, 4);
+    yapping("%.1f", en.x);
+
+    nudge(2.5, &en);
+    yapping("%.1f", en.x);
+
+    gang A a;
+    gang B b;
+    gang C c;
+    b.b = 2;
+    c.c = 3;
+    sum3(&a, &b, &c);
+    yapping("%d", a.a);
+
+    bussin 0;
+}

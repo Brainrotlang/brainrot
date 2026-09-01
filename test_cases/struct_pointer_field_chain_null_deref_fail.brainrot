@@ -1,0 +1,15 @@
+🚽 Test case: #197 -- chaining `.` through a pointer-typed field whose
+🚽 pointer is still NULL (`next` never assigned) is a clean runtime error,
+🚽 not a crash. Written as an assignment target (no yapping) so the error
+🚽 is the program's only output, mirroring struct_pointer_null_deref_fail
+🚽 (#196's variable-base equivalent).
+gang Node {
+    rizz val;
+    gang Node *next;
+};
+
+skibidi main {
+    gang Node n;
+    n.val = 3;
+    n.next.val = 5;
+}

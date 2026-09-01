@@ -1,0 +1,25 @@
+🚽 Test case: a multi-dimensional array of struct values,
+🚽 `gang Point grid[2][2];`. Confirms element strides compose correctly
+🚽 across dimensions so `grid[r][c].field` addresses the right blob.
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+skibidi main {
+    gang Point grid[2][2];
+    rizz r;
+    rizz c;
+    flex (r = 0; r < 2; r = r + 1) {
+        flex (c = 0; c < 2; c = c + 1) {
+            grid[r][c].x = r;
+            grid[r][c].y = c;
+        }
+    }
+    flex (r = 0; r < 2; r = r + 1) {
+        flex (c = 0; c < 2; c = c + 1) {
+            yapping("grid[%d][%d] = %d %d", r, c, grid[r][c].x, grid[r][c].y);
+        }
+    }
+    bussin 0;
+}

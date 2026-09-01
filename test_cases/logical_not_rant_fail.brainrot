@@ -1,0 +1,11 @@
+🚽 Test case: `!` on a rant must be a semantic error.
+🚽
+🚽 The quieter half of logical_not_struct_fail. A rant is not int-width,
+🚽 so judging its truth through the int evaluator reads the wrong bytes
+🚽 rather than crashing -- a wrong answer with nothing to notice. `!p` on
+🚽 a real pointer stays legal and means the null check it looks like.
+skibidi main {
+    rant r = "hi";
+    yapping("%b", !r);
+    bussin 0;
+}

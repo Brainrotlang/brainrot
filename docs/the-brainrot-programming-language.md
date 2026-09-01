@@ -22,13 +22,18 @@ A Meme-Fueled Journey into Compiler Design, Internet Slang, and Skibidi Toilets
    - 7.9. Structs (`gang`)
    - 7.10. Unions (`chungus`)
    - 7.11. Enums (`gyatt`)
-   - 7.12. Modules (`#cooked`)
+   - 7.12. Type Aliases (`lit`)
+   - 7.13. Modules (`#cooked`)
 8. **Extended User Documentation**
    - 8.1. `yapping`
    - 8.2. `yappin`
    - 8.3. `baka`
    - 8.4. `ragequit`
    - 8.5. `chill`
+   - 8.6. `slorp`
+   - 8.7. `bet`
+   - 8.8. `gamba`
+   - 8.9. Strings: `yaplen`, `yapcat`, `yapcmp`, `yapidx`, `s[i]`, `s[i:j]`
 9. **Limitations**
 10. **Known Issues**
 11. **Cultural Context: The Rise of ‘Brain Rot’**
@@ -80,6 +85,11 @@ To compile Brainrot from source, you’ll need:
 - **GCC** (GNU Compiler Collection)
 - **Flex** (Fast Lexical Analyzer)
 - **Bison** (Parser Generator)
+- **OpenSSL** (`libcrypto`) — a **required** dependency of the standard
+  library (`libstdrot.so`), which uses it for the cryptographically safe
+  `gamba()` RNG (see [§8.8](#88-gamba)). The development headers are needed to
+  build; on Linux the runtime `libcrypto` is also needed to run. Building
+  without OpenSSL is a failed link, not a `gamba`-less interpreter.
 
 Installation commands vary by platform:
 
@@ -87,20 +97,24 @@ Installation commands vary by platform:
 
 ```bash
 sudo apt-get update
-sudo apt-get install gcc flex bison libfl-dev
+sudo apt-get install gcc flex bison libfl-dev libssl-dev
 ```
 
 ### Arch Linux
 
 ```bash
-sudo pacman -S gcc flex bison
+sudo pacman -S gcc flex bison openssl
 ```
 
 ### macOS (via Homebrew)
 
 ```bash
-brew install gcc flex bison
+brew install gcc flex bison openssl@3
 ```
+
+> **Note**: Homebrew's OpenSSL is keg-only, but `make` locates it
+> automatically and statically links `libcrypto` into `libstdrot.so`, so the
+> built standard library is self-contained.
 
 > **Note**: If you encounter `libfl` issues on macOS, you may need to locate and symlink `libfl.dylib` manually, as outlined in the README.
 
@@ -175,8 +189,6 @@ Brainrot replaces familiar C keywords with meme-inspired slang:
 | based      | default      |
 | mewing     | do           |
 | gyatt      | enum         |
-| whopper    | extern       |
-| cringe     | goto         |
 | giga       | long         |
 | smol       | short        |
 | nut        | signed       |
@@ -193,6 +205,13 @@ Brainrot replaces familiar C keywords with meme-inspired slang:
 | rant       | string type  |
 | lit        | typedef      |
 
+There is no equivalent of C's `extern` or `goto`. `extern` has nothing to do
+here: `#cooked` splices source and native modules register their own
+functions, so a symbol from another file resolves with no declaration and
+there is no linker to inform. `goto` is simply not offered. Both once existed
+as reserved words that no grammar rule accepted — writing either was always a
+syntax error — so `whopper` and `cringe` are now ordinary identifiers.
+
 ### 7.2. Operators
 
 Brainrot supports common arithmetic and logical operators:
@@ -206,7 +225,22 @@ Brainrot supports common arithmetic and logical operators:
 - `=` Assignment
 - `&&` Logical AND
 - `||` Logical OR
-- `!` Logical NOT (depending on grammar rules)
+- `!` Logical NOT. Yields a `cap`, whatever the operand was, and binds as
+  tightly as unary minus — so `!a == b` is `(!a) == b` and `!a && b` is
+  `(!a) && b`.
+
+  The operand is judged in its own type rather than the surrounding
+  context's, so `!0.5` is `L` (0.5 is true, and truncating it to `!0` would
+  say otherwise) and a packed `smol` is read at its own width. It must be a
+  scalar or a pointer: `!` on a `gang` or a `rant` is a semantic error,
+  since neither has a scalar truth value. On a pointer it is the null check
+  it looks like.
+
+  Because `cap` and `rizz` do not silently convert in either direction in
+  this language, `rizz k = !n;` is a type error exactly as `rizz k = W;`
+  is, and a native expecting `rizz` rejects a `!` argument the same way.
+  Untyped integer contexts — an array index, an `ohio` selector, an `edgy`
+  or `goon` condition — do get C's 0/1.
 - `++` Increment:
   - Pre-Increment (`++i`): Increments the value of `i` by 1 before it is used in an expression.
   - Post-Increment (`i++`): Uses the current value of `i`, then increments it by 1.
@@ -275,6 +309,16 @@ Brainrot supports common arithmetic and logical operators:
 - **`ragequit`**: terminates program execution immediately with the provided exit code.
 - **`chill`**: sleep for a integer number of seconds.
 - **`slorp`**: reads user input, similar to `scanf` but safe.
+- **`gamba`**: cryptographically safe random integers (OpenSSL `RAND_bytes`).
+- **`yaplen`**: length of a `rant`, in bytes.
+- **`yapcat`**: joins two `rant`s into a new one.
+- **`yapcmp`**: lexicographic comparison, returning `-1`, `0` or `1`.
+- **`yapidx`**: byte index of the first occurrence of one `rant` in another,
+  or `-1`.
+- **File I/O** — `crackopen`, `peaceout`, `skim`, `doomscroll`, `yapto`,
+  `shitpost`, `zoink`, `whereami`, `throwback`, `itsjoever`, `bricked`,
+  `bustcache`. Twelve operations behind a `SAUCE *` handle; see
+  [`docs/file-io.md`](file-io.md) for the full reference.
 
 ---
 
@@ -312,6 +356,44 @@ cap is_prime(rizz n) {
 cap isPrime = is_prime(11)
 
 ```
+
+#### Parameter types
+
+Scalars (`rizz`, `chad`, `gigachad`, `cap`, `yap`, `smol`), pointers, `gang`/
+`chungus` by value, `gyatt`, and `rant` (strings) may all be parameters.
+
+A `rant` parameter takes its **own copy** of the string, so it behaves as an
+ordinary local `rant`: assigning to it inside the callee does not disturb the
+caller's variable.
+
+```c
+rizz load_sfx(rant path) {
+    yapping("loading %s", path);
+    bussin 1;
+}
+
+skibidi main {
+    load_sfx("assets/sfx/jump.ogg");
+    load_sfx("assets/sfx/bruh.ogg");
+    bussin 0;
+}
+```
+
+#### Current Limitations
+
+- An **array** cannot be passed as an argument — a parameter can never be an
+  array type, and array-to-pointer decay is not implemented. Pass an element
+  (`f(arr[0])`) or its address (`f(&arr[0])`).
+- Reassigning a `rant` — parameter or local — leaks its previous buffer
+  ([#277](https://github.com/Brainrotlang/brainrot/issues/277)).
+- Argument types are only checked against parameter types in specific cases
+  (arrays, struct/union tags); a general type check for user-defined calls
+  does not exist yet, so passing a `rizz` where a `chad` is declared is not
+  diagnosed. A non-string argument to a `rant` parameter *is* refused, though
+  — the call does not run — because binding one would hand the callee a `rant`
+  with no buffer, which then gets used. (A refused call can still leave a
+  `rant` *declaration target* empty, e.g. `rant r = f(1, 2);` on an arity
+  mismatch; that is a separate, pre-existing property of failed calls.)
 
 ### 7.8. Pointers and Call by Reference
 
@@ -442,9 +524,11 @@ Notes and limitations on nesting:
 - A struct/union **cannot embed itself by value** (`gang Foo { gang Foo x; };`
   is a compile-time error, same as C — it has no finite size). A
   self-referential **pointer** field (`gang Node { gang Node *next; };`) is
-  allowed to declare, but chained `.` access through a pointer-typed
-  struct/union field (e.g. `a.ptr.b`) is not yet supported — dereference it
-  explicitly first.
+  allowed, and chained `.` access follows it like C's `->` — `a.next.val`
+  reads/writes through the pointer, for any chain depth (`a.next.next.val`).
+  Only a single level of indirection per hop is followed: a multi-level
+  pointer field (`gang Node **next`) still needs an explicit dereference,
+  and following a null pointer field is a runtime error.
 - A nested struct/union field's brace-initializer must itself be a braced
   sub-initializer, matching the shape of the type — `gang Line m = { {5, 6},
   {7, 8} };`, **not** the flattened `gang Line m = {5, 6, 7, 8};`. The
@@ -481,14 +565,69 @@ Point: 3 4 5.0
 Q: 10 20 0.0
 ```
 
+**Arrays of structs.** A struct/union tag can be the element type of an array,
+including multi-dimensional arrays (`gang Point pts[3];`, `gang Point
+grid[2][2];`). Each element is a whole struct blob laid out with the tag's own
+alignment, so indexing composes with member access: `pts[i].x`,
+`grid[r][c].y`, and nested chains such as `lines[i].a.x`. An element is also a
+by-value struct wherever a plain struct variable is — it can copy-initialize
+another (`gang Point c = pts[i];`), be passed by value (`take(pts[i])`), or be
+returned (`bussin pts[i];`).
+
+```brainrot
+gang Point {
+    rizz x;
+    chad y;
+};
+
+skibidi main {
+    gang Point pts[3];
+    rizz i;
+    flex (i = 0; i < 3; i = i + 1) {
+        pts[i].x = i * 10;
+        pts[i].y = i + 0.5;
+    }
+    yapping("%d %.1f", pts[2].x, pts[2].y);
+    bussin 0;
+}
+```
+
 #### Current Limitations
 
-- Chained access through a pointer-typed struct/union field (`a.ptr.b`) is
-  not yet supported.
+- Whole-struct assignment to an existing array element (`pts[i] = c;`) is not
+  supported, the same limitation plain struct variables have (`p = c;`); use
+  copy-initialization or per-field assignment instead.
+- A brace initializer for an array of structs (`gang Point pts[2] = {{1,
+  2}, {3, 4}};`) is not yet supported; declare the array and assign elements.
+- A field may itself be an array of structs/unions (`gang Pool { gang Entity
+  es[8]; };`, including multi-dimensional), and its elements are accessed and
+  assigned per field like any other (`pool.es[i].x = 1.0;`). The element type
+  must already be defined, and a struct cannot contain an array of *itself*
+  by value for the same reason it cannot contain one of itself directly — an
+  array of pointers to itself (`gang Node *kids[2];`) is fine.
+- Chained access follows a single-level pointer field per hop (`a.next.val`);
+  a multi-level pointer field (`gang Node **next`) is not followed and must
+  be dereferenced explicitly.
+- A struct/union pointer supports arithmetic and indexing, scaled by the
+  pointee's size: `p = p + 1`, `p = p - 1`, and `p[i].x` for both reading and
+  assignment — so a function handed a bare `gang Entity *` can walk a whole
+  pool. A pointer carries no extent, so — as in C — `p[i]` is **not**
+  bounds-checked, unlike the array form (`pts[i]`) which is. Only
+  single-level pointers and a single index are accepted: `gang E **pp` needs
+  an explicit dereference, and `p[0][1]` would be indexing into a struct.
+- Member access directly on a parenthesized expression (`(p + 1).x`) is not
+  supported; assign first (`p = p + 1; p.x`) or index (`p[1].x`).
 - A struct can be passed as a function parameter or returned from a
-  function, but only as a plain struct variable of the exact matching type
-  — not a sub-expression like a chained call or a member access. Arguments
+  function by value as a plain struct variable (`take(p)`, `bussin p;`), a
+  by-value struct member-access sub-expression (`take(b.corner)`, `bussin
+  b.corner;`), or a struct-returning call result (`take(make_point())`,
+  `bussin make_point();`) of the exact matching type. By-value arguments
   and return values are deep-copied (C by-value semantics), never aliased.
+  A function may instead return a **pointer to a struct** (`gang Point
+  *f()`); that returns a pointer value — typically a pointer parameter or
+  other storage that outlives the call — and reads/writes through it alias
+  the pointee. Returning `&local` dangles once the call returns (the same
+  undefined behavior as a scalar pointer return in C).
 
 ### 7.10. Unions (`chungus`)
 
@@ -578,15 +717,17 @@ skibidi main {
 
 The same rules as [`gang` nesting](#nesting) apply: the nested type must
 already be defined, a union can't embed itself by value, and chained access
-through a pointer-typed field isn't yet supported.
+follows a single-level pointer field per hop (like C's `->`).
 
 #### Current Limitations
 
-- Chained access through a pointer-typed struct/union field (`a.ptr.b`) is
-  not yet supported.
+- Chained access follows a single-level pointer field per hop (`a.next.val`);
+  a multi-level pointer field (`gang Node **next`) is not followed and must
+  be dereferenced explicitly.
 - A union can be passed as a function parameter or returned from a
   function under the same rules as a struct (see [§7.9](#79-structs-gang)) —
-  plain variable of the exact matching type, deep-copied.
+  a plain variable, a by-value member-access sub-expression, or a
+  union-returning call result of the exact matching type, deep-copied.
 
 ### 7.11. Enums (`gyatt`)
 
@@ -705,43 +846,180 @@ a `rizz`.
   Declaring a *variable* of an already-defined enum type works inside a
   function body.
 
-### 7.12. Modules (`#cooked`)
+### 7.12. Type Aliases (`lit`)
 
-`#cooked` is Brainrot's `#include`: it splices another `.brainrot` file's
-function and struct definitions into the current file at the point of the
-directive, so a program can be split across multiple files.
+Use **`lit`** to define a top-level alias for an existing type, like a C
+`typedef`. Aliases have no runtime behavior: they expand to the aliased type
+during parsing and then follow the same semantic rules as the original type.
+
+```c
+lit rizz Count;
+lit rizz *IntPtr;
+lit gang Point PointAlias;
+lit gyatt Color Paint;
+```
+
+C-style anonymous aggregate typedefs are also supported:
+
+```c
+lit gang {
+    rizz x;
+    rizz y;
+} Point;
+
+lit chungus {
+    rizz i;
+    chad f;
+} Data;
+```
+
+You can also provide an aggregate tag, matching C's
+`typedef struct point { ... } Point;` form:
+
+```c
+lit gang point {
+    rizz x;
+    rizz y;
+} Point;
+
+lit gang Point {
+    rizz x;
+    rizz y;
+} Point;
+```
+
+After an alias is defined, use it anywhere a type can be declared:
+
+```c
+Count n = 3;
+IntPtr p = &n;
+PointAlias pt = {1, 2};
+Paint favorite = GREEN;
+```
+
+Pointer aliases compose with additional `*` declarators. For example,
+`IntPtr *pp;` declares a pointer to an `IntPtr`, equivalent to `rizz **pp;`.
+
+Aliases can be used for variables, scalar arrays, function parameters,
+function return types, and struct/union fields. Aliases to named structs and
+unions keep the underlying tag identity, so `PointAlias` still has the exact
+type `gang Point`; anonymous aggregate aliases create a new aggregate type
+whose public name is the alias; named inline aggregate aliases additionally
+make the tag available through normal `gang tag`/`chungus tag` syntax.
+
+Current limitations:
+
+- `lit` declarations are top-level only.
+- The alias target must already be defined; there are no forward typedefs or
+  incomplete aggregate aliases such as `lit gang Ghost Alias;`.
+- Array typedefs and function-pointer typedefs are not supported.
+- Storage-class modifiers such as `salty` are not accepted on `lit`
+  declarations; apply them where the alias is used instead. Repeating a
+  width or signedness specifier the alias already has (`giga` on a `giga`
+  alias, `nut` on a `nut` alias) is rejected as a conflict.
+- Alias names are reserved type names and cannot be reused as variables,
+  parameters, functions, enum constants, or other aliases. Aggregate tags
+  (`gang`/`chungus`/`gyatt`) live in a separate namespace, so a typedef name can
+  share a spelling with a tag in either declaration order, matching C
+  typedef/tag behavior.
+
+### 7.13. Modules (`#cooked`)
+
+`#cooked` is Brainrot's `#include`. The quoted form splices another
+`.brainrot` file's function and struct definitions into the current file at
+the point of the directive, so a program can be split across multiple files.
+The angle-bracket form names a module instead of a path, and can resolve to
+either a `.brainrot` file (spliced in the same way) or a native `.so`
+(dlopen'd and registered) — a native module's functions become ordinary
+native calls once cooked, indistinguishable from the core standard
+library's own.
 
 #### Syntax
 
 ```c
 #cooked "path/to/file.brainrot"
+#cooked <module_name>
 ```
 
-The directive must be alone on its line (leading whitespace is fine). Only
-the quoted form is supported — there is no `<...>` system-header equivalent,
-since stdrot's builtins are already globally available without an include.
+The directive must be alone on its line (leading whitespace is fine).
 
 #### Path resolution
 
-A relative path is resolved relative to the directory of the file
+A relative quoted path is resolved relative to the directory of the file
 *containing* the `#cooked` directive (like C's quote-form `#include`), not
-the current working directory `brainrot` was invoked from. An absolute path
-is used as-is.
+the current working directory `brainrot` was invoked from. An absolute
+quoted path is used as-is.
+
+The angle-bracket form takes a bare module name (no `/`) and resolves it by
+searching, in order:
+
+1. Each directory in `$BRAINROT_PATH` (colon-separated), if set.
+2. Exactly one of the following two — never both, so an install can never
+   shadow a source build or vice versa:
+   - The install module directory (`/usr/local/lib/brainrot`), if the
+     running `brainrot` executable's own directory is the install bin
+     directory (`/usr/local/bin`) — i.e. this *is* an installed binary.
+   - Otherwise, a `stdrot/` directory next to the running executable
+     itself, so an uninstalled build resolves a module sitting in its own
+     source tree with no install step.
+
+   "The running executable" means the actual binary that's executing, not
+   `argv[0]` — a bare command name typed at a shell prompt (as opposed to
+   `./brainrot` or an absolute path) carries no directory information at
+   all, so this is resolved via the OS (`/proc/self/exe` on Linux,
+   `_NSGetExecutablePath` on macOS) rather than guessed from `argv[0]` and
+   the current working directory.
+
+Within each directory, a `<module_name>.brainrot` file is checked before a
+`<module_name>.so` file — one syntax, one search path, two possible artifact
+kinds. The first directory containing either wins.
 
 #### What can be included
 
-A `#cooked`-included file is spliced in as top-level content, so it should
-contain only function and struct definitions — **not** its own `skibidi
-main`. (A Brainrot program has exactly one `main`; splicing in a second one
-is a parse error.)
+A `#cooked`-included `.brainrot` file (either form) is spliced in as
+top-level content, so it should contain only function and struct
+definitions — **not** its own `skibidi main`. (A Brainrot program has
+exactly one `main`; splicing in a second one is a parse error.)
+
+A `#cooked <name>` that resolves to a native `.so` instead is dlopen'd
+(`RTLD_LOCAL`, not the core library's `RTLD_GLOBAL`) and must export a
+`StdrotAPI brainrot_module_init_v3(void)` entrypoint — the native counterpart
+of the core standard library's own `stdrot_get_api_v3()`, built the exact
+same way (`stdrot/registry.c`'s linker-section collection of every
+`STDROT_EXPORT_SIG()` in the module, exported under the module-specific name
+instead via `-DSTDROT_REGISTRY_ENTRYPOINT=brainrot_module_init_v3` — see
+`tests/nativemodules/testnative.c` for a minimal example). Every cooked
+module exports that *same* entrypoint name; that's fine because it's always
+looked up by that specific module's own `dlopen` handle (never a
+process-wide symbol search), and `RTLD_LOCAL` keeps it from ever entering
+the global symbol scope in the first place — see `stdrot/registry.c`'s own
+comment for why an *internal* cross-symbol call from inside a module (as
+opposed to this handle-scoped lookup) is the actual hazard this design
+avoids. Its exported functions become callable alongside the core
+library's and any other already-cooked module's; a name colliding with
+either is a load-time error naming the existing source.
+Missing or ABI-incompatible `brainrot_module_init_v3()`, and a malformed
+function table, are both load-time errors for the same reason a
+`libstdrot.so` built against an incompatible ABI is (see `stdrot_load()`,
+`stdrot.c`) — a native module is exactly as fragile as the core library.
 
 #### Include-once and circular includes
 
-Including the same file more than once (e.g. two modules that both `#cooked`
-a shared third module) is a no-op after the first time — Brainrot has no
-`#edgydef`/`#slaps` guards yet, so this is handled automatically. A file that
-`#cooked`s itself, directly or through a cycle of other files, is a compile
-error that reports the include chain instead of hanging.
+Cooking the same artifact more than once (e.g. two modules that both
+`#cooked` a shared third one) is a no-op after the first time — for a
+`.brainrot` file this is handled automatically, and a native `.so` is simply
+never `dlopen`'d twice.
+
+Include-once being **structural rather than a convention** is the reason
+Brainrot has no include guards and is not getting any: C needs
+`#ifndef`/`#define`/`#endif` precisely because its `#include` will happily
+splice a file twice, so every header has to defend itself and a forgotten
+guard is a real bug. Here there is nothing to forget.
+
+A `.brainrot` file that `#cooked`s itself, directly or through a cycle of
+other files, is a compile error that reports the include chain instead of
+hanging — a native module can't form a cycle this way (loading one never
+re-enters the lexer), so only the "already loaded, no-op" half applies to it.
 
 #### Example
 
@@ -978,6 +1256,200 @@ Error: bet: assertion failed at line 2: this assertion must fail
 ```
 
 The program terminates immediately when a `bet` fails, preventing further execution.
+
+---
+
+### 8.8. `gamba`
+
+```c
+rizz gamba();          /* unbiased value in [0, INT_MAX]        */
+rizz gamba(rizz n);    /* unbiased value in [0, n)              */
+rizz gamba(rizz lo, rizz hi);  /* unbiased value in [lo, hi], inclusive */
+```
+
+`gamba` is Brainrot's cryptographically safe random number generator. It is a
+standard-library builtin (no `#cooked`, no keyword) backed by OpenSSL's
+`RAND_bytes`, so `libcrypto` is a **required** native build dependency of
+`libstdrot.so`.
+
+- **Unbiased.** Ranges use rejection sampling, never `gamba() % n`, so every
+  value in the range is equally likely -- no modulo bias.
+- **Honest failures.** If the CSPRNG fails, `gamba` aborts with an error
+  rather than returning a look-alike `0`. It never falls back to C's
+  `rand()`/`random()` and there is no seed function (`gamba_seed` would be a
+  security bug -- OpenSSL seeds itself).
+- **Range checks.** `gamba(n)` requires `n > 0` and `gamba(lo, hi)` requires
+  `hi >= lo`; an invalid range aborts with an error, it does not wrap.
+- The three integer forms take no argument, one argument (`n`), or two
+  arguments (`lo, hi`); all arguments are `rizz` and the result is always
+  `rizz`.
+
+> A filling form `gamba_bytes(buf, n)` (raw random bytes into a buffer) is
+> planned but not yet available. On the WebAssembly build, which is
+> intentionally OpenSSL-free, `gamba` errors instead of returning a value.
+
+**Example**:
+
+```c
+skibidi main {
+    rizz roll = gamba(1, 6);
+    yapping("you rolled %d", roll);
+
+    rizz nonce = gamba();
+    yapping("nonce %d", nonce);
+    bussin 0;
+}
+```
+
+---
+
+### 8.9. Strings: `yaplen`, `yapcat`, `yapcmp`, `yapidx`, `s[i]`, `s[i:j]`
+
+```c
+rizz yaplen(rant s);                  /* length in BYTES                    */
+rant yapcat(rant a, rant b);          /* a joined to b, as a new string     */
+rizz yapcmp(rant a, rant b);          /* -1 if a < b, 0 if equal, 1 if a > b */
+rizz yapidx(rant hay, rant needle);   /* byte index of needle, or -1        */
+```
+
+The v1 string library. All four are standard-library builtins -- no `#cooked`,
+no keyword -- and all of them take and return ordinary `rant` and `rizz`
+values.
+
+**Everything is bytes, not characters.** A `rant` is a length-prefixed byte
+buffer, so `yaplen("é")` is `2`, not `1`: that is two bytes of UTF-8.
+Comparison and searching are byte-wise for the same reason. Codepoint-aware
+variants are not part of v1.
+
+Bytes compare as **unsigned**, which is what C's `strcmp` and Go's
+`strings.Compare` do. Every non-ASCII byte therefore sorts *after* every ASCII
+one.
+
+> ### ⚠️ A `yap[N]` buffer always has length `N`
+>
+> This is the neighbouring gotcha, and it bites harder than the byte/character
+> one. A `rant` carries a real length. A `yap[N]` character buffer — the thing
+> [`slorp`](#86-slorp) fills, and the usual way a program reads input —
+> reports its **declared capacity**, not the length of the text in it.
+>
+> ```c
+> yap buf[32];
+> slorp(buf);                        🚽 user types "hi"
+>
+> yaplen(buf)          🚽 32, not 2
+> yapcmp(buf, "hi")    🚽 1  -- "buf is greater", because it is 32 long
+> yapidx(buf, "i")     🚽 1  -- correct
+> yapcat(buf, "!")     🚽 a real 33-byte string; prints as "hi" because
+>                      🚽 yapping stops at the first NUL, so the "!" is
+>                      🚽 sitting 31 bytes past it
+> ```
+>
+> So measure, compare and join a **`rant`**, not a raw buffer — and note there
+> is currently no way to convert one into the other: `rant r = buf;` is
+> rejected outright with *"Type mismatch in initialization of 'r': expected
+> string, got char"*. A `yap[N]` stays a `yap[N]`.
+>
+> `yapidx` is the one that still behaves, because a bounded scan finds the
+> needle at the same offset whether or not the trailing bytes are counted. If
+> you only need "where is it" or "does it contain it", it works on a buffer.
+>
+> This is a property of how character arrays are passed to builtins, not of
+> these four functions; they are simply the first to read the stored length
+> rather than treating the bytes as a C string. Pinned by
+> `test_cases/string_stdlib_char_buffer.brainrot`, and expected to change.
+
+**The builtins never modify their arguments; `yapcat` returns a new string.**
+Neither argument is touched, and the result is independent of both -- storing
+it and then calling `yapcat` again leaves the first result untouched. The same
+goes for `s[i:j]`: a slice is a **copy, not a view**, so mutating either the
+slice or the string it came from leaves the other alone.
+
+That is a narrower claim than "strings are immutable", and deliberately so --
+`s[i] = c` writes a byte in place (see below).
+
+- `yaplen` reads the stored length, so it is O(1) and is correct for a string
+  containing an embedded NUL. It is not `strlen`.
+- `yapcat("", s)` and `yapcat(s, "")` both equal `s`.
+- `yapcmp` returns exactly `-1`, `0` or `1` -- never some other nonzero number
+  -- so `yapcmp(a, b) == -1` is safe to write. When one string is a prefix of
+  the other, the **shorter sorts first**: `yapcmp("app", "apple")` is `-1`.
+- `yapidx` returns the index of the *first* match. A needle that is not present
+  gives `-1`, and an **empty needle gives `0`**, matching Go's
+  `strings.Index` -- so `yapidx(h, n) >= 0` is a correct "contains" test for
+  every needle, including an empty one.
+
+#### Indexing and slicing: `s[i]` and `s[i:j]`
+
+These are **syntax**, not builtins — no `#cooked`, no function call.
+
+```c
+rant s = "hello world";
+
+yap  c   = s[0];        🚽 'h'   -- one byte, as a yap
+rant sub = s[0:5];      🚽 "hello" -- a NEW rant
+```
+
+- **`s[i]` yields a `yap`** — the byte at offset `i`. Index in `[0, len)`;
+  anything else is a runtime error.
+- **`s[i]` is assignable**: `s[0] = 74;` writes that byte in place, exactly as
+  `yap buf[0] = 74;` does. Writes are bounds-checked by the same rule as reads,
+  so `s[yaplen(s)] = c` is refused rather than scribbling past the buffer. The
+  string's length never changes — you are overwriting a byte, not splicing.
+  This is the one way a `rant`'s contents can be modified; every builtin
+  returns a new string instead.
+- **`s[i:j]` yields a new `rant`** — the half-open range `[i, j)`, so its
+  length is `j - i`. Requires `0 <= i <= j <= len`.
+- **Both slice bounds are required.** `s[:j]`, `s[i:]` and `s[:]` are not v1
+  syntax.
+- **No negative indices.** `s[-1]` does not mean "the last byte"; it is simply
+  out of range. Use `s[yaplen(s) - 1]`.
+- **Out of range is an error, not a clamp.** The program stops where the
+  mistake is rather than quietly returning something shorter than you asked
+  for.
+- Bounds are **bytes**, exactly as with `yaplen` — so a two-byte UTF-8
+  character is two indices, and slicing between them yields half a character.
+
+Note the deliberate asymmetry: `s[len]` is an error, but `s[len:len]` is
+**legal** and gives the empty string, because a slice's upper bound is
+exclusive and so `len` is a valid *boundary* even though it is not a valid
+*index*. `s[i:i]` is likewise legal and empty, which makes it a usable
+starting value when building a string up in a loop.
+
+Only a **named** `rant` can be indexed or sliced — `s[0:2]` works,
+`yapcat(a, b)[0:2]` does not parse. Bind the intermediate to a variable
+first. (The grammar shares its `IDENTIFIER [` prefix with array access so the
+two stay unambiguous; allowing an arbitrary expression base is a possible
+later change.)
+
+> **Not in v1:** there is no split, replace, trim, or case conversion yet, and
+> no omitted slice bounds or negative indices. Those are tracked separately;
+> v1 is the measure/join/compare/search/index core that the rest builds on.
+
+**Example**:
+
+```c
+skibidi main {
+    rant name = yapcat(yapcat("Big", " "), "Chungus");
+
+    yapping("%s", name);              🚽 Big Chungus
+    yapping("%d", yaplen(name));      🚽 11
+    yapping("%d", yapidx(name, " ")); 🚽 3
+
+    edgy (yapidx(name, "Chungus") >= 0) {
+        yapping("certified");
+    }
+
+    edgy (yapcmp("Chad", "Chadwick") < 0) {
+        yapping("Chad sorts first");
+    }
+    bussin 0;
+}
+```
+
+See [`examples/string_toolkit.brainrot`](../examples/string_toolkit.brainrot)
+for a longer worked example of the builtins, and
+[`examples/string_parsing.brainrot`](../examples/string_parsing.brainrot) for
+indexing and slicing used to split a delimited record.
 
 ---
 

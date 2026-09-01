@@ -5,6 +5,9 @@
 🚽 (sizeof(uintptr_t)) before ever reaching the type-size machinery a
 🚽 by-value void field would incorrectly fall through to; this proves
 🚽 the field-level rejection doesn't also catch the valid pointer case.
+🚽 Expected size is 16, not 8 + 4 = 12: the 8-byte pointer field forces
+🚽 8-byte struct alignment, so the trailing `rizz x` gets 4 bytes of
+🚽 padding after it -- matching `struct Box { void *p; int x; };` in C.
 gang Box {
     skibidi *p;
     rizz x;

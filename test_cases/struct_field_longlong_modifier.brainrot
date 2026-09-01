@@ -1,0 +1,21 @@
+🚽 Test case: #206 (3e) -- a `thicc` (long long) scalar struct field,
+🚽 reached through a `lit thicc rizz` alias, is sized/aligned as 8 bytes,
+🚽 not misread as a 4-byte int -- the long-long sibling of struct_field_
+🚽 long_modifier (giga). Unlike giga, long long is 8 bytes on both LP64
+🚽 and wasm32 ILP32, so this needs no per-platform override. Proves the
+🚽 slot's size and the member's own maxxing(); it deliberately does not
+🚽 store a value outside int range (VAR_INT still loads/stores through a
+🚽 4-byte int regardless of modifiers -- a pre-existing gap the giga
+🚽 fixture documents too).
+lit thicc rizz Big;
+
+gang Wide {
+    yap unit;
+    Big value;
+};
+
+skibidi main {
+    gang Wide w;
+    yapping("%lu", maxxing(w));
+    yapping("%lu", maxxing(w.value));
+}

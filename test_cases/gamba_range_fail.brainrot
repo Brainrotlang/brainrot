@@ -1,0 +1,7 @@
+🚽 gamba(lo, hi) with hi < lo is an inverted range: it must abort, never
+🚽 silently wrap or hand back a look-alike value (issue #215).
+skibidi main {
+    rizz bad = gamba(5, 3);
+    yapping("unreachable=%d", bad);
+    bussin 0;
+}

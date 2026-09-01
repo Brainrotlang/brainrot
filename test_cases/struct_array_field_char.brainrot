@@ -1,0 +1,20 @@
+🚽 Test case: #206 (3e) -- a `yap` (char) array field specifically, to
+🚽 exercise the width/signedness-correct read/write paths #243 fixed for
+🚽 packed char storage in this new struct-field-array code path too, not
+🚽 just the array-variable and scalar-struct-field ones. Elements are
+🚽 written out of order (index 0 last), matching #243's own write-order
+🚽 fixtures: if a regression ever widened this field's element writes
+🚽 back to 4 bytes, index 0's write would clobber indices 1-3.
+gang Name {
+    yap letters[4];
+};
+
+skibidi main {
+    gang Name n;
+    n.letters[1] = 'i';
+    n.letters[2] = 'z';
+    n.letters[3] = 'z';
+    n.letters[0] = 'r';
+    yapping("%c%c%c%c", n.letters[0], n.letters[1], n.letters[2],
+           n.letters[3]);
+}

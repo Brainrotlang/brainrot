@@ -2,7 +2,11 @@
 
 #include "stdrot_api.h"
 #include <stdlib.h>
+#ifdef _WIN32
+#include <windows.h> /* Sleep() -- no POSIX unistd.h/sleep() on Windows */
+#else
 #include <unistd.h>
+#endif
 
 /* ragequit: exit with a code.
  * cleanup() is registered via atexit() in main() so it runs automatically. */
@@ -14,7 +18,15 @@ void ragequit(int exit_code)
 /* chill: suspend execution for the given number of seconds */
 void chill(unsigned int seconds)
 {
+#ifdef _WIN32
+    /* Win32 Sleep() takes milliseconds. Cap the multiply so a large seconds
+     * value can't overflow the DWORD argument -- INFINITE (0xFFFFFFFF) would
+     * hang forever, which a finite chill() must never become. */
+    DWORD ms = (seconds > 4294967U) ? 0xFFFFFFFEUL : (DWORD)(seconds * 1000U);
+    Sleep(ms);
+#else
     sleep(seconds);
+#endif
 }
 
 /* exit_code_params/seconds_params below declare a single STDROT_INT

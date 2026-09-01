@@ -1,0 +1,49 @@
+🚽 Test case: an ARRAY of structs is not a by-value struct value, and
+🚽 passing one where a struct parameter is declared must say so rather than
+🚽 silently hand over element 0.
+🚽
+🚽 `gang Point pts[2]` keeps the whole array in the same Variable slot a
+🚽 single struct uses, so resolve_by_value_struct_source() (ast.c) would
+🚽 otherwise copy total_size bytes out of it and pass pts[0] -- the caller
+🚽 writes `len2(pts)`, the callee receives pts[0], and nothing anywhere
+🚽 objects.
+🚽
+🚽 ── Two rejections cover this, at different layers ────────────────────
+🚽 This fixture pins the STATIC one (#308): semantic_visit_function_call()
+🚽 rejects any array identifier passed to a user-defined function, so the
+🚽 program never runs and the process exits 1. That check covers every
+🚽 element type, not just structs -- `rizz a[2]` passed to a `rizz`
+🚽 parameter used to print the array's own address reinterpreted as an int,
+🚽 and a `cap` array was undefined behavior outright (UBSan: "load of value
+🚽 144, which is not a valid value for type '_Bool'").
+🚽
+🚽 The RUNTIME rejection added by #307 in resolve_by_value_struct_source()
+🚽 is still load-bearing and still tested -- see
+🚽 struct_array_copy_init_fail.brainrot. It covers the by-value struct
+🚽 sources the analyzer's call-argument check does not see: copy
+🚽 initialization (`gang Point a = pts;`) and struct returns
+🚽 (`bussin pts;`). The two layers are deliberately both present; neither
+🚽 subsumes the other.
+🚽
+🚽 ── What this fixture would catch ─────────────────────────────────────
+🚽 An implementation that reports nothing and quietly binds pts[0]: the
+🚽 call's result is printed, so that regression would print 25.0 here
+🚽 instead of failing. It would also catch a regression that reported the
+🚽 error but carried on, since main never reaching its output at all is
+🚽 part of what is pinned.
+gang Point {
+    chad x;
+    chad y;
+};
+
+chad len2(gang Point p) {
+    bussin p.x * p.x + p.y * p.y;
+}
+
+skibidi main {
+    gang Point pts[2];
+    pts[0].x = 3.0;
+    pts[0].y = 4.0;
+    yapping("%.1f", len2(pts));
+    bussin 0;
+}

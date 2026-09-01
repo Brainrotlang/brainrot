@@ -36,7 +36,9 @@
 // expected value instead of native's — see the comment next to it for why.
 // They are still run and still asserted on, just against a different,
 // equally exact string, so a regression in either one still fails this
-// harness.
+// harness. Override strings don't need a trailing newline to match a
+// multi-line native expected string (e.g. "8\n4" vs. native's "16\n8\n")
+// -- both sides of the comparison are .trim()'d below before comparing.
 //
 // Usage: node tests/run_wasm_tests.mjs [test|production]
 //   (run from the repo root, after `make wasm-test` and/or `make wasm`)
@@ -118,6 +120,48 @@ const WASM_EXPECTED_OVERRIDES = {
   native_sizeof_ptr_result: "4",
   native_identity_abi_type_char_array: "8",
   native_void_pointer_struct_field: "8",
+  // struct_field_long_modifier's `Meters` field is a `lit giga rizz`
+  // (long) alias: 4 bytes/4-aligned on wasm32 ILP32 vs 8/8 on native
+  // LP64, same root cause as `giga` above. `yap unit` (1 byte) then
+  // pads to 4 (not native's 8), so the struct is 8 bytes total, and
+  // the member's own maxxing(d.value) is 4 (not native's 8) too.
+  struct_field_long_modifier: "8\n4",
+  // struct_array_field_ptr's `rizz *ptrs[2];` is 2 pointers: 4 bytes
+  // each on wasm32 ILP32 (8 total) vs 8 bytes each on native LP64 (16
+  // total) -- same root cause as native_void_pointer_struct_field above.
+  struct_array_field_ptr: "ptr0 correct\nptr1 correct\n8",
+  // lang.l's "cannot find module" diagnostic is deliberately worded
+  // differently under STDROT_STATIC (wasm, no dynamic loader at all) vs.
+  // native: native mentions both "<name>.brainrot" and "<name>.so" as
+  // candidates the search path checked, wasm mentions only
+  // "<name>.brainrot" since module_path_resolve() (module_path.c) never
+  // even looks for a ".so" there. See lang.l's handle_cooked_module_
+  // directive for the #ifdef STDROT_STATIC split this mirrors.
+  cooked_module_search_path:
+    "Error: cooked_module_search_path.brainrot:10: cannot find module " +
+    "'mathmod' (looked for 'mathmod.brainrot' via $BRAINROT_PATH, then " +
+    "either the install module directory or a 'stdrot' directory next " +
+    "to this executable, whichever applies)",
+  // gamba is cryptographically safe RNG backed by OpenSSL RAND_bytes
+  // (issue #215). The wasm build is deliberately OpenSSL-free (issue #175),
+  // so gamba is a documented erroring stub there (stdrot/gamba.c's
+  // STDROT_STATIC branch) rather than a weaker generator. The happy-path
+  // fixture draws randomness on its first call (`rizz fixed = gamba(1, 1);`,
+  // line 7) and so aborts here instead of printing native's property
+  // assertions. The two invalid-range fixtures (gamba_range_fail,
+  // gamba_zero_fail) reject BEFORE touching the CSPRNG, so they emit the
+  // same error on wasm as native and need no override.
+  gamba: "Error: gamba: CSPRNG unavailable in this build (no OpenSSL) at line 7",
+  // Zero-argument gamba() aborts on the wasm stub too. Its error line comes
+  // from the call node (line 8), NOT a first-argument node it doesn't have --
+  // guarding that the no-arg form reports the real line, not "line 0".
+  gamba_noarg:
+    "Error: gamba: CSPRNG unavailable in this build (no OpenSSL) at line 8",
+  // Statement-position (bare `gamba();`) runs through a different dispatcher
+  // than the initializer above. It must ALSO report the call node's line
+  // (line 8), not "line 0" -- guarding the statement path fix.
+  gamba_statement:
+    "Error: gamba: CSPRNG unavailable in this build (no OpenSSL) at line 8",
 };
 
 // Fixtures that call a tests/stdrot/*.c native (poke_int, peek_int,

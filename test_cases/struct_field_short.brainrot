@@ -1,0 +1,18 @@
+🚽 Test case: #206 (3e) -- a `smol` (short) scalar struct field is sized
+🚽 and aligned as 2 bytes, and reads/writes correctly. `yap c` (1, align
+🚽 1) at offset 0, `smol s` (2, align 2) at offset 2, `rizz i` (4, align
+🚽 4) at offset 4 -> total 8. Short is 2 bytes on both LP64 and wasm32,
+🚽 so no per-platform override is needed.
+gang Mixed {
+    yap c;
+    smol s;
+    rizz i;
+};
+
+skibidi main {
+    gang Mixed m;
+    m.c = 1;
+    m.s = 300;
+    m.i = 5;
+    yapping("%lu %d %d %d", maxxing(m), m.c, m.s, m.i);
+}

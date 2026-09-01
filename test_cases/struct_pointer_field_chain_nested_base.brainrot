@@ -1,0 +1,24 @@
+🚽 Test case: #197 -- a by-value nested struct field (`box.inner`) whose
+🚽 own member is a pointer-typed field (`link`): `box.inner.link.val`
+🚽 mixes inline-nested resolution (no deref) with pointer-following in one
+🚽 chain.
+gang Node {
+    rizz val;
+    gang Node *link;
+};
+gang Inner {
+    gang Node hub;
+};
+gang Box {
+    gang Inner inner;
+};
+
+skibidi main {
+    gang Box box;
+    gang Node target;
+    target.val = 7;
+    box.inner.hub.link = &target;
+    yapping("%d", box.inner.hub.link.val);
+    box.inner.hub.link.val = 88;
+    yapping("%d", target.val);
+}

@@ -1,14 +1,9 @@
-🚽 Test case: no-initializer variant of the grammar-boundary check --
-🚽 `skibidi x;` (no initializer, scalar void) reaches a parse-time check
-🚽 in lang.y that rejects declaring a variable with type void via YYABORT,
-🚽 rather than waiting for semantic_visit_declaration() (which is
-🚽 exercised by semantic_error_void_variable_declaration.brainrot).
-🚽 This prevents creating an invalid declaration AST node and cleanly
-🚽 aborts parsing without hard exit(1) in create_default_node().
-🚽
-🚽 Exercised here as a separate parse-time rejection path.
-🚽
-🚽
+🚽 Test case: round-20 review finding #1, no-initializer variant of the
+🚽 void-variable rejection -- `skibidi x;` still passes through
+🚽 create_default_node() (ast.c) to synthesize a placeholder initializer,
+🚽 then reaches the same semantic_visit_declaration() guard as
+🚽 `skibidi x = 5;`. This fixture keeps the no-initializer parse path
+🚽 covered without claiming create_default_node() rejects the declaration.
 skibidi main {
     skibidi x;
     bussin 0;

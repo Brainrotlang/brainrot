@@ -1,0 +1,6 @@
+gyatt Color { RED, GREEN };
+
+skibidi main {
+    lit gyatt Color Paint;
+    bussin 0;
+}

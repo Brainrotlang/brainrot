@@ -1,0 +1,23 @@
+🚽 Test case: #196 -- a struct/union-tagged pointer's initializer is
+🚽 checked against the DECLARED TAG, not just "is this a struct pointer"
+🚽 (PR #248 review, round 2, finding 1). VAR_STRUCT is a category, not a
+🚽 type: `gang Point` and `gang Rect` are both VAR_STRUCT, pointer_level
+🚽 1, so the round-1 fix's category-only check (declared_type == init_type)
+🚽 passed this silently, then followed the pointer using Point's layout
+🚽 on an actually Rect-shaped blob.
+gang Point {
+    rizz x;
+    rizz y;
+};
+gang Rect {
+    rizz w;
+    rizz h;
+};
+
+skibidi main {
+    gang Rect r;
+    r.w = 11;
+    r.h = 22;
+    gang Point *pp = &r;
+    yapping("%d %d", pp.x, pp.y);
+}

@@ -13,7 +13,17 @@ make test       # build, then run tests/test_brainrot.py against test_cases/*.br
 make valgrind   # build, then run run_valgrind_tests.sh over every test_cases/*.brainrot
 make format     # clang-format all .c/.h files
 make format-check # check formatting without modifying files (what CI's `lint` job runs)
+make cppcheck   # static analysis (what CI's `static-analysis` job runs); needs cppcheck >= 2.13
 make clean      # remove build artifacts (does NOT touch source)
+```
+
+Optional raylib bindings — never needed by `make`, `make test`, or
+`make valgrind`, and only the last two lines require raylib installed:
+
+```bash
+make rayrot-gen-sources # generate the raylib binding; needs NO raylib
+make rayrot             # hand-written module (Road A); needs raylib
+make rayrot-gen         # compile the generated binding + ABI drift check
 ```
 
 Run a single program: `./brainrot path/to/file.brainrot`.
@@ -68,8 +78,15 @@ Issue, Type of Change, Checklist) — fill it in, don't strip it out.
 - **Always**: run `make test` and `make valgrind` before calling a change done.
 - **Always**: run `make format-check` (or `make format` to fix) before opening
   a PR — the CI `lint` job blocks on any diff.
+- **Always**: run `make cppcheck` before opening a PR — the CI
+  `static-analysis` job blocks on any finding.
 - **Always**: fill out `.github/PULL_REQUEST_TEMPLATE.md` in full when opening a PR.
 - **Ask first**: changing existing keyword syntax/semantics in `lang.l`/`lang.y`
   (README's keyword table is a public compatibility surface).
 - **Never**: commit generated files (`lang.tab.*`, `lex.yy.c`, `brainrot`,
-  `libstdrot.so`) or disable `-Werror`/sanitizers to silence a warning.
+  `libstdrot.so`) or disable `-Werror`/sanitizers to silence a warning. This
+  covers generated *bindings* too (Appendix B Q7 in `docs/ROADMAP.md`): a
+  binding generator's C output is derived and stays out of the repo, while a
+  vendored, pinned API description it reads *in* (e.g. raylib's
+  `raylib_api.json`) is an ordinary committed source file, not generated
+  output.

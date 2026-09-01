@@ -1,0 +1,21 @@
+🚽 Test case: #206 (3e) -- indexing into an array field reached through a
+🚽 chain of nested-struct member access (`o.inner.vals[i]`), not just a
+🚽 direct field. Array.base (ast.h) holds the whole struct_access
+🚽 expression, and struct_access already resolves chains of any depth on
+🚽 its own (resolve_struct_access() recurses when the object is itself a
+🚽 NODE_STRUCT_ACCESS), so this should fall out for free with no extra
+🚽 chain-specific code.
+gang Inner {
+    rizz vals[3];
+};
+gang Outer {
+    gang Inner inner;
+};
+
+skibidi main {
+    gang Outer o;
+    o.inner.vals[0] = 10;
+    o.inner.vals[1] = 20;
+    o.inner.vals[2] = 30;
+    yapping("%d %d %d", o.inner.vals[0], o.inner.vals[1], o.inner.vals[2]);
+}

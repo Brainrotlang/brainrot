@@ -1,6 +1,9 @@
-🚽 Test case: a function declared to return a struct *pointer* must be
-🚽 rejected outright (not yet supported), rather than silently dropping the
-🚽 `*` and treating the function as a by-value struct return
+🚽 Test case: #193 -- pointer-to-struct return types are now supported
+🚽 (see struct_pointer_return.brainrot), but returning a BY-VALUE struct
+🚽 from a pointer-returning function (`gang Point *f() { ... bussin p; }`
+🚽 where p is a `gang Point`, not a pointer) is a type error: the return
+🚽 value is not a pointer, so there is nothing to store into the pointer
+🚽 destination.
 gang Point {
     rizz x;
 };
@@ -12,6 +15,6 @@ gang Point *get_ptr() {
 }
 
 skibidi main {
-    gang Point r = get_ptr();
+    gang Point *r = get_ptr();
     bussin 0;
 }

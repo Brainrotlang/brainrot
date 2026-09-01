@@ -112,7 +112,7 @@ void dump(HashMap *hm)
         {
             Variable *v = (Variable *)hm->nodes[i]->value;
             printf("key: %p, value: %s, is_array: %s\n", hm->nodes[i]->key,
-                   v->name.data, v->is_array ? "true" : "false");
+                   v->name.data, v->desc.is_array ? "true" : "false");
         }
     }
 }
@@ -138,7 +138,7 @@ void *hm_get(HashMap *hm, const void *key, size_t key_size)
         if (!node)
             return NULL; // Empty slot means key not found
 
-        if (key_equal(node->key, key, key_size))
+        if (node->key_size == key_size && key_equal(node->key, key, key_size))
         {
             return node->value;
         }
@@ -176,7 +176,7 @@ void hm_put(HashMap *hm, const void *key, size_t key_size, void *value,
     while (hm->nodes[index])
     {
         HashMapNode *node = hm->nodes[index];
-        if (key_equal(node->key, key, key_size))
+        if (node->key_size == key_size && key_equal(node->key, key, key_size))
         {
             // Update existing value
             void *new_value = safe_malloc(value_size);
@@ -240,27 +240,28 @@ void hm_free(HashMap *hm)
             Variable *var = hm->nodes[i]->value;
             if (var != NULL)
             {
-                if (var->is_array)
+                if (var->desc.is_array)
                 {
                     SAFE_FREE(var->value.array_data);
                 }
-                else if (var->var_type == VAR_STRUCT && var->value.array_data)
+                else if (var->desc.type == VAR_STRUCT &&
+                         var->desc.pointer_level == 0 && var->value.array_data)
                 {
                     free(var->value.array_data);
                     var->value.array_data = NULL;
                 }
-                else if (var->var_type == VAR_STRING &&
+                else if (var->desc.type == VAR_STRING &&
                          var->value.strvalue.data)
                 {
                     SAFE_FREE(var->value.strvalue);
                 }
-                if (var->struct_name.data)
+                if (var->desc.struct_name.data)
                 {
-                    SAFE_FREE(var->struct_name);
+                    SAFE_FREE(var->desc.struct_name);
                 }
-                if (var->enum_name.data)
+                if (var->desc.enum_name.data)
                 {
-                    SAFE_FREE(var->enum_name);
+                    SAFE_FREE(var->desc.enum_name);
                 }
             }
 

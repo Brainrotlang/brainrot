@@ -1,0 +1,65 @@
+🚽 String toolkit -- the v1 string builtins (issue #251) doing ordinary
+🚽 work: yaplen, yapcat, yapidx and yapcmp.
+🚽
+🚽 v1 is deliberately small. There is no substring/slice operation yet, so
+🚽 everything here is built out of "how long is it", "join two", "where is
+🚽 it" and "which sorts first" -- which is already enough for validation,
+🚽 search and ordering.
+
+rant full_name(rant first, rant last) {
+    bussin yapcat(yapcat(first, " "), last);
+}
+
+🚽 yapidx returns a byte index, or -1 when the needle is absent -- so
+🚽 ">= 0" is the idiomatic "contains" test. It reads 0 for an empty needle
+🚽 rather than -1 precisely so this stays correct for every needle.
+cap contains(rant haystack, rant needle) {
+    bussin yapidx(haystack, needle) >= 0;
+}
+
+cap looks_like_email(rant address) {
+    rizz at = yapidx(address, "@");
+    rizz dot = yapidx(address, ".");
+    🚽 Needs an "@" that is not first, and a "." somewhere after it.
+    bussin at > 0 && dot > at + 1;
+}
+
+skibidi main {
+    rant first = "Big";
+    rant last = "Chungus";
+    rant name = full_name(first, last);
+
+    yapping("name:   %s", name);
+    yapping("length: %d", yaplen(name));
+    yapping("space:  %d", yapidx(name, " "));
+
+    yapping("");
+
+    rant good = "chungus@ohio.gov";
+    rant bad = "chungus.ohio.gov";
+    yapping("%s -> %d", good, looks_like_email(good));
+    yapping("%s -> %d", bad, looks_like_email(bad));
+
+    yapping("");
+
+    yapping("contains 'hung': %d", contains(name, "hung"));
+    yapping("contains 'zzz':  %d", contains(name, "zzz"));
+
+    yapping("");
+
+    🚽 yapcmp returns -1, 0 or 1, so it drops straight into ordering
+    🚽 logic. A prefix always sorts before the string that extends it:
+    🚽 "Chad" < "Chadwick".
+    rant a = "Chad";
+    rant b = "Chadwick";
+    edgy (yapcmp(a, b) < 0) {
+        yapping("%s sorts before %s", a, b);
+    } amogus {
+        yapping("%s sorts before %s", b, a);
+    }
+
+    🚽 Lengths are counted in BYTES, not characters: "é" is two bytes of
+    🚽 UTF-8. v1 is byte-oriented throughout.
+    yapping("bytes in 'é': %d", yaplen("é"));
+    bussin 0;
+}

@@ -1,0 +1,75 @@
+🚽 Test case: issues #312 and #321 -- a function's parameter must shadow a
+🚽 same-named variable in `skibidi main`.
+🚽
+🚽 Both were the same root cause. `skibidi_function` (lang.y) reduces to a
+🚽 BARE STATEMENT LIST -- `$$ = $4`, no function-def node -- so main's body
+🚽 is analyzed with no current_function_name, and add_symbol() records its
+🚽 locals with function_name == {0}: indistinguishable from a real global.
+🚽 find_symbol() returned whichever entry matched first, so main's local
+🚽 could answer a lookup for a parameter of the same name inside an
+🚽 unrelated function.
+🚽
+🚽 The two symptoms looked unrelated:
+🚽
+🚽   #312  the POINTER LEVEL came from main's variable, so a correct call
+🚽         was rejected -- "expected pointer to struct/union 'P' (level 1),
+🚽         got struct pointer level 0" -- naming a type that is correct
+🚽         inside the callee, which sends you looking in the wrong function.
+🚽
+🚽   #321  the STRUCT TAG came from main's variable, so a valid member
+🚽         access failed -- "Struct 'Bag' has no member 'x'" for a
+🚽         parameter declared `gang Vec2`, which does have `x`.
+🚽
+🚽 Renaming either variable made both disappear, which is the tell. It also
+🚽 made parameter names part of a library's public surface: a caller
+🚽 picking a natural local name for a struct it owns got a compile
+🚽 error inside a file it did not write.
+🚽
+🚽 ── Why the values are printed ────────────────────────────────────────
+🚽 Not just that these compile. `getx(v)` printing 3.0 and `use(&bm)`
+🚽 printing W prove the CALLEE saw its own parameter; and main printing
+🚽 its own `bm.n` and `b.n` afterwards proves the fix did not go the other
+🚽 way and make main's locals unreachable.
+gang Vec2 { chad x; chad y; };
+gang Bag  { rizz n; };
+gang P    { chad w; };
+
+🚽 #321: the parameter's TAG must win over main's `b`.
+chad getx(gang Vec2 b) {
+    bussin b.x;
+}
+
+🚽 #312: the parameter's POINTER LEVEL must win over main's `bm`.
+chad wid(gang P *bm) {
+    bussin 7.0;
+}
+
+cap use(gang P *bm) {
+    bussin wid(bm) > 0.0;
+}
+
+🚽 A scalar parameter shadowing a scalar local of the same name.
+rizz twice(rizz n) {
+    bussin n * 2;
+}
+
+skibidi main {
+    gang Vec2 v;
+    v.x = 3.0;
+
+    gang Bag b;          🚽 same name as getx's parameter, DIFFERENT type
+    b.n = 41;
+
+    gang P bm;           🚽 same name as wid/use's parameter, NOT a pointer
+    bm.w = 1.0;
+
+    rizz n = 100;        🚽 same name as twice's parameter
+
+    yapping("getx  %.1f", getx(v));
+    yapping("use   %b", use(&bm));
+    yapping("twice %d", twice(3));
+
+    🚽 main's own variables are still its own
+    yapping("mine  %d %d %.1f", b.n, n, bm.w);
+    bussin 0;
+}

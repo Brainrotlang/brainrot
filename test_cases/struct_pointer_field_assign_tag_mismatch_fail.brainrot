@@ -1,0 +1,24 @@
+🚽 Test case: #197 -- assigning a wrong-tag pointer into a pointer-typed
+🚽 struct FIELD (`a.next = &r;` where `next` is `gang Node *` and `r` is a
+🚽 `gang Rect`) is rejected, closing the store path that #197's chained
+🚽 read `a.next.val` now depends on. Without this, a Rect* planted in a
+🚽 Node* field would later be read back through Node's layout by
+🚽 `a.next.val` -- for differently-sized structs, an out-of-bounds access.
+🚽 The guard is the same struct-tag assignment check added for #196
+🚽 (semantic_visit_assignment), here exercised with a struct-field target
+🚽 rather than a plain pointer variable.
+gang Node {
+    rizz val;
+    gang Node *next;
+};
+gang Rect {
+    rizz w;
+    rizz h;
+};
+
+skibidi main {
+    gang Node a;
+    gang Rect r;
+    a.next = &r;
+    yapping("%d", a.next.val);
+}

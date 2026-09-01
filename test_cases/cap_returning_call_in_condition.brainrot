@@ -1,0 +1,54 @@
+🚽 Test case: issue #313 -- a `cap`-returning call used where an integer
+🚽 is wanted, which above all means an `edgy`/`goon` CONDITION.
+🚽
+🚽 unbox_native_numeric_result() (ast.c) knew every scalar type except
+🚽 VAR_BOOL, so `edgy (yes())` hit its `default: return false` and the
+🚽 caller reported "cannot be used in an integer context".
+🚽
+🚽 ── Why this was worse than an error ──────────────────────────────────
+🚽 It FAILED OPEN. The condition evaluated to 0, so `edgy (yes())` took
+🚽 the false branch and a program ignoring stderr quietly did the wrong
+🚽 thing -- the same failure mode as #296 and #303. That is why the
+🚽 `edgy (yes())` line below asserts the TRUE branch ran: an
+🚽 implementation that reported the error and evaluated 0 would print
+🚽 nothing there and fail this fixture, rather than merely printing an
+🚽 extra diagnostic.
+🚽
+🚽 ── What is deliberately NOT here ─────────────────────────────────────
+🚽 `rizz n = yes();` is rejected -- "expected int, got bool" -- and that
+🚽 is NOT this bug: `rizz n = b;` for a plain `cap b` is rejected
+🚽 identically, with no call involved. It is a declaration type rule,
+🚽 consistent either way, so pinning it here would mislabel it as part of
+🚽 this fix.
+cap yes() {
+    bussin W;
+}
+
+cap no() {
+    bussin L;
+}
+
+skibidi main {
+    🚽 the shape the issue is about: a call directly as a condition
+    edgy (yes()) {
+        yapping("edgy true");
+    }
+
+    🚽 ... and the false case, so a fix that hardcoded "true" would fail
+    edgy (no()) {
+        yapping("NOT REACHED");
+    } amogus {
+        yapping("edgy false");
+    }
+
+    🚽 a loop condition, and mixed into a larger boolean expression
+    rizz n = 0;
+    goon (n < 2 && yes()) {
+        n = n + 1;
+    }
+    yapping("goon ran %d", n);
+
+    🚽 an integer context that is not a condition
+    yapping("negated %d", !yes());
+    bussin 0;
+}

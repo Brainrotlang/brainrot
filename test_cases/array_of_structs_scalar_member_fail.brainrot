@@ -1,0 +1,9 @@
+🚽 Test case (error): member access on an element of a NON-struct array
+🚽 (`nums[0].x` where nums is `rizz[]`) must be rejected, not treated as a
+🚽 struct blob.
+skibidi main {
+    rizz nums[3];
+    nums[0] = 1;
+    yapping("%d", nums[0].x);
+    bussin 0;
+}

@@ -21,7 +21,13 @@ static HashMap *struct_registry = NULL;
 static StructDef *struct_registry_list = NULL;
 static HashMap *enum_registry = NULL;
 static EnumDef *enum_registry_list = NULL;
+static HashMap *type_alias_registry = NULL;
+static TypeAlias *type_alias_registry_list = NULL;
 bool struct_def_had_error = false;
+/* Set by lit alias helpers below; lang.y's post-yyparse gate aborts before
+   semantic analysis/execution when true, and cleanup resets it through
+   free_type_alias_registry(). */
+bool typedef_had_error = false;
 ReturnValue current_return_value;
 Arena arena;
 
@@ -33,8 +39,8 @@ Scope *current_scope;
 
 /* Include the symbol table functions */
 extern void yyerror(const char *s);
+extern void yyerror_current_line(const char *s);
 extern void cleanup(void);
-extern TypeModifiers get_variable_modifiers(const String name);
 extern const char *vartype_to_string(VarType type);
 extern int yylineno;
 static int get_function_return_pointer_level(const String name);
@@ -203,8 +209,9 @@ static NativeResult native_call_peek(ASTNode *node)
         }
     }
 
-    NativeResult result = execute_native_call(
-        node->data.func_call.function_name, node->data.func_call.arguments);
+    NativeResult result =
+        execute_native_call(node->data.func_call.function_name,
+                            node->data.func_call.arguments, node->line_number);
     native_call_cache[free_slot].node = node;
     native_call_cache[free_slot].result = result;
     native_call_cache[free_slot].valid = true;
@@ -222,7 +229,8 @@ static NativeResult native_call_consume(ASTNode *node)
         }
     }
     return execute_native_call(node->data.func_call.function_name,
-                               node->data.func_call.arguments);
+                               node->data.func_call.arguments,
+                               node->line_number);
 }
 
 /* Helper to build a namespaced static key */
@@ -276,8 +284,15 @@ size_t get_type_size_for_descriptor(VarType type, int pointer_level,
 
 static void write_value_to_address(void *address, VarType type,
                                    int pointer_level, ASTNode *expr,
-                                   TypeModifiers mods);
+                                   TypeModifiers mods, bool packed_storage);
 static void initialize_variable_from_expr(Variable *var, ASTNode *expr);
+static size_t get_array_element_stride(VarType type, int pointer_level,
+                                       TypeModifiers mods,
+                                       const String struct_name);
+static void *array_element_address(void *element_base, size_t offset,
+                                   VarType type, int pointer_level,
+                                   TypeModifiers mods,
+                                   const String struct_name);
 
 // Symbol table functions
 bool set_variable(const String name, void *value, VarType type,
@@ -287,17 +302,17 @@ bool set_variable(const String name, void *value, VarType type,
     if (var != NULL)
     {
 
-        var->modifiers = mods;
-        var->var_type = type;
+        var->desc.modifiers = mods;
+        var->desc.type = type;
         switch (type)
 
         case VAR_INT:
         {
-            if (var->modifiers.is_long)
+            if (var->desc.modifiers.is_long)
             {
                 var->value.ivalue = (long long)(*(int *)value);
             }
-            else if (var->modifiers.is_long_long)
+            else if (var->desc.modifiers.is_long_long)
             {
                 var->value.ivalue = (long)(*(int *)value);
             }
@@ -319,7 +334,7 @@ bool set_variable(const String name, void *value, VarType type,
             var->value.bvalue = *(bool *)value;
             break;
         case VAR_CHAR:
-            var->value.ivalue = *(char *)value;
+            var->value.ivalue = *(unsigned char *)value;
             break;
         case VAR_STRING:
             var->value.strvalue = ARENA_STRDUP(*(String *)value);
@@ -349,7 +364,7 @@ bool set_variable(const String name, void *value, VarType type,
     return false; // Symbol table is full
 }
 
-bool set_multi_array_variable(const String name, int dimensions[],
+bool set_multi_array_variable(const String name, const int dimensions[],
                               int num_dimensions, TypeModifiers mods,
                               VarType type)
 {
@@ -357,25 +372,35 @@ bool set_multi_array_variable(const String name, int dimensions[],
     if (var == NULL)
         return false;
 
-    var->is_array = true;
-    var->modifiers = mods;
-    var->var_type = type;
+    var->desc.is_array = true;
+    var->desc.modifiers = mods;
+    var->desc.type = type;
 
     // calculate the total size of the array
-    var->array_dimensions.num_dimensions = num_dimensions;
+    var->desc.array_dimensions.num_dimensions = num_dimensions;
     size_t total = 1;
 
     for (int i = 0; i < num_dimensions; i++)
     {
-        var->array_dimensions.dimensions[i] = dimensions[i];
+        var->desc.array_dimensions.dimensions[i] = dimensions[i];
         total *= dimensions[i];
     }
 
-    var->array_dimensions.total_size = total;
+    var->desc.array_dimensions.total_size = total;
     var->array_length = total;
 
-    size_t element_size =
-        get_type_size_for_descriptor(type, var->pointer_level, mods);
+    /* Element size = the one stride authority (get_array_element_stride):
+       a struct/union VALUE element is sized by its tag's layout, everything
+       else by its modifier-aware descriptor width. Reserving per element by
+       the SAME function array_element_address() later strides by is what
+       keeps storage size and element addressing from ever disagreeing. */
+    size_t element_size = get_array_element_stride(
+        type, var->desc.pointer_level, mods, var->desc.struct_name);
+    if (type == VAR_STRUCT && var->desc.pointer_level == 0 && element_size == 0)
+    {
+        yyerror("Unknown struct/union type for array");
+        return false;
+    }
     if (element_size == 0)
         element_size = sizeof(int);
 
@@ -400,6 +425,65 @@ ASTNode *create_struct_def_node(String name, StructField *fields)
     return node;
 }
 
+/* Type a member access from DECLARED types alone, executing nothing.
+ *
+ * resolve_struct_access() answers by walking real storage, which a call base
+ * has none of until the call runs -- and the type queries below must never
+ * run it. They ask with report_errors = false precisely because they are
+ * probes, and create_struct_access_node()'s eager resolve happens while the
+ * file is still being parsed.
+ *
+ * So `f().x` and `f().inner.x` were "unknown" to every static query: a chad
+ * field printed through %f came out as an int, maxxing() reported the type as
+ * not statically known, and get_expression_pointer_level() returned 0. The
+ * declared return type of f answers all of it without a single side effect,
+ * which is what this does.
+ *
+ * Returns the field, or NULL when the shape genuinely is not statically
+ * knowable (a base that is not a call or a chain of them, a call returning
+ * something other than a by-value struct, a function not yet defined). */
+static StructField *static_struct_field(ASTNode *node)
+{
+    if (!node || node->type != NODE_STRUCT_ACCESS)
+    {
+        return NULL;
+    }
+    ASTNode *obj = node->data.struct_access.object;
+    StructDef *parent = NULL;
+
+    if (obj && obj->type == NODE_FUNC_CALL)
+    {
+        if (is_builtin_function(obj->data.func_call.function_name))
+        {
+            return NULL; /* no native returns a struct across the ABI */
+        }
+        Function *func = get_function(obj->data.func_call.function_name);
+        if (!func || func->return_desc.type != VAR_STRUCT ||
+            func->return_desc.pointer_level != 0 ||
+            !func->return_desc.struct_name.data)
+        {
+            return NULL;
+        }
+        parent = get_struct_def(func->return_desc.struct_name);
+    }
+    else if (obj && obj->type == NODE_STRUCT_ACCESS)
+    {
+        StructField *outer = static_struct_field(obj);
+        if (!outer || outer->desc.type != VAR_STRUCT ||
+            !outer->desc.struct_name.data)
+        {
+            return NULL;
+        }
+        parent = get_struct_def(outer->desc.struct_name);
+    }
+
+    if (!parent)
+    {
+        return NULL;
+    }
+    return find_struct_field(parent, node->data.struct_access.member_name);
+}
+
 ASTNode *create_struct_access_node(ASTNode *object, String member)
 {
     ASTNode *node = ARENA_ALLOC_ASTNODE();
@@ -417,19 +501,28 @@ ASTNode *create_struct_access_node(ASTNode *object, String member)
     StructDef *def = NULL;
     void *base = NULL;
     StructField *fld = NULL;
-    if (resolve_struct_access(node, &def, &base, &fld,
-                              /* report_errors */ false))
+    if (!resolve_struct_access(node, &def, &base, &fld,
+                               /* report_errors */ false))
     {
-        node->var_type = fld->type;
-        node->pointer_level = fld->pointer_level;
-        if (fld->type == VAR_STRUCT && fld->struct_name.data)
+        /* No storage to walk -- a forward reference, or a call base, which
+           this resolve is forbidden to execute. Fall back to declared
+           types, which is all a call base ever needed. */
+        fld = static_struct_field(node);
+    }
+    if (fld)
+    {
+        node->var_type = fld->desc.type;
+        node->pointer_level = fld->desc.pointer_level;
+        node->modifiers = fld->desc.modifiers;
+        if (fld->desc.type == VAR_STRUCT && fld->desc.struct_name.data)
             node->data.struct_access.struct_name =
-                ARENA_STRDUP(fld->struct_name);
+                ARENA_STRDUP(fld->desc.struct_name);
     }
     return node;
 }
 
-ASTNode *create_multi_array_declaration_node(String name, int dimensions[],
+ASTNode *create_multi_array_declaration_node(String name,
+                                             const int dimensions[],
                                              int num_dimensions, VarType type)
 {
     ASTNode *node = ARENA_ALLOC_ASTNODE();
@@ -500,10 +593,99 @@ ASTNode *create_multi_array_access_node(String name, ASTNode *indices[],
     Variable *var = get_variable(name);
     if (var)
     {
-        node->var_type = var->var_type;
-        node->pointer_level = var->pointer_level;
-        node->modifiers = var->modifiers;
-        node->is_array = var->is_array;
+        node->var_type = var->desc.type;
+        node->pointer_level = var->desc.pointer_level;
+        node->modifiers = var->desc.modifiers;
+        node->is_array = var->desc.is_array;
+    }
+
+    return node;
+}
+
+/* `s[i:j]` -- builds the half-open byte-slice node (#251). Both bounds are
+ * mandatory; see the `slice` member's own comment in ast.h for why this is a
+ * node type of its own rather than a second shape of NODE_ARRAY_ACCESS.
+ *
+ * var_type is set unconditionally to VAR_STRING rather than copied from the
+ * named Variable the way create_multi_array_access_node() does above. That is
+ * not an oversight: a slice's result type does not depend on what `name`
+ * turns out to be -- it is a rant or the program is wrong -- and at parse
+ * time the variable usually does not exist yet anyway, since get_variable()
+ * looks in the RUNTIME scope. Whether `name` really is a rant is checked
+ * where the answer is knowable: statically in semantic_analyze_with_scope_
+ * tracking() and at runtime in evaluate_string_slice().
+ */
+ASTNode *create_string_slice_node(String name, ASTNode *start, ASTNode *end)
+{
+    ASTNode *node = ARENA_ALLOC_ASTNODE();
+    if (!node)
+    {
+        yyerror("Memory allocation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    node->type = NODE_STRING_SLICE;
+    /* Without this the analyzer's "only a rant can be sliced" diagnostic
+       reports line 1 for every program, since add_semantic_error() takes
+       the line from the node. */
+    node->line_number = yylineno;
+    node->data.slice.name = ARENA_STRDUP(name);
+    node->data.slice.start = start;
+    node->data.slice.end = end;
+    node->var_type = VAR_STRING;
+    node->pointer_level = 0;
+    node->is_array = false;
+    return node;
+}
+
+/* The struct-field counterpart of create_multi_array_access_node(): `base`
+   is an already-built struct_access expression (e.g. `foo.arr`), not a
+   Variable name -- Array.base (ast.h) is what tells every other consumer
+   (evaluate_multi_array_access(), get_expression_type()/get_expression_
+   pointer_level(), and their semantic_analyzer.c mirrors) to resolve
+   through resolve_struct_access() instead of get_variable(). Resolves
+   eagerly where possible, same reasoning and same "expected to fail
+   silently" contract as create_struct_access_node()'s own comment
+   (forward references / not-yet-declared variables at parse time). */
+ASTNode *create_struct_field_array_access_node(ASTNode *base,
+                                               ASTNode *indices[],
+                                               int num_indices)
+{
+    ASTNode *node = ARENA_ALLOC_ASTNODE();
+    if (!node)
+    {
+        yyerror("Memory allocation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    node->type = NODE_ARRAY_ACCESS;
+    node->data.array.base = base;
+    node->data.array.num_dimensions = num_indices;
+    for (int i = 0; i < num_indices; i++)
+    {
+        node->data.array.indices[i] = indices[i];
+    }
+
+    StructDef *def = NULL;
+    void *field_base = NULL;
+    StructField *fld = NULL;
+    if (base->type == NODE_STRUCT_ACCESS &&
+        resolve_struct_access(base, &def, &field_base, &fld,
+                              /* report_errors */ false))
+    {
+        node->var_type = fld->desc.type;
+        node->pointer_level = fld->desc.pointer_level;
+        node->modifiers = fld->desc.modifiers;
+        /* NOT fld->is_array: this node denotes the INDEXED ELEMENT
+           (`foo.arr[i]`), a scalar/pointer value, not the array field
+           itself -- fld->is_array (true) describes the field being
+           indexed into, not the result of indexing it. Under-indexing
+           (fewer indices than the field's own rank, which in C would
+           yield a sub-array) is rejected outright by evaluate_struct_
+           field_array_access()'s own rank check, so a successfully-
+           evaluated node here is always a genuine scalar/pointer
+           element; false is correct unconditionally. */
+        node->is_array = false;
     }
 
     return node;
@@ -518,8 +700,15 @@ ASTNode *create_array_access_node_single(String name, ASTNode *index)
     return create_multi_array_access_node(name, indices, 1);
 }
 
-// Calculate the memory offset for multi-dimensional array access
-size_t calculate_array_offset(Variable *var, int indices[], int num_indices)
+/* Calculate the memory offset for multi-dimensional array access.
+   Takes the two pieces an "is this actually an array, and what shape"
+   check needs directly, rather than a `Variable *`, so a StructField's
+   own is_array/array_dimensions (an array-typed struct field, e.g.
+   `chad params[4];`) can reuse this without a fake Variable standing in
+   for it -- the logic below never depended on anything else a Variable
+   carries. */
+size_t calculate_array_offset(bool is_array, const ArrayDimensions *dims,
+                              int indices[], int num_indices)
 {
     // TEMPORARY FIX: Skip strict dimension checking due to variable lookup bug
     // The issue is that get_variable() sometimes returns the wrong variable
@@ -528,20 +717,19 @@ size_t calculate_array_offset(Variable *var, int indices[], int num_indices)
 
     // If the variable is not actually an array or dimensions don't match,
     // try to handle it gracefully instead of crashing
-    if (!var->is_array)
+    if (!is_array)
     {
         // Variable is not an array - return offset 0 for single element access
         return 0;
     }
 
-    if (num_indices != var->array_dimensions.num_dimensions)
+    if (num_indices != dims->num_dimensions)
     {
         // Dimension mismatch - for now, just use the first few indices that are
         // available This is not ideal but prevents crashes
-        int actual_indices =
-            (num_indices < var->array_dimensions.num_dimensions)
-                ? num_indices
-                : var->array_dimensions.num_dimensions;
+        int actual_indices = (num_indices < dims->num_dimensions)
+                                 ? num_indices
+                                 : dims->num_dimensions;
 
         if (actual_indices <= 0)
         {
@@ -560,13 +748,13 @@ size_t calculate_array_offset(Variable *var, int indices[], int num_indices)
     for (int i = 0; i < num_indices; i++)
     {
         // Check if the index is within bounds
-        if (indices[i] < 0 || indices[i] >= var->array_dimensions.dimensions[i])
+        if (indices[i] < 0 || indices[i] >= dims->dimensions[i])
         {
             char error_msg[MAX_BUFFER_LEN];
-            sprintf(
-                error_msg,
+            snprintf(
+                error_msg, sizeof(error_msg),
                 "Array index out of bounds: dimension %d (index=%d, size=%d)",
-                i + 1, indices[i], var->array_dimensions.dimensions[i]);
+                i + 1, indices[i], dims->dimensions[i]);
             yyerror(error_msg);
             exit(EXIT_FAILURE);
         }
@@ -576,7 +764,7 @@ size_t calculate_array_offset(Variable *var, int indices[], int num_indices)
         size_t multiplier = 1;
         for (int j = i + 1; j < num_indices; j++)
         {
-            multiplier *= var->array_dimensions.dimensions[j];
+            multiplier *= dims->dimensions[j];
         }
 
         offset += indices[i] * multiplier;
@@ -593,10 +781,11 @@ size_t calculate_array_offset(Variable *var, int indices[], int num_indices)
    grandparent blob), which becomes the base for this level.
 
    Chaining through a pointer-typed struct/union field (e.g. `a.ptr.b`
-   where `ptr` is `gang Foo *`) is intentionally not supported yet — it
-   would require implicit pointer dereference semantics that don't exist
-   elsewhere in the language, so we report a clear error instead of
-   computing a bogus address. */
+   where `ptr` is `gang Foo *`, #197) follows the pointer, applying the
+   same single-level implicit-`->` rule the pointer-typed-VARIABLE base
+   case (#196) uses: `pointer_level == 1` dereferences and continues from
+   the pointee; `pointer_level > 1` is rejected (C requires an explicit
+   `(*x)->`); a null pointer is a clean error, not a crash. */
 bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                            StructField **field_out, bool report_errors)
 {
@@ -622,33 +811,74 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                 yyerror("Undefined struct or union variable");
             return false;
         }
-        if (var->var_type != VAR_STRUCT)
+        if (var->desc.type != VAR_STRUCT)
         {
             if (report_errors)
                 yyerror("Variable is not a struct or union");
             return false;
         }
-        parent_def = get_struct_def(var->struct_name);
+        parent_def = get_struct_def(var->desc.struct_name);
         if (!parent_def)
         {
             if (report_errors)
                 yyerror("Unknown struct or union type");
             return false;
         }
-        /* Lazily allocate blob if missing — handles cases where parse-time
-           pointer was invalidated by hashmap resize during semantic
-           analysis. */
-        if (!var->value.array_data)
+        /* #196: a pointer-typed struct/union variable (`gang Foo *pp;
+           pp.field`) follows the pointer -- the base is whatever `pp`
+           points at, not a blob owned by `pp` itself. `pp`'s own union
+           slot is `value.pvalue` (an address), never `value.array_data`;
+           reading `array_data` for a pointer variable would either
+           misinterpret that address as a blob pointer or -- when unset --
+           silently calloc a brand-new, disconnected blob (the leak this
+           branch's predecessor, PR #247, hardened against without yet
+           following the pointer).
+
+           Only ONE level of indirection: `.` as an implicit `->` is
+           defensible for `gang Foo *pp` (pointer_level == 1) -- `pp.field`
+           reads exactly like C's `pp->field`. It is not defensible for
+           `gang Foo **pp` (pointer_level == 2): C requires an explicit
+           `(*pp)->field`, because `pvalue` at that level holds the
+           address of a `Foo *`, not a `Foo` blob -- reinterpreting those
+           bytes as a `Foo` (what treating every pointer_level > 0
+           uniformly did before this check, PR #248 review finding 2)
+           silently reads/writes through the wrong type. */
+        if (var->desc.pointer_level > 1)
         {
-            var->value.array_data = calloc(1, parent_def->total_size);
-            if (!var->value.array_data)
+            if (report_errors)
+                yyerror("Member access via '.' through a multi-level "
+                        "pointer (pointer_level > 1) is not supported");
+            return false;
+        }
+        if (var->desc.pointer_level == 1)
+        {
+            uintptr_t target = var->value.pvalue;
+            if (!target)
             {
                 if (report_errors)
-                    yyerror("Out of memory for struct/union blob");
+                    yyerror("Null pointer dereference in struct member "
+                            "access");
                 return false;
             }
+            parent_base = (void *)target;
         }
-        parent_base = var->value.array_data;
+        else
+        {
+            /* Lazily allocate blob if missing — handles cases where
+               parse-time pointer was invalidated by hashmap resize during
+               semantic analysis. */
+            if (!var->value.array_data)
+            {
+                var->value.array_data = calloc(1, parent_def->total_size);
+                if (!var->value.array_data)
+                {
+                    if (report_errors)
+                        yyerror("Out of memory for struct/union blob");
+                    return false;
+                }
+            }
+            parent_base = var->value.array_data;
+        }
     }
     else if (obj && obj->type == NODE_STRUCT_ACCESS)
     {
@@ -659,27 +889,342 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                                    report_errors))
             return false;
 
-        if (outer_field->pointer_level > 0)
-        {
-            if (report_errors)
-                yyerror("Chained member access through a pointer-typed "
-                        "struct/union field is not supported");
-            return false;
-        }
-        if (outer_field->type != VAR_STRUCT)
+        if (outer_field->desc.type != VAR_STRUCT)
         {
             if (report_errors)
                 yyerror("Member access on non-struct/union field");
             return false;
         }
-        parent_def = get_struct_def(outer_field->struct_name);
+        parent_def = get_struct_def(outer_field->desc.struct_name);
         if (!parent_def)
         {
             if (report_errors)
                 yyerror("Unknown nested struct or union type");
             return false;
         }
-        parent_base = (char *)outer_base + outer_field->offset;
+
+        /* Address of the outer field's own storage within its enclosing
+           blob. For a plain (non-pointer) nested struct/union field this
+           IS the nested blob (structs live inline); for a pointer-typed
+           field it's the slot holding the pointer VALUE. */
+        void *outer_field_addr = (char *)outer_base + outer_field->offset;
+
+        /* #197: chaining `.` through a pointer-typed struct/union FIELD
+           (`n.next.val` where `next` is `gang Node *`) follows the pointer,
+           the same single-level-of-indirection rule the pointer-typed
+           VARIABLE case above (#196) already uses. The field's slot holds a
+           uintptr_t pointer value, not the nested blob, so read it and
+           continue member resolution from there. `pointer_level > 1`
+           (`gang Node **next`) needs an explicit `(*x)->` in C and is
+           rejected for the identical reason the variable case rejects it
+           -- the slot holds a `Node *`, not a `Node` blob. */
+        if (outer_field->desc.pointer_level > 1)
+        {
+            if (report_errors)
+                yyerror("Member access via '.' through a multi-level "
+                        "pointer (pointer_level > 1) is not supported");
+            return false;
+        }
+        if (outer_field->desc.pointer_level == 1)
+        {
+            uintptr_t target = *(uintptr_t *)outer_field_addr;
+            if (!target)
+            {
+                if (report_errors)
+                    yyerror("Null pointer dereference in struct member "
+                            "access");
+                return false;
+            }
+            parent_base = (void *)target;
+        }
+        else
+        {
+            parent_base = outer_field_addr;
+        }
+    }
+    else if (obj && obj->type == NODE_ARRAY_ACCESS && obj->data.array.base)
+    {
+        /* Member access on an element of a struct/union-typed ARRAY FIELD
+           (`pool.es[i].x`, #311). The sibling branch below handles the
+           name-based form (`pts[i].x`) and its own comment used to record
+           this shape as unsupported; this is the branch that supports it.
+
+           Deliberately NOT routed through evaluate_struct_field_array_
+           access(), which computes exactly this address and is used for a
+           scalar element (`foo.nums[i]`): that function reports via
+           yyerror() and exit()s on every failure, which is right for an
+           evaluation context but wrong here -- resolve_struct_access() is
+           also called speculatively with report_errors == false (see
+           create_struct_field_array_access_node(), infer_expression_
+           struct_name()), and a speculative probe of a malformed access
+           must return false, not terminate the interpreter. The address
+           arithmetic below is the same, through the same two helpers, so
+           bounds checking (calculate_array_offset()) and struct-aware
+           striding (array_element_address() via get_array_element_
+           stride()) are inherited rather than reimplemented. */
+        StructDef *outer_def = NULL;
+        void *outer_base = NULL;
+        StructField *arr_fld = NULL;
+        if (!resolve_struct_access(obj->data.array.base, &outer_def,
+                                   &outer_base, &arr_fld, report_errors))
+            return false;
+
+        if (!arr_fld->desc.is_array || arr_fld->desc.type != VAR_STRUCT ||
+            arr_fld->desc.pointer_level != 0)
+        {
+            if (report_errors)
+                yyerror("Member access on a non-struct/union array element");
+            return false;
+        }
+
+        parent_def = get_struct_def(arr_fld->desc.struct_name);
+        if (!parent_def)
+        {
+            if (report_errors)
+                yyerror("Unknown struct or union type");
+            return false;
+        }
+
+        /* Same rank check evaluate_struct_field_array_access() makes, and
+           for the same reason: an array field lives inline in the
+           enclosing struct's single blob, so calculate_array_offset()'s
+           lenient dimension-mismatch fallback would resolve into a
+           NEIGHBORING field's bytes rather than merely misindexing its
+           own array. */
+        int num_indices = obj->data.array.num_dimensions;
+        if (num_indices <= 0 ||
+            num_indices != arr_fld->desc.array_dimensions.num_dimensions)
+        {
+            if (report_errors)
+            {
+                char msg[MAX_BUFFER_LEN];
+                snprintf(msg, sizeof(msg),
+                         "Struct/union field '%.100s' expects %d array "
+                         "index/indices, got %d",
+                         arr_fld->name.data ? arr_fld->name.data : "?",
+                         arr_fld->desc.array_dimensions.num_dimensions,
+                         num_indices);
+                yyerror(msg);
+            }
+            return false;
+        }
+
+        int indices[MAX_DIMENSIONS] = {0};
+        for (int i = 0; i < num_indices; i++)
+        {
+            if (!obj->data.array.indices[i])
+            {
+                if (report_errors)
+                    yyerror("Missing array index in struct field access");
+                return false;
+            }
+            indices[i] = evaluate_expression_int(obj->data.array.indices[i]);
+        }
+
+        size_t offset = calculate_array_offset(
+            true, &arr_fld->desc.array_dimensions, indices, num_indices);
+        void *element_base = (char *)outer_base + arr_fld->offset;
+        parent_base = array_element_address(
+            element_base, offset, arr_fld->desc.type,
+            arr_fld->desc.pointer_level, arr_fld->desc.modifiers,
+            arr_fld->desc.struct_name);
+    }
+    else if (obj && obj->type == NODE_ARRAY_ACCESS && obj->data.array.name.data)
+    {
+        /* Member access on an element of an array of struct/union values or
+           pointers (`pts[i].x`, `ptrs[i].x`), or on an INDEXED STRUCT
+           POINTER (`p[i].x`, #311 -- see the pointer branch below).
+
+           The struct-field array form (`foo.arr[i].x`,
+           obj->data.array.base set) is handled by its own branch above,
+           added by #315 -- which landed after this one, so an earlier
+           revision of this comment correctly said the form was
+           unsupported here. It is supported now. */
+        Variable *var = get_variable(obj->data.array.name);
+        if (!var || var->desc.type != VAR_STRUCT)
+        {
+            if (report_errors)
+                yyerror("Member access on a non-struct/union array element");
+            return false;
+        }
+
+        /* `p[i].x` where p is a struct POINTER rather than an array
+           (#311). In C these are the same operation -- p[i] is *(p + i) --
+           and that equivalence is what makes a helper able to walk a pool
+           it was handed as a bare pointer, which is the whole point of the
+           feature:
+
+               skibidi walk(gang E *p, rizz n) {
+                   flex (rizz i = 0; i < n; i = i + 1) { ... p[i].x ... }
+               }
+
+           Split from the array path below rather than folded into it
+           because almost nothing is shared: the base address comes from
+           the pointer's own value instead of array_data, the stride comes
+           from the pointee's StructDef rather than the element descriptor,
+           and -- unavoidably -- there is no bounds check, because a
+           pointer carries no extent. The array path's
+           calculate_array_offset() would also be actively wrong here: it
+           returns 0 whenever is_array is false, silently collapsing
+           `p[5]` to `p[0]`.
+
+           Only single-level pointers and a single index are accepted. A
+           `gang Foo **` needs an explicit dereference (the same rule the
+           variable and nested-field branches enforce), and a second index
+           would be indexing into a struct, which is not an array. */
+        if (!var->desc.is_array && var->desc.pointer_level > 0)
+        {
+            if (var->desc.pointer_level > 1)
+            {
+                if (report_errors)
+                    yyerror("Indexing a multi-level pointer (pointer_level "
+                            "> 1) is not supported -- dereference it "
+                            "explicitly");
+                return false;
+            }
+            if (obj->data.array.num_dimensions != 1 ||
+                !obj->data.array.indices[0])
+            {
+                if (report_errors)
+                    yyerror("A struct/union pointer takes exactly one "
+                            "index");
+                return false;
+            }
+            parent_def = get_struct_def(var->desc.struct_name);
+            if (!parent_def || parent_def->total_size == 0)
+            {
+                if (report_errors)
+                    yyerror("Unknown struct or union type");
+                return false;
+            }
+            void *ptr_base = (void *)var->value.pvalue;
+            if (!ptr_base)
+            {
+                if (report_errors)
+                    yyerror("Member access through a null struct/union "
+                            "pointer");
+                return false;
+            }
+            int index = evaluate_expression_int(obj->data.array.indices[0]);
+            parent_base =
+                (char *)ptr_base + (ptrdiff_t)index * parent_def->total_size;
+        }
+        else if (!var->desc.is_array)
+        {
+            if (report_errors)
+                yyerror("Member access on a non-struct/union array element");
+            return false;
+        }
+        else
+        {
+            parent_def = get_struct_def(var->desc.struct_name);
+            if (!parent_def)
+            {
+                if (report_errors)
+                    yyerror("Unknown struct or union type");
+                return false;
+            }
+            /* Same single-level implicit-`->` rule as the variable and nested-
+               field branches above: an array of `gang Foo *` follows one level
+               of indirection, an array of `gang Foo **` needs an explicit
+               dereference and is rejected. */
+            if (var->desc.pointer_level > 1)
+            {
+                if (report_errors)
+                    yyerror("Member access via '.' through a multi-level "
+                            "pointer (pointer_level > 1) is not supported");
+                return false;
+            }
+
+            int num_indices = obj->data.array.num_dimensions;
+            int indices[MAX_DIMENSIONS] = {0};
+            for (int i = 0; i < num_indices; i++)
+                indices[i] =
+                    evaluate_expression_int(obj->data.array.indices[i]);
+            size_t offset = calculate_array_offset(var->desc.is_array,
+                                                   &var->desc.array_dimensions,
+                                                   indices, num_indices);
+            void *element_addr = array_element_address(
+                var->value.array_data, offset, var->desc.type,
+                var->desc.pointer_level, var->desc.modifiers,
+                var->desc.struct_name);
+
+            if (var->desc.pointer_level == 1)
+            {
+                uintptr_t target = *(uintptr_t *)element_addr;
+                if (!target)
+                {
+                    if (report_errors)
+                        yyerror("Null pointer dereference in struct member "
+                                "access");
+                    return false;
+                }
+                parent_base = (void *)target;
+            }
+            else
+            {
+                parent_base = element_addr;
+            }
+        }
+    }
+    else if (obj && obj->type == NODE_FUNC_CALL)
+    {
+        /* `f().x`, and by recursion `f().inner.x`. Executing the call here
+         * rather than in each caller is what lets a bare statement, a
+         * larger expression (`f().x + 0`), a `bussin f().x` and a nested
+         * field share one implementation.
+         *
+         * INVARIANT: report_errors == false means "do not execute". That
+         * flag is the only thing separating this from the eager parse-time
+         * resolve in create_struct_access_node() and the type probes in
+         * get_expression_type() and friends, which must answer from
+         * declared types alone (static_struct_field) -- running a user
+         * function from any of them would execute the program out of
+         * order, or while it is still being parsed. */
+        if (!report_errors)
+        {
+            return false;
+        }
+        if (is_builtin_function(obj->data.func_call.function_name))
+        {
+            /* No native can return a struct across the Road A ABI. */
+            yyerror("Member access on the result of a built-in function");
+            return false;
+        }
+        /* execute_function_call(), NOT handle_function_call(): the latter's
+           VAR_STRUCT case is discard-and-free, so by the time it returns
+           pvalue is 0 and there is no field left to read. */
+        execute_function_call(obj->data.func_call.function_name,
+                              obj->data.func_call.arguments);
+        if (current_return_value.desc.type != VAR_STRUCT ||
+            current_return_value.desc.pointer_level != 0 ||
+            !current_return_value.value.pvalue)
+        {
+            /* Every other failure path here reports, and no caller adds a
+               second diagnostic -- they all assume this one spoke. Staying
+               silent let `rizz x = not_a_struct().nope;` run the call,
+               yield 0 and exit 0. Semantic analysis does not catch it
+               either, so this is the only check. */
+            yyerror("Member access on a call that does not return a "
+                    "by-value struct or union");
+            free_pending_return_value();
+            return false;
+        }
+        parent_def = get_struct_def(current_return_value.desc.struct_name);
+        if (!parent_def)
+        {
+            yyerror("Unknown struct or union type");
+            free_pending_return_value();
+            return false;
+        }
+        /* BORROWED from the pending-return slot, which the next call's
+           free_pending_return_value() releases. That is safe only for a
+           caller that reads the field before anything else runs -- a scalar
+           `f().x` load. A caller that keeps the blob past that point must
+           copy it out and drop the slot itself; see
+           struct_access_executes_call() in resolve_by_value_struct_source(),
+           which is the one such caller. */
+        parent_base = (void *)current_return_value.value.pvalue;
     }
     else
     {
@@ -700,6 +1245,14 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                      member.data);
             yyerror(msg);
         }
+        /* `f().nope`. The call arm above left its result in the pending
+           slot for the caller to read a field out of, and there is no
+           field -- so nothing downstream will consume it. Semantic
+           analysis rejects this shape before it runs whenever the callee
+           is resolvable, which is why no test reaches here; free it
+           anyway rather than depend on that. */
+        if (obj && obj->type == NODE_FUNC_CALL)
+            free_pending_return_value();
         return false;
     }
 
@@ -707,6 +1260,399 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
     *base_out = parent_base;
     *field_out = fld;
     return true;
+}
+
+/* Does resolving this member access run a user function -- i.e. does its
+ * base chain bottom out in a call? If so, resolve_struct_access() hands
+ * back a base that points INTO the pending-return slot's blob, and the
+ * blob dies at the next free_pending_return_value(). Every caller of
+ * resolve_by_value_struct_source() keeps the pointer past that point, so
+ * they need an owned copy instead of the borrow. */
+static bool struct_access_executes_call(const ASTNode *node)
+{
+    /* Steps through ARRAY-ACCESS links as well as member-access ones, so
+       `make_bag().pts[0]` answers true. It walked NODE_STRUCT_ACCESS
+       only until #315 gave a NODE_ARRAY_ACCESS a base to have -- and
+       since this is the shared "does resolving this run a call"
+       predicate, teaching it the new link is better than making one
+       caller pass expr->data.array.base: every future shape wants the
+       same answer from the same place. */
+    while (node && (node->type == NODE_STRUCT_ACCESS ||
+                    (node->type == NODE_ARRAY_ACCESS && node->data.array.base)))
+    {
+        node = node->type == NODE_STRUCT_ACCESS
+                   ? node->data.struct_access.object
+                   : node->data.array.base;
+    }
+    return node && node->type == NODE_FUNC_CALL;
+}
+
+/* ── THREE DISPATCHES, ONE SET OF EXPRESSION SHAPES ─────────────────────
+ * Three functions dispatch on the same node types -- NODE_IDENTIFIER,
+ * NODE_STRUCT_ACCESS, NODE_ARRAY_ACCESS -- for the same set of
+ * struct-valued expressions, and each answers a different question:
+ *
+ *   resolve_struct_access()            (above, ast.c)
+ *       which struct is this MEMBER being read out of, and at what
+ *       address? Runtime.
+ *   resolve_by_value_struct_source()   (below, ast.c)
+ *       where is a by-value struct VALUE to copy, and who owns it?
+ *       Runtime.
+ *   the NODE_STRUCT_ACCESS case of semantic_analyze_with_scope_tracking()
+ *                                      (semantic_analyzer.c)
+ *       is this expression struct-typed AT ALL, and does the member
+ *       exist? Static -- it must answer without running anything.
+ *
+ * This comment said TWO for one revision, and the missing third is what
+ * that revision then got wrong: #315 taught both ast.c dispatches about
+ * struct-typed array fields and not the analyzer, so `b.pts[0].y` worked
+ * while `b.pts[0].core.v` was rejected as "Member access on
+ * non-struct/union value" -- a diagnostic that was not merely unhelpful
+ * but false, and which made the new field form strictly less capable
+ * than the `arr[0].core.v` shape it was modelled on. One hop worked
+ * because that hop is answered at runtime; the second needed the static
+ * dispatch that had not been updated (PR #315 review).
+ *
+ * Every divergence between those two lists has been a bug. #307: the
+ * array-variable guard was added to one arm and not its sibling. #309:
+ * the static array check covered NODE_IDENTIFIER only. #315: a new
+ * expression shape (struct-typed array fields) was taught to
+ * resolve_struct_access() and not to this function, which inverted the
+ * polarity outright -- the legitimate `f(b.pts[0])` was refused while the
+ * illegitimate `f(b.pts)` silently passed element 0.
+ *
+ * So: if you are adding an expression shape that can denote a struct,
+ * there are THREE lists to update -- and two of them live in this file,
+ * which is exactly why the third gets missed. A fixture that only reads
+ * ONE hop out of the new shape will not notice the analyzer; one that
+ * only reads a field out of it will not notice the value/ownership
+ * dispatch. Chain a second hop, and pass one somewhere.
+ *
+ * And what has to be copied across is not just the ADDRESS ARITHMETIC.
+ * #315's first attempt mirrored resolve_struct_access()'s arithmetic
+ * exactly and was correct about every byte it computed -- then handed the
+ * result back borrowed, because that function has no ownership story to
+ * copy: it only ever gives its base to an immediate field read. The arm
+ * that does have one is NODE_STRUCT_ACCESS, right here, with its
+ * struct_access_executes_call() handling. A base chain that bottoms out
+ * in a call points into the pending-return slot, and every caller of
+ * THIS function keeps the pointer past the next
+ * free_pending_return_value(). Getting that wrong is a
+ * heap-use-after-free with two arguments and a leak with one -- not a
+ * wrong value, so no amount of checking printed output finds it. Only the
+ * SUCCESS path needs the copy; the early returns are reached by the
+ * enclosing call's own cleanup.
+ *
+ * The four consumers, for the "single choke point" argument to be
+ * checkable: enter_function_scope() (Brainrot struct parameters),
+ * marshal_struct_argument() (native STDROT_STRUCT parameters, stdrot.c),
+ * interpreter_visit_declaration() (copy-initializers), and
+ * handle_return_statement() (struct returns). Struct copy-ASSIGNMENT is
+ * not among them -- `e = s;` between two struct variables is
+ * "Unsupported assignment type" everywhere in the language. */
+bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
+                                    String *tag_out, bool *owned_out,
+                                    bool report_errors)
+{
+    *owned_out = false;
+    if (!expr)
+    {
+        if (report_errors)
+            yyerror("Missing struct/union value expression");
+        return false;
+    }
+
+    if (expr->type == NODE_IDENTIFIER)
+    {
+        Variable *src = get_variable(expr->data.name);
+        if (!src || src->desc.type != VAR_STRUCT)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union value");
+            return false;
+        }
+        /* A struct POINTER variable (`gang Point *pp`) is NOT a by-value
+           struct value: its union slot holds an address, and copying it
+           where a struct value is expected would be an implicit
+           dereference (`*pp`), which C requires to be written out. Reject
+           it here so the identifier path enforces the same pointer_level
+           == 0 invariant the member-access path below does -- PR #253
+           review, finding 1. */
+        if (src->desc.pointer_level > 0)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union value, got a "
+                        "pointer");
+            return false;
+        }
+        /* An ARRAY of structs is not a struct value either, and this is
+           the one shape that fails silently rather than loudly if it
+           isn't caught: `gang Point pts[4]` stores the whole array in
+           the same value.array_data slot a single struct uses, so every
+           caller below would happily copy total_size bytes out of it and
+           get element 0 -- the user writes `len2(pts)` or
+           `rl_color_to_int(pal)`, the callee receives pts[0], and
+           nothing anywhere says a word. Every other type already
+           rejects this (is_unmarshallable_array_arg(),
+           semantic_analyzer.c, gives `rizz a[2]` passed to a scalar
+           parameter a clean "int arrays cannot be passed where a
+           scalar/string is expected"); structs got silence because that
+           helper is only consulted on the scalar paths.
+           Rejecting it HERE rather than only in the native-call analyzer
+           closes it for every consumer of this function at once --
+           native STDROT_STRUCT parameters, Brainrot-defined struct
+           parameters (enter_function_scope()), struct returns, and
+           struct copy-initializers -- since they all resolve their
+           source through this one place (PR #307 review, finding 1). */
+        if (src->desc.is_array)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union value, got an "
+                        "array (index it, e.g. `arr[0]`)");
+            return false;
+        }
+        *blob_out = src->value.array_data;
+        *tag_out = src->desc.struct_name;
+        return true;
+    }
+
+    if (expr->type == NODE_STRUCT_ACCESS)
+    {
+        StructDef *sd = NULL;
+        void *base = NULL;
+        StructField *fld = NULL;
+        if (!resolve_struct_access(expr, &sd, &base, &fld, report_errors))
+            return false;
+        if (fld->desc.type != VAR_STRUCT || fld->desc.pointer_level > 0)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union field");
+            if (struct_access_executes_call(expr))
+                free_pending_return_value();
+            return false;
+        }
+        /* An ARRAY field is not a by-value struct value, for exactly the
+           reason the NODE_IDENTIFIER arm above says an array VARIABLE
+           isn't: the field's bytes are the whole array, so copying
+           total_size out of it silently yields element 0 -- `len2(b.pts)`
+           hands the callee `b.pts[0]` and nothing objects.
+           That guard was added above by #307 and NOT here, because a
+           struct-typed array field could not be declared at the time.
+           This change is what makes it declarable, so the same guard is
+           needed on this arm too. #309's static check does not cover it
+           either: array_identifier_symbol() is NODE_IDENTIFIER-only, and
+           `b.pts` is a NODE_STRUCT_ACCESS (PR #315 review). */
+        if (fld->desc.is_array)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union value, got an "
+                        "array (index it, e.g. `arr[0]`)");
+            if (struct_access_executes_call(expr))
+                free_pending_return_value();
+            return false;
+        }
+        if (struct_access_executes_call(expr))
+        {
+            /* `make_outer().inner`. Copy the field out of the pending-return
+               blob and release the blob now, before returning a pointer the
+               caller will still be holding when the next call reuses that
+               slot. Leaving it borrowed made `take(make_outer().inner, g())`
+               a heap-use-after-free -- g()'s cleanup freed the Outer, then
+               the bind loop copied from it -- and made `bussin
+               make_outer().inner;` leak the Outer, because that path
+               overwrites value.pvalue with its own fresh blob. */
+            StructDef *fdef = get_struct_def(fld->desc.struct_name);
+            if (!fdef)
+            {
+                if (report_errors)
+                    yyerror("Unknown struct or union type");
+                free_pending_return_value();
+                return false;
+            }
+            void *owned = calloc(1, fdef->total_size);
+            if (!owned)
+            {
+                if (report_errors)
+                    yyerror("Out of memory for struct/union value");
+                free_pending_return_value();
+                return false;
+            }
+            memcpy(owned, (char *)base + fld->offset, fdef->total_size);
+            free_pending_return_value();
+            *blob_out = owned;
+            *tag_out = fld->desc.struct_name;
+            *owned_out = true;
+            return true;
+        }
+        *blob_out = (char *)base + fld->offset;
+        *tag_out = fld->desc.struct_name;
+        return true;
+    }
+
+    if (expr->type == NODE_ARRAY_ACCESS && expr->data.array.base)
+    {
+        /* An element of a struct-typed ARRAY FIELD (`b.pts[i]`) used as a
+           by-value struct value -- passing it to a function, returning it,
+           copy-initializing from it (PR #315 review).
+           This is the field form of the name-based arm below, and it needs
+           its own dispatch for the same reason resolve_struct_access() does:
+           `b.pts[i]` is a NODE_ARRAY_ACCESS whose data.array.base is set and
+           whose data.array.name is NOT, so it fell straight past that arm's
+           `name.data` requirement into the catch-all error -- meaning
+           `len2(b.pts[0])`, the natural thing to write once `b.pts[0].x`
+           works, was refused while `len2(b.pts)` (the whole array) was
+           quietly accepted.
+           The address arithmetic mirrors resolve_struct_access()'s
+           equivalent branch exactly, through the same two helpers, so
+           bounds checking and struct-aware striding are inherited. */
+        StructDef *outer_def = NULL;
+        void *outer_base = NULL;
+        StructField *arr_fld = NULL;
+        if (!resolve_struct_access(expr->data.array.base, &outer_def,
+                                   &outer_base, &arr_fld, report_errors))
+            return false;
+
+        if (!arr_fld->desc.is_array || arr_fld->desc.type != VAR_STRUCT ||
+            arr_fld->desc.pointer_level != 0)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union value");
+            return false;
+        }
+
+        StructDef *elem_def = get_struct_def(arr_fld->desc.struct_name);
+        if (!elem_def)
+        {
+            if (report_errors)
+                yyerror("Unknown struct or union type");
+            return false;
+        }
+
+        /* Same rank check resolve_struct_access() makes on this shape: an
+           array field is inline in the enclosing blob, so a dimension
+           mismatch would resolve into a NEIGHBOURING field's bytes rather
+           than merely misindexing its own array. */
+        int num_indices = expr->data.array.num_dimensions;
+        if (num_indices <= 0 ||
+            num_indices != arr_fld->desc.array_dimensions.num_dimensions)
+        {
+            if (report_errors)
+                yyerror("Wrong number of array indices for a struct/union "
+                        "array field");
+            return false;
+        }
+
+        int indices[MAX_DIMENSIONS] = {0};
+        for (int i = 0; i < num_indices; i++)
+        {
+            if (!expr->data.array.indices[i])
+            {
+                if (report_errors)
+                    yyerror("Missing array index in struct field access");
+                return false;
+            }
+            indices[i] = evaluate_expression_int(expr->data.array.indices[i]);
+        }
+
+        size_t offset = calculate_array_offset(
+            true, &arr_fld->desc.array_dimensions, indices, num_indices);
+        void *element_base = (char *)outer_base + arr_fld->offset;
+        void *element_addr = array_element_address(
+            element_base, offset, arr_fld->desc.type,
+            arr_fld->desc.pointer_level, arr_fld->desc.modifiers,
+            arr_fld->desc.struct_name);
+
+        /* `make_bag().pts[0]`. When the base chain bottoms out in a call,
+           outer_base -- and so element_addr -- points INTO the
+           pending-return slot's blob, which dies at the next
+           free_pending_return_value(). Handing that back borrowed is the
+           bug the NODE_STRUCT_ACCESS arm above already fixed for its own
+           shape, and it reproduced here verbatim: a two-argument call
+           (`dot(make_bag().pts[0], mk())`) had argument 2's own call free
+           the blob before the bind loop copied from it -- a
+           heap-use-after-free -- and the single-argument, return and
+           copy-init forms leaked it instead (PR #315 review).
+
+           Copy the element out and release the slot NOW, before returning
+           a pointer the caller holds past that point. calloc(), not
+           SAFE_MALLOC, to match the sibling arm and because
+           free_owned_struct_arg_blobs() (enter_function_scope()) releases
+           these with plain free().
+
+           SUCCESS PATH ONLY. The early returns above do not need this:
+           the enclosing call's own cleanup reaches the slot on those
+           paths, so adding it there would double-free. This is the one
+           place the pointer outlives the function. */
+        if (struct_access_executes_call(expr))
+        {
+            void *owned = calloc(1, elem_def->total_size);
+            if (!owned)
+            {
+                if (report_errors)
+                    yyerror("Out of memory for struct/union value");
+                free_pending_return_value();
+                return false;
+            }
+            memcpy(owned, element_addr, elem_def->total_size);
+            free_pending_return_value();
+            *blob_out = owned;
+            *tag_out = elem_def->name;
+            *owned_out = true;
+            return true;
+        }
+
+        *blob_out = element_addr;
+        *tag_out = arr_fld->desc.struct_name;
+        return true;
+    }
+
+    if (expr->type == NODE_ARRAY_ACCESS && expr->data.array.name.data)
+    {
+        /* An element of an array of struct/union VALUES (`pts[i]`) is itself
+           a by-value struct -- its blob lives inline in the array storage.
+           A pointer-element array (`gang Foo *ptrs[N]`) is rejected for the
+           same reason a struct-pointer variable is above: `ptrs[i]` is an
+           address, and using it where a value is expected would be an
+           implicit dereference. */
+        Variable *src = get_variable(expr->data.array.name);
+        if (!src || !src->desc.is_array || src->desc.type != VAR_STRUCT)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union value");
+            return false;
+        }
+        if (src->desc.pointer_level > 0)
+        {
+            if (report_errors)
+                yyerror("Expected a by-value struct/union value, got a "
+                        "pointer");
+            return false;
+        }
+        if (!get_struct_def(src->desc.struct_name))
+        {
+            if (report_errors)
+                yyerror("Unknown struct or union type");
+            return false;
+        }
+        int num_indices = expr->data.array.num_dimensions;
+        int indices[MAX_DIMENSIONS] = {0};
+        for (int i = 0; i < num_indices; i++)
+            indices[i] = evaluate_expression_int(expr->data.array.indices[i]);
+        size_t offset = calculate_array_offset(src->desc.is_array,
+                                               &src->desc.array_dimensions,
+                                               indices, num_indices);
+        *blob_out =
+            array_element_address(src->value.array_data, offset, src->desc.type,
+                                  src->desc.pointer_level, src->desc.modifiers,
+                                  src->desc.struct_name);
+        *tag_out = src->desc.struct_name;
+        return true;
+    }
+
+    if (report_errors)
+        yyerror("Expected a by-value struct/union value (a struct variable "
+                "or a struct member access)");
+    return false;
 }
 
 void *evaluate_struct_member_address(ASTNode *node)
@@ -720,6 +1666,150 @@ void *evaluate_struct_member_address(ASTNode *node)
 }
 
 // Evaluate a multi-dimensional array access node
+/* The one place array element STRIDE is decided, so it can never drift from
+   the layout the storage was sized for. For a scalar or a pointer element
+   this is get_type_size_for_descriptor(type, pointer_level, mods) -- a
+   width-modified element (`lit thicc rizz Big; Big vals[N];`, giga/thicc)
+   strides by its real 8-byte slot, a pointer element by sizeof(uintptr_t).
+   For a struct/union VALUE element (pointer_level 0) the descriptor has no
+   tag and reports 0, so the tag's own computed layout size is used instead
+   -- the same total_size set_multi_array_variable() reserved per element.
+   `struct_name` is only consulted for that struct-value case; callers with
+   no struct element may pass an empty String. Returns 0 for a genuinely
+   unsizable element (VAR_VOID, or a struct tag that doesn't resolve); the
+   address helper below turns that into the "zero-sized" diagnostic. */
+static size_t get_array_element_stride(VarType type, int pointer_level,
+                                       TypeModifiers mods,
+                                       const String struct_name)
+{
+    if (type == VAR_STRUCT && pointer_level == 0)
+    {
+        StructDef *def = get_struct_def(struct_name);
+        return def ? def->total_size : 0;
+    }
+    return get_type_size_for_descriptor(type, pointer_level, mods);
+}
+
+/* Byte address of array element `offset` (measured in elements) from
+   element_base, strided by get_array_element_stride() (above) so element
+   spacing can never drift from layout. Both array-access paths (struct-field
+   and name-based) and the struct-array member/by-value resolvers funnel
+   their final address computation through here. The VALUE at the returned
+   address is still loaded/stored through its base VarType's C type by the
+   caller -- occupancy of a wide scalar slot (storing a 4-byte int into an
+   8-byte long-long slot) is a separate, pre-existing gap documented on
+   ast.h's Variable -- but the element STRIDE now matches the C array layout
+   the blob was sized for (PR #256 review). A struct/union VALUE element
+   returns the address of the whole element blob. */
+static void *array_element_address(void *element_base, size_t offset,
+                                   VarType type, int pointer_level,
+                                   TypeModifiers mods, const String struct_name)
+{
+    size_t stride =
+        get_array_element_stride(type, pointer_level, mods, struct_name);
+    if (stride == 0)
+    {
+        yyerror("Cannot index an array of zero-sized elements");
+        exit(EXIT_FAILURE);
+    }
+    return (char *)element_base + offset * stride;
+}
+
+/* The struct-field counterpart of evaluate_multi_array_access() below,
+   for a `foo.arr[i]` node (Array.base set -- see ast.h's own comment on
+   that field). Kept as its own function rather than interleaved into
+   the name-based one: that function's existing name-based path has
+   several rounds of hard-won, narrowly-targeted bugfixes documented
+   inline (its own comments), and splitting keeps this new path from
+   perturbing any of that. Mirrors its structure and error-handling
+   style closely, field offset standing in for array_data. */
+static void *evaluate_struct_field_array_access(ASTNode *node)
+{
+    ASTNode *base = node->data.array.base;
+    int num_indices = node->data.array.num_dimensions;
+    if (num_indices <= 0)
+    {
+        yyerror("Invalid number of array indices");
+        exit(EXIT_FAILURE);
+    }
+
+    StructDef *def = NULL;
+    void *field_base = NULL;
+    StructField *fld = NULL;
+    if (!resolve_struct_access(base, &def, &field_base, &fld,
+                               /* report_errors */ true))
+    {
+        yyerror("Cannot resolve struct field for array access");
+        exit(EXIT_FAILURE);
+    }
+    if (!fld->desc.is_array)
+    {
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "Struct/union field '%.100s' is not an array",
+                 fld->name.data ? fld->name.data : "?");
+        yyerror(error_msg);
+        exit(EXIT_FAILURE);
+    }
+    /* calculate_array_offset()'s own "TEMPORARY FIX" dimension-mismatch
+       handling silently truncates to whichever index count is smaller
+       and keeps going -- a leftover workaround for a Variable-lookup
+       bug on the name-based path, not a real rank-checking policy. That
+       leniency is tolerable for a standalone array's own private
+       buffer; it is not tolerable here: an array field lives inline in
+       the struct's single blob, so a rank mismatch silently computing
+       an offset for the wrong number of dimensions reads/writes into a
+       neighboring field's bytes instead of just misreading its own
+       array (e.g. `g.cells[1]` on a `rizz cells[2][3];` field would
+       silently resolve to `cells[1][0]`'s address and be treated as a
+       lone int, not rejected). Reject the mismatch outright here,
+       before calculate_array_offset() ever gets a chance to be lenient
+       about it. */
+    if (num_indices != fld->desc.array_dimensions.num_dimensions)
+    {
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "Struct/union field '%.100s' expects %d array index/indices, "
+                 "got %d",
+                 fld->name.data ? fld->name.data : "?",
+                 fld->desc.array_dimensions.num_dimensions, num_indices);
+        yyerror(error_msg);
+        exit(EXIT_FAILURE);
+    }
+
+    int indices[MAX_DIMENSIONS];
+    for (int i = 0; i < num_indices; i++)
+    {
+        ASTNode *index_node = node->data.array.indices[i];
+        if (!index_node)
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Missing index %d for array field '%.100s'", i,
+                     fld->name.data ? fld->name.data : "?");
+            yyerror(error_msg);
+            exit(EXIT_FAILURE);
+        }
+        indices[i] = evaluate_expression_int(index_node);
+    }
+
+    size_t offset = calculate_array_offset(
+        fld->desc.is_array, &fld->desc.array_dimensions, indices, num_indices);
+    void *element_base = (char *)field_base + fld->offset;
+
+    /* Stride by the field's own modifier-aware element size (giga/thicc
+       element arrays stride by 8, not sizeof(int)), which also subsumes
+       the pointer-element case (sizeof(uintptr_t)) -- see array_element_
+       address(). Before this, the switch here strided every non-pointer
+       element by its base VarType's width and dropped fld->modifiers, so a
+       `lit thicc rizz Big; Big vals[3];` field laid out at 3*8 bytes was
+       indexed as if each element were 4 bytes -- elements 1+ landed inside
+       the reservation's front, not at their C offsets (PR #256 review). */
+    return array_element_address(element_base, offset, fld->desc.type,
+                                 fld->desc.pointer_level, fld->desc.modifiers,
+                                 fld->desc.struct_name);
+}
+
 void *evaluate_multi_array_access(ASTNode *node)
 {
     // Validate the node structure
@@ -733,6 +1823,8 @@ void *evaluate_multi_array_access(ASTNode *node)
         yyerror("Invalid node type for array access");
         exit(EXIT_FAILURE);
     }
+    if (node->data.array.base)
+        return evaluate_struct_field_array_access(node);
 
     // CRITICAL: Store the array name in a local copy IMMEDIATELY
     // The array name might be corrupted if we access node->data.array.name
@@ -779,7 +1871,81 @@ void *evaluate_multi_array_access(ASTNode *node)
         yyerror(error_msg);
         exit(EXIT_FAILURE);
     }
-    if (!var->is_array)
+    /* Indexing a struct/union POINTER (`p[i]`, #311). In C this is
+       *(p + i), so it is an ordinary element address computation with the
+       pointee's own layout as the stride -- there just is no array to
+       take a base or extent from.
+
+       Handled here, in the shared element-address routine, rather than
+       only where `p[i].x` is resolved: this function is what the
+       interpreter's generic node traversal reaches
+       (interpreter_visit_array_access()), what evaluate_lvalue_address()
+       uses for an assignment target, and what the scalar evaluators use
+       for a value load. Fixing only the member-access resolver left
+       `yapping("%f", p[1].x)` working while `chad t = p[1].x;` died here,
+       because those two arrive by different routes.
+
+       No bounds check is possible and none is attempted -- a pointer
+       carries no extent, exactly as in C. That is also why
+       calculate_array_offset() is not used below: it returns 0 whenever
+       is_array is false, which would silently collapse `p[5]` to `p[0]`. */
+    if (!var->desc.is_array && var->desc.pointer_level == 1 &&
+        var->desc.type == VAR_STRUCT)
+    {
+        StructDef *pointee = get_struct_def(var->desc.struct_name);
+        if (!pointee || pointee->total_size == 0)
+        {
+            yyerror("Cannot index a pointer to an unknown struct/union type");
+            exit(EXIT_FAILURE);
+        }
+        if (num_indices != 1 || !node->data.array.indices[0])
+        {
+            yyerror("A struct/union pointer takes exactly one index");
+            exit(EXIT_FAILURE);
+        }
+        void *ptr_base = (void *)var->value.pvalue;
+        if (!ptr_base)
+        {
+            yyerror("Indexing a null struct/union pointer");
+            exit(EXIT_FAILURE);
+        }
+        ptrdiff_t idx = evaluate_expression_int(node->data.array.indices[0]);
+        return (char *)ptr_base + idx * (ptrdiff_t)pointee->total_size;
+    }
+
+    /* `s[i]` on a `rant` -- byte indexing (#251). The counterpart of
+       resolve_array_access_element()'s VAR_STRING branch, which is what
+       already told the caller to read the result as a VAR_CHAR; this
+       returns the address of the byte to read.
+
+       Bounds are checked against the STORED LENGTH rather than a
+       terminator, because a rant is not NUL-terminated -- s.len is the
+       only correct extent, the same reason yaplen() does not call
+       strlen(). Out of range is a hard error, not a clamp and not UB, so
+       ASan/UBSan stay clean and the program stops where the mistake is. */
+    if (var->desc.type == VAR_STRING && !var->desc.is_array &&
+        var->desc.pointer_level == 0)
+    {
+        if (num_indices != 1 || !node->data.array.indices[0])
+        {
+            yyerror("A rant takes exactly one index");
+            exit(EXIT_FAILURE);
+        }
+        int idx = evaluate_expression_int(node->data.array.indices[0]);
+        size_t len = var->value.strvalue.data ? var->value.strvalue.len : 0;
+        if (idx < 0 || (size_t)idx >= len)
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "String index out of bounds (index=%d, length=%zu)", idx,
+                     len);
+            yyerror(error_msg);
+            exit(EXIT_FAILURE);
+        }
+        return var->value.strvalue.data + idx;
+    }
+
+    if (!var->desc.is_array)
     {
         char error_msg[MAX_BUFFER_LEN];
         snprintf(error_msg, sizeof(error_msg),
@@ -820,56 +1986,33 @@ void *evaluate_multi_array_access(ASTNode *node)
     }
 
     // Calculate the offset
-    size_t offset = calculate_array_offset(var, indices, num_indices);
+    size_t offset = calculate_array_offset(
+        var->desc.is_array, &var->desc.array_dimensions, indices, num_indices);
 
-    /* Round-23 review, finding #1 -- pointer_level DOMINATES element
-       stride the same way it dominates return-value boxing
-       (handle_function_call(), round 22) and native-argument marshalling
-       (ast_expr_to_stdrot_value(), stdrot.c): get_type_size_for_
-       descriptor() (this file) already allocates each element of a
-       pointer-typed array (`rizz *ptrs[N]`) as sizeof(uintptr_t) via its
-       own unconditional `pointer_level > 0` check, regardless of the
-       array's base VarType -- but this function's switch below dispatched
-       purely on var->var_type, computing each element's address using
-       THAT type's width (sizeof(int), sizeof(char), ...) instead of
-       sizeof(uintptr_t). For element 0 those strides coincidentally
-       agree with the correctly-allocated layout (both start at byte 0),
-       masking the bug completely -- but for element 1 onward, a `rizz
-       *ptrs[2]` array (each slot really 8 bytes on LP64) got indexed as
-       if each slot were 4 bytes (sizeof(int)), so `ptrs[1]` pointed
-       halfway into slot 0's own 8 bytes: an out-of-bounds/aliased
-       address, not the real second pointer -- real memory corruption on
-       both read and write, not merely a wrong value. Checked here,
-       before the base-type switch, for the identical reason every other
-       "pointer-ness dominates representation" fix in this PR checks it
-       first. VAR_VOID (`skibidi *ptrs[N]`) previously had no case at all
-       in the switch below and hit "Unknown variable type" unconditionally
-       -- also fixed by this same check, since it's a pointer-typed array
-       exactly like any other now. */
-    if (var->pointer_level > 0)
-    {
-        return (uintptr_t *)var->value.array_data + offset;
-    }
+    /* Stride by the variable's element size via the shared array_element_
+       address()/get_array_element_stride() authority. This subsumes several
+       fixes that used to live here as special cases + a base-type switch:
 
-    // Return a pointer to the element
-    switch (var->var_type)
-    {
-    case VAR_INT:
-        return (int *)var->value.array_data + offset;
-    case VAR_SHORT:
-        return (short *)var->value.array_data + offset;
-    case VAR_FLOAT:
-        return (float *)var->value.array_data + offset;
-    case VAR_DOUBLE:
-        return (double *)var->value.array_data + offset;
-    case VAR_BOOL:
-        return (bool *)var->value.array_data + offset;
-    case VAR_CHAR:
-        return (char *)var->value.array_data + offset;
-    default:
-        yyerror("Unknown variable type");
-        exit(EXIT_FAILURE);
-    }
+       - Round-23 review, finding #1: pointer_level dominates element stride
+         (a `rizz *ptrs[N]` array's slots are sizeof(uintptr_t), not
+         sizeof(int)); indexing them as int-wide made `ptrs[1]` land halfway
+         into slot 0 -- real memory corruption.
+       - PR #256 review: the base-type switch dropped var->modifiers, so a
+         width-modified element array (`lit thicc rizz Big; Big vals[N];`)
+         strided by sizeof(int) instead of its real 8-byte slot.
+       - A struct/union VALUE array (`gang Point pts[N]`) strides by the tag's
+         layout size; the returned pointer is the element blob's address.
+         Bare `pts[i]` as a scalar value is never meaningful -- member access
+         (`pts[i].f`) and by-value use (`gang P c = pts[i];`) resolve the
+         element through resolve_struct_access()/resolve_by_value_struct_
+         source() -- so this just hands them (and the harmless return-
+         statement pre-visit that discards it) a valid pointer.
+
+       A VAR_VOID non-pointer element (stride 0) is rejected by the helper; a
+       `skibidi *ptrs[N]` pointer array strides fine (sizeof(uintptr_t)). */
+    return array_element_address(var->value.array_data, offset, var->desc.type,
+                                 var->desc.pointer_level, var->desc.modifiers,
+                                 var->desc.struct_name);
 }
 
 bool set_int_variable(const String name, int value, TypeModifiers mods)
@@ -889,15 +2032,15 @@ bool set_array_variable(String name, int length, TypeModifiers mods,
     Variable *var = get_variable(name);
     if (var != NULL)
     {
-        if (var->is_array)
+        if (var->desc.is_array)
         {
             // free the old array
             SAFE_FREE(var->value.array_data);
         }
-        var->var_type = type;
-        var->is_array = true;
+        var->desc.type = type;
+        var->desc.is_array = true;
         var->array_length = length;
-        var->modifiers = mods;
+        var->desc.modifiers = mods;
         switch (type)
         {
         case VAR_INT:
@@ -969,6 +2112,7 @@ void reset_modifiers(void)
     current_modifiers.is_volatile = false;
     current_modifiers.is_signed = false;
     current_modifiers.is_unsigned = false;
+    current_modifiers.is_sizeof = false;
     current_modifiers.is_const = false;
     current_modifiers.is_long = false;
     current_modifiers.is_long_long = false;
@@ -993,12 +2137,10 @@ bool check_and_mark_identifier(ASTNode *node, const String contextErrorMessage)
 
         // Do the table lookup
         Variable *var = get_variable(node->data.name);
-        if (var != NULL)
-            node->is_valid_symbol = true;
-        /* Not a variable -- fall back to the enum-constant namespace (e.g.
-           bare `RED` from `gyatt Color { RED, ... };`), matching C's
+        /* A variable, or -- falling back to the enum-constant namespace
+           (e.g. bare `RED` from `gyatt Color { RED, ... };`), matching C's
            unscoped enum constants. */
-        else if (find_global_enum_constant(node->data.name) != NULL)
+        if (var != NULL || find_global_enum_constant(node->data.name) != NULL)
             node->is_valid_symbol = true;
 
         if (!node->is_valid_symbol)
@@ -1014,34 +2156,45 @@ bool check_and_mark_identifier(ASTNode *node, const String contextErrorMessage)
 void execute_switch_statement(ASTNode *node)
 {
     int switch_value = evaluate_expression(node->data.switch_stmt.expression);
-    CaseNode *current_case = node->data.switch_stmt.cases;
-    int matched = 0;
+
+    // Two-phase dispatch so a `based` (default) case doesn't win just because
+    // a single forward scan reaches it first (issue #179). Phase 1 picks the
+    // entry case: a `sigma rule` whose value equals the switch value, or
+    // `based` only if no numbered case matches -- so `based`'s position in the
+    // case list no longer decides whether it runs. Phase 2 executes from that
+    // entry case onward, falling through into later cases exactly like a C
+    // switch until a `bruh` (break) longjmps out.
+    CaseNode *entry = NULL;
+    CaseNode *default_case = NULL;
+
+    for (CaseNode *scan = node->data.switch_stmt.cases; scan; scan = scan->next)
+    {
+        if (scan->value)
+        {
+            if (evaluate_expression(scan->value) == switch_value)
+            {
+                entry = scan;
+                break;
+            }
+        }
+        else
+        {
+            default_case = scan;
+        }
+    }
+
+    if (!entry)
+        entry = default_case;
+
+    if (!entry)
+        return; // no matching case and no default: nothing to run
 
     PUSH_JUMP_BUFFER();
     if (setjmp(CURRENT_JUMP_BUFFER()) == 0)
     {
-        while (current_case)
-        {
-            if (current_case->value)
-            {
-                int case_value = evaluate_expression(current_case->value);
-                if (case_value == switch_value || matched)
-                {
-                    matched = 1;
-                    execute_statements(current_case->statements);
-                }
-            }
-            else
-            {
-                // Default case
-                if (matched || !matched)
-                {
-                    execute_statements(current_case->statements);
-                    break;
-                }
-            }
-            current_case = current_case->next;
-        }
+        for (CaseNode *current_case = entry; current_case;
+             current_case = current_case->next)
+            execute_statements(current_case->statements);
     }
     else
     {
@@ -1124,10 +2277,10 @@ ASTNode *create_array_access_node(String name, ASTNode *index)
     Variable *var = get_variable(name);
     if (var != NULL)
     {
-        node->var_type = var->var_type;
-        node->pointer_level = var->pointer_level;
+        node->var_type = var->desc.type;
+        node->pointer_level = var->desc.pointer_level;
         node->array_length = var->array_length;
-        node->modifiers = var->modifiers;
+        node->modifiers = var->desc.modifiers;
     }
 
     return node;
@@ -1150,7 +2303,7 @@ ASTNode *create_float_node(float value)
 ASTNode *create_char_node(char value)
 {
     ASTNode *node = create_node(NODE_CHAR, VAR_CHAR, current_modifiers);
-    SET_DATA_INT(node, value); // Store char as integer
+    SET_DATA_INT(node, (unsigned char)value); // Store char as integer
     return node;
 }
 
@@ -1277,7 +2430,7 @@ void *handle_identifier(ASTNode *node, const String contextErrorMessage,
     if (var != NULL)
     {
         static Value promoted_value;
-        if (var->pointer_level > 0)
+        if (var->desc.pointer_level > 0)
         {
             if (promote != 0)
             {
@@ -1289,7 +2442,7 @@ void *handle_identifier(ASTNode *node, const String contextErrorMessage,
         if (promote == 1)
         {
 
-            switch (var->var_type)
+            switch (var->desc.type)
             {
             case VAR_DOUBLE:
                 return &var->value.dvalue;
@@ -1316,7 +2469,7 @@ void *handle_identifier(ASTNode *node, const String contextErrorMessage,
         }
         else if (promote == 2)
         {
-            switch (var->var_type)
+            switch (var->desc.type)
             {
             case VAR_DOUBLE:
                 promoted_value.fvalue = (float)var->value.dvalue;
@@ -1343,7 +2496,7 @@ void *handle_identifier(ASTNode *node, const String contextErrorMessage,
         }
         else
         {
-            switch (var->var_type)
+            switch (var->desc.type)
             {
             case VAR_DOUBLE:
                 return &var->value.dvalue;
@@ -1389,6 +2542,88 @@ void *handle_identifier(ASTNode *node, const String contextErrorMessage,
     return NULL;
 }
 
+/* What a NODE_ARRAY_ACCESS node indexes into, regardless of whether
+   it's the classic IDENTIFIER form (Array.name, a Variable) or the
+   struct-field form (Array.base, `foo.arr[i]`, a StructField). Single
+   source of truth for "is this a valid array access, and what does it
+   mean" -- every consumer below (get_expression_type,
+   get_expression_pointer_level, is_expression,
+   infer_runtime_expression_type_noeval) must agree on this, or one can
+   call an expression well-typed while another calls it undefined for
+   the identical node (confirmed: for `f.n[0]` on a scalar `rizz n`,
+   is_expression(node, VAR_INT) used to report true while
+   get_expression_type(node) reported NONE/"Undefined array field" --
+   two public type queries disagreeing about the same expression).
+   Returns false -- leaving *out untouched -- for a node that isn't a
+   NODE_ARRAY_ACCESS, a name/field that doesn't resolve, or one that
+   resolves but isn't actually an array (indexing a scalar): all three
+   are "not a valid array access" and every caller here must treat them
+   identically. */
+typedef struct
+{
+    VarType type;
+    int pointer_level;
+    TypeModifiers modifiers;
+    const ArrayDimensions *dimensions;
+} ArrayAccessElement;
+
+static bool resolve_array_access_element(ASTNode *node, ArrayAccessElement *out)
+{
+    if (!node || node->type != NODE_ARRAY_ACCESS)
+        return false;
+
+    if (node->data.array.base)
+    {
+        StructDef *def = NULL;
+        void *base = NULL;
+        StructField *fld = NULL;
+        if (!resolve_struct_access(node->data.array.base, &def, &base, &fld,
+                                   false) ||
+            !fld->desc.is_array)
+            return false;
+        out->type = fld->desc.type;
+        out->pointer_level = fld->desc.pointer_level;
+        out->modifiers = fld->desc.modifiers;
+        out->dimensions = &fld->desc.array_dimensions;
+        return true;
+    }
+
+    Variable *var = get_variable(node->data.array.name);
+    if (!var)
+        return false;
+    /* `s[i]` on a `rant` yields a `yap` (#251). A rant is not an array --
+       it is the length-prefixed String of lib/string_value.h -- so the
+       is_array check below would reject it, which is exactly what used to
+       make `s[0]` fail with "Variable 's' is not an array".
+
+       Reported here rather than at each of this function's call sites
+       because this is the single choke point for an array access's ELEMENT
+       type: get_expression_type() and get_expression_pointer_level() both
+       route through it, and so therefore does every scalar evaluator that
+       asks numeric_load() what width to read. Saying VAR_CHAR once here is
+       what makes `yap c = s[0];` and `yapping("%c", s[0])` agree.
+
+       A `yap buf[N]` is VAR_CHAR *and* is_array, so it never reaches this
+       branch -- it stays on the ordinary array path, where the element
+       type is already VAR_CHAR anyway. */
+    if (var->desc.type == VAR_STRING && !var->desc.is_array &&
+        var->desc.pointer_level == 0)
+    {
+        out->type = VAR_CHAR;
+        out->pointer_level = 0;
+        out->modifiers = var->desc.modifiers;
+        out->dimensions = &var->desc.array_dimensions;
+        return true;
+    }
+    if (!var->desc.is_array)
+        return false;
+    out->type = var->desc.type;
+    out->pointer_level = var->desc.pointer_level;
+    out->modifiers = var->desc.modifiers;
+    out->dimensions = &var->desc.array_dimensions;
+    return true;
+}
+
 int get_expression_pointer_level(ASTNode *node)
 {
     if (!node)
@@ -1401,14 +2636,22 @@ int get_expression_pointer_level(ASTNode *node)
     case NODE_IDENTIFIER:
     {
         Variable *var = get_variable(node->data.name);
-        return var ? var->pointer_level : node->pointer_level;
+        return var ? var->desc.pointer_level : node->pointer_level;
     }
     case NODE_ARRAY_ACCESS:
     {
-        Variable *var = get_variable(node->data.array.name);
-        return var ? var->pointer_level : node->pointer_level;
+        ArrayAccessElement elem;
+        if (resolve_array_access_element(node, &elem))
+            return elem.pointer_level;
+        return node->pointer_level;
     }
     case NODE_UNARY_OPERATION:
+        /* A truth value is never a pointer, whatever the operand was.
+           Without this `!p` reports pointer level 1 and downstream code
+           tries to evaluate it as an address ("Invalid pointer
+           expression"), even though the answer it computes is correct. */
+        if (node->data.unary.op == OP_NOT)
+            return 0;
         if (node->data.unary.op == OP_ADDRESS_OF)
             return get_expression_pointer_level(node->data.unary.operand) + 1;
         if (node->data.unary.op == OP_DEREFERENCE)
@@ -1425,13 +2668,20 @@ int get_expression_pointer_level(ASTNode *node)
                is static data on the registered StdrotEntry -- answering
                this from it never invokes the call, so it never touches
                the native-call memo cache, same as before this consulted
-               STDROT_PTR at all. Only STDROT_PTR has a pointer_level to
-               report (see marshal_native_return_value()'s comment on why
-               that reuses VAR_INT + pointer_level); everything else,
-               including the unmarshalled STDROT_HANDLE, is level 0. */
+               STDROT_PTR at all. Only STDROT_PTR and STDROT_HANDLE have
+               a pointer_level to report (see marshal_native_return_
+               value()'s comment on why that reuses VAR_INT +
+               pointer_level); everything else is level 0. */
             const StdrotEntry *entry =
                 get_native_function(node->data.func_call.function_name);
-            if (entry && entry->return_type.type == STDROT_PTR)
+            /* STDROT_HANDLE alongside STDROT_PTR (#213): a handle is an
+               opaque address too, so `SAUCE *f = crackopen(...)` needs
+               the same pointer_level. A handle declares pointer_level 0,
+               giving level 1 -- one indirection, and never more: the
+               token is the resource, there is nothing behind it to
+               reach through. */
+            if (entry && (entry->return_type.type == STDROT_PTR ||
+                          entry->return_type.type == STDROT_HANDLE))
                 return entry->return_type.pointer_level + 1;
             return 0;
         }
@@ -1470,8 +2720,13 @@ int get_expression_pointer_level(ASTNode *node)
         void *base = NULL;
         StructField *fld = NULL;
         if (!resolve_struct_access(node, &def, &base, &fld, false))
-            return 0;
-        return fld->pointer_level;
+        {
+            /* Declared types answer a call base; nothing here may run it. */
+            fld = static_struct_field(node);
+            if (!fld)
+                return node->pointer_level;
+        }
+        return fld->desc.pointer_level;
     }
     default:
         return node->pointer_level;
@@ -1515,25 +2770,24 @@ VarType get_expression_type(ASTNode *node)
         return VAR_BOOL;
     case NODE_CHAR:
         return VAR_INT;
+    case NODE_STRING_SLICE:
+        /* `s[i:j]` is a rant, always -- see create_string_slice_node()'s
+           own comment for why the node does not consult the variable. */
+        return VAR_STRING;
     case NODE_ARRAY_ACCESS:
     {
-        // First, get the array's base type from symbol table
-        // Store the array name locally to prevent modification
-        const String array_name = node->data.array.name;
-        if (!array_name.data)
-        {
-            yyerror("Invalid array access: missing array name");
-            return NONE;
-        }
-
-        Variable *var = get_variable(array_name);
-        if (var != NULL && var->is_array)
-        {
-            // Return the array's element type without evaluating
-            // (evaluation might modify the node structure)
-            return var->var_type;
-        }
-        yyerror("Undefined array in expression");
+        ArrayAccessElement elem;
+        if (resolve_array_access_element(node, &elem))
+            return elem.type;
+        /* Deliberately not "Undefined array" -- resolve_array_access_
+           element() returns false both when the name/field genuinely
+           doesn't resolve AND when it resolves to something that just
+           isn't an array (e.g. indexing a scalar struct field);
+           claiming "undefined" for the latter is a real thing that
+           exists, just not indexable, and evaluate_struct_field_array_
+           access()/evaluate_multi_array_access() (ast.c) report the
+           precise reason at the point they actually have it. */
+        yyerror("Invalid array access in expression");
         return NONE;
     }
     case NODE_IDENTIFIER:
@@ -1543,7 +2797,7 @@ VarType get_expression_type(ASTNode *node)
         Variable *var = get_variable(array_name);
         if (var != NULL)
         {
-            return var->var_type;
+            return var->desc.type;
         }
         /* Not a variable -- an enum constant has type int in C. */
         if (find_global_enum_constant(array_name) != NULL)
@@ -1580,6 +2834,14 @@ VarType get_expression_type(ASTNode *node)
     }
     case NODE_UNARY_OPERATION:
     {
+        /* `!x` is a truth value whatever x was, so it does not inherit the
+           operand's type the way `-x` does. Without this, `!someInt` would
+           statically type as rizz and a `%b` print or a cap-typed context
+           would read it as the wrong width. */
+        if (node->data.unary.op == OP_NOT)
+        {
+            return VAR_BOOL;
+        }
         if (node->data.unary.op == OP_ADDRESS_OF ||
             node->data.unary.op == OP_DEREFERENCE)
         {
@@ -1622,7 +2884,7 @@ VarType get_expression_type(ASTNode *node)
         Function *func = get_function(func_name);
         if (func != NULL)
         {
-            return func->return_type;
+            return func->return_desc.type;
         }
         yyerror("Undefined function in get_expression_type");
         return NONE;
@@ -1633,12 +2895,87 @@ VarType get_expression_type(ASTNode *node)
         void *base = NULL;
         StructField *fld = NULL;
         if (!resolve_struct_access(node, &def, &base, &fld, false))
-            return NONE;
-        return fld->type;
+        {
+            /* Declared types answer a call base; nothing here may run it. */
+            fld = static_struct_field(node);
+            if (!fld)
+                return node->var_type;
+        }
+        return fld->desc.type;
     }
     default:
         yyerror("Unknown node type in get_expression_type");
         return NONE;
+    }
+}
+
+static StructDef *get_struct_def_for_expression(ASTNode *expr)
+{
+    if (!expr)
+        return NULL;
+
+    switch (expr->type)
+    {
+    case NODE_IDENTIFIER:
+    {
+        Variable *var = get_variable(expr->data.name);
+        if (var && var->desc.type == VAR_STRUCT && var->desc.struct_name.data)
+            return get_struct_def(var->desc.struct_name);
+        return NULL;
+    }
+    case NODE_ARRAY_ACCESS:
+    {
+        /* NOT resolve_array_access_element(): that helper's
+           ArrayAccessElement has no struct_name field (struct-typed
+           array elements aren't supported at all for the struct-field/
+           Array.base form -- build_struct_fields_from_params(), lang.y,
+           rejects that combination for struct fields outright), but a
+           plain array VARIABLE of struct-pointer-typed elements is a
+           real, working, tested feature (e.g. `lit gang Point *P; P
+           values[2]; ... *values[1] ...`, lit_struct_pointer_alias_
+           array.brainrot) that needs var->struct_name specifically.
+           Array.base (struct-field form) has no such feature yet, so it
+           falls through to NULL below, same as before this field
+           existed. */
+        if (expr->data.array.base)
+            return NULL;
+        Variable *var = get_variable(expr->data.array.name);
+        if (var && var->desc.is_array && var->desc.type == VAR_STRUCT &&
+            var->desc.struct_name.data)
+            return get_struct_def(var->desc.struct_name);
+        return NULL;
+    }
+    case NODE_STRUCT_ACCESS:
+    {
+        StructDef *def = NULL;
+        void *base = NULL;
+        StructField *fld = NULL;
+        if (!resolve_struct_access(expr, &def, &base, &fld, false))
+        {
+            /* The sixth site, and the one that needs a LAYOUT rather than a
+               VarType. Once infer_runtime_expression_type_noeval() learned
+               to report VAR_STRUCT for `f().inner`, handle_sizeof()'s
+               "type is not statically known" gate started passing -- and
+               then failed here instead with "Invalid type in sizeof",
+               because the storage walk still found nothing to take a
+               definition from. Declared types have it. */
+            fld = static_struct_field(expr);
+        }
+        if (fld && fld->desc.type == VAR_STRUCT && fld->desc.struct_name.data)
+            return get_struct_def(fld->desc.struct_name);
+        return NULL;
+    }
+    case NODE_UNARY_OPERATION:
+        if (expr->data.unary.op == OP_DEREFERENCE)
+        {
+            ASTNode *operand = expr->data.unary.operand;
+            if (get_expression_pointer_level(operand) <= 0)
+                return NULL;
+            return get_struct_def_for_expression(operand);
+        }
+        return NULL;
+    default:
+        return NULL;
     }
 }
 
@@ -1700,19 +3037,14 @@ static VarType infer_runtime_expression_type_noeval(ASTNode *expr)
         return VAR_INT;
     case NODE_ARRAY_ACCESS:
     {
-        const String array_name = expr->data.array.name;
-        if (!array_name.data)
-            return NONE;
-        Variable *var = get_variable(array_name);
-        if (var != NULL)
-            return var->var_type;
-        return NONE;
+        ArrayAccessElement elem;
+        return resolve_array_access_element(expr, &elem) ? elem.type : NONE;
     }
     case NODE_IDENTIFIER:
     {
         Variable *var = get_variable(expr->data.name);
         if (var != NULL)
-            return var->var_type;
+            return var->desc.type;
         if (find_global_enum_constant(expr->data.name) != NULL)
             return VAR_INT;
         return NONE;
@@ -1759,7 +3091,7 @@ static VarType infer_runtime_expression_type_noeval(ASTNode *expr)
 
         Function *func = get_function(func_name);
         if (func != NULL)
-            return func->return_type;
+            return func->return_desc.type;
         return NONE;
     }
     case NODE_STRUCT_ACCESS:
@@ -1768,8 +3100,16 @@ static VarType infer_runtime_expression_type_noeval(ASTNode *expr)
         void *base = NULL;
         StructField *fld = NULL;
         if (!resolve_struct_access(expr, &def, &base, &fld, false))
-            return NONE;
-        return fld->type;
+        {
+            /* Declared types answer a call base. This function exists
+               specifically to type an expression WITHOUT evaluating it --
+               maxxing()'s operand is never run -- so a static answer is the
+               only kind allowed here, and it is available. */
+            fld = static_struct_field(expr);
+            if (!fld)
+                return NONE;
+        }
+        return fld->desc.type;
     }
     default:
         return NONE;
@@ -1827,7 +3167,7 @@ static VarType infer_runtime_expression_abi_type_noeval(ASTNode *expr)
         return t;
 
     Variable *var = get_variable(expr->data.name);
-    if (var != NULL && var->is_array)
+    if (var != NULL && var->desc.is_array)
         return VAR_STRING;
     return t;
 }
@@ -1986,10 +3326,16 @@ void *handle_binary_operation(ASTNode *node)
     }
 
     // Perform the operation and allocate the result.
+    // This branch and the final "else if (!result)" below both allocate an
+    // int, but for unrelated reasons -- this one because comparison
+    // operators always produce an int result regardless of promoted_type,
+    // the other as the int/long/etc. fallback once every other
+    // promoted_type has been tried. Not adjacent, not mergeable without
+    // losing that distinction.
     if (node->data.op.op == OP_LT || node->data.op.op == OP_GT ||
         node->data.op.op == OP_LE || node->data.op.op == OP_GE ||
         node->data.op.op == OP_EQ || node->data.op.op == OP_NE)
-    {
+    { // NOLINT(bugprone-branch-clone)
         result = SAFE_MALLOC(int);
     }
     else if (!result && promoted_type == VAR_DOUBLE)
@@ -2054,6 +3400,39 @@ void *handle_binary_operation(ASTNode *node)
                 *(int *)result =
                     0; // Define a fallback behavior for int division by zero
             }
+            /* The OTHER trapping case, and the one a zero check alone
+               misses: INT_MIN / -1. The mathematical result (2147483648)
+               is not representable in int, C leaves it undefined, and on
+               x86-64 `idiv` raises #DE for it exactly as it does for a
+               zero divisor -- so this crashed the interpreter with SIGFPE
+               rather than producing a value or a diagnostic (#272/#273).
+               Handled like division by zero, since the situation is the
+               same one: there is no correct int to return, so say so
+               instead of trapping.
+
+               Unlike OP_MOD's matching guard below, this one does NOT
+               consider node->modifiers.is_unsigned -- because this arm
+               has no unsigned branch at all to order it against. That
+               asymmetry is deliberate rather than an omission, and it is
+               recorded here because it will matter to whoever wires
+               unsigned arithmetic through: 0x80000000 / 0xFFFFFFFF is
+               perfectly well defined unsigned (and its answer really is
+               0), so once is_unsigned actually reaches a binary-op node
+               this branch would emit a diagnostic about "the most
+               negative rizz" for operands the user declared nonut.
+               Adding a check today would only pair one dead branch with
+               another: is_unsigned is never set on these nodes as things
+               stand -- `nonut rizz a = 0 - 1; a % 3` yields -1, not the
+               unsigned 0 -- so OP_MOD's own unsigned handling is
+               unreachable in that shape too (PR #310 review). Fix the
+               propagation first; then this guard needs the same
+               is_unsigned ordering OP_MOD already has. */
+            else if (*(int *)left_value == INT_MIN && *(int *)right_value == -1)
+            {
+                yyerror("Division overflow: the most negative rizz divided "
+                        "by -1 has no representable result");
+                *(int *)result = 0;
+            }
             else
             {
                 *(int *)result = *(int *)left_value / *(int *)right_value;
@@ -2099,6 +3478,21 @@ void *handle_binary_operation(ASTNode *node)
                 unsigned int ur = (unsigned int)right;
                 *(int *)result = (int)(ul % ur);
             }
+            /* INT_MIN % -1 traps on x86-64 for the same reason INT_MIN /
+               -1 does -- `idiv` computes quotient and remainder together,
+               so the unrepresentable QUOTIENT faults even though only the
+               remainder was asked for (#272/#273). Unlike the division
+               case there is a correct answer to give: the remainder is
+               mathematically 0, exactly representable, so this returns it
+               rather than reporting an error. Nothing is lost and nothing
+               needs diagnosing; the trap was purely an artifact of how the
+               hardware computes it. Checked AFTER the is_unsigned branch
+               because unsigned arithmetic has no such case -- there is no
+               negative operand for it to arise from. */
+            else if (left == INT_MIN && right == -1)
+            {
+                *(int *)result = 0;
+            }
             else
             {
                 *(int *)result = left % right;
@@ -2107,7 +3501,7 @@ void *handle_binary_operation(ASTNode *node)
         else if (promoted_type == VAR_FLOAT)
         {
             *(float *)result =
-                fmod(*(float *)left_value, *(float *)right_value);
+                fmodf(*(float *)left_value, *(float *)right_value);
         }
         else if (promoted_type == VAR_DOUBLE)
         {
@@ -2116,7 +3510,28 @@ void *handle_binary_operation(ASTNode *node)
         }
         else if (promoted_type == VAR_SHORT)
         {
-            *(short *)result = *(short *)left_value % *(short *)right_value;
+            /* The zero guard OP_DIVIDE's own VAR_SHORT branch has always
+               had, and this one was missing entirely: `smol a = 7, b = 0;
+               a % b` went straight to the modulo and crashed with SIGFPE
+               (#271). Mirrors the VAR_INT case above and the VAR_SHORT
+               division case, message included.
+
+               No INT_MIN-style overflow guard is needed here, unlike
+               VAR_INT: C's usual arithmetic conversions promote both
+               shorts to int before the operation, so the worst case
+               (-32768 % -1) is computed as ints, where both the quotient
+               and the remainder are representable. The trap is specific to
+               operands that are already the widest type the division is
+               performed in. */
+            if (*(short *)right_value == 0)
+            {
+                yyerror("Modulo by zero");
+                *(short *)result = 0;
+            }
+            else
+            {
+                *(short *)result = *(short *)left_value % *(short *)right_value;
+            }
         }
         break;
     case OP_LT:
@@ -2217,10 +3632,14 @@ void *evaluate_lvalue_address(ASTNode *node)
             return NULL;
         }
 
-        if (var->pointer_level > 0)
+        /* Pointer-typed variables, including `gang T *p`, store the pointer
+           value in pvalue. Assignment to the pointer itself writes that slot;
+           dereference assignment handles the pointee through the unary case
+           below. */
+        if (var->desc.pointer_level > 0)
             return &var->value.pvalue;
 
-        switch (var->var_type)
+        switch (var->desc.type)
         {
         case VAR_INT:
             return &var->value.ivalue;
@@ -2238,6 +3657,17 @@ void *evaluate_lvalue_address(ASTNode *node)
             return &var->value.strvalue;
         case VAR_ENUM:
             return &var->value.ivalue;
+        case VAR_STRUCT:
+            /* Non-pointer struct/union values live in the layout blob at
+               value.array_data (allocated by interpreter_visit_declaration).
+               Pointer-to-struct variables are handled above via
+               pointer_level > 0 and pvalue. */
+            if (!var->value.array_data)
+            {
+                yyerror("Uninitialized struct lvalue");
+                return NULL;
+            }
+            return var->value.array_data;
         default:
             yyerror("Unsupported lvalue type");
             return NULL;
@@ -2260,6 +3690,46 @@ void *evaluate_lvalue_address(ASTNode *node)
     return NULL;
 }
 
+/* Byte stride for pointer arithmetic on `expr`, whose pointer level is
+ * `ptr_level` -- i.e. sizeof(*expr), the amount `expr + 1` advances by.
+ *
+ * get_type_size_for_descriptor() answers this for every pointee whose size
+ * follows from (VarType, pointer_level, modifiers) alone, and returns 0 for
+ * the rest. A by-value struct/union pointee is the interesting member of
+ * "the rest": `gang Vec2 *` and `gang Matrix *` are both VAR_STRUCT at
+ * pointer_level 1, so that signature genuinely cannot tell them apart and
+ * correctly refuses to guess.
+ *
+ * The tag it would need is not missing, though -- it is on the Variable,
+ * where get_struct_def_for_expression() can reach it. So struct pointer
+ * arithmetic needed no new field on the pointer's descriptor (#311
+ * proposed one); it needed this second lookup for the case the
+ * size-by-descriptor path structurally cannot serve.
+ *
+ * Returns 0 when the pointee's size is genuinely unknown -- a single-level
+ * opaque VAR_PTR/VAR_VOID pointer -- which callers must still reject
+ * rather than treat as 1 (see their own comments). Only pointer_level 1
+ * consults the struct tag: at level 2+ the pointee is itself a pointer,
+ * whose size get_type_size_for_descriptor() already knows. */
+static size_t pointer_arith_scale(ASTNode *expr, int ptr_level)
+{
+    if (!expr || ptr_level <= 0)
+        return 0;
+
+    size_t scale = get_type_size_for_descriptor(get_expression_type(expr),
+                                                ptr_level - 1, expr->modifiers);
+    if (scale != 0)
+        return scale;
+
+    if (ptr_level == 1 && get_expression_type(expr) == VAR_STRUCT)
+    {
+        StructDef *def = get_struct_def_for_expression(expr);
+        if (def && def->total_size > 0)
+            return def->total_size;
+    }
+    return 0;
+}
+
 uintptr_t evaluate_expression_pointer(ASTNode *node)
 {
     if (!node)
@@ -2275,7 +3745,7 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
             yyerror("Undefined variable");
             return (uintptr_t)0;
         }
-        if (var->pointer_level <= 0)
+        if (var->desc.pointer_level <= 0)
         {
             yyerror("Expression is not a pointer");
             return (uintptr_t)0;
@@ -2288,6 +3758,15 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
         if (node->data.unary.op == OP_ADDRESS_OF)
             return (uintptr_t)evaluate_lvalue_address(node->data.unary.operand);
         if (node->data.unary.op == OP_DEREFERENCE)
+            /* A NULL pointer value reaching a dereference here is a real
+             * possible Brainrot-program runtime crash (matching C's own
+             * *NULL semantics), not a bug in this call site specifically --
+             * every typed dereference in this dispatch (evaluate_expression_
+             * int/short/float/.../bool) shares the same unguarded shape.
+             * Whether pointer dereference should instead raise a catchable
+             * runtime error is a language-semantics decision, out of scope
+             * for this CI-adoption pass. */
+            // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
             return *(uintptr_t *)(uintptr_t)evaluate_expression_pointer(
                 node->data.unary.operand);
         break;
@@ -2334,9 +3813,8 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
                 uintptr_t base =
                     evaluate_expression_pointer(node->data.op.left);
                 ptrdiff_t offset = evaluate_expression_int(node->data.op.right);
-                size_t scale = get_type_size_for_descriptor(
-                    get_expression_type(node->data.op.left), left_ptr - 1,
-                    node->data.op.left->modifiers);
+                size_t scale =
+                    pointer_arith_scale(node->data.op.left, left_ptr);
                 /* Round-23 review, finding #4 -- a scale of 0 means the
                    pointee's size is genuinely unknown (a single-level
                    opaque VAR_PTR/VAR_VOID pointer -- semantic analysis
@@ -2364,9 +3842,8 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
                 uintptr_t base =
                     evaluate_expression_pointer(node->data.op.right);
                 ptrdiff_t offset = evaluate_expression_int(node->data.op.left);
-                size_t scale = get_type_size_for_descriptor(
-                    get_expression_type(node->data.op.right), right_ptr - 1,
-                    node->data.op.right->modifiers);
+                size_t scale =
+                    pointer_arith_scale(node->data.op.right, right_ptr);
                 if (scale == 0)
                 {
                     yyerror("Cannot perform pointer arithmetic on a "
@@ -2415,9 +3892,54 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
     return (uintptr_t)0;
 }
 
+/* See this function's declaration (ast.h) for the full invariant. */
+int char_scalar_slot_value(int raw)
+{
+    return (unsigned char)raw;
+}
+
+/* `packed_storage` distinguishes two genuinely different memory shapes
+   `address` can point into, which only diverge for VAR_CHAR:
+   - false (a plain NODE_IDENTIFIER target): address is a scalar
+     Variable's own union slot (evaluate_lvalue_address's NODE_IDENTIFIER
+     case), which for VAR_CHAR is `&var->value.ivalue` -- a real 4-byte
+     `int` slot, not a 1-byte one (see that union's definition), because
+     there is no dedicated 1-byte member for it to live in instead.
+   - true (NODE_ARRAY_ACCESS, NODE_STRUCT_ACCESS, or a dereferenced
+     pointer target): address points into a tightly packed array/struct
+     blob (or, for a dereference, wherever the pointer says -- possibly
+     a scalar Variable's own slot, possibly one of those same blobs),
+     where a `yap` element/field genuinely occupies 1 byte with real
+     neighbors on both sides. Every other VarType already has matching
+     width between the two shapes (BOOL, SHORT, FLOAT, DOUBLE, INT all
+     use a same-sized union member and a same-sized array/struct slot),
+     which is why only VAR_CHAR needs this distinction at all.
+
+   A dereferenced pointer's `address` can land in EITHER shape and
+   there is no way to tell which from the pointer alone -- `yap *p`
+   could be `&someCharVariable` or `&someArray[i]` or `&someStruct.
+   field`. That ambiguity is why the VAR_CHAR case below does not just
+   pick a width from `packed_storage` and stop: the scalar (non-packed)
+   branch also narrows the value to a single byte's worth of range
+   before zero-extending it back out to fill the full 4-byte slot,
+   keeping that slot's upper 3 bytes permanently zero. That is what
+   makes a *later*, narrower 1-byte write through a `yap *` alias into
+   this same slot (the `packed_storage` branch, taken because the write
+   arrived via a dereference, not because anyone determined this
+   particular address is actually a scalar's slot) safe: it only ever
+   touches the low byte, and the upper three were already zero and stay
+   that way. Without this, a scalar `yap c; yap *p = &c;` sequence
+   ending in `*p = 'x'` would leave whatever was previously in bytes
+   1-3 of `c`'s slot behind, corrupting any subsequent raw (unnarrowed)
+   read of `c` as a full int (confirmed: `c = 1000;` followed by
+   `*p = 'x';` used to leave `c + 0` reading 888, not 120). Writing
+   `*(int *)address` in the packed case overwrites 3 bytes of whatever
+   follows -- padding if you're lucky, a real neighboring field/element
+   if you're not (confirmed: `gang { rizz a; yap b; yap c; };
+   f.b = 'x';` silently zeroed `c`). */
 static void write_value_to_address(void *address, VarType type,
                                    int pointer_level, ASTNode *expr,
-                                   TypeModifiers mods)
+                                   TypeModifiers mods, bool packed_storage)
 {
     if (!address)
     {
@@ -2449,7 +3971,11 @@ static void write_value_to_address(void *address, VarType type,
         *(bool *)address = evaluate_expression_bool(expr);
         break;
     case VAR_CHAR:
-        *(int *)address = evaluate_expression_int(expr);
+        if (packed_storage)
+            *(char *)address = (char)evaluate_expression_int(expr);
+        else
+            *(int *)address =
+                char_scalar_slot_value(evaluate_expression_int(expr));
         break;
     case VAR_STRING:
         *(String *)address = evaluate_expression_string(expr);
@@ -2470,13 +3996,13 @@ static void initialize_variable_from_expr(Variable *var, ASTNode *expr)
     if (!var || !expr)
         return;
 
-    if (var->pointer_level > 0)
+    if (var->desc.pointer_level > 0)
     {
         var->value.pvalue = evaluate_expression_pointer(expr);
         return;
     }
 
-    switch (var->var_type)
+    switch (var->desc.type)
     {
     case VAR_INT:
         var->value.ivalue = evaluate_expression_int(expr);
@@ -2494,7 +4020,8 @@ static void initialize_variable_from_expr(Variable *var, ASTNode *expr)
         var->value.bvalue = evaluate_expression_bool(expr);
         break;
     case VAR_CHAR:
-        var->value.ivalue = evaluate_expression_int(expr);
+        var->value.ivalue =
+            char_scalar_slot_value(evaluate_expression_int(expr));
         break;
     case VAR_STRING:
         var->value.strvalue = evaluate_expression_string(expr);
@@ -2505,6 +4032,52 @@ static void initialize_variable_from_expr(Variable *var, ASTNode *expr)
     case NONE:
     default:
         break;
+    }
+}
+
+/* Is an expression true, judged in ITS OWN type?
+ *
+ * `!` cannot reuse the caller's context type the way `-` can. Two things
+ * go wrong if it does. Reading a `rizz` variable back through a `bool *`
+ * is a type-punned load that UBSan rejects outright ("load of value 5,
+ * which is not a valid value for type '_Bool'"), and funnelling a `chad`
+ * through the int path silently changes the answer: `!0.5` would truncate
+ * to `!0` and report true, when 0.5 is as true as any other non-zero.
+ *
+ * So dispatch on the operand's own static type and let each evaluator read
+ * its own storage. A pointer operand is compared against NULL, which makes
+ * `!p` the null check it looks like. */
+static bool expression_is_truthy(ASTNode *expr)
+{
+    if (!expr)
+    {
+        return false;
+    }
+    if (get_expression_pointer_level(expr) > 0)
+    {
+        return evaluate_expression_pointer(expr) != (uintptr_t)0;
+    }
+    switch (get_expression_type(expr))
+    {
+    case VAR_FLOAT:
+        return evaluate_expression_float(expr) != 0.0f;
+    case VAR_DOUBLE:
+        return evaluate_expression_double(expr) != 0.0;
+    case VAR_BOOL:
+        return evaluate_expression_bool(expr);
+    case VAR_SHORT:
+        /* Not merely tidiness: a smol is stored packed at sizeof(short),
+           so letting this fall through to evaluate_expression_int() reads
+           four bytes out of a two-byte slot. `smol arr[2] = {0, 1};
+           !arr[0]` then loads 0x00010000 and answers false for a zero. */
+        return evaluate_expression_short(expr) != 0;
+    default:
+        /* VAR_INT, VAR_CHAR and VAR_ENUM. A yap is already special-cased
+           inside evaluate_expression_int()'s own array path, so it reads
+           its single byte correctly; the others are int-width. Anything
+           without a scalar truth value -- struct, union, rant -- is
+           rejected by the semantic analyzer before it can reach here. */
+        return evaluate_expression_int(expr) != 0;
     }
 }
 
@@ -2523,7 +4096,7 @@ void *handle_unary_expression(ASTNode *node, void *operand_value,
         else if (operand_type == VAR_SHORT)
         {
             short *result = SAFE_MALLOC(short);
-            *result = !(*(short *)operand_value);
+            *result = -(*(short *)operand_value);
             return result;
         }
         else if (operand_type == VAR_FLOAT)
@@ -2766,6 +4339,23 @@ static void free_native_result_box(void *raw, VarType actual)
  * polymorphic one (slorp): `actual` always already matches what's
  * expected there, since the semantic analyzer genuinely knows the
  * static type in both cases. */
+/* "Native" or "User-defined", for a call-result diagnostic.
+ *
+ * These messages are shared between the native and user-defined call
+ * paths, and said "Native call result" unconditionally -- so a `cap`
+ * function twelve lines up in the same file produced an error pointing
+ * the reader at their #cooked modules (#313). The distinction is
+ * knowable right here: the node is the call. */
+static const char *native_call_qualifier(const ASTNode *node)
+{
+    if (node && node->type == NODE_FUNC_CALL &&
+        is_builtin_function(node->data.func_call.function_name))
+    {
+        return "Native";
+    }
+    return "User-defined";
+}
+
 static bool unbox_native_numeric_result(void *raw, VarType actual, double *out)
 {
     switch (actual)
@@ -2785,6 +4375,19 @@ static bool unbox_native_numeric_result(void *raw, VarType actual, double *out)
         return true;
     case VAR_CHAR:
         *out = (double)*(char *)raw;
+        return true;
+    case VAR_BOOL:
+        /* `cap` was the one scalar type missing here, so a cap-returning
+           call could not be used where an integer is wanted -- including
+           an `edgy`/`goon` CONDITION, which is the shape that matters
+           (#313). It failed OPEN: the condition evaluated to 0, so
+           `edgy (f())` silently took the false branch, and a program
+           ignoring stderr just quietly did the wrong thing.
+           handle_function_call() boxes a bool result as SAFE_MALLOC(bool)
+           and writes it through a `bool *`, so that is how it is read
+           back. In an integer context a `cap` is 0 or 1, matching what
+           `!0` already produces. */
+        *out = (double)*(bool *)raw;
         return true;
     default:
         return false;
@@ -2822,8 +4425,8 @@ static bool unbox_native_numeric_result(void *raw, VarType actual, double *out)
  * unreachable. */
 static bool warn_if_native_result_void(const char *context_name)
 {
-    if (current_return_value.type != VAR_VOID &&
-        current_return_value.type != NONE)
+    if (current_return_value.desc.type != VAR_VOID &&
+        current_return_value.desc.type != NONE)
         return false;
     char error_msg[MAX_BUFFER_LEN];
     snprintf(error_msg, sizeof(error_msg),
@@ -2831,6 +4434,49 @@ static bool warn_if_native_result_void(const char *context_name)
              context_name);
     yyerror(error_msg);
     return true;
+}
+
+/* Load a numeric value from `addr`, reading it as `type` actually stores it.
+ *
+ * The counterpart of identifier_numeric_value() for the load sites that do
+ * not go through handle_identifier(): array elements and pointer targets.
+ * Those used to cast the address to whichever type the calling evaluator
+ * happened to want, which is a reinterpretation and not a conversion --
+ * `chad arr[1]; arr[0] = 17.5; rizz k = arr[0];` produced 1099694080, the
+ * bit pattern of 17.5f, and the reverse (`rizz arr[1]; chad f = arr[0];`)
+ * produced 0.00. Worse, printing and assigning the same rvalue disagreed,
+ * because yapping's dispatch reads it by type while the assignment did not.
+ *
+ * Every numeric member of the Value union is exactly representable as a
+ * double, so this is the lossless common currency; callers narrow. VAR_CHAR
+ * is one byte and unsigned on purpose -- char_scalar_slot_value() (ast.h)
+ * zero-extends a scalar yap on every write, so a signed packed read would
+ * disagree with a scalar read of the same logical value for every byte
+ * >= 128. NODE_STRUCT_ACCESS already had its own by-field-type switch and
+ * was already correct; it is deliberately left alone rather than given a
+ * second implementation here. */
+static double numeric_load(const void *addr, VarType type)
+{
+    if (addr == NULL)
+    {
+        return 0.0;
+    }
+    switch (type)
+    {
+    case VAR_DOUBLE:
+        return *(const double *)addr;
+    case VAR_FLOAT:
+        return (double)*(const float *)addr;
+    case VAR_SHORT:
+        return (double)*(const short *)addr;
+    case VAR_BOOL:
+        return *(const bool *)addr ? 1.0 : 0.0;
+    case VAR_CHAR:
+        return (double)*(const unsigned char *)addr;
+    default:
+        /* VAR_INT and VAR_ENUM; both int-width. */
+        return (double)*(const int *)addr;
+    }
 }
 
 float evaluate_expression_float(ASTNode *node)
@@ -2847,7 +4493,8 @@ float evaluate_expression_float(ASTNode *node)
             yyerror("Cannot use pointer in float context");
             return 0.0f;
         }
-        return *(float *)evaluate_multi_array_access(node);
+        return (float)numeric_load(evaluate_multi_array_access(node),
+                                   get_expression_type(node));
     }
     case NODE_FLOAT:
         return node->data.fvalue;
@@ -2894,13 +4541,19 @@ float evaluate_expression_float(ASTNode *node)
                 yyerror("Cannot use pointer in float context");
                 return 0.0f;
             }
-            return *(float *)(uintptr_t)evaluate_expression_pointer(
-                node->data.unary.operand);
+            return (float)numeric_load(
+                (const void *)(uintptr_t)evaluate_expression_pointer(
+                    node->data.unary.operand),
+                get_expression_type(node));
         }
         if (node->data.unary.op == OP_ADDRESS_OF)
         {
             yyerror("Cannot use pointer in float context");
             return 0.0f;
+        }
+        if (node->data.unary.op == OP_NOT)
+        {
+            return expression_is_truthy(node->data.unary.operand) ? 0.0f : 1.0f;
         }
         float operand = evaluate_expression_float(node->data.unary.operand);
         float *result =
@@ -2927,16 +4580,16 @@ float evaluate_expression_float(ASTNode *node)
             return 0.0f;
         }
         double value;
-        if (!unbox_native_numeric_result(raw, current_return_value.type,
+        if (!unbox_native_numeric_result(raw, current_return_value.desc.type,
                                          &value))
         {
             char error_msg[MAX_BUFFER_LEN];
             snprintf(error_msg, sizeof(error_msg),
                      "Native call result (%s) cannot be used in a float "
                      "context",
-                     vartype_to_string(current_return_value.type));
+                     vartype_to_string(current_return_value.desc.type));
             yyerror(error_msg);
-            free_native_result_box(raw, current_return_value.type);
+            free_native_result_box(raw, current_return_value.desc.type);
             return 0.0f;
         }
         SAFE_FREE(raw);
@@ -2950,9 +4603,9 @@ float evaluate_expression_float(ASTNode *node)
         if (!resolve_struct_access(node, &def, &base, &fld, true))
             return 0;
         void *addr = (char *)base + fld->offset;
-        if (fld->pointer_level > 0)
+        if (fld->desc.pointer_level > 0)
             return (float)*(uintptr_t *)addr;
-        switch (fld->type)
+        switch (fld->desc.type)
         {
         case VAR_INT:
         case VAR_ENUM:
@@ -2962,7 +4615,9 @@ float evaluate_expression_float(ASTNode *node)
         case VAR_BOOL:
             return (float)*(bool *)addr;
         case VAR_CHAR:
-            return (float)*(char *)addr;
+            /* unsigned char: see evaluate_expression_int()'s
+               OP_DEREFERENCE case for why. */
+            return (float)*(unsigned char *)addr;
         case VAR_FLOAT:
             return *(float *)addr;
         case VAR_DOUBLE:
@@ -2991,7 +4646,8 @@ double evaluate_expression_double(ASTNode *node)
             yyerror("Cannot use pointer in double context");
             return 0.0;
         }
-        return *(double *)evaluate_multi_array_access(node);
+        return numeric_load(evaluate_multi_array_access(node),
+                            get_expression_type(node));
     }
     case NODE_DOUBLE:
         return node->data.dvalue;
@@ -3038,13 +4694,19 @@ double evaluate_expression_double(ASTNode *node)
                 yyerror("Cannot use pointer in double context");
                 return 0.0;
             }
-            return *(double *)(uintptr_t)evaluate_expression_pointer(
-                node->data.unary.operand);
+            return numeric_load(
+                (const void *)(uintptr_t)evaluate_expression_pointer(
+                    node->data.unary.operand),
+                get_expression_type(node));
         }
         if (node->data.unary.op == OP_ADDRESS_OF)
         {
             yyerror("Cannot use pointer in double context");
             return 0.0;
+        }
+        if (node->data.unary.op == OP_NOT)
+        {
+            return expression_is_truthy(node->data.unary.operand) ? 0.0 : 1.0;
         }
         double operand = evaluate_expression_double(node->data.unary.operand);
         double *result =
@@ -3071,16 +4733,16 @@ double evaluate_expression_double(ASTNode *node)
             return 0.0L;
         }
         double value;
-        if (!unbox_native_numeric_result(raw, current_return_value.type,
+        if (!unbox_native_numeric_result(raw, current_return_value.desc.type,
                                          &value))
         {
             char error_msg[MAX_BUFFER_LEN];
             snprintf(error_msg, sizeof(error_msg),
                      "Native call result (%s) cannot be used in a double "
                      "context",
-                     vartype_to_string(current_return_value.type));
+                     vartype_to_string(current_return_value.desc.type));
             yyerror(error_msg);
-            free_native_result_box(raw, current_return_value.type);
+            free_native_result_box(raw, current_return_value.desc.type);
             return 0.0L;
         }
         SAFE_FREE(raw);
@@ -3094,9 +4756,9 @@ double evaluate_expression_double(ASTNode *node)
         if (!resolve_struct_access(node, &def, &base, &fld, true))
             return 0;
         void *addr = (char *)base + fld->offset;
-        if (fld->pointer_level > 0)
+        if (fld->desc.pointer_level > 0)
             return (double)*(uintptr_t *)addr;
-        switch (fld->type)
+        switch (fld->desc.type)
         {
         case VAR_INT:
         case VAR_ENUM:
@@ -3106,7 +4768,9 @@ double evaluate_expression_double(ASTNode *node)
         case VAR_BOOL:
             return (double)*(bool *)addr;
         case VAR_CHAR:
-            return (double)*(char *)addr;
+            /* unsigned char: see evaluate_expression_int()'s
+               OP_DEREFERENCE case for why. */
+            return (double)*(unsigned char *)addr;
         case VAR_FLOAT:
             return (double)*(float *)addr;
         case VAR_DOUBLE:
@@ -3128,23 +4792,23 @@ size_t get_type_size(String name)
         /* A struct/union value has no primitive size; look up its
            definition and use the computed layout size instead. Pointers
            to structs fall through to the descriptor path (pointer size). */
-        if (var->var_type == VAR_STRUCT && var->pointer_level == 0)
+        if (var->desc.type == VAR_STRUCT && var->desc.pointer_level == 0)
         {
-            StructDef *def = get_struct_def(var->struct_name);
+            StructDef *def = get_struct_def(var->desc.struct_name);
             if (def != NULL)
-                return var->is_array ? def->total_size * var->array_length
-                                     : def->total_size;
+                return var->desc.is_array ? def->total_size * var->array_length
+                                          : def->total_size;
             yyerror("Unknown struct or union type");
             return 0;
         }
         size_t base = get_type_size_for_descriptor(
-            var->var_type, var->pointer_level, var->modifiers);
+            var->desc.type, var->desc.pointer_level, var->desc.modifiers);
         if (base == 0)
         {
             yyerror("Undefined variable in sizeof");
             return 0;
         }
-        return var->is_array ? base * var->array_length : base;
+        return var->desc.is_array ? base * var->array_length : base;
     }
     /* Not a variable -- a bare enum constant (e.g. `maxxing(RED)`) has type
        int in C. */
@@ -3165,9 +4829,33 @@ size_t handle_sizeof(ASTNode *node)
         // For identifiers, use get_type_size which looks up the variable
         return get_type_size(expr->data.name);
     }
-    else
+
+    /* An indexed array element (`maxxing(s.vals[0])`, `maxxing(arr[0])`):
+       size it by the element's own modifier-aware width, the same
+       get_type_size_for_descriptor() layout and element-stride use, rather
+       than the generic path below -- which reads expr->modifiers off the
+       NODE_ARRAY_ACCESS node, and nothing populates that from the field's/
+       variable's modifiers, so a width-modified element (`lit thicc rizz
+       Big; Big vals[N];`) wrongly reported sizeof(int) instead of its real
+       8-byte slot (PR #256 review). resolve_array_access_element() reads
+       type/pointer_level/modifiers from the field or variable without
+       evaluating the index, so sizeof's never-evaluate rule is preserved. */
+    if (expr->type == NODE_ARRAY_ACCESS)
     {
-        /* sizeof's operand is never evaluated -- that's its defining
+        ArrayAccessElement elem;
+        if (resolve_array_access_element(expr, &elem) &&
+            !(elem.type == VAR_STRUCT && elem.pointer_level == 0))
+            return get_type_size_for_descriptor(elem.type, elem.pointer_level,
+                                                elem.modifiers);
+        /* A struct/union VALUE element (`maxxing(pts[0])`) has no scalar
+           descriptor width -- get_type_size_for_descriptor() would report 0.
+           Fall through to the generic VAR_STRUCT path below, which sizes it
+           by the tag's own layout via get_struct_def_for_expression(), so an
+           element reports the same size as a plain struct variable of the
+           same tag. */
+    }
+
+    /* sizeof's operand is never evaluated -- that's its defining
            property, matching C. get_expression_type() alone doesn't
            honor that for a native call: its own NODE_FUNC_CALL case
            falls back to actually invoking a legacy/untyped native to
@@ -3190,108 +4878,135 @@ size_t handle_sizeof(ASTNode *node)
            would already have returned NONE) -- so this doesn't replace
            get_expression_type() below, just proves ahead of time that
            calling it is safe. */
-        if (infer_runtime_expression_type_noeval(expr) == NONE)
-        {
-            yyerror("maxxing (sizeof) of an expression whose type is not "
-                    "statically known -- sizeof's operand is never "
-                    "evaluated, so a native call it depends on cannot be "
-                    "invoked to discover it");
-            return 0;
-        }
-
-        // For non-identifiers (like literals), use get_expression_type
-        VarType type = get_expression_type(expr);
-        switch (type)
-        {
-        case VAR_INT:
-            return get_type_size_for_descriptor(
-                type, get_expression_pointer_level(expr), expr->modifiers);
-        case VAR_FLOAT:
-            return get_type_size_for_descriptor(
-                type, get_expression_pointer_level(expr), expr->modifiers);
-        case VAR_DOUBLE:
-            return get_type_size_for_descriptor(
-                type, get_expression_pointer_level(expr), expr->modifiers);
-        case VAR_SHORT:
-            return get_type_size_for_descriptor(
-                type, get_expression_pointer_level(expr), expr->modifiers);
-        case VAR_BOOL:
-            return get_type_size_for_descriptor(
-                type, get_expression_pointer_level(expr), expr->modifiers);
-        case VAR_CHAR:
-            return get_type_size_for_descriptor(
-                type, get_expression_pointer_level(expr), expr->modifiers);
-        case VAR_ENUM:
-            return get_type_size_for_descriptor(
-                type, get_expression_pointer_level(expr), expr->modifiers);
-        case VAR_STRING:
-            /* Round-19 review, finding #3 -- get_type_size_for_descriptor()
-               (above) has always defined VAR_STRING as sizeof(String),
-               and a plain identifier's sizeof (the branch above this
-               `else`) already uses it via get_type_size(); this generic
-               path (a native-call expression like `identity(buf)`
-               resolving to STDROT_STRING, per get_native_call_static_
-               type()) fell to the `default: yyerror("Invalid type in
-               sizeof")` below purely because this case was missing --
-               an AST-shape accident, not an actual "strings have no
-               size" rule, since the identical VarType already has a
-               well-defined size everywhere else. */
-            return get_type_size_for_descriptor(
-                type, get_expression_pointer_level(expr), expr->modifiers);
-        case VAR_PTR:
-            /* A typed native's STDROT_PTR result (or any other pointer-
-               typed expression reaching this generic path) -- get_type_
-               size_for_descriptor() already handles pointer_level > 0
-               correctly (sizeof(uintptr_t)) via its own unconditional
-               check at the top; this case was simply missing, so a
-               pointer-typed non-identifier expression fell to the
-               `default: yyerror("Invalid type in sizeof")` case below
-               despite being a perfectly well-defined size. */
-            return get_type_size_for_descriptor(
-                type, get_expression_pointer_level(expr), expr->modifiers);
-        case VAR_STRUCT:
-        {
-            int plevel = get_expression_pointer_level(expr);
-            if (plevel > 0)
-                return get_type_size_for_descriptor(type, plevel,
-                                                    expr->modifiers);
-            /* A struct/union-typed field access (e.g. `l.start`) — resolve
-               it to the field's definition and return its layout size. */
-            if (expr->type == NODE_STRUCT_ACCESS)
-            {
-                StructDef *def = NULL;
-                void *base = NULL;
-                StructField *fld = NULL;
-                if (resolve_struct_access(expr, &def, &base, &fld, false))
-                {
-                    StructDef *sdef = get_struct_def(fld->struct_name);
-                    if (sdef != NULL)
-                        return sdef->total_size;
-                }
-            }
-            /* A dereferenced struct/union pointer (e.g. `*q`) — resolve the
-               operand's variable and return the pointed-to layout size. */
-            if (expr->type == NODE_UNARY_OPERATION &&
-                expr->data.unary.op == OP_DEREFERENCE &&
-                expr->data.unary.operand->type == NODE_IDENTIFIER)
-            {
-                Variable *var =
-                    get_variable(expr->data.unary.operand->data.name);
-                if (var != NULL && var->var_type == VAR_STRUCT)
-                {
-                    StructDef *sdef = get_struct_def(var->struct_name);
-                    if (sdef != NULL)
-                        return sdef->total_size;
-                }
-            }
-            yyerror("Invalid type in sizeof");
-            return 0;
-        }
-        default:
-            yyerror("Invalid type in sizeof");
-            return 0;
-        }
+    if (infer_runtime_expression_type_noeval(expr) == NONE)
+    {
+        yyerror("maxxing (sizeof) of an expression whose type is not "
+                "statically known -- sizeof's operand is never "
+                "evaluated, so a native call it depends on cannot be "
+                "invoked to discover it");
+        return 0;
     }
+
+    // For non-identifiers (like literals), use get_expression_type
+    VarType type = get_expression_type(expr);
+    switch (type)
+    {
+    case VAR_INT:
+    case VAR_FLOAT:
+    case VAR_DOUBLE:
+    case VAR_SHORT:
+    case VAR_BOOL:
+    case VAR_CHAR:
+    case VAR_ENUM:
+    /* Round-19 review, finding #3 -- get_type_size_for_descriptor()
+       (above) has always defined VAR_STRING as sizeof(String),
+       and a plain identifier's sizeof (the branch above this
+       `else`) already uses it via get_type_size(); this generic
+       path (a native-call expression like `identity(buf)`
+       resolving to STDROT_STRING, per get_native_call_static_
+       type()) fell to the `default: yyerror("Invalid type in
+       sizeof")` below purely because this case was missing --
+       an AST-shape accident, not an actual "strings have no
+       size" rule, since the identical VarType already has a
+       well-defined size everywhere else. */
+    case VAR_STRING:
+    /* A typed native's STDROT_PTR result (or any other pointer-
+       typed expression reaching this generic path) -- get_type_
+       size_for_descriptor() already handles pointer_level > 0
+       correctly (sizeof(uintptr_t)) via its own unconditional
+       check at the top; this case was simply missing, so a
+       pointer-typed non-identifier expression fell to the
+       `default: yyerror("Invalid type in sizeof")` case below
+       despite being a perfectly well-defined size. */
+    case VAR_PTR:
+        return get_type_size_for_descriptor(
+            type, get_expression_pointer_level(expr), expr->modifiers);
+    case VAR_STRUCT:
+    {
+        int plevel = get_expression_pointer_level(expr);
+        if (plevel > 0)
+            return get_type_size_for_descriptor(type, plevel, expr->modifiers);
+
+        StructDef *sdef = get_struct_def_for_expression(expr);
+        if (sdef != NULL)
+            return sdef->total_size;
+        yyerror("Invalid type in sizeof");
+        return 0;
+    }
+    default:
+        yyerror("Invalid type in sizeof");
+        return 0;
+    }
+}
+
+/* `s[i:j]` -- evaluates a half-open byte slice of a rant into a NEW String
+ * the caller owns (#251).
+ *
+ * Returning a fresh copy rather than a view into the source is the
+ * copy-not-a-view rule the rest of this string library follows -- NOT a claim
+ * that a rant is immutable, which it is not: `s[i] = c` writes a byte in
+ * place, exactly as `yap buf[i] = c` does. What is guaranteed is that a slice
+ * and its source are independent afterwards, in both directions. Here that is
+ * also a lifetime requirement: evaluate_expression_string()'s contract is
+ * that every result is an independently owned buffer its caller frees (see
+ * free_owned_string_args()'s comment), so handing back a pointer into a live
+ * Variable's storage would hand that caller someone else's memory to free.
+ *
+ * Bounds are 0 <= i <= j <= len, checked against the STORED length -- a rant
+ * is not NUL-terminated, so s.len is the only correct extent. Out of range is
+ * a hard error rather than Python-style clamping: silently returning a
+ * shorter string than asked for turns an indexing mistake into wrong output
+ * instead of a stopped program. i == j is legal and yields the empty string,
+ * which is what makes `s[i:i]` a usable base case in a loop.
+ */
+static String evaluate_string_slice(ASTNode *node)
+{
+    const String name = node->data.slice.name;
+    Variable *var = get_variable(name);
+    if (!var)
+    {
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "Variable '%.100s' is not defined", name.data);
+        yyerror(error_msg);
+        exit(EXIT_FAILURE);
+    }
+    if (var->desc.type != VAR_STRING || var->desc.is_array ||
+        var->desc.pointer_level != 0)
+    {
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "Cannot slice '%.100s': only a rant can be sliced", name.data);
+        yyerror(error_msg);
+        exit(EXIT_FAILURE);
+    }
+
+    size_t len = var->value.strvalue.data ? var->value.strvalue.len : 0;
+    int start = evaluate_expression_int(node->data.slice.start);
+    int end = evaluate_expression_int(node->data.slice.end);
+
+    if (start < 0 || end < start || (size_t)end > len)
+    {
+        char error_msg[MAX_BUFFER_LEN];
+        snprintf(error_msg, sizeof(error_msg),
+                 "String slice out of bounds (start=%d, end=%d, length=%zu)",
+                 start, end, len);
+        yyerror(error_msg);
+        exit(EXIT_FAILURE);
+    }
+
+    /* An empty result still returns an owned one-byte buffer rather than
+       {NULL, 0}: safe_strdup() refuses a NULL source even for length 0, and
+       every consumer of a rant expects a real pointer it can free. */
+    if (start == end)
+    {
+        String empty = {.data = "", .len = 0};
+        return safe_strdup(&empty);
+    }
+
+    String view = {.data = var->value.strvalue.data + start,
+                   .len = (size_t)(end - start)};
+    return safe_strdup(&view);
 }
 
 String evaluate_expression_string(ASTNode *node)
@@ -3304,6 +5019,8 @@ String evaluate_expression_string(ASTNode *node)
     case NODE_STRING_LITERAL:
     case NODE_STRING:
         return safe_strdup(&node->data.strvalue);
+    case NODE_STRING_SLICE:
+        return evaluate_string_slice(node);
     case NODE_IDENTIFIER:
     {
         String error = {.data = "Undefined variable",
@@ -3340,13 +5057,13 @@ String evaluate_expression_string(ASTNode *node)
            STDROT_PTR result specifically -- this closes the identical
            hole for every other mismatched type too, e.g. a legacy
            STDROT_ANY export that actually returned an int). */
-        if (current_return_value.type != VAR_STRING)
+        if (current_return_value.desc.type != VAR_STRING)
         {
             char error_msg[MAX_BUFFER_LEN];
             snprintf(error_msg, sizeof(error_msg),
                      "Native call result (%s) cannot be used in a string "
                      "context",
-                     vartype_to_string(current_return_value.type));
+                     vartype_to_string(current_return_value.desc.type));
             yyerror(error_msg);
             SAFE_FREE(raw);
             return (String){.data = NULL, .len = 0};
@@ -3366,6 +5083,26 @@ String evaluate_expression_string(ASTNode *node)
         yyerror("Invalid string expression");
         return (String){.data = NULL, .len = 0};
     }
+}
+
+/* An identifier's numeric value, converted from whatever type the variable
+ * actually has.
+ *
+ * handle_identifier(..., 0) hands back a pointer to the variable's OWN
+ * storage, so casting that to the type the caller happens to want is a
+ * reinterpretation, not a conversion: for `chad g = 17.5; rizz k = g;` it
+ * read the float's bit pattern as an int and produced 1099694080. A `smol`
+ * target read the wrong two bytes and produced 0.
+ *
+ * Promote mode 1 already does the real conversion for every numeric type,
+ * so route through it and narrow. Every caller below guards pointer_level
+ * first, which matters because mode 1 refuses a pointer outright. Every
+ * numeric member of the Value union (int, short, bool, float) is exactly
+ * representable as a double, so the intermediate loses nothing. */
+static double identifier_numeric_value(ASTNode *node, const String error)
+{
+    double *promoted = (double *)handle_identifier(node, error, 1);
+    return promoted != NULL ? *promoted : 0.0;
 }
 
 short evaluate_expression_short(ASTNode *node)
@@ -3402,7 +5139,9 @@ short evaluate_expression_short(ASTNode *node)
         }
         String error = {.data = "Undefined variable",
                         .len = sizeof("Undefined variable") - 1};
-        return *(short *)handle_identifier(node, error, 0);
+        /* Truncates toward zero from the variable's real type -- see
+           identifier_numeric_value(). */
+        return (short)identifier_numeric_value(node, error);
     }
     case NODE_OPERATION:
     {
@@ -3451,13 +5190,20 @@ short evaluate_expression_short(ASTNode *node)
                 yyerror("Cannot use pointer in integer context");
                 return 0;
             }
-            return *(short *)(uintptr_t)evaluate_expression_pointer(
-                node->data.unary.operand);
+            return (short)numeric_load(
+                (const void *)(uintptr_t)evaluate_expression_pointer(
+                    node->data.unary.operand),
+                get_expression_type(node));
         }
         if (node->data.unary.op == OP_ADDRESS_OF)
         {
             yyerror("Cannot use pointer in integer context");
             return 0;
+        }
+        if (node->data.unary.op == OP_NOT)
+        {
+            return (short)(expression_is_truthy(node->data.unary.operand) ? 0
+                                                                          : 1);
         }
         short operand = evaluate_expression_short(node->data.unary.operand);
         short *result =
@@ -3473,7 +5219,8 @@ short evaluate_expression_short(ASTNode *node)
             yyerror("Cannot use pointer in integer context");
             return 0;
         }
-        return *(short *)evaluate_multi_array_access(node);
+        return (short)numeric_load(evaluate_multi_array_access(node),
+                                   get_expression_type(node));
     }
     case NODE_FUNC_CALL:
     {
@@ -3489,16 +5236,17 @@ short evaluate_expression_short(ASTNode *node)
             return 0;
         }
         double value;
-        if (!unbox_native_numeric_result(raw, current_return_value.type,
+        if (!unbox_native_numeric_result(raw, current_return_value.desc.type,
                                          &value))
         {
             char error_msg[MAX_BUFFER_LEN];
             snprintf(error_msg, sizeof(error_msg),
-                     "Native call result (%s) cannot be used in an "
+                     "%s call result (%s) cannot be used in an "
                      "integer context",
-                     vartype_to_string(current_return_value.type));
+                     native_call_qualifier(node),
+                     vartype_to_string(current_return_value.desc.type));
             yyerror(error_msg);
-            free_native_result_box(raw, current_return_value.type);
+            free_native_result_box(raw, current_return_value.desc.type);
             return 0;
         }
         SAFE_FREE(raw);
@@ -3512,9 +5260,9 @@ short evaluate_expression_short(ASTNode *node)
         if (!resolve_struct_access(node, &def, &base, &fld, true))
             return 0;
         void *addr = (char *)base + fld->offset;
-        if (fld->pointer_level > 0)
+        if (fld->desc.pointer_level > 0)
             return (short)*(uintptr_t *)addr;
-        switch (fld->type)
+        switch (fld->desc.type)
         {
         case VAR_INT:
         case VAR_ENUM:
@@ -3524,7 +5272,9 @@ short evaluate_expression_short(ASTNode *node)
         case VAR_BOOL:
             return (short)*(bool *)addr;
         case VAR_CHAR:
-            return (short)*(char *)addr;
+            /* unsigned char: see evaluate_expression_int()'s
+               OP_DEREFERENCE case for why. */
+            return (short)*(unsigned char *)addr;
         case VAR_FLOAT:
             return (short)*(float *)addr;
         case VAR_DOUBLE:
@@ -3573,7 +5323,9 @@ int evaluate_expression_int(ASTNode *node)
         }
         String error = {.data = "Undefined variable",
                         .len = sizeof("Undefined variable") - 1};
-        return *(int *)handle_identifier(node, error, 0);
+        /* Truncates toward zero from the variable's real type -- see
+           identifier_numeric_value(). */
+        return (int)identifier_numeric_value(node, error);
     }
     case NODE_OPERATION:
     {
@@ -3591,7 +5343,7 @@ int evaluate_expression_int(ASTNode *node)
             if (!left)
                 return 0;
             int right = evaluate_expression_int(node->data.op.right);
-            return left && right;
+            return right != 0;
         }
         if (node->data.op.op == OP_OR)
         {
@@ -3599,7 +5351,7 @@ int evaluate_expression_int(ASTNode *node)
             if (left)
                 return 1;
             int right = evaluate_expression_int(node->data.op.right);
-            return left || right;
+            return right != 0;
         }
 
         // Regular integer operations
@@ -3621,13 +5373,41 @@ int evaluate_expression_int(ASTNode *node)
                 yyerror("Cannot use pointer in integer context");
                 return 0;
             }
-            return *(int *)(uintptr_t)evaluate_expression_pointer(
+            // See the NODE_UNARY_OPERATION/OP_DEREFERENCE case in
+            // evaluate_expression_pointer() above for why a possible NULL
+            // dereference here is expected/deferred, not a bug to silently
+            // wave off. Both returns below dereference `pointee`, so both
+            // need their own suppression -- NOLINTNEXTLINE only covers the
+            // one line immediately after it.
+            void *pointee = (void *)(uintptr_t)evaluate_expression_pointer(
                 node->data.unary.operand);
+            /* get_expression_type() on a dereference returns the
+               operand's own type (see that function's own
+               NODE_UNARY_OPERATION case) -- for a `yap *p`, that's the
+               pointee's real VarType, VAR_CHAR, regardless of what `p`
+               happens to point at (a scalar variable's union slot, or a
+               genuinely packed array/struct byte). Same width bug as
+               the NODE_ARRAY_ACCESS case below if left as a blind
+               `*(int *)`: a `yap *` into a packed buffer would over-read
+               3 bytes past a real 1-byte slot. `unsigned char`, not
+               `char`: char_scalar_slot_value() (ast.h) zero-extends a
+               scalar `yap` variable's own slot on every write, so a
+               scalar read is always 0-255; a signed `*(char *)` read
+               here would disagree with that for every packed byte
+               >= 128 (confirmed: after `c = 1000`, a scalar read gives
+               232, a signed packed read gave -24) even though both are
+               reading what should be the same logical value. */
+            // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
+            return (int)numeric_load(pointee, get_expression_type(node));
         }
         if (node->data.unary.op == OP_ADDRESS_OF)
         {
             yyerror("Cannot use pointer in integer context");
             return 0;
+        }
+        if (node->data.unary.op == OP_NOT)
+        {
+            return expression_is_truthy(node->data.unary.operand) ? 0 : 1;
         }
         int operand = evaluate_expression_int(node->data.unary.operand);
         int *result = (int *)handle_unary_expression(node, &operand, VAR_INT);
@@ -3642,7 +5422,26 @@ int evaluate_expression_int(ASTNode *node)
             yyerror("Cannot use pointer in integer context");
             return 0;
         }
-        return *(int *)evaluate_multi_array_access(node);
+        /* This function is the shared "integer family" evaluator for
+           every element type that doesn't get its own dedicated
+           evaluate_expression_{bool,short,float,double}() -- VAR_CHAR
+           and VAR_ENUM both funnel through here (get_expression_type()
+           already maps a char literal to VAR_INT). Unlike those other
+           four types, whose array-element width always matches this
+           function's own `int` return width, a `yap` array element is
+           1 byte: reading it back as `*(int *)` over-reads 3 bytes past
+           a single-element array and misreads every other element's
+           address as if elements were 4 bytes apart instead of 1
+           (mirrors the write-side bug fixed in write_value_to_address()
+           for the identical reason -- VAR_CHAR is the one type whose
+           packed-array width doesn't match this function's own).
+           `unsigned char`, not `char`: see the matching comment on the
+           OP_DEREFERENCE case above -- a signed read here would
+           disagree with a scalar `yap` variable's own always-0-255
+           representation (char_scalar_slot_value(), ast.h) for every
+           byte >= 128. */
+        return (int)numeric_load(evaluate_multi_array_access(node),
+                                 get_expression_type(node));
     }
     case NODE_FUNC_CALL:
     {
@@ -3658,16 +5457,17 @@ int evaluate_expression_int(ASTNode *node)
             return 0;
         }
         double value;
-        if (!unbox_native_numeric_result(raw, current_return_value.type,
+        if (!unbox_native_numeric_result(raw, current_return_value.desc.type,
                                          &value))
         {
             char error_msg[MAX_BUFFER_LEN];
             snprintf(error_msg, sizeof(error_msg),
-                     "Native call result (%s) cannot be used in an "
+                     "%s call result (%s) cannot be used in an "
                      "integer context",
-                     vartype_to_string(current_return_value.type));
+                     native_call_qualifier(node),
+                     vartype_to_string(current_return_value.desc.type));
             yyerror(error_msg);
-            free_native_result_box(raw, current_return_value.type);
+            free_native_result_box(raw, current_return_value.desc.type);
             return 0;
         }
         SAFE_FREE(raw);
@@ -3681,9 +5481,9 @@ int evaluate_expression_int(ASTNode *node)
         if (!resolve_struct_access(node, &def, &base, &fld, true))
             return 0;
         void *addr = (char *)base + fld->offset;
-        if (fld->pointer_level > 0)
+        if (fld->desc.pointer_level > 0)
             return (int)*(uintptr_t *)addr;
-        switch (fld->type)
+        switch (fld->desc.type)
         {
         case VAR_INT:
         case VAR_ENUM:
@@ -3693,7 +5493,12 @@ int evaluate_expression_int(ASTNode *node)
         case VAR_BOOL:
             return (int)*(bool *)addr;
         case VAR_CHAR:
-            return (int)*(char *)addr;
+            /* unsigned char, not char: must agree with a scalar `yap`
+               variable's own always-0-255 representation
+               (char_scalar_slot_value(), ast.h) -- see the matching
+               comment on evaluate_expression_int()'s OP_DEREFERENCE
+               case for the full reasoning. */
+            return (int)*(unsigned char *)addr;
         case VAR_FLOAT:
             return (int)*(float *)addr;
         case VAR_DOUBLE:
@@ -3719,8 +5524,8 @@ static void marshal_native_return_value(ASTNode *node)
     NativeResult nr = native_call_consume(node);
     StdrotValue result = nr.value;
 
-    current_return_value.pointer_level = 0;
-    current_return_value.struct_name = (String){0};
+    current_return_value.desc.pointer_level = 0;
+    current_return_value.desc.struct_name = (String){0};
     /* nr.owns_string (NativeResult, stdrot.h) is scoped to exactly this
        `nr` -- not a global -- so it can only ever be true here when THIS
        call's own result really is the materialized string it describes,
@@ -3743,17 +5548,26 @@ static void marshal_native_return_value(ASTNode *node)
        need to agree on a VarType tag (this function tags it VAR_INT, not
        VAR_PTR), only on pointer_level and the raw
        value. */
-    if (result.type == STDROT_PTR)
+    /* STDROT_HANDLE rides the same representation as STDROT_PTR (#213):
+       an opaque resource token is an address with no further type
+       information, which is exactly what the convention above describes.
+       Sharing it means `SAUCE *f = crackopen(...)` reaches a pointer
+       variable through the machinery that already works for
+       `rizz *p = test_ptr_source();`, rather than needing a parallel
+       path. The handle's KIND is not carried here and does not need to
+       be -- it is checked at the ABI boundary, and enforced for real by
+       the owning library's live-handle registry. */
+    if (result.type == STDROT_PTR || result.type == STDROT_HANDLE)
     {
         const StdrotEntry *entry =
             get_native_function(node->data.func_call.function_name);
-        current_return_value.type = VAR_INT;
-        current_return_value.pointer_level =
+        current_return_value.desc.type = VAR_INT;
+        current_return_value.desc.pointer_level =
             (entry ? entry->return_type.pointer_level : 0) + 1;
     }
     else
     {
-        current_return_value.type = stdrot_type_to_vartype(result.type);
+        current_return_value.desc.type = stdrot_type_to_vartype(result.type);
     }
     current_return_value.has_value = result.type != STDROT_NONE;
 
@@ -3775,7 +5589,7 @@ static void marshal_native_return_value(ASTNode *node)
         current_return_value.value.bvalue = result.val.b;
         break;
     case STDROT_CHAR:
-        current_return_value.value.ivalue = result.val.c;
+        current_return_value.value.ivalue = (unsigned char)result.val.c;
         break;
     case STDROT_STRING:
         current_return_value.value.strvalue = result.val.str;
@@ -3783,18 +5597,31 @@ static void marshal_native_return_value(ASTNode *node)
     case STDROT_PTR:
         current_return_value.value.pvalue = (uintptr_t)result.val.ptr;
         break;
-    case STDROT_CSTRING:
     case STDROT_HANDLE:
+        /* An opaque native resource (#213). Marshalled exactly like
+           STDROT_PTR above, and that is the whole of it on this side:
+           what Brainrot stores is the token, nothing more. The token is
+           deliberately NOT memory Brainrot owns -- the native library
+           owns the resource and releases it, so unlike a STDROT_STRING
+           return there is nothing here to deep-copy and nothing to free.
+           See STDROT_HANDLE's comment in stdrot_api.h for the ownership
+           model this implements, and why the library's live-handle
+           registry rather than this line is what makes it safe. */
+        current_return_value.value.pvalue = (uintptr_t)result.val.handle.handle;
+        break;
+    case STDROT_CSTRING:
+    case STDROT_STRUCT:
         /* semantic_check_native_call() rejects any call to a native whose
-           return_type.type is STDROT_CSTRING or STDROT_HANDLE outright
+           return_type.type is STDROT_CSTRING or STDROT_STRUCT outright
            (CSTRING has no return-side marshalling implemented -- this
-           switch has no case that would populate strvalue for it; HANDLE
-           needs a resource-ownership model Phase 2 hasn't designed yet,
-           see roadmap Appendix B Q6) -- so a Brainrot program can never
-           reach this call with result.type equal to either, structurally
-           unreachable here. Add real marshalling (and remove the
-           semantic-analyzer rejection) once a builtin actually needs to
-           return one. */
+           switch has no case that would populate strvalue for it; STRUCT
+           is argument-direction-only for an ownership reason, see
+           STDROT_STRUCT's own comment in stdrot_api.h) -- so a Brainrot
+           program can never reach this call with result.type equal to
+           either, structurally unreachable here. STDROT_HANDLE used to
+           sit in this set and no longer does: returning a handle needs no
+           ownership answer of its own, because the token is not memory
+           the caller must free. */
     case STDROT_ANY:
         /* STDROT_ANY is a descriptor placeholder ("type genuinely
            unknown" or "identity-polymorphic", see StdrotEntry's own
@@ -3838,14 +5665,14 @@ void *handle_function_call(ASTNode *node)
            returned NULL despite this call genuinely having a value),
            reinterpreting a real address as if it were the scalar value
            at that address, or discarding it outright. */
-        if (current_return_value.pointer_level > 0)
+        if (current_return_value.desc.pointer_level > 0)
         {
             return_value = SAFE_MALLOC(uintptr_t);
             *(uintptr_t *)return_value = current_return_value.value.pvalue;
             return return_value;
         }
 
-        switch (current_return_value.type)
+        switch (current_return_value.desc.type)
         {
         case VAR_INT:
             return_value = SAFE_MALLOC(int);
@@ -4007,7 +5834,7 @@ bool evaluate_expression_bool(ASTNode *node)
             if (!left)
                 return false;
             bool right = evaluate_expression_bool(node->data.op.right);
-            return left && right;
+            return right;
         }
         if (node->data.op.op == OP_OR)
         {
@@ -4015,7 +5842,7 @@ bool evaluate_expression_bool(ASTNode *node)
             if (left)
                 return true;
             bool right = evaluate_expression_bool(node->data.op.right);
-            return left || right;
+            return right;
         }
 
         // Regular integer operations
@@ -4035,8 +5862,17 @@ bool evaluate_expression_bool(ASTNode *node)
             get_expression_pointer_level(node) > 0)
             return evaluate_expression_pointer(node) != (uintptr_t)0;
         if (node->data.unary.op == OP_DEREFERENCE)
+            // See the NODE_UNARY_OPERATION/OP_DEREFERENCE case in
+            // evaluate_expression_pointer() above for why a possible NULL
+            // dereference here is expected/deferred, not a bug to silently
+            // wave off.
+            // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
             return *(bool *)(uintptr_t)evaluate_expression_pointer(
                 node->data.unary.operand);
+        if (node->data.unary.op == OP_NOT)
+        {
+            return !expression_is_truthy(node->data.unary.operand);
+        }
         bool operand = evaluate_expression_bool(node->data.unary.operand);
         bool *result =
             (bool *)handle_unary_expression(node, &operand, VAR_BOOL);
@@ -4086,15 +5922,15 @@ bool evaluate_expression_bool(ASTNode *node)
            legacy STDROT_ANY export that actually returned a string) must
            be rejected here the same way it already is for the numeric
            evaluators, not silently reinterpreted through a `bool *`. */
-        if (current_return_value.type != VAR_BOOL)
+        if (current_return_value.desc.type != VAR_BOOL)
         {
             char error_msg[MAX_BUFFER_LEN];
             snprintf(error_msg, sizeof(error_msg),
                      "Native call result (%s) cannot be used in a bool "
                      "context",
-                     vartype_to_string(current_return_value.type));
+                     vartype_to_string(current_return_value.desc.type));
             yyerror(error_msg);
-            free_native_result_box(raw, current_return_value.type);
+            free_native_result_box(raw, current_return_value.desc.type);
             return 0;
         }
         bool return_val = *(bool *)raw;
@@ -4109,9 +5945,9 @@ bool evaluate_expression_bool(ASTNode *node)
         if (!resolve_struct_access(node, &def, &base, &fld, true))
             return 0;
         void *addr = (char *)base + fld->offset;
-        if (fld->pointer_level > 0)
+        if (fld->desc.pointer_level > 0)
             return (bool)*(uintptr_t *)addr;
-        switch (fld->type)
+        switch (fld->desc.type)
         {
         case VAR_INT:
         case VAR_ENUM:
@@ -4146,17 +5982,15 @@ ArgumentList *create_argument_list(ASTNode *expr, ArgumentList *existing_list)
     {
         return new_node;
     }
-    else
+
+    /* Append to the end of existing_list */
+    ArgumentList *temp = existing_list;
+    while (temp->next)
     {
-        /* Append to the end of existing_list */
-        ArgumentList *temp = existing_list;
-        while (temp->next)
-        {
-            temp = temp->next;
-        }
-        temp->next = new_node;
-        return existing_list;
+        temp = temp->next;
     }
+    temp->next = new_node;
+    return existing_list;
 }
 
 ASTNode *create_print_statement_node(ASTNode *expr)
@@ -4198,26 +6032,24 @@ ASTNode *create_statement_list(ASTNode *statement, ASTNode *existing_list)
         node->data.statements->next = NULL;
         return node;
     }
-    else
+
+    // Append at the end of existing_list
+    StatementList *sl = existing_list->data.statements;
+    while (sl->next)
     {
-        // Append at the end of existing_list
-        StatementList *sl = existing_list->data.statements;
-        while (sl->next)
-        {
-            sl = sl->next;
-        }
-        // Now sl is the last element; append the new statement
-        StatementList *new_item = ARENA_ALLOC(StatementList);
-        if (!new_item)
-        {
-            yyerror("Memory allocation failed");
-            return existing_list;
-        }
-        new_item->statement = statement;
-        new_item->next = NULL;
-        sl->next = new_item;
+        sl = sl->next;
+    }
+    // Now sl is the last element; append the new statement
+    StatementList *new_item = ARENA_ALLOC(StatementList);
+    if (!new_item)
+    {
+        yyerror("Memory allocation failed");
         return existing_list;
     }
+    new_item->statement = statement;
+    new_item->next = NULL;
+    sl->next = new_item;
+    return existing_list;
 }
 
 bool is_const_variable(const String name)
@@ -4225,7 +6057,7 @@ bool is_const_variable(const String name)
     Variable *var = get_variable(name);
     if (var != NULL)
     {
-        return var->modifiers.is_const;
+        return var->desc.modifiers.is_const;
     }
     return false;
 }
@@ -4247,14 +6079,19 @@ bool is_expression(ASTNode *node, VarType type)
 
     switch (node->type)
     {
+    case NODE_STRING_SLICE:
+        /* `s[i:j]` is a rant (#251). Needed here, not just in
+           get_expression_type(), because this is the predicate
+           ast_expr_to_stdrot_value() (stdrot.c) uses to decide a native
+           argument's ABI type -- without it a slice passed straight to
+           yapping() marshalled as "no value at all". */
+        return type == VAR_STRING;
     case NODE_ARRAY_ACCESS:
     {
-        Variable *var = get_variable(node->data.array.name);
-        if (var != NULL)
-        {
-            return var->var_type == type;
-        }
-        yyerror("Undefined variable in type check");
+        ArrayAccessElement elem;
+        if (resolve_array_access_element(node, &elem))
+            return elem.type == type;
+        yyerror("Invalid array access in type check");
         return false;
     }
     case NODE_IDENTIFIER:
@@ -4266,7 +6103,7 @@ bool is_expression(ASTNode *node, VarType type)
         Variable *var = get_variable(node->data.name);
         if (var != NULL)
         {
-            return var->var_type == type;
+            return var->desc.type == type;
         }
         /* Not a variable -- an enum constant has type int in C. */
         if (find_global_enum_constant(node->data.name) != NULL)
@@ -4332,8 +6169,17 @@ bool is_expression(ASTNode *node, VarType type)
         void *base = NULL;
         StructField *fld = NULL;
         if (!resolve_struct_access(node, &def, &base, &fld, false))
-            return false;
-        return fld->type == type;
+        {
+            /* A call base has no storage to walk, and this probe must not
+               run the call to make some. Declared types answer it. Without
+               this the field reported no type at all and
+               ast_expr_to_stdrot_value() fell through to STDROT_INT, so a
+               chad field printed with %f came out as an integer. */
+            fld = static_struct_field(node);
+            if (!fld)
+                return false;
+        }
+        return fld->desc.type == type;
     }
     default:
         return node->type == VART_TO_NODET(type);
@@ -4362,7 +6208,7 @@ VarType get_function_return_type(const String name)
     Function *func = get_function(name);
     if (func != NULL)
     {
-        return func->return_type;
+        return func->return_desc.type;
     }
     yyerror("Undefined function in type check");
     return NONE;
@@ -4373,7 +6219,7 @@ static int get_function_return_pointer_level(const String name)
     Function *func = get_function(name);
     if (func != NULL)
     {
-        return func->return_pointer_level;
+        return func->return_desc.pointer_level;
     }
     yyerror("Undefined function in type check");
     return 0;
@@ -4420,18 +6266,67 @@ void execute_assignment(ASTNode *node)
             yyerror("Assignment to undefined variable");
             return;
         }
-        target_type = var->var_type;
-        target_pointer_level = var->pointer_level;
-        mods = var->modifiers;
+        target_type = var->desc.type;
+        target_pointer_level = var->desc.pointer_level;
+        mods = var->desc.modifiers;
     }
     /* NODE_STRUCT_ACCESS targets (including chains, e.g. a.b.c) already have
        target_type/target_pointer_level resolved correctly above via
        get_expression_type()/get_expression_pointer_level(), which both
        route through resolve_struct_access(). */
 
+    /* Every evaluate_lvalue_address() case except NODE_IDENTIFIER writes
+       into packed storage (an array/struct blob, or wherever a
+       dereferenced pointer points -- itself possibly one of those same
+       blobs) rather than a scalar Variable's own union slot; see
+       write_value_to_address()'s own comment for why that distinction
+       matters. */
+    bool packed_storage = target->type != NODE_IDENTIFIER;
+
     void *address = evaluate_lvalue_address(target);
     write_value_to_address(address, target_type, target_pointer_level,
-                           value_node, mods);
+                           value_node, mods, packed_storage);
+}
+
+/* Does ast_accept()'s own walk compute this expression's value?
+ *
+ * The visitor's expression cases exist so a shared visitor -- the semantic
+ * analyzer -- can inspect a node; they deliberately do not evaluate. Three
+ * are exceptions: interpreter_visit_unary_operation() performs a pre/post
+ * increment, interpreter_visit_array_access() performs the access, and
+ * interpreter_visit_assignment() performs the write. NODE_SIZEOF is
+ * evaluated by its visitor too and is listed for the same reason.
+ *
+ * Both places that have to decide "has this already run, or must I run it?"
+ * ask HERE rather than keeping their own list. They had separate lists for
+ * one revision and immediately disagreed: the statement path excluded
+ * increments and array accesses to avoid running them twice, while the void
+ * `bussin` arm did not, so `bussin arr[f()];` in a skibidi function ran f
+ * twice -- the exact mirror of the bug the statement list was written to
+ * avoid. */
+bool ast_accept_evaluates_expression(const ASTNode *node)
+{
+    if (!node)
+    {
+        return false;
+    }
+    switch (node->type)
+    {
+    case NODE_ARRAY_ACCESS: /* interpreter_visit_array_access */
+    case NODE_ASSIGNMENT:   /* interpreter_visit_assignment performs
+                               the write */
+    case NODE_SIZEOF:       /* interpreter_visit_sizeof */
+        return true;
+    case NODE_UNARY_OPERATION: /* only the increments; OP_NEG and friends
+                                  are inspected, not computed */
+    {
+        OperatorType op = node->data.unary.op;
+        return op == OP_POST_INC || op == OP_PRE_INC || op == OP_POST_DEC ||
+               op == OP_PRE_DEC;
+    }
+    default:
+        return false;
+    }
 }
 
 void execute_statement(ASTNode *node)
@@ -4444,9 +6339,9 @@ void execute_statement(ASTNode *node)
     {
         String name = node->data.op.left->data.name;
         Variable *var = variable_new(name);
-        var->var_type = node->var_type;
-        var->pointer_level = node->pointer_level;
-        var->modifiers = node->modifiers;
+        var->desc.type = node->var_type;
+        var->desc.pointer_level = node->pointer_level;
+        var->desc.modifiers = node->modifiers;
 
         /* Check if it's static and already initialized */
         if (node->modifiers.is_static)
@@ -4489,13 +6384,6 @@ void execute_statement(ASTNode *node)
         break;
     }
     case NODE_ARRAY_ACCESS:
-        if (node->data.array.name.data && node->data.array.index)
-        {
-            if (!(node->data.array.name.data))
-            {
-                yyerror("Failed to create array");
-            }
-        }
         break;
     case NODE_OPERATION:
     case NODE_UNARY_OPERATION:
@@ -4510,7 +6398,6 @@ void execute_statement(ASTNode *node)
     case NODE_FUNC_CALL:
     {
         // Set execution context with current line number
-        extern ExecutionContext g_exec_context;
         g_exec_context.line_number = node->line_number;
         g_exec_context.function_name = node->data.func_call.function_name;
 
@@ -4518,7 +6405,8 @@ void execute_statement(ASTNode *node)
         if (is_builtin_function(node->data.func_call.function_name))
         {
             execute_builtin_function(node->data.func_call.function_name,
-                                     node->data.func_call.arguments);
+                                     node->data.func_call.arguments,
+                                     node->line_number);
         }
         else
         {
@@ -4813,11 +6701,24 @@ ASTNode *create_default_node(VarType var_type, int pointer_level)
         String s = {.data = "\0", .len = sizeof("\0") - 1};
         return create_string_literal_node(s);
     }
-    case VAR_ENUM:
+    // VAR_ENUM's 0 (the natural enum default) and VAR_VOID's 0 (an
+    // invalid-variable placeholder, see its own comment below) coincide but
+    // for semantically distinct reasons -- not a merge candidate.
+    case VAR_ENUM: // NOLINT(bugprone-branch-clone)
         return create_int_node(0);
     case VAR_VOID:
+        /* Reached only for pointer_level == 0 now (the pointer_level > 0
+           case -- `skibidi *p;` -- already returned above, alongside
+           every other pointer-typed default). `skibidi x;` (no
+           initializer, no pointer) is genuinely invalid -- a named
+           void variable was never valid and has no meaningful default.
+           Return the same placeholder initializer the pointer path uses so
+           parsing can finish and the semantic declaration check can report
+           the invalid variable through the normal cleanup path. */
+        return create_int_node(0);
     default:
-        return NULL;
+        yyerror("Unsupported type for default node");
+        exit(1);
     }
 }
 
@@ -4973,7 +6874,7 @@ void validate_struct_initializer_shape(StructDef *def, ExpressionList *list)
     while (fld && index < initializer_count)
     {
         bool is_nested_aggregate =
-            (fld->type == VAR_STRUCT && fld->pointer_level == 0);
+            (fld->desc.type == VAR_STRUCT && fld->desc.pointer_level == 0);
 
         if (is_nested_aggregate != (cur->sublist != NULL))
         {
@@ -4994,8 +6895,8 @@ void validate_struct_initializer_shape(StructDef *def, ExpressionList *list)
         }
         else if (is_nested_aggregate)
         {
-            validate_struct_initializer_shape(get_struct_def(fld->struct_name),
-                                              cur->sublist);
+            validate_struct_initializer_shape(
+                get_struct_def(fld->desc.struct_name), cur->sublist);
         }
 
         if (def->is_union)
@@ -5034,7 +6935,7 @@ static void populate_struct_fields(StructDef *def, void *base,
     {
         void *addr = (char *)base + fld->offset;
         bool is_nested_aggregate =
-            (fld->type == VAR_STRUCT && fld->pointer_level == 0);
+            (fld->desc.type == VAR_STRUCT && fld->desc.pointer_level == 0);
 
         /* A shape mismatch here (braced sub-initializer for a scalar
            field, or a bare value for a nested struct/union field) would
@@ -5049,16 +6950,16 @@ static void populate_struct_fields(StructDef *def, void *base,
         }
         else if (is_nested_aggregate)
         {
-            populate_struct_fields(get_struct_def(fld->struct_name), addr,
+            populate_struct_fields(get_struct_def(fld->desc.struct_name), addr,
                                    cur->sublist);
         }
-        else if (fld->pointer_level > 0)
+        else if (fld->desc.pointer_level > 0)
         {
             *(uintptr_t *)addr = evaluate_expression_pointer(cur->expr);
         }
         else
         {
-            switch (fld->type)
+            switch (fld->desc.type)
             {
             case VAR_INT:
             case VAR_ENUM:
@@ -5094,19 +6995,19 @@ static void populate_struct_fields(StructDef *def, void *base,
 void populate_struct_variable(const String name, ExpressionList *list)
 {
     Variable *var = get_variable(name);
-    if (!var || var->var_type != VAR_STRUCT)
+    if (!var || var->desc.type != VAR_STRUCT)
         return;
-    StructDef *def = get_struct_def(var->struct_name);
+    StructDef *def = get_struct_def(var->desc.struct_name);
     if (!def)
         return;
     populate_struct_fields(def, var->value.array_data, list);
 }
 
 void populate_multi_array_variable(String name, ExpressionList *list,
-                                   int dimensions[], int num_dimensions)
+                                   const int dimensions[], int num_dimensions)
 {
     Variable *var = get_variable(name);
-    if (var == NULL || !var->is_array)
+    if (var == NULL || !var->desc.is_array)
     {
         yyerror("Cannot initialize: not an array");
         return;
@@ -5154,7 +7055,7 @@ void populate_multi_array_variable(String name, ExpressionList *list,
            before the base-type switch, dominant over it, for the
            identical reason every other "pointer-ness dominates
            representation" fix in this PR checks it first. */
-        if (var->pointer_level > 0)
+        if (var->desc.pointer_level > 0)
         {
             uintptr_t *array = (uintptr_t *)var->value.array_data;
             array[index] = evaluate_expression_pointer(current->expr);
@@ -5163,7 +7064,7 @@ void populate_multi_array_variable(String name, ExpressionList *list,
             continue;
         }
 
-        switch (var->var_type)
+        switch (var->desc.type)
         {
         case VAR_INT:
         {
@@ -5316,7 +7217,7 @@ Variable *variable_new(String name)
     }
     memset(var, 0, sizeof(Variable));
     var->name = name;
-    var->is_array = false;
+    var->desc.is_array = false;
     return var;
 }
 
@@ -5329,7 +7230,7 @@ void add_variable_to_scope(const String name, Variable *var)
     }
 
     /* Static variables go to the static store, not the scope */
-    if (var->modifiers.is_static)
+    if (var->desc.modifiers.is_static)
     {
         if (!static_variable_map)
             static_variable_map = hm_new();
@@ -5404,8 +7305,8 @@ Function *create_function_ex(String name, VarType return_type,
     }
 
     func->name = safe_strdup(&name);
-    func->return_type = return_type;
-    func->return_pointer_level = return_pointer_level;
+    func->return_desc.type = return_type;
+    func->return_desc.pointer_level = return_pointer_level;
     func->parameters = params;
     func->body = body;
 
@@ -5444,9 +7345,19 @@ void execute_function_call(const String name, ArgumentList *args)
        before this call overwrites the slot. */
     free_pending_return_value();
 
-    current_return_value.type = func->return_type;
-    current_return_value.pointer_level = func->return_pointer_level;
+    current_return_value.desc.type = func->return_desc.type;
+    current_return_value.desc.pointer_level = func->return_desc.pointer_level;
     current_return_value.has_value = false;
+    /* INVARIANT: never leave a value behind under a type it does not
+       belong to. current_return_value.value is a UNION, and the line above
+       has just declared it VAR_STRUCT for a struct-returning callee while
+       the bytes still hold the PREVIOUS call's integer. The first nested
+       call inside the body then frees that integer as a heap pointer:
+       `take(v, bump(&n)); gang Outer o = make_outer(&n);` is a SEGV on
+       origin/main for exactly this reason -- bump's int, retyped as
+       make_outer's blob pointer. Same hazard the void `bussin` arm in
+       handle_return_statement() blanks for. */
+    current_return_value.value.pvalue = 0;
 
     if (!enter_function_scope(func, args))
     {
@@ -5456,7 +7367,7 @@ void execute_function_call(const String name, ArgumentList *args)
         return;
     }
 
-    PUSH_JUMP_BUFFER();
+    PUSH_FUNCTION_JUMP_BUFFER();
     if (setjmp(CURRENT_JUMP_BUFFER()) == 0)
     {
         /* Use visitor pattern instead of old AST execution for function bodies
@@ -5499,18 +7410,26 @@ void execute_function_call(const String name, ArgumentList *args)
  * anymore. */
 void free_pending_return_value(void)
 {
-    if (current_return_value.type == VAR_STRUCT &&
+    /* pointer_level == 0 gates the free: a by-value struct return owns the
+       heap blob at value.pvalue (allocated by handle_return_statement's
+       VAR_STRUCT arm) and must free it, but a pointer-to-struct return
+       (`gang Point *f()`, #193) stores a BORROWED pointer to storage the
+       caller owns -- freeing it would destroy the caller's struct (a
+       use-after-free when a discarded `pick(&p, &q);` statement releases
+       the return slot). */
+    if (current_return_value.desc.type == VAR_STRUCT &&
+        current_return_value.desc.pointer_level == 0 &&
         current_return_value.value.pvalue)
     {
         free((void *)current_return_value.value.pvalue);
         current_return_value.value.pvalue = 0;
     }
-    if (current_return_value.struct_name.data)
+    if (current_return_value.desc.struct_name.data)
     {
-        SAFE_FREE(current_return_value.struct_name);
-        current_return_value.struct_name = (String){0};
+        SAFE_FREE(current_return_value.desc.struct_name);
+        current_return_value.desc.struct_name = (String){0};
     }
-    if (current_return_value.type == VAR_STRING &&
+    if (current_return_value.desc.type == VAR_STRING &&
         current_return_value.owns_strvalue &&
         current_return_value.value.strvalue.data)
     {
@@ -5568,8 +7487,8 @@ void handle_return_statement(ASTNode *expr)
         current_func = get_function(scope->function_name);
         if (current_func)
         {
-            declared_type = current_func->return_type;
-            declared_pointer_level = current_func->return_pointer_level;
+            declared_type = current_func->return_desc.type;
+            declared_pointer_level = current_func->return_desc.pointer_level;
         }
     }
     /* Not inside any function (declared_type/declared_pointer_level stay
@@ -5578,15 +7497,15 @@ void handle_return_statement(ASTNode *expr)
 
     if (!expr)
     {
-        current_return_value.type = declared_type;
-        current_return_value.pointer_level = declared_pointer_level;
+        current_return_value.desc.type = declared_type;
+        current_return_value.desc.pointer_level = declared_pointer_level;
         current_return_value.has_value = true;
     }
     else if (declared_pointer_level > 0)
     {
         uintptr_t pointer_result = evaluate_expression_pointer(expr);
-        current_return_value.type = declared_type;
-        current_return_value.pointer_level = declared_pointer_level;
+        current_return_value.desc.type = declared_type;
+        current_return_value.desc.pointer_level = declared_pointer_level;
         current_return_value.has_value = true;
         current_return_value.value.pvalue = pointer_result;
     }
@@ -5597,8 +7516,8 @@ void handle_return_statement(ASTNode *expr)
         case VAR_INT:
         {
             int result = evaluate_expression_int(expr);
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
             current_return_value.value.ivalue = result;
             break;
@@ -5606,8 +7525,8 @@ void handle_return_statement(ASTNode *expr)
         case VAR_FLOAT:
         {
             float result = evaluate_expression_float(expr);
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
             current_return_value.value.fvalue = result;
             break;
@@ -5615,8 +7534,8 @@ void handle_return_statement(ASTNode *expr)
         case VAR_DOUBLE:
         {
             double result = evaluate_expression_double(expr);
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
             current_return_value.value.dvalue = result;
             break;
@@ -5624,8 +7543,8 @@ void handle_return_statement(ASTNode *expr)
         case VAR_BOOL:
         {
             bool result = evaluate_expression_bool(expr);
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
             current_return_value.value.bvalue = result;
             break;
@@ -5633,8 +7552,8 @@ void handle_return_statement(ASTNode *expr)
         case VAR_SHORT:
         {
             short result = evaluate_expression_short(expr);
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
             current_return_value.value.svalue = result;
             break;
@@ -5642,8 +7561,8 @@ void handle_return_statement(ASTNode *expr)
         case VAR_ENUM:
         {
             int result = evaluate_expression_int(expr);
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
             current_return_value.value.ivalue = result;
             break;
@@ -5664,8 +7583,8 @@ void handle_return_statement(ASTNode *expr)
                already reads a char return from that exact union
                member. */
             int result = evaluate_expression_int(expr);
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
             current_return_value.value.ivalue = result;
             break;
@@ -5696,8 +7615,8 @@ void handle_return_statement(ASTNode *expr)
                while evaluating this string can't leave owns_strvalue
                or type stuck on ITS OWN (unrelated) return afterward. */
             String result = evaluate_expression_string(expr);
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
             current_return_value.value.strvalue = result;
             current_return_value.owns_strvalue = true;
@@ -5708,54 +7627,151 @@ void handle_return_statement(ASTNode *expr)
                VAR_VOID now (round 20), not NONE -- NONE here is
                reached only for `bussin` outside any function (`main`
                itself has no declared return type, see declared_type's
-               own NONE default above). Both mean the same thing for
-               this switch's purposes: ignore the expression's value
-               entirely -- it is never evaluated at all (matching the
-               original behavior this case has always had; `bussin
-               someExpr;` inside a void function has never executed
-               someExpr for its side effects, and introducing that now
-               would be a new, unrelated behavior change, not a
-               reentrancy fix). No nested-call reentrancy risk here for
-               exactly that reason: nothing runs evaluate_expression_*
-               on expr in this case, so current_return_value can't be
-               clobbered by anything expr might otherwise have called.
-               (Reaching this case at all, rather than the declared_
-               pointer_level > 0 branch above, means declared_pointer_
-               level == 0 -- genuinely void, not `skibidi *`.) */
+               own NONE default above). Both ignore the expression's
+               VALUE entirely -- there is nowhere to put it.
+
+               A bare user-defined CALL is the one shape that must still
+               be EXECUTED for its side effects, though: since PR #254
+               review finding 1, ast_accept()'s NODE_RETURN pre-visit no
+               longer runs a bare-call return expression (that pre-visit
+               was what executed `bussin someCall();` inside a void
+               function before), so this arm now runs it -- exactly once,
+               discarding the result. Any other expression shape (`bussin
+               a + b;`, `bussin p;`) is still pre-visited and, as before,
+               its value is simply dropped here. NONE (a bare `bussin
+               someCall();` at top level in main) is handled identically.
+               Both native and user-defined calls must dispatch through the
+               same two-way branch every other bare-call site uses (see the
+               NODE_FUNC_CALL statement case above, and interpreter_execute_
+               call_statement) -- execute_function_call() alone searches
+               only the user-defined table, so `bussin yapping("hi");` in a
+               void function would otherwise be reported as an undefined
+               function (PR #254 review, finding 1). */
         case NONE:
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
+            if (expr && expr->type == NODE_FUNC_CALL)
+            {
+                if (is_builtin_function(expr->data.func_call.function_name))
+                {
+                    execute_builtin_function(expr->data.func_call.function_name,
+                                             expr->data.func_call.arguments,
+                                             expr->line_number);
+                }
+                else
+                {
+                    execute_function_call(expr->data.func_call.function_name,
+                                          expr->data.func_call.arguments);
+                    free_pending_return_value();
+                }
+            }
+            else if (expr)
+            {
+                /* Anything else discarded by a void `bussin`.
+                 *
+                 * INVARIANT: do not evaluate a node ast_accept() has
+                 * already evaluated. Its pre-visit does compute an
+                 * increment and an array access, so this must ask rather
+                 * than assume. */
+                if (!ast_accept_evaluates_expression(expr))
+                {
+                    evaluate_expression(expr);
+                }
+                /* If the expression contained a call, its result is left in
+                 * the shared slot with nothing coming to consume it, and
+                 * the next call's cleanup would free it a second time. */
+                free_pending_return_value();
+                /* INVARIANT: leave no live value behind either.
+                 * current_return_value.value is a UNION, so a discarded
+                 * integer result occupies the same bytes as .pvalue --
+                 * handing the next return a "pointer" that is really a
+                 * small integer, freed later as though it were heap. */
+                current_return_value.value.pvalue = 0;
+                current_return_value.has_value = false;
+            }
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
             current_return_value.has_value = true;
             break;
         case VAR_STRUCT:
         {
-            current_return_value.type = declared_type;
-            current_return_value.pointer_level = 0;
-            current_return_value.has_value = true;
-            /* Only a plain struct variable is supported as the return
-               expression (matching the same constraint on struct
-               arguments -- see enter_function_scope). The blob is
-               copied into a fresh, heap-owned allocation *before* the
-               scope cleanup below runs: that cleanup frees this
-               function's own scope, which is where the source
-               variable's blob lives, so evaluating lazily (e.g. from
-               the caller, after this function returns) would read
-               freed memory. The caller is responsible for copying out
-               of current_return_value.value.pvalue and freeing it --
-               see interpreter_visit_declaration's struct_init_expr
-               handling. */
-            Variable *src = NULL;
-            if (expr->type == NODE_IDENTIFIER)
-                src = get_variable(expr->data.name);
-            if (!src || src->var_type != VAR_STRUCT)
+            /* A struct-returning CALL result (`bussin make_point();`, #193)
+               is handled first, before any current_return_value field is
+               set: executing the call overwrites this shared slot with ITS
+               own struct result -- the right blob (heap-owned, and outside
+               this function's about-to-be-freed scope) and tag. That value
+               already IS this function's return value, so after a tag check
+               against the declared return type there is nothing to copy:
+               ownership flows callee -> here -> our own caller (which copies
+               out of current_return_value and frees it, exactly as for a
+               direct `bussin p;`). Doing this before the field assignments
+               below avoids the reentrancy bug where the nested call leaves
+               current_return_value.type stuck on its own return. */
+            if (expr && expr->type == NODE_FUNC_CALL)
             {
-                yyerror("Return expression is not a struct variable");
-                /* value.pvalue may hold a stale bit pattern left over
-                   from a previous, differently-typed return sharing
-                   this union -- has_value=false is what tells the
-                   caller (interpreter_visit_declaration's
-                   struct_init_expr handling) there's nothing usable
-                   to read out of it. */
+                execute_function_call(expr->data.func_call.function_name,
+                                      expr->data.func_call.arguments);
+                if (!current_return_value.has_value ||
+                    current_return_value.desc.type != VAR_STRUCT)
+                {
+                    yyerror("Return expression call does not return a "
+                            "by-value struct/union");
+                    free_pending_return_value();
+                    current_return_value.has_value = false;
+                    break;
+                }
+                if (current_func &&
+                    current_func->return_desc.struct_name.data &&
+                    (!current_return_value.desc.struct_name.data ||
+                     strcmp(current_return_value.desc.struct_name.data,
+                            current_func->return_desc.struct_name.data) != 0))
+                {
+                    yyerror("Return expression type does not match declared "
+                            "return type");
+                    free_pending_return_value();
+                    current_return_value.has_value = false;
+                    break;
+                }
+                /* current_return_value already holds the correct blob/tag;
+                   normalize the type metadata to this function's declared
+                   return (identical to the callee's here) and keep it. */
+                current_return_value.desc.type = declared_type;
+                current_return_value.desc.pointer_level = 0;
+                current_return_value.has_value = true;
+                break;
+            }
+            current_return_value.desc.type = declared_type;
+            current_return_value.desc.pointer_level = 0;
+            current_return_value.has_value = true;
+            /* The source blob is copied into a fresh, heap-owned
+               allocation *before* the scope cleanup below runs: that
+               cleanup frees this function's own scope, which is where the
+               source's storage lives, so evaluating lazily (e.g. from the
+               caller, after this function returns) would read freed
+               memory. The caller is responsible for copying out of
+               current_return_value.value.pvalue and freeing it -- see
+               interpreter_visit_declaration's struct_init_expr handling.
+
+               Two more source shapes are accepted (#193), symmetric with
+               the struct-argument side (enter_function_scope): a plain
+               struct variable (`bussin p;`) and a by-value struct/union
+               member-access sub-expression (`bussin outer.inner;`, also
+               following pointer bases/fields via resolve_struct_access,
+               #196/#197), both resolved by the same shared helper so this
+               path enforces the identical pointer_level == 0 invariant and
+               emits a single diagnostic on failure (PR #253 review,
+               findings 1 & 2). */
+            void *src_blob = NULL;
+            String src_tag = {0};
+            bool src_owned = false;
+            if (!resolve_by_value_struct_source(expr, &src_blob, &src_tag,
+                                                &src_owned, true))
+            {
+                /* The helper already reported the specific failure; add no
+                   second diagnostic. value.pvalue may hold a stale bit
+                   pattern left over from a previous, differently-typed
+                   return sharing this union -- has_value=false is what
+                   tells the caller (interpreter_visit_declaration's
+                   struct_init_expr handling) there's nothing usable to
+                   read out of it. */
                 current_return_value.has_value = false;
                 break;
             }
@@ -5764,26 +7780,32 @@ void handle_return_statement(ASTNode *expr)
                caller's own destination-type check (still correct, but
                the error would point at the call site instead of this
                return). */
-            if (current_func && current_func->return_struct_name.data &&
-                (!src->struct_name.data ||
-                 strcmp(src->struct_name.data,
-                        current_func->return_struct_name.data) != 0))
+            if (current_func && current_func->return_desc.struct_name.data &&
+                strcmp(src_tag.data,
+                       current_func->return_desc.struct_name.data) != 0)
             {
                 yyerror("Return expression type does not match declared "
                         "return type");
                 current_return_value.has_value = false;
+                if (src_owned)
+                    free(src_blob);
                 break;
             }
-            StructDef *def = get_struct_def(src->struct_name);
+            StructDef *def = get_struct_def(src_tag);
             if (def)
             {
                 void *blob = calloc(1, def->total_size);
-                if (blob && src->value.array_data)
-                    memcpy(blob, src->value.array_data, def->total_size);
+                if (blob && src_blob)
+                    memcpy(blob, src_blob, def->total_size);
                 current_return_value.value.pvalue = (uintptr_t)blob;
-                current_return_value.struct_name =
-                    safe_strdup(&src->struct_name);
+                current_return_value.desc.struct_name = safe_strdup(&src_tag);
             }
+            /* `bussin make_outer().inner;` -- the helper already released
+               the call's own blob and handed us a copy to own. Assigning
+               value.pvalue above would otherwise have been the only
+               reference to it. */
+            if (src_owned)
+                free(src_blob);
             break;
         }
         default:
@@ -5795,6 +7817,62 @@ void handle_return_statement(ASTNode *expr)
     while (current_scope && !current_scope->is_function_scope)
     {
         exit_scope();
+    }
+
+    /* Discard any BREAK targets between here and this function's own
+       frame (#319). LONGJMP() goes to the innermost buffer; if a `bussin`
+       fires inside a loop or switch, that is the loop's, not the
+       function's. Landing there made the loop's setjmp return non-zero,
+       so it skipped its body, popped, and fell through to the statement
+       AFTER the loop -- inside a function that was supposed to have
+       returned. `bussin` silently behaved as `break`, and the next
+       exit_scope() then found a NULL scope and exit(1)'d the process
+       before anything was flushed, so a search-and-return loop produced
+       no output at all.
+
+       Popping here rather than teaching each loop to re-throw keeps the
+       knowledge in one place: the loops' setjmp frames are abandoned by
+       the longjmp below and their own POP_JUMP_BUFFER() never runs, which
+       is exactly why their buffers have to be released now instead. The
+       scopes those frames entered are already gone -- the loop above
+       unwound every non-function scope before this point.
+
+       ── Only drain when there IS a function frame to drain to ──────────
+       "abandoned by the longjmp below" assumes the longjmp happens, and
+       in `main` it does not. execute_function_call() is the only site
+       that pushes an is_function buffer, and `main`'s body is not run
+       through it (skibidi_function reduces to a bare statement list --
+       see semantic_analyzer.c's find_symbol() comment), so nothing below
+       a `bussin` in `main` is ever is_function.
+
+       Draining unconditionally there empties the whole stack, leaves
+       jump_buffer NULL, and skips the LONGJMP() entirely -- so execution
+       falls back into the loop body with its scopes already unwound and
+       every subsequent statement reports against a dead scope. That
+       turned `main`'s single "No scope to exit" into a four-error cascade
+       (PR #325 review). Checking first is strictly non-regressive: every
+       real function still gets the fix, and `main` keeps the one
+       diagnostic it had before.
+
+       `bussin` in `main` remains wrong either way -- it should end the
+       program, and even a plain `bussin 3;` there exits 0 rather than 3,
+       so the value is not plumbed. That is a separate, larger change than
+       this one and is deliberately not folded in here. */
+    bool has_function_frame = false;
+    for (JumpBuffer *jb = jump_buffer; jb; jb = jb->next)
+    {
+        if (jb->is_function)
+        {
+            has_function_frame = true;
+            break;
+        }
+    }
+    if (has_function_frame)
+    {
+        while (jump_buffer && !jump_buffer->is_function)
+        {
+            POP_JUMP_BUFFER();
+        }
     }
 
     // skibidi main function do not have jump buffer
@@ -5816,12 +7894,18 @@ Parameter *create_parameter_ex(String name, VarType type, int pointer_level,
     }
 
     param->name = ARENA_STRDUP(name);
-    param->type = type;
-    param->struct_name = (String){0};
-    param->enum_name = (String){0};
-    param->pointer_level = pointer_level;
+    param->desc.type = type;
+    param->desc.struct_name = (String){0};
+    param->desc.enum_name = (String){0};
+    param->desc.pointer_level = pointer_level;
     param->next = next;
-    param->modifiers = mods;
+    param->desc.modifiers = mods;
+    /* Arena memory is malloc'd, not calloc'd -- explicit zeroing, not a
+       no-op. Callers that build an array-typed struct field (lang.y's
+       `struct_field: type declarator dimensions SEMICOLON`) overwrite
+       both fields immediately after this call returns. */
+    param->desc.is_array = false;
+    param->desc.array_dimensions = (ArrayDimensions){0};
 
     return param;
 }
@@ -5881,24 +7965,21 @@ ASTNode *create_function_def_node_struct(String name, String struct_name,
     node->data.function_def.parameters = params;
     node->data.function_def.body = body;
 
-    if (pointer_level > 0)
-    {
-        /* By-value struct returns are copied (see handle_return_statement's
-           VAR_STRUCT case); a pointer-to-struct return would need its own,
-           not-yet-implemented handling (interpreter_visit_declaration
-           always allocates a fresh blob for a struct-typed variable,
-           which is wrong for one that should just hold an address).
-           Refuse to register the function rather than silently drop the
-           `*` and treat this as by-value -- get_function() returning NULL
-           at any call site gives a clear "Undefined function" instead of
-           a confusing runtime type error. */
-        yyerror("Struct pointer return types are not yet supported");
-        return node;
-    }
-
-    Function *func = create_function_ex(name, VAR_STRUCT, 0, params, body);
+    /* A pointer-to-struct return (`gang Point *f()`, #193) returns a
+       pointer VALUE, exactly like the already-supported scalar pointer
+       return (`rizz *f()`): handle_return_statement's declared_pointer_
+       level > 0 branch evaluates the return expression as a pointer and
+       boxes it, and interpreter_visit_declaration's pointer branch stores
+       that value into the pointer-typed destination -- no by-value blob is
+       allocated. Registered with its real pointer_level so a call site
+       sees return_pointer_level > 0. Returning `&local` dangles once the
+       callee's scope is freed, the same C undefined behavior the scalar
+       pointer return already has; the safe uses are returning a pointer
+       parameter or a pointer to storage that outlives the call. */
+    Function *func =
+        create_function_ex(name, VAR_STRUCT, pointer_level, params, body);
     if (func)
-        func->return_struct_name = ARENA_STRDUP(struct_name);
+        func->return_desc.struct_name = ARENA_STRDUP(struct_name);
 
     return node;
 }
@@ -5916,7 +7997,7 @@ ASTNode *create_function_def_node_enum(String name, String enum_name,
 
     Function *func = get_function(name);
     if (func)
-        func->return_enum_name = ARENA_STRDUP(enum_name);
+        func->return_desc.enum_name = ARENA_STRDUP(enum_name);
 
     return node;
 }
@@ -5978,30 +8059,88 @@ void reverse_parameter_list(Parameter **head)
     *head = prev;
 }
 
+/* Free the heap temporaries enter_function_scope() owns for struct
+   arguments that are function-CALL results (`take(make_point())`, #193):
+   a call's returned blob lives in the shared current_return_value slot,
+   which the next argument's own call would overwrite/free before the
+   two-phase bind runs, so each such argument is copied into its own
+   temporary here and freed once (after the deep-copy into the parameter,
+   or on any early-exit error path). A borrowed blob (a plain struct
+   variable or member access) has owns[k] == false and is never freed
+   here. */
+static void free_owned_struct_arg_blobs(const Value *arg_values,
+                                        const bool *owns, int count)
+{
+    for (int k = 0; k < count; k++)
+        if (owns[k])
+            free((void *)arg_values[k].pvalue);
+}
+
+/* The same job for `rant` arguments (#311). evaluate_expression_string()
+ * always hands back a safe_strdup'd buffer the caller owns -- a literal, a
+ * variable's contents, a call result, all of them -- and the binding loop
+ * then ARENA_STRDUPs it into the parameter, so the intermediate has to be
+ * released or every string argument leaks one buffer per call.
+ *
+ * Kept as a separate array from arg_owns_blob rather than folded into it,
+ * even though a slot can only ever be one or the other (the two live in
+ * the same Value union, so a slot holding a blob pointer cannot also hold
+ * a String): the two are freed with different allocators -- plain free()
+ * for the calloc'd struct temporaries, SAFE_FREE for safe_malloc'd string
+ * buffers -- and a single flag could not say which. */
+static void free_owned_string_args(Value *arg_values, const bool *owns,
+                                   int count)
+{
+    for (int k = 0; k < count; k++)
+        if (owns[k])
+            SAFE_FREE(arg_values[k].strvalue.data);
+}
+
 bool enter_function_scope(Function *func, ArgumentList *args)
 {
     ArgumentList *curr_arg = args;
     Value arg_values[MAX_ARGUMENTS];
+    bool arg_owns_blob[MAX_ARGUMENTS] = {false};
+    bool arg_owns_string[MAX_ARGUMENTS] = {false};
     int arg_count = 0;
 
-    // Reverse the parameter list
+    /* Snapshot the parameters in call order into a local array. The parser
+       stores them reversed, so reverse the shared list in place, copy the
+       node pointers out, then restore it IMMEDIATELY -- before any argument
+       is evaluated. Evaluating an argument can invoke another function
+       (`f(g())`), and if that callee is THIS SAME Function*, its own
+       enter_function_scope() would reverse func->parameters again while the
+       outer invocation was mid-iteration -- binding `f(f(s1, s2), s3)`'s
+       parameters out of source order (PR #254 review, finding 2; the same
+       long-standing reentrancy that made `sub(sub(10, 3), 1)` compute -8).
+       Iterating the local `ordered[]` snapshot instead makes each
+       invocation independent of what nested calls do to the shared list. */
     reverse_parameter_list(&func->parameters);
-    Parameter *curr_param = func->parameters;
+    Parameter *ordered[MAX_ARGUMENTS];
+    int param_count = 0;
+    for (Parameter *p = func->parameters; p && param_count < MAX_ARGUMENTS;
+         p = p->next)
+        ordered[param_count++] = p;
+    reverse_parameter_list(&func->parameters);
+
+    Parameter *curr_param = param_count > 0 ? ordered[0] : NULL;
+    int param_index = 0;
 
     // Evaluate argument values before creating the scope
     while (curr_arg && curr_param)
     {
-        arg_values[arg_count].pointer_level = curr_param->pointer_level;
-        if (curr_param->pointer_level > 0)
+        arg_values[arg_count].pointer_level = curr_param->desc.pointer_level;
+        if (curr_param->desc.pointer_level > 0)
         {
             arg_values[arg_count].pvalue =
                 evaluate_expression_pointer(curr_arg->expr);
             curr_arg = curr_arg->next;
-            curr_param = curr_param->next;
+            curr_param =
+                ++param_index < param_count ? ordered[param_index] : NULL;
             arg_count++;
             continue;
         }
-        switch (curr_param->type)
+        switch (curr_param->desc.type)
         {
         case VAR_INT:
         case VAR_CHAR:
@@ -6026,40 +8165,161 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                 evaluate_expression_short(curr_arg->expr);
             break;
         case VAR_STRING:
-            yyerror("String parameters are not supported");
-            reverse_parameter_list(&func->parameters);
-            return false;
+            /* `rant s` parameters (#311). Natives have always taken
+               strings; this was the user-function gap.
+
+               evaluate_expression_string() returns a safe_strdup'd buffer
+               this frame owns, so it is recorded for release below --
+               NOT aliased into the parameter. Aliasing the caller's
+               buffer would be the C `const char *` semantic the issue
+               proposed, but it is unsafe here for a reason C does not
+               have: exit_scope() tears down the callee's scope, and a
+               parameter pointing into the caller's storage would make
+               that teardown's ownership depend on where the argument
+               came from. Copying makes the parameter an ordinary local
+               `rant` -- indistinguishable from one the callee declared
+               itself -- which is also what makes assigning to it safe. */
+            arg_values[arg_count].strvalue =
+                evaluate_expression_string(curr_arg->expr);
+            /* A NULL buffer means the argument was not a string at all
+               (`show(42)`) or the copy failed. Refuse the call rather
+               than bind it, matching the VAR_STRUCT arm below -- which
+               also frees what it owns and returns false rather than
+               handing the callee something malformed -- instead of this
+               family's looser report-and-continue convention.
+               The distinction is worth the extra check: a NULL-buffered
+               `rant` is a REPRESENTABLE INVALID STATE, not merely a
+               wrong value. It propagates -- through a nested call, and
+               out through `bussin s` into a caller's `rant` -- and
+               printing it is undefined behavior (C11 7.21.6.1p8): glibc
+               and BSD libc print "(null)", musl does not, which is
+               exactly the kind of thing that looks benign in CI and
+               isn't.
+               What this check does NOT do is make that state
+               unreachable, and an earlier version of this comment
+               wrongly claimed it did (PR #314 review). A NULL-buffered
+               `rant` is reachable on main today with no `rant` parameter
+               involved at all -- any call REFUSED mid-argument leaves a
+               `rant` declaration target NULL, e.g. `rant r = f(1, 2);`
+               (arity mismatch) or `rant r = g(notastruct);` (the
+               VAR_STRUCT arm below refusing). Both verified. That is a
+               pre-existing property of what a refused call leaves
+               behind, and closing it means changing every failed call,
+               not this one. The correct, narrower justification stands
+               on its own: this feature opened a NEW route to that state
+               -- a bound parameter, which unlike a refused call's
+               leftovers is then USED -- and this closes the route it
+               opened.
+               evaluate_expression_string() has already emitted exactly
+               one diagnostic on both of its NULL paths, so this adds no
+               second error -- the same discipline as the
+               resolve_by_value_struct_source() call below. */
+            if (!arg_values[arg_count].strvalue.data)
+            {
+                free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
+                                            arg_count);
+                free_owned_string_args(arg_values, arg_owns_string, arg_count);
+                return false;
+            }
+            arg_owns_string[arg_count] = true;
+            break;
         case VAR_STRUCT:
         {
-            /* By-value struct argument: only a plain struct variable is
-               supported as the source (matching what's actually needed --
-               a struct-valued sub-expression, e.g. a function call
-               returning a struct, isn't a thing here yet). Stash the
-               source blob pointer now, while still in the caller's scope
-               -- evaluating it after create_scope() below would resolve
-               against the callee's (still-empty) scope instead. */
-            if (curr_arg->expr->type != NODE_IDENTIFIER)
+            /* By-value struct argument. Resolve the source blob now, while
+               still in the caller's scope -- resolving it after create_
+               scope() below would look in the callee's (still-empty) scope
+               instead. The blob is deep-copied into the parameter in the
+               binding loop further down (C by-value semantics), so the
+               source only has to stay alive until then, which it does: it
+               lives in the caller's scope, and nothing frees that between
+               here and the copy.
+
+               Three source shapes are accepted (#193). A plain struct
+               variable (`take(p)`) or a by-value struct/union member-access
+               sub-expression (`take(outer.inner)`, following pointer
+               bases/fields via #196/#197) resolves to a BORROWED blob in
+               the caller's scope via resolve_by_value_struct_source(),
+               which reports a single diagnostic on failure. A struct-
+               returning CALL result (`take(make_point())`) resolves to an
+               OWNED heap temporary: its blob lives in the shared current_
+               return_value slot, which a later argument's own call would
+               overwrite/free before the bind loop copies it, so it is
+               copied into its own temporary now and freed after binding
+               (see free_owned_struct_arg_blobs). */
+            void *src_blob = NULL;
+            String src_tag = {0};
+            bool src_owned = false;
+            if (curr_arg->expr->type == NODE_FUNC_CALL)
             {
-                yyerror("Struct argument must be a plain struct variable");
-                reverse_parameter_list(&func->parameters);
+                execute_function_call(
+                    curr_arg->expr->data.func_call.function_name,
+                    curr_arg->expr->data.func_call.arguments);
+                if (!current_return_value.has_value ||
+                    current_return_value.desc.type != VAR_STRUCT)
+                {
+                    yyerror("Struct argument call does not return a "
+                            "by-value struct/union");
+                    free_pending_return_value();
+                    free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
+                                                arg_count);
+                    free_owned_string_args(arg_values, arg_owns_string,
+                                           arg_count);
+                    return false;
+                }
+                if (!current_return_value.desc.struct_name.data ||
+                    !curr_param->desc.struct_name.data ||
+                    strcmp(current_return_value.desc.struct_name.data,
+                           curr_param->desc.struct_name.data) != 0)
+                {
+                    yyerror("Struct argument type does not match parameter "
+                            "type");
+                    free_pending_return_value();
+                    free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
+                                                arg_count);
+                    free_owned_string_args(arg_values, arg_owns_string,
+                                           arg_count);
+                    return false;
+                }
+                StructDef *cdef = get_struct_def(curr_param->desc.struct_name);
+                void *temp = cdef ? calloc(1, cdef->total_size) : NULL;
+                void *ret_blob = (void *)current_return_value.value.pvalue;
+                if (temp && ret_blob)
+                    memcpy(temp, ret_blob, cdef->total_size);
+                /* The returned blob is now copied into our own temporary;
+                   release current_return_value's copy so the next
+                   argument's call can safely reuse the slot. */
+                free_pending_return_value();
+                arg_values[arg_count].pvalue = (uintptr_t)temp;
+                arg_owns_blob[arg_count] = true;
+                break;
+            }
+            if (!resolve_by_value_struct_source(curr_arg->expr, &src_blob,
+                                                &src_tag, &src_owned, true))
+            {
+                free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
+                                            arg_count);
+                free_owned_string_args(arg_values, arg_owns_string, arg_count);
                 return false;
             }
-            Variable *src = get_variable(curr_arg->expr->data.name);
-            if (!src || src->var_type != VAR_STRUCT)
-            {
-                yyerror("Struct argument is not a struct variable");
-                reverse_parameter_list(&func->parameters);
-                return false;
-            }
-            if (!src->struct_name.data || !curr_param->struct_name.data ||
-                strcmp(src->struct_name.data, curr_param->struct_name.data) !=
-                    0)
+            if (!src_tag.data || !curr_param->desc.struct_name.data ||
+                strcmp(src_tag.data, curr_param->desc.struct_name.data) != 0)
             {
                 yyerror("Struct argument type does not match parameter type");
-                reverse_parameter_list(&func->parameters);
+                if (src_owned)
+                    free(src_blob);
+                free_owned_struct_arg_blobs(arg_values, arg_owns_blob,
+                                            arg_count);
+                free_owned_string_args(arg_values, arg_owns_string, arg_count);
                 return false;
             }
-            arg_values[arg_count].pvalue = (uintptr_t)src->value.array_data;
+            /* `take(make_outer().inner, ...)` resolves to an OWNED copy for
+               the same reason the bare-call arm above allocates one: the
+               deep copy into the parameter happens in the binding loop
+               below, and a later argument's call would have freed the
+               original first. Recording it here hands it to
+               free_owned_struct_arg_blobs() along with the rest. */
+            arg_values[arg_count].pvalue = (uintptr_t)src_blob;
+            arg_owns_blob[arg_count] = src_owned;
             break;
         }
         case VAR_PTR:
@@ -6073,14 +8333,15 @@ bool enter_function_scope(Function *func, ArgumentList *args)
         }
 
         curr_arg = curr_arg->next;
-        curr_param = curr_param->next;
+        curr_param = ++param_index < param_count ? ordered[param_index] : NULL;
         arg_count++;
     }
 
     if (curr_arg || curr_param)
     {
         yyerror("Mismatched number of arguments and parameters");
-        reverse_parameter_list(&func->parameters);
+        free_owned_struct_arg_blobs(arg_values, arg_owns_blob, arg_count);
+        free_owned_string_args(arg_values, arg_owns_string, arg_count);
         return false;
     }
 
@@ -6089,35 +8350,67 @@ bool enter_function_scope(Function *func, ArgumentList *args)
     current_scope = scope;
     current_scope->is_function_scope = true;
     current_scope->function_name = func->name;
-    curr_param = func->parameters; // Reset parameter list after reversing
 
-    // Assign evaluated values to function parameters
+    // Assign evaluated values to function parameters (iterating the same
+    // call-order snapshot the evaluation loop used).
     for (int i = 0; i < arg_count; i++)
     {
+        curr_param = ordered[i];
         Variable *var = variable_new(curr_param->name);
-        var->var_type = curr_param->type;
-        var->pointer_level = curr_param->pointer_level;
-        TypeModifiers mods = curr_param->modifiers;
+        var->desc.type = curr_param->desc.type;
+        var->desc.pointer_level = curr_param->desc.pointer_level;
+        TypeModifiers mods = curr_param->desc.modifiers;
         add_variable_to_scope(curr_param->name, var);
         SAFE_FREE(var);
 
-        if (curr_param->pointer_level > 0)
+        if (curr_param->desc.pointer_level > 0)
         {
             Variable *bound = get_variable(curr_param->name);
             if (bound)
             {
-                bound->pointer_level = curr_param->pointer_level;
+                bound->desc.pointer_level = curr_param->desc.pointer_level;
+                /* A pointer-to-struct/union parameter (`gang Foo *pp`)
+                   needs its tag copied too, same as the by-value VAR_STRUCT
+                   case below -- resolve_struct_access()'s NODE_IDENTIFIER
+                   branch (ast.c) resolves `pp.field` via `get_struct_def(
+                   var->struct_name)` regardless of pointer_level, and this
+                   loop's own var_type assignment above already treats the
+                   parameter as a struct/union variable. Without this, a
+                   pointer-to-struct parameter's struct_name stayed empty
+                   and `pp.field` inside the callee died on "Unknown struct
+                   or union type" (PR #248 review, finding 3). */
+                if (curr_param->desc.type == VAR_STRUCT)
+                    bound->desc.struct_name =
+                        safe_strdup(&curr_param->desc.struct_name);
                 bound->value.pvalue = arg_values[i].pvalue;
             }
-            curr_param = curr_param->next;
             continue;
         }
 
-        switch (curr_param->type)
+        switch (curr_param->desc.type)
         {
         case VAR_INT:
-        case VAR_CHAR:
             set_int_variable(curr_param->name, arg_values[i].ivalue, mods);
+            break;
+        case VAR_CHAR:
+            /* Not set_int_variable(): that calls set_variable(...,
+               VAR_INT, ...), which overwrites this parameter's
+               var_type to VAR_INT (clobbering the VAR_CHAR set moments
+               ago, above) and stores the raw, unmasked argument value.
+               A `yap` parameter passed an out-of-byte-range argument
+               (nothing here rejects that) would then keep both a wrong
+               var_type and non-zero upper bytes in its ivalue slot --
+               exactly the stale-high-bytes hazard write_value_to_
+               address()'s own comment describes, now reachable through
+               a plain function call instead of a pointer alias
+               (confirmed: `skibidi foo(yap c) { yap *p = &c; *p = 'x';
+               yapping("%d", c + 0); } ... foo(1000);` printed 888, not
+               120). set_char_variable() calls set_variable(..., VAR_
+               CHAR, ...), whose own VAR_CHAR case already does the
+               same `(unsigned char)` zero-extension write_value_to_
+               address() does, and correctly leaves var_type as
+               VAR_CHAR. */
+            set_char_variable(curr_param->name, arg_values[i].ivalue, mods);
             break;
         case VAR_FLOAT:
             set_float_variable(curr_param->name, arg_values[i].fvalue, mods);
@@ -6132,10 +8425,39 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             set_short_variable(curr_param->name, arg_values[i].svalue, mods);
             break;
         case VAR_STRING:
-            yyerror("String parameters are not supported");
-            exit_scope();
-            reverse_parameter_list(&func->parameters);
-            return false;
+        {
+            /* Hand the frame's own safe_strdup'd buffer straight to the
+               parameter and drop this frame's claim on it, rather than
+               copying again and freeing the original.
+               initialize_variable_from_expr() (ast.c) binds a `rant`
+               LOCAL exactly this way -- `var->value.strvalue =
+               evaluate_expression_string(expr)` -- so a `rant` parameter
+               ends up the same shape as one the callee declared itself,
+               which is the property that makes scope teardown correct.
+
+               That is load-bearing, and NOT interchangeable with
+               set_string_variable(): hm_free() (lib/hm.c) releases a
+               VAR_STRING variable with SAFE_FREE, which is right for a
+               safe_malloc'd buffer and wrong for set_variable()'s
+               ARENA_STRDUP. Routing this through set_string_variable()
+               produced "Attempt to free invalid/corrupted pointer" at
+               every scope exit. That allocator mismatch is pre-existing
+               in set_variable()'s own VAR_STRING case and is left alone
+               here; this path simply does not go through it. */
+            Variable *bound = get_variable(curr_param->name);
+            if (bound)
+            {
+                bound->desc.type = VAR_STRING;
+                bound->desc.modifiers = mods;
+                bound->value.strvalue = arg_values[i].strvalue;
+                /* Ownership transferred -- free_owned_string_args() must
+                   not also release it. If `bound` were ever NULL the flag
+                   stays set, so this frame frees the buffer rather than
+                   leaking it. */
+                arg_owns_string[i] = false;
+            }
+            break;
+        }
         case VAR_STRUCT:
         {
             /* Deep-copy: give the parameter its own blob (C struct-by-value
@@ -6144,10 +8466,11 @@ bool enter_function_scope(Function *func, ArgumentList *args)
                existed. Type already validated in the argument-evaluation
                pass above, so def's size matches the source blob's. */
             Variable *bound = get_variable(curr_param->name);
-            StructDef *def = get_struct_def(curr_param->struct_name);
+            StructDef *def = get_struct_def(curr_param->desc.struct_name);
             if (bound && def)
             {
-                bound->struct_name = safe_strdup(&curr_param->struct_name);
+                bound->desc.struct_name =
+                    safe_strdup(&curr_param->desc.struct_name);
                 bound->value.array_data = calloc(1, def->total_size);
                 void *src_blob = (void *)arg_values[i].pvalue;
                 if (bound->value.array_data && src_blob)
@@ -6164,7 +8487,8 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             if (bound)
             {
                 bound->value.ivalue = arg_values[i].ivalue;
-                bound->enum_name = safe_strdup(&curr_param->enum_name);
+                bound->desc.enum_name =
+                    safe_strdup(&curr_param->desc.enum_name);
             }
             break;
         }
@@ -6175,14 +8499,38 @@ bool enter_function_scope(Function *func, ArgumentList *args)
         case NONE:
             break;
         }
-        curr_param = curr_param->next;
     }
-    reverse_parameter_list(&func->parameters);
+    /* Bind loop done -- every owned call-result temporary has been
+       deep-copied into its parameter's own blob, so release them all now
+       (a borrowed source has owns==false and is left untouched).
+       func->parameters was already restored to its stored order right
+       after the snapshot above, so nothing to un-reverse here. */
+    free_owned_struct_arg_blobs(arg_values, arg_owns_blob, arg_count);
+    free_owned_string_args(arg_values, arg_owns_string, arg_count);
     return true;
 }
 
 void register_struct_def(StructDef *def)
 {
+    /* alignment is set only by compute_struct_layout()/
+       compute_union_layout() (called by both StructDef construction
+       sites in lang.y), never by this function. A still-zero alignment
+       here means some future construction path skipped that call --
+       fail loud now rather than let a struct/union that later embeds
+       this one by value silently pack with zero padding
+       (get_struct_field_alignment() trusts a *registered* def's
+       alignment outright; see that function's comment in this file).
+       Deliberately not assert(): this must still catch the bug in a
+       build that defines NDEBUG, not just a debug build, so it's a
+       plain unconditional check -- same "fail loud, always" contract
+       as every other internal-invariant check in this file (e.g. the
+       "Memory allocation failed" exit(EXIT_FAILURE) sites above). */
+    if (def->alignment == 0)
+    {
+        yyerror("Internal error: StructDef registered before "
+                "compute_struct_layout()/compute_union_layout() ran");
+        exit(EXIT_FAILURE);
+    }
     if (!struct_registry)
         struct_registry = hm_new();
     size_t len = def->name.len;
@@ -6213,8 +8561,8 @@ void free_struct_registry(void)
         {
             StructField *nxt = f->next;
             SAFE_FREE(f->name);
-            SAFE_FREE(f->struct_name);
-            SAFE_FREE(f->enum_name);
+            SAFE_FREE(f->desc.struct_name);
+            SAFE_FREE(f->desc.enum_name);
             SAFE_FREE(f);
             f = nxt;
         }
@@ -6243,57 +8591,177 @@ StructField *find_struct_field(StructDef *def, const String name)
 /* Size in bytes that a single field occupies within its enclosing
    struct/union blob. Nested struct/union fields (type == VAR_STRUCT,
    pointer_level == 0) take the nested definition's total_size; every
-   other field falls back to get_type_size_for_descriptor. */
+   other field falls back to get_type_size_for_descriptor, honoring
+   f->modifiers (is_long/is_long_long/is_unsigned) -- e.g. a VAR_INT
+   field reached through a `lit giga rizz ...` alias must size as an
+   8-byte long, not silently collapse to a 4-byte int.
+
+   An array field (f->is_array, e.g. `chad params[4];`) occupies its
+   element size times the product of every dimension -- computed below
+   as `element_size`, using the exact same per-type logic a scalar field
+   of the same declared type would, since array-ness only ever
+   multiplies occupancy, never changes what a single element looks
+   like. */
 static size_t get_struct_field_size(StructField *f)
 {
-    if (f->pointer_level > 0)
-        return sizeof(uintptr_t);
-
-    if (f->type == VAR_STRUCT)
+    size_t element_size;
+    if (f->desc.pointer_level > 0)
     {
-        StructDef *nested = get_struct_def(f->struct_name);
+        element_size = sizeof(uintptr_t);
+    }
+    else if (f->desc.type == VAR_STRUCT)
+    {
+        StructDef *nested = get_struct_def(f->desc.struct_name);
         /* Should always be resolved by the parser before layout is
            computed; fall back defensively rather than corrupt offsets. */
-        return nested ? nested->total_size : 0;
+        element_size = nested ? nested->total_size : 0;
+    }
+    else
+    {
+        element_size =
+            get_type_size_for_descriptor(f->desc.type, 0, f->desc.modifiers);
+        if (element_size == 0)
+            element_size = sizeof(int);
     }
 
-    TypeModifiers m = {0};
-    size_t fsz = get_type_size_for_descriptor(f->type, 0, m);
-    if (fsz == 0)
-        fsz = sizeof(int);
-    return fsz;
+    if (!f->desc.is_array)
+        return element_size;
+
+    size_t count = 1;
+    for (int i = 0; i < f->desc.array_dimensions.num_dimensions; i++)
+        count *= (size_t)f->desc.array_dimensions.dimensions[i];
+    return element_size * count;
 }
 
-/* Walk the field list, assign natural-alignment offsets, return total size.
-   We use simple sequential layout (no padding) to keep it straightforward;
-   add alignment rounding here if needed later. */
-size_t compute_struct_layout(StructField *fields)
+/* Alignment in bytes that a single field imposes on its enclosing
+   struct/union, matching the C ABI (`_Alignof` of the corresponding C
+   type). Nested struct/union fields take the nested definition's own
+   alignment; pointer fields align as a pointer. Mirrors
+   get_struct_field_size()'s type switch, including f->modifiers for
+   VAR_INT -- an 8-byte long/long-long field (reachable via a `lit
+   giga`/`lit thicc` alias) must align as 8, not fall back to plain
+   int's 4, or a following field would be under-padded.
+
+   Deliberately ignores f->is_array: a C array never needs more
+   alignment than its own element (`chad params[4];` is 4-aligned, same
+   as a lone `chad`, not 16-aligned), so the switch below already
+   answers array fields correctly without a special case. */
+static size_t get_struct_field_alignment(StructField *f)
+{
+    if (f->desc.pointer_level > 0)
+        return _Alignof(uintptr_t);
+
+    if (f->desc.type == VAR_STRUCT)
+    {
+        StructDef *nested = get_struct_def(f->desc.struct_name);
+        /* Should always be resolved by the parser before layout is
+           computed; fall back defensively rather than corrupt offsets. */
+        return nested ? nested->alignment : 1;
+    }
+
+    switch (f->desc.type)
+    {
+    case VAR_FLOAT:
+        return _Alignof(float);
+    case VAR_DOUBLE:
+        return _Alignof(double);
+    case VAR_BOOL:
+        return _Alignof(bool);
+    case VAR_SHORT:
+        return _Alignof(short);
+    case VAR_CHAR:
+        return _Alignof(char);
+    case VAR_INT:
+        if (f->desc.modifiers.is_long_long)
+            return _Alignof(long long);
+        if (f->desc.modifiers.is_long)
+            return _Alignof(long);
+        return _Alignof(int);
+    case VAR_STRING:
+        return _Alignof(String);
+    case VAR_ENUM:
+        return _Alignof(int);
+    case VAR_PTR:
+        return _Alignof(uintptr_t);
+    case VAR_VOID:
+    case NONE:
+    default:
+        return 1;
+    }
+}
+
+/* Round `offset` up to the next multiple of `alignment` (a power of two). */
+static size_t align_up(size_t offset, size_t alignment)
+{
+    if (alignment <= 1)
+        return offset;
+    return (offset + alignment - 1) & ~(alignment - 1);
+}
+
+/* Walk def->fields, assign C-ABI-aligned offsets (padding before each
+   field as needed), and write def->total_size/def->alignment -- the
+   struct's total size rounded up to its own max field alignment
+   (trailing padding) and that alignment itself. Matches the standard C
+   struct-layout algorithm (align, place, pad), so a `gang`'s *occupancy*
+   -- its total size and every field's offset -- matches what a real C
+   compiler would produce for the same field list.
+
+   That is a claim about shape, not about full FFI byte-compatibility:
+   no current code path hands a `gang` *by value* across the FFI (see
+   ast_expr_to_stdrot_value()'s lack of a VAR_STRUCT case, stdrot.c), and
+   a wide scalar field (e.g. a `lit giga`-aliased `long` field) occupies
+   the C-correct number of bytes but is still loaded/stored through this
+   interpreter's plain 32-bit int path (evaluate_expression_int(),
+   write_value_to_address()) -- the same pre-existing limitation plain
+   `giga`/`thicc` variables have outside of any struct. Fixing that is
+   out of scope here; this function's job is only that the *slot* is the
+   right size and at the right offset.
+
+   def->total_size and def->alignment are set together, here, as the
+   single writer of both -- callers only ever populate def->fields/
+   is_union and then call this (or compute_union_layout), so there is no
+   window where one is stale relative to the other. */
+void compute_struct_layout(StructDef *def)
 {
     size_t off = 0;
-    StructField *f = fields;
+    size_t max_align = 1;
+    StructField *f = def->fields;
     while (f)
     {
+        size_t falign = get_struct_field_alignment(f);
+        if (falign > max_align)
+            max_align = falign;
+        off = align_up(off, falign);
         f->offset = off;
         off += get_struct_field_size(f);
         f = f->next;
     }
-    return off; /* total bytes */
+    def->total_size = align_up(off, max_align); /* includes trailing pad */
+    def->alignment = max_align;
 }
 
-/* Union fields all share offset 0; total size is the largest member. */
-size_t compute_union_layout(StructField *fields)
+/* Union fields all share offset 0; def->total_size becomes the largest
+   member, rounded up to the largest member's alignment (unions pad too
+   -- `union { char c; int i; }` is 4 bytes in C, not 1). Same
+   single-writer contract as compute_struct_layout() above. */
+void compute_union_layout(StructDef *def)
 {
     size_t max_size = 0;
-    StructField *f = fields;
+    size_t max_align = 1;
+    StructField *f = def->fields;
     while (f)
     {
         f->offset = 0;
         size_t fsz = get_struct_field_size(f);
         if (fsz > max_size)
             max_size = fsz;
+        size_t falign = get_struct_field_alignment(f);
+        if (falign > max_align)
+            max_align = falign;
         f = f->next;
     }
-    return max_size;
+    def->total_size = align_up(max_size, max_align);
+    def->alignment = max_align;
 }
 
 void register_enum_def(EnumDef *def)
@@ -6338,6 +8806,181 @@ void free_enum_registry(void)
     enum_registry_list = NULL;
 }
 
+TypeDescriptor make_type_descriptor(VarType type, int pointer_level,
+                                    TypeModifiers modifiers)
+{
+    TypeDescriptor descriptor = {0};
+    descriptor.type = type;
+    descriptor.pointer_level = pointer_level;
+    descriptor.modifiers = modifiers;
+    return descriptor;
+}
+
+TypeDescriptor type_descriptor_from_alias(const TypeAlias *alias)
+{
+    if (!alias)
+        return make_type_descriptor(NONE, 0, (TypeModifiers){0});
+
+    /* struct_name/enum_name are borrowed from the registry. Callers may
+       copy them onto AST/symbol objects they own, but must not free or
+       mutate these strings, and must not keep the descriptor after
+       free_type_alias_registry(). */
+    TypeDescriptor descriptor = make_type_descriptor(
+        alias->type, alias->pointer_level, alias->modifiers);
+    descriptor.struct_name = alias->struct_name;
+    descriptor.enum_name = alias->enum_name;
+    return descriptor;
+}
+
+bool merge_type_modifiers(TypeModifiers base, TypeModifiers extra,
+                          TypeModifiers *out, const String name)
+{
+    TypeModifiers merged = base;
+
+    if ((extra.is_signed || extra.is_unsigned) &&
+        (base.is_signed || base.is_unsigned))
+    {
+        char msg[MAX_BUFFER_LEN];
+        snprintf(msg, sizeof(msg),
+                 "Conflicting signedness modifiers for typedef alias '%s'",
+                 name.data ? name.data : "?");
+        yyerror_current_line(msg);
+        typedef_had_error = true;
+        return false;
+    }
+
+    if ((extra.is_long || extra.is_long_long) &&
+        (base.is_long || base.is_long_long))
+    {
+        char msg[MAX_BUFFER_LEN];
+        snprintf(msg, sizeof(msg),
+                 "Conflicting width modifiers for typedef alias '%s'",
+                 name.data ? name.data : "?");
+        yyerror_current_line(msg);
+        typedef_had_error = true;
+        return false;
+    }
+
+    if (base.is_static)
+    {
+        char msg[MAX_BUFFER_LEN];
+        snprintf(msg, sizeof(msg),
+                 "Storage-class modifier cannot be stored in typedef alias "
+                 "'%s'",
+                 name.data ? name.data : "?");
+        yyerror_current_line(msg);
+        typedef_had_error = true;
+        return false;
+    }
+
+    merged.is_volatile = base.is_volatile || extra.is_volatile;
+    merged.is_signed = base.is_signed || extra.is_signed;
+    merged.is_unsigned = base.is_unsigned || extra.is_unsigned;
+    merged.is_const = base.is_const || extra.is_const;
+    merged.is_long = base.is_long || extra.is_long;
+    merged.is_long_long = base.is_long_long || extra.is_long_long;
+    merged.is_sizeof = extra.is_sizeof;
+    merged.is_static = extra.is_static;
+
+    if (out)
+        *out = merged;
+    return true;
+}
+
+bool register_type_alias(String name, TypeDescriptor descriptor)
+{
+    if (!name.data)
+    {
+        yyerror_current_line("Invalid typedef alias name");
+        typedef_had_error = true;
+        return false;
+    }
+
+    if (descriptor.modifiers.is_static)
+    {
+        yyerror_current_line(
+            "Storage-class modifiers are not allowed in typedef aliases");
+        typedef_had_error = true;
+        return false;
+    }
+
+    TypeModifiers alias_modifiers = descriptor.modifiers;
+    alias_modifiers.is_sizeof = false;
+
+    /* lit aliases live in the top-level ordinary identifier namespace:
+       aliases, functions, variables, and enum constants cannot reuse the name.
+       Struct/union/enum tags deliberately remain separate C-like tag
+       namespaces and are checked by their own registries. */
+    if (get_type_alias(name) || get_function(name) || get_variable(name) ||
+        find_global_enum_constant(name))
+    {
+        char msg[MAX_BUFFER_LEN];
+        snprintf(msg, sizeof(msg), "Typedef alias '%s' is already defined",
+                 name.data);
+        yyerror_current_line(msg);
+        typedef_had_error = true;
+        return false;
+    }
+
+    TypeAlias *alias = SAFE_MALLOC(TypeAlias);
+    alias->name = safe_strdup(&name);
+    alias->type = descriptor.type;
+    alias->pointer_level = descriptor.pointer_level;
+    alias->modifiers = alias_modifiers;
+    alias->struct_name = descriptor.struct_name.data
+                             ? safe_strdup(&descriptor.struct_name)
+                             : (String){0};
+    alias->enum_name = descriptor.enum_name.data
+                           ? safe_strdup(&descriptor.enum_name)
+                           : (String){0};
+    alias->next_def = NULL;
+
+    if (!type_alias_registry)
+        type_alias_registry = hm_new();
+    /* hm_put copies the key bytes; hm_free_shallow frees that copy. The
+       TypeAlias node and its owned strings are released via the linked
+       list below, not by the hashmap. */
+    hm_put(type_alias_registry, alias->name.data, alias->name.len, &alias,
+           sizeof(TypeAlias *));
+    alias->next_def = type_alias_registry_list;
+    type_alias_registry_list = alias;
+    return true;
+}
+
+TypeAlias *get_type_alias(const String name)
+{
+    if (!type_alias_registry || !name.data)
+        return NULL;
+    TypeAlias **alias =
+        (TypeAlias **)hm_get(type_alias_registry, name.data, name.len);
+    return alias ? *alias : NULL;
+}
+
+void free_type_alias_registry(void)
+{
+    if (type_alias_registry)
+    {
+        hm_free_shallow(type_alias_registry);
+        type_alias_registry = NULL;
+    }
+
+    TypeAlias *alias = type_alias_registry_list;
+    while (alias)
+    {
+        TypeAlias *next = alias->next_def;
+        SAFE_FREE(alias->name.data);
+        alias->name = (String){0};
+        SAFE_FREE(alias->struct_name.data);
+        alias->struct_name = (String){0};
+        SAFE_FREE(alias->enum_name.data);
+        alias->enum_name = (String){0};
+        SAFE_FREE(alias);
+        alias = next;
+    }
+    type_alias_registry_list = NULL;
+    typedef_had_error = false;
+}
+
 EnumConstant *find_global_enum_constant(const String name)
 {
     if (!name.data)
@@ -6364,9 +9007,7 @@ bool finalize_enum_constants(EnumDef *def)
     EnumConstant *c = def->constants;
     while (c)
     {
-        if (c->has_explicit_value)
-            next_value = c->value;
-        else
+        if (!c->has_explicit_value)
             c->value = next_value;
 
         EnumConstant *prev = def->constants;
@@ -6384,7 +9025,8 @@ bool finalize_enum_constants(EnumDef *def)
             }
             prev = prev->next;
         }
-        if (ok && find_global_enum_constant(c->name))
+        if (ok &&
+            (find_global_enum_constant(c->name) || get_type_alias(c->name)))
         {
             char msg[MAX_BUFFER_LEN];
             snprintf(msg, sizeof(msg), "Enum constant '%s' is already defined",

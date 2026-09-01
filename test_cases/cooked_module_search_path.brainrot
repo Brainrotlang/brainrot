@@ -1,0 +1,15 @@
+🚽 #cooked <mathmod> is not resolvable via any search-path tier by default
+🚽 (no $BRAINROT_PATH, and mathmod.brainrot doesn't exist in the install
+🚽 module directory or next to the brainrot executable) -- this fixture's
+🚽 own default run (via make test / make valgrind) exercises the "module
+🚽 not found" error path. tests/test_brainrot.py separately re-runs this
+🚽 exact same file with $BRAINROT_PATH pointed at tests/modules/, where
+🚽 mathmod.brainrot does exist, to exercise the search-path-hit success
+🚽 path and the in-tree fallback -- see test_module_search_path_hit() and
+🚽 test_module_in_tree_fallback() there.
+#cooked <mathmod>
+
+skibidi main {
+    yapping("%d", doubled(21));
+    bussin 0;
+}

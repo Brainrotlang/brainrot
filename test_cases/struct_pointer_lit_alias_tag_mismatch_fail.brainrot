@@ -1,0 +1,26 @@
+🚽 Test case: #196 -- the struct-tag check applies to a `lit`-aliased
+🚽 pointer declaration too, not just the direct `gang T *name = expr;`
+🚽 spelling (PR #248 review, round 3, finding 1). `lit gang Point
+🚽 *PointPtr; PointPtr pp = &r;` reaches semantic_visit_declaration()'s
+🚽 GENERAL branch (data.op.right there IS the real initializer, unlike
+🚽 the NODE_STRUCT_DEF-marker branch the round-2 fix covered) -- that
+🚽 branch had the category check (VAR_STRUCT vs VAR_STRUCT) but no tag
+🚽 check until now.
+gang Point {
+    rizz x;
+    rizz y;
+};
+gang Rect {
+    rizz w;
+    rizz h;
+};
+
+lit gang Point *PointPtr;
+
+skibidi main {
+    gang Rect r;
+    r.w = 11;
+    r.h = 22;
+    PointPtr pp = &r;
+    yapping("%d %d", pp.x, pp.y);
+}

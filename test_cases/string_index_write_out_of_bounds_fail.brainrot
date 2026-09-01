@@ -1,0 +1,29 @@
+🚽 Test case: issue #251 -- an out-of-range WRITE through `s[i] = c` is
+🚽 refused, not performed.
+🚽
+🚽 The read counterpart is string_index_out_of_bounds_fail.brainrot. This
+🚽 one exists separately because the write path is what makes the bounds
+🚽 check load-bearing rather than merely correct: a bad READ returns a
+🚽 wrong byte, while a bad WRITE corrupts memory outside the buffer. An
+🚽 implementation that checked reads and not writes would keep that fixture
+🚽 green and this one red, which is the whole reason both exist.
+🚽
+🚽 ── Why the index is len exactly ──────────────────────────────────────
+🚽 `s[5] = c` on a 5-byte string is the first invalid index, one past the
+🚽 last valid one. A wild index like s[999] would be caught by almost any
+🚽 check including a wrong one; s[len] is the case that separates `<` from
+🚽 `<=`, and it is also the single byte most likely to be "harmlessly"
+🚽 writable -- safe_strdup() allocates len + 1 and NUL-terminates, so
+🚽 offset len IS inside the allocation. Writing there would not trip ASan
+🚽 or valgrind; it would just silently destroy the terminator that
+🚽 yapping's %s relies on. Nothing but this fixture would notice.
+🚽
+🚽 `before` pins that execution reached the assignment, and nothing follows
+🚽 it: this must stop the program rather than report and carry on.
+skibidi main {
+    rant s = "hello";
+    yapping("before");
+    s[5] = 88;
+    yapping("after [%s]", s);
+    bussin 0;
+}

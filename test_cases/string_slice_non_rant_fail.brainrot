@@ -1,0 +1,33 @@
+🚽 Test case: issue #251 -- slicing something that is not a rant is
+🚽 rejected STATICALLY, before the program runs.
+🚽
+🚽 `s[i:j]` is only defined for a rant. A `rizz` has no bytes to slice, and
+🚽 unlike an out-of-range bound -- which depends on values only known at
+🚽 runtime -- this is wrong no matter what the program does, so it is
+🚽 caught in semantic analysis where a better answer is available.
+🚽
+🚽 ── Both layers exist, and this fixture pins the static one ───────────
+🚽 evaluate_string_slice() (ast.c) repeats the check at runtime, and that
+🚽 is not redundant: the analyzer's find_symbol() only sees names declared
+🚽 so far in its pass, so a slice of a name it cannot resolve is left for
+🚽 the runtime to report. Neither layer subsumes the other.
+🚽
+🚽 The tell that this is the STATIC rejection is that `before` is NOT in
+🚽 the expected output. The program never starts -- semantic analysis
+🚽 fails and the process exits non-zero with nothing on stdout. An
+🚽 implementation that dropped the static check and relied only on the
+🚽 runtime one would print `before` first, and this fixture would fail.
+🚽
+🚽 A `yap buf[N]` is rejected the same way and for the same reason: it is
+🚽 VAR_CHAR-and-array, not a rant. That matters more than it looks, because
+🚽 a char buffer is the one thing most likely to be mistaken for a string
+🚽 here -- it is what slorp fills. Covered by the second declaration below
+🚽 being present and unused; swapping the sliced name to `buf` produces the
+🚽 same diagnostic, verified by hand.
+skibidi main {
+    rizz n = 5;
+    yap buf[8];
+    yapping("before");
+    yapping("never [%s]", n[0:1]);
+    bussin 0;
+}
