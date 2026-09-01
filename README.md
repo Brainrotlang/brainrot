@@ -271,7 +271,6 @@ Current limitations include:
 - Limited support for complex expressions
 - Basic error reporting
 - No support for arrays in user-defined functions
-- `ohio`/`based` (switch/default): `based` fires as soon as the interpreter's scan reaches it, so its position among the `sigma rule` cases matters — placing it before a case that would otherwise match currently pre-empts that match ([#179](https://github.com/Brainrotlang/brainrot/issues/179))
 
 ## 🗺️ Roadmap
 

@@ -7,3 +7,5 @@ lang.gv
 libstdrot.so
 brainrot.wasm
 brainrot.mjs
+__pycache__/
+rayrot/generated/

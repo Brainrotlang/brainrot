@@ -651,14 +651,8 @@ void execute_switch_statement(ASTNode *node)
     PUSH_JUMP_BUFFER();
     if (setjmp(CURRENT_JUMP_BUFFER()) == 0)
     {
-        int running = 0;
-        for (CaseNode *current_case = node->data.switch_stmt.cases; current_case; current_case = current_case->next)
-        {
-            if (current_case == entry)
-                running = 1;
-            if (running)
-                execute_statements(current_case->statements);
-        }
+        for (CaseNode *current_case = entry; current_case; current_case = current_case->next)
+            execute_statements(current_case->statements);
     }
     else
     {

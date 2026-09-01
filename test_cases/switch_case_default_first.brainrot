@@ -25,5 +25,17 @@ skibidi main {
             yapping("B one");
             bruh;
     }
+
+    🚽 C-style fall-through *out of* `based`: nothing matches, so `based` runs,
+    🚽 and with no trailing `bruh` it falls through into the following
+    🚽 `sigma rule`. Locks in the fall-through semantics the fix changed most.
+    rizz c = 9;
+    ohio (c) {
+        based:
+            yapping("default C");
+        sigma rule 1:
+            yapping("C one");
+            bruh;
+    }
     bussin 0;
 }
