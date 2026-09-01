@@ -1,0 +1,29 @@
+🚽 Example: an array of structs — a small roster of players, each a
+🚽 `gang Player`. Fills the array in a loop, then finds the top scorer.
+gang Player {
+    rizz id;
+    rizz score;
+};
+
+skibidi main {
+    gang Player roster[4];
+    rizz i;
+
+    🚽 Populate: player i has score (i + 1) * 7 % 13.
+    flex (i = 0; i < 4; i = i + 1) {
+        roster[i].id = i;
+        roster[i].score = ((i + 1) * 7) % 13;
+    }
+
+    🚽 Report every player and track the best.
+    rizz best = 0;
+    flex (i = 0; i < 4; i = i + 1) {
+        yapping("player %d scored %d", roster[i].id, roster[i].score);
+        edgy (roster[i].score > roster[best].score) {
+            best = i;
+        }
+    }
+
+    yapping("top scorer: player %d (%d)", roster[best].id, roster[best].score);
+    bussin 0;
+}

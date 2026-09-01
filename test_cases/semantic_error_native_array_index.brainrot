@@ -1,0 +1,8 @@
+🚽 Test case: a native call used as an array index -- both in a declaration
+🚽 initializer and as a call argument -- must be checked statically.
+skibidi main {
+    rizz arr[3];
+    rizz x = arr[bet(2)];
+    yapping("%d", arr[bet(2)]);
+    bussin 0;
+}

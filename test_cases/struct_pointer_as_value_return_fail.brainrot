@@ -1,0 +1,17 @@
+🚽 Test case: #193 -- returning a struct POINTER where a by-value struct
+🚽 return is expected (`bussin pp;` with `gang Point *pp`) is a type error,
+🚽 not an implicit dereference (PR #253 review, finding 1).
+gang Point {
+    rizz x;
+};
+
+gang Point deref(gang Point *pp) {
+    bussin pp;
+}
+
+skibidi main {
+    gang Point q;
+    q.x = 5;
+    gang Point r = deref(&q);
+    bussin 0;
+}

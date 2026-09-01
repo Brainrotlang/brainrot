@@ -1,0 +1,20 @@
+🚽 Test case: round-18 review finding #3 -- NONE previously meant both
+🚽 "genuinely unknown" and "known to be void," so a call to a TYPED
+🚽 native whose descriptor return type is STDROT_NONE (yapping(), a real
+🚽 STDROT_EXPORT_SIG_VARIADIC() export, not a legacy STDROT_ANY one)
+🚽 statically type-checked as NONE, and validate_binary_operation()/the
+🚽 declaration-initializer check's "can't determine the type, skip
+🚽 validation" fallback (which exists for genuinely unknown legacy
+🚽 exports) let `rizz x = yapping("hi");` through with no static error at
+🚽 all -- the exact same class of bug VAR_PTR already fixed for pointer-
+🚽 typed natives being conflated with NONE. VAR_VOID (ast.h) is now its
+🚽 own VarType, distinct from NONE and incompatible with every type
+🚽 including itself (check_type_compatibility_ex(), semantic_analyzer.c),
+🚽 so this is now caught statically, before any execution -- not merely
+🚽 at runtime by evaluate_expression_int()'s own void-result check the
+🚽 way a legacy STDROT_ANY export's void result still has to be (see
+🚽 native_return_type_any_void_value_context.brainrot for that case).
+skibidi main {
+    rizz x = yapping("hi");
+    bussin 0;
+}

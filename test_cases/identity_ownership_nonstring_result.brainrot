@@ -1,0 +1,21 @@
+🚽 Test case: round-13 review finding #1 -- string ownership metadata must
+🚽 travel with the specific NativeResult it describes, not through a
+🚽 process-global, because evaluating a call's OWN arguments can invoke
+🚽 OTHER native calls first. `takes_cstring(identity(slorp(buf)))` as a bare
+🚽 statement: identity(slorp(buf)) is evaluated first, while marshalling
+🚽 takes_cstring's own argument -- slorp(buf) marshals into a freshly
+🚽 allocated buffer, identity() aliases and returns it unchanged, so
+🚽 execute_native_call() materializes an independent copy and marks it
+🚽 owned. That copy is consumed (as a CSTRING) and freed correctly by
+🚽 takes_cstring's own argument cleanup -- but if ownership were tracked as
+🚽 a single mutable global instead of part of that specific NativeResult,
+🚽 it would still read true after takes_cstring's OWN call returns (an
+🚽 STDROT_INT from strlen(), never touching a string-only ownership check),
+🚽 and execute_func_call()'s statement-position cleanup would reinterpret
+🚽 that int's union bits as a heap pointer and free them.
+skibidi main {
+    yap buf[32];
+    takes_cstring(identity(slorp(buf)));
+    yapping("ok");
+    bussin 0;
+}

@@ -1,0 +1,88 @@
+name: Native release build
+description: Build, verify, and upload one native Brainrot release artifact.
+
+inputs:
+  os:
+    description: Target OS name from the release matrix.
+    required: true
+  artifact-name:
+    description: Name for the uploaded native release artifact.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install release dependencies (Linux)
+      if: ${{ inputs.os == 'linux' }}
+      shell: bash
+      run: |
+        sudo sed -i \
+          's|azure.archive.ubuntu.com|archive.ubuntu.com|g' \
+          /etc/apt/apt-mirrors.txt
+        cat /etc/apt/apt-mirrors.txt
+        sudo apt-get \
+          -o Acquire::Retries=3 \
+          -o Acquire::http::Timeout=15 \
+          -o Acquire::https::Timeout=15 \
+          update
+        sudo apt-get \
+          -o Acquire::Retries=3 \
+          -o Acquire::http::Timeout=15 \
+          -o Acquire::https::Timeout=15 \
+          install gcc flex bison libfl-dev libssl-dev -y
+
+    - name: Install release dependencies (macOS)
+      if: ${{ inputs.os == 'darwin' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        brew install flex bison openssl@3
+        echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+        echo "$(brew --prefix flex)/bin" >> "$GITHUB_PATH"
+        echo "FLEX_PREFIX=$(brew --prefix flex)" >> "$GITHUB_ENV"
+        # openssl is keg-only on Homebrew: point pkg-config at its .pc files so
+        # the Makefile can resolve libcrypto for gamba's RAND_bytes dependency
+        # (issue #215). On Darwin the Makefile STATICALLY links libcrypto.a
+        # (self-contained dylib, no Homebrew path baked in) via
+        # pkg-config --variable=libdir; this export is belt-and-suspenders
+        # since `make` also auto-detects `brew --prefix openssl@3` itself.
+        echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig" >> "$GITHUB_ENV"
+
+    - name: Build release binaries
+      shell: bash
+      run: make release FLEX_PREFIX="${FLEX_PREFIX:-}"
+
+    - name: Verify release binary
+      shell: bash
+      run: |
+        set -euo pipefail
+        tmpdir="$(mktemp -d)"
+        cp brainrot libstdrot.so "$tmpdir/"
+        chmod +x "$tmpdir/brainrot"
+        (cd / && "$tmpdir/brainrot" \
+          "$GITHUB_WORKSPACE/examples/hello_world.brainrot")
+        file "$tmpdir/brainrot"
+        file "$tmpdir/libstdrot.so"
+        # Darwin: prove the shipped libstdrot.so carries NO load command
+        # pointing at Homebrew's keg-only OpenSSL. libcrypto is statically
+        # linked (issue #215), so a program on a machine without that exact
+        # brew prefix must still dlopen the stdlib. A stray keg-only path here
+        # is the exact "works only on the builder" regression to catch.
+        if [ "${{ inputs.os }}" = "darwin" ]; then
+          if otool -L "$tmpdir/libstdrot.so" | grep -Ei 'libcrypto|openssl'; then
+            echo "ERROR: libstdrot.so references an external OpenSSL dylib;" \
+              "libcrypto must be statically linked on Darwin." >&2
+            exit 1
+          fi
+          echo "otool -L clean: no external OpenSSL load command."
+        fi
+
+    - name: Upload binaries
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: |
+          brainrot
+          libstdrot.so
+        if-no-files-found: error
+        retention-days: 1

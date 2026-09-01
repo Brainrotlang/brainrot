@@ -1,0 +1,108 @@
+🚽 Test case: issue #319 -- `bussin` from inside a loop or switch.
+🚽
+🚽 LONGJMP() jumps to the INNERMOST jump buffer. Loops, do-while and
+🚽 switch each push one so `bruh` can escape them, and
+🚽 execute_function_call() pushes one so `bussin` can. A return from
+🚽 inside a loop therefore landed in the LOOP's setjmp: it skipped the
+🚽 loop body, popped, and fell through to the statement AFTER the loop --
+🚽 inside a function that was supposed to have returned. `bussin` silently
+🚽 behaved as `break`.
+🚽
+🚽 The mismatched scope stack then killed the process: exit_scope() found
+🚽 current_scope == NULL and called exit(1) directly, so NOTHING was
+🚽 flushed. The original repro produced an empty stdout, exit 1, and an
+🚽 error naming an internal concept ("No scope to exit") at a line that
+🚽 was not the return.
+🚽
+🚽 ── What this fixture pins ────────────────────────────────────────────
+🚽 That the returns produce the RIGHT VALUES, not merely that the program
+🚽 survives. `bussin`-as-`break` would have fallen through to the
+🚽 trailing `bussin 0 - 1;` in each function below, so every one of these
+🚽 would print -1 rather than crashing, once the scope stack no longer
+🚽 died. Checking only for a clean exit would miss that entirely.
+🚽
+🚽 `bruh` is exercised alongside, because the fix works by discarding
+🚽 break targets on the return path -- so the thing most at risk of
+🚽 regressing is `break` itself.
+rizz fromFor(rizz n) {
+    flex (rizz i = 0; i < n; i = i + 1) {
+        edgy (i == 2) {
+            bussin i;
+        }
+    }
+    bussin 0 - 1;
+}
+
+rizz fromWhile(rizz n) {
+    rizz i = 0;
+    goon (i < n) {
+        edgy (i == 3) {
+            bussin i * 10;
+        }
+        i = i + 1;
+    }
+    bussin 0 - 1;
+}
+
+🚽 Two levels deep: the return has to discard BOTH loops' buffers.
+rizz fromNested(rizz n) {
+    flex (rizz i = 0; i < n; i = i + 1) {
+        flex (rizz j = 0; j < n; j = j + 1) {
+            edgy (i == 1 && j == 2) {
+                bussin i * 100 + j;
+            }
+        }
+    }
+    bussin 0 - 1;
+}
+
+🚽 `ohio` pushes a break target too, so it is the same bug.
+rizz fromSwitch(rizz k) {
+    ohio (k) {
+        sigma rule 1:
+            bussin 11;
+        based:
+            bussin 99;
+    }
+    bussin 0 - 1;
+}
+
+🚽 A BARE `bussin;` (void return, #320) from inside a loop -- the
+🚽 intersection of that change and this one, which neither fixture covered
+🚽 on its own. It must leave the function, not the loop: "NOT REACHED"
+🚽 below is what a `bussin`-as-`break` would print.
+skibidi findAndStop(rizz n) {
+    flex (rizz i = 0; i < n; i = i + 1) {
+        edgy (i == 2) {
+            yapping("stopping at %d", i);
+            bussin;
+        }
+        yapping("visiting %d", i);
+    }
+    yapping("NOT REACHED");
+}
+
+🚽 The control case: `bruh` must still escape exactly one loop.
+rizz stillBreaks(rizz n) {
+    rizz total = 0;
+    flex (rizz i = 0; i < n; i = i + 1) {
+        edgy (i == 2) {
+            bruh;
+        }
+        total = total + i;
+    }
+    bussin total;
+}
+
+skibidi main {
+    yapping("for      %d", fromFor(5));
+    yapping("while    %d", fromWhile(5));
+    yapping("nested   %d", fromNested(4));
+    yapping("switch   %d", fromSwitch(1));
+    yapping("switch d %d", fromSwitch(7));
+    yapping("break    %d", stillBreaks(5));
+    findAndStop(5);
+    🚽 execution continues past every one of those
+    yapping("done");
+    bussin 0;
+}

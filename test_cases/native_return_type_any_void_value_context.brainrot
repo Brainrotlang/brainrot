@@ -1,0 +1,12 @@
+🚽 Test case: legacy_void() is a legacy/untyped export (STDROT_ANY)
+🚽 whose actual runtime result is STDROT_NONE (void). Used as a bare
+🚽 statement that's fine -- but used where a value is expected
+🚽 (`gigachad x = legacy_void();`), the semantic analyzer has no static
+🚽 type for it to reject statically (infer_expression_type() reports
+🚽 NONE, so the declaration check is skipped outright), so
+🚽 evaluate_expression_double() must catch it at runtime instead of
+🚽 silently treating "no value at all" as 0.0.
+skibidi main {
+    gigachad x = legacy_void();
+    bussin 0;
+}

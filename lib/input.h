@@ -18,6 +18,7 @@
 #include <errno.h>
 #include <stdint.h>
 #include <limits.h>
+#include <stdbool.h>
 
 // Return codes for input functions
 typedef enum
@@ -36,7 +37,8 @@ typedef enum
 } input_status;
 
 /**
- * Clears the remaining input in stdin to prevent it from affecting subsequent reads.
+ * Clears the remaining input in stdin to prevent it from affecting subsequent
+ * reads.
  */
 void clear_stdin_buffer(void);
 
@@ -89,5 +91,16 @@ input_status input_float(float *value);
  * @return input_status indicating success or type of error
  */
 input_status input_double(double *value);
+
+/**
+ * Safely reads a boolean value. Accepts exactly "0" or "1" -- no
+ * "true"/"false"/"y"/"n" aliases, matching this library's existing
+ * strict-conversion style (input_int/input_double reject any trailing
+ * character too, not just a wrong token).
+ *
+ * @param value Pointer to store the boolean value
+ * @return input_status indicating success or type of error
+ */
+input_status input_bool(bool *value);
 
 #endif // INPUT_H

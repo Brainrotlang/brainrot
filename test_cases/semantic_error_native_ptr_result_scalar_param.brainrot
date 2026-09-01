@@ -1,0 +1,9 @@
+🚽 Test case: poke_int's second parameter is a plain STDROT_INT, not a
+🚽 pointer -- passing test_ptr_source()'s STDROT_PTR result into it must
+🚽 be rejected statically rather than handed to the wrapper as if it were
+🚽 an ordinary int.
+skibidi main {
+    rizz value = 10;
+    poke_int(&value, test_ptr_source());
+    bussin 0;
+}

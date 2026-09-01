@@ -1,0 +1,45 @@
+---
+# Small, curated allowlist -- deliberately not "checks=*" (see issue #172).
+# bugprone/clang-analyzer/performance catch real bugs; the readability
+# entries below are the handful that survived triage against this tree
+# without mass-NOLINT-ing intentional patterns (arena/pool allocation,
+# the tree-walking visitor's recursion, etc).
+#
+# clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling is
+# dropped: it fires on every memcpy/memset call recommending C11 Annex K
+# (memcpy_s/memset_s), which glibc doesn't implement and this codebase
+# doesn't use anywhere -- pure noise, not a real finding.
+#
+# bugprone-easily-swappable-parameters is dropped: purely stylistic (would
+# want renaming, not a code fix), and fires on dozens of ordinary
+# two-int-parameter functions throughout this codebase with no correctness
+# signal behind it.
+#
+# bugprone-narrowing-conversions is dropped: the interpreter's typed-value
+# arithmetic deliberately narrows a C-promoted `int`/`double`/`long double`
+# result back down to the operand's declared width (short/float/char/etc.)
+# via a typed pointer store, at every single binop x type combination in
+# ast.c's evaluator -- dozens of identical-shape, intentional instances, not
+# individually actionable findings.
+#
+# performance-no-int-to-ptr is dropped: pointer values flow through this
+# interpreter as uintptr_t (the tagged-value representation's pointer
+# boxing, see STDROT_PTR / pointer_level throughout ast.c, interpreter.c,
+# stdrot.c) and get cast back to void*/typed pointers at every dispatch
+# boundary -- again a pervasive, deliberate pattern, not individually
+# actionable findings.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  performance-*,
+  -performance-no-int-to-ptr,
+  readability-else-after-return,
+  readability-redundant-declaration,
+  readability-non-const-parameter
+WarningsAsErrors: '*'
+HeaderFilterRegex: '^\./(lib|stdrot)/.*\.h$'
+FormatStyle: none

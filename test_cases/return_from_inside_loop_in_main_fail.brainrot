@@ -1,0 +1,58 @@
+🚽 Test case: issue #319, the shape the fix deliberately does NOT cover --
+🚽 `bussin` inside a loop in `main`.
+🚽
+🚽 The companion fixture (return_from_inside_loop.brainrot) puts every
+🚽 scenario inside a helper function, and that is exactly why this one
+🚽 exists: it is the one place where the invariant the fix relies on does
+🚽 not hold, and it was missed for precisely that reason (PR #325 review).
+🚽
+🚽 ── Why main is different ─────────────────────────────────────────────
+🚽 handle_return_statement() (ast.c) discards the BREAK targets between a
+🚽 `bussin` and its own function's frame, because LONGJMP() goes to the
+🚽 innermost buffer and a return from inside a loop would otherwise land in
+🚽 the LOOP's setjmp.
+🚽
+🚽 execute_function_call() is the only site that pushes an is_function
+🚽 buffer, and `main`'s body never goes through it -- skibidi_function
+🚽 reduces to a bare statement list. So in `main` there is no function frame
+🚽 anywhere below the `bussin`, and draining unconditionally would empty the
+🚽 whole stack, leave jump_buffer NULL, skip the LONGJMP entirely, and drop
+🚽 execution back into the loop body with its scopes already unwound. Every
+🚽 statement after that reports against a dead scope.
+🚽
+🚽 ── What this fixture pins ────────────────────────────────────────────
+🚽 EXACTLY ONE diagnostic, which is what main produced before #319 touched
+🚽 anything. It is a NON-REGRESSION test, not an endorsement: `bussin 0` in
+🚽 `main` should just end the program, and this error is the pre-existing
+🚽 wrong answer. What must not happen is the fix making it worse.
+🚽
+🚽 Without the has_function_frame check, this prints four errors instead of
+🚽 one:
+🚽     Error: Undefined variable ...
+🚽     Error: Undefined variable in get_expression_type ...
+🚽     Error: Assignment to undefined variable ...
+🚽     Error: No scope to exit ...
+🚽 -- the loop's increment and condition still running against the torn-down
+🚽 scope before hitting the same terminal failure. Verified by mutation:
+🚽 removing the guard makes this fixture red while the companion fixture
+🚽 stays green, which is the whole reason it is a separate file.
+🚽
+🚽 `before` is printed so the fixture pins that the program got that far,
+🚽 and `AFTER LOOP` is absent from the expected output because execution
+🚽 must NOT resume after the loop.
+🚽
+🚽 A proper fix -- making `bussin` in `main` terminate the program, and
+🚽 plumbing its value so `bussin 3;` exits 3 rather than 0 -- is a larger
+🚽 change than #319 and is deliberately out of scope here. When that lands,
+🚽 this fixture is expected to change, and it should: it documents current
+🚽 behaviour, not desired behaviour.
+skibidi main {
+    yapping("before");
+    flex (rizz i = 0; i < 5; i = i + 1) {
+        edgy (i == 2) {
+            bussin 0;
+        }
+    }
+    yapping("AFTER LOOP");
+    bussin 0;
+}

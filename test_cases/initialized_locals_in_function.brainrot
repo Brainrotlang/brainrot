@@ -1,0 +1,39 @@
+🚽 Test case: function-local array/struct/union locals declared *with* a
+🚽 braced initializer (not just bare declarations) get their storage and
+🚽 initializer populated correctly at runtime, per call
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+chungus Data {
+    rizz i;
+    chad f;
+};
+
+rizz sum_array_init() {
+    rizz arr[3] = {1, 2, 3};
+    bussin arr[0] + arr[1] + arr[2];
+}
+
+rizz point_init_x() {
+    gang Point p = {7, 8};
+    bussin p.x;
+}
+
+rizz point_init_y() {
+    gang Point p = {7, 8};
+    bussin p.y;
+}
+
+rizz union_init() {
+    chungus Data d = {99};
+    bussin d.i;
+}
+
+skibidi main {
+    yapping("%d", sum_array_init());
+    yapping("%d %d", point_init_x(), point_init_y());
+    yapping("%d", union_init());
+    bussin 0;
+}

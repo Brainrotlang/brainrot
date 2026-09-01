@@ -1,0 +1,15 @@
+🚽 Test case: round-21 review finding #3 -- making `skibidi` reachable
+🚽 through the whole `type` grammar (round 20) meant validity needed
+🚽 patching at every declaration-like position, not just variable
+🚽 declarations. A named by-value (pointer_level 0) void parameter is
+🚽 nonsense -- an empty parameter list already spells "no parameters" --
+🚽 but param_list's grammar action had no check for it, so
+🚽 `rizz wat(skibidi x)` parsed and installed `x` into the symbol table
+🚽 with type VAR_VOID. Now rejected at parse time.
+rizz wat(skibidi x) {
+    bussin 42;
+}
+
+skibidi main {
+    bussin 0;
+}

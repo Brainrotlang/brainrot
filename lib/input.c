@@ -7,7 +7,8 @@
 #include "input.h"
 
 /**
- * Clears the remaining input in stdin to prevent it from affecting subsequent reads.
+ * Clears the remaining input in stdin to prevent it from affecting subsequent
+ * reads.
  */
 void clear_stdin_buffer(void)
 {
@@ -87,7 +88,7 @@ input_status input_string(char *buffer, size_t buffer_size, size_t *chars_read)
 
     // Check if the input was truncated (no newline found)
     size_t len = strnlen(buffer, buffer_size);
-    if(len == buffer_size && buffer[len - 1] != '\n')
+    if (len == buffer_size && buffer[len - 1] != '\n')
     {
         clear_stdin_buffer();
         return INPUT_BUFFER_OVERFLOW;
@@ -274,4 +275,35 @@ input_status input_double(double *value)
 
     *value = result;
     return INPUT_SUCCESS;
+}
+
+/**
+ * Safely reads a boolean value ("0" or "1" only)
+ *
+ * @param value Pointer to store the boolean value
+ * @return input_status indicating success or type of error
+ */
+input_status input_bool(bool *value)
+{
+    if (value == NULL)
+    {
+        return INPUT_NULL_PTR;
+    }
+
+    char buffer[32];
+    size_t chars_read;
+
+    input_status status = input_string(buffer, sizeof(buffer), &chars_read);
+    if (status != INPUT_SUCCESS)
+    {
+        return status;
+    }
+
+    if (chars_read == 1 && (buffer[0] == '0' || buffer[0] == '1'))
+    {
+        *value = buffer[0] == '1';
+        return INPUT_SUCCESS;
+    }
+
+    return INPUT_CONVERSION_ERROR;
 }

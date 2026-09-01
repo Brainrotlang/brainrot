@@ -1,0 +1,8 @@
+🚽 Test case: native call arity mismatch (Phase 2 -- typed native ABI).
+🚽 bet's fixed/checked prefix is exactly 1 parameter (the condition); calling
+🚽 it with zero arguments must be a semantic error, not a runtime crash.
+skibidi main {
+    cap ok = bet();
+    yapping("%b", ok);
+    bussin 0;
+}

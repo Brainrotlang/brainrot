@@ -1,0 +1,15 @@
+🚽 Example: brace-init of a union whose single member is a nested struct
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+chungus Shape {
+    gang Point pt;
+    rizz raw;
+};
+
+skibidi main {
+    chungus Shape s = { {7, 9} };
+    yapping("%d %d", s.pt.x, s.pt.y);
+}

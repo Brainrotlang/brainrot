@@ -1,0 +1,20 @@
+🚽 maxxing (sizeof) on enum-typed operands
+gyatt Color {
+    RED,
+    GREEN,
+    BLUE
+};
+
+gang Shape {
+    gyatt Color c;
+};
+
+skibidi main {
+    gyatt Color favorite;
+    yapping("%lu", maxxing(favorite));
+
+    gang Shape s;
+    yapping("%lu", maxxing(s.c));
+
+    bussin 0;
+}

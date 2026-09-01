@@ -1,0 +1,19 @@
+🚽 Test case: enum-typed field nested inside a union
+gyatt Color {
+    RED,
+    GREEN,
+    BLUE
+};
+
+chungus Data {
+    gyatt Color c;
+    rizz raw;
+};
+
+skibidi main {
+    chungus Data d;
+    d.c = GREEN;
+    yapping("%d", d.c);
+    yapping("%d", d.raw);
+    bussin 0;
+}

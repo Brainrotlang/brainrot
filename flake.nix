@@ -15,16 +15,21 @@
         version = "1.0.0";
         src = ./.;
 
-        nativeBuildInputs = with pkgs; [ 
-          flex 
-          bison 
-          gcc 
+        nativeBuildInputs = with pkgs; [
+          flex
+          bison
+          gcc
+          # The Makefile resolves libcrypto via pkg-config (issue #215).
+          pkg-config
         ];
 
-        buildInputs = with pkgs; [ 
-          # On Nix, flex provides the headers and libs (libfl) 
+        buildInputs = with pkgs; [
+          # On Nix, flex provides the headers and libs (libfl)
           # needed for the -lfl flag.
-          flex 
+          flex
+          # OpenSSL (libcrypto) is a required dependency of libstdrot.so:
+          # gamba() is backed by RAND_bytes. Without it the native link fails.
+          openssl
         ];
 
         # Ensure the Makefile uses the correct paths
@@ -39,14 +44,16 @@
       };
 
       devShells.${system}.default = pkgs.mkShell {
-        nativeBuildInputs = with pkgs; [ 
-          flex 
-          bison 
-          gcc 
-          python3 
+        nativeBuildInputs = with pkgs; [
+          flex
+          bison
+          gcc
+          python3
           python3Packages.pytest
-          valgrind 
+          valgrind
           clang-tools
+          pkg-config
+          openssl
         ];
       };
     };

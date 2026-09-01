@@ -1,0 +1,20 @@
+🚽 Test case: #193 -- pointer-to-struct return types are now supported
+🚽 (see struct_pointer_return.brainrot), but returning a BY-VALUE struct
+🚽 from a pointer-returning function (`gang Point *f() { ... bussin p; }`
+🚽 where p is a `gang Point`, not a pointer) is a type error: the return
+🚽 value is not a pointer, so there is nothing to store into the pointer
+🚽 destination.
+gang Point {
+    rizz x;
+};
+
+gang Point *get_ptr() {
+    gang Point p;
+    p.x = 5;
+    bussin p;
+}
+
+skibidi main {
+    gang Point *r = get_ptr();
+    bussin 0;
+}

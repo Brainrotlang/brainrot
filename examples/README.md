@@ -336,4 +336,379 @@ skibidi main{
 - Using a `goon` loop to find the next numbers, until limit.
 
 
+## 8. Modules (`#cooked`)
+
+**File Names:** `mathutils.brainrot`, `modules.brainrot`
+
+`mathutils.brainrot`:
+
+```c
+rizz square(rizz n) {
+    bussin n * n;
+}
+
+rizz cube(rizz n) {
+    bussin n * n * n;
+}
+```
+
+`modules.brainrot`:
+
+```c
+#cooked "mathutils.brainrot"
+
+skibidi main {
+    yapping("square(6) = %d", square(6));
+    yapping("cube(3) = %d", cube(3));
+    bussin 0;
+}
+```
+
+Run with `./brainrot examples/modules.brainrot`.
+
+### What It Does
+
+- Demonstrates `#cooked` (Brainrot's `#include`): `modules.brainrot` splices
+  in `mathutils.brainrot`'s functions and calls them from `main`.
+- `mathutils.brainrot` is a module, not a standalone program — it has no
+  `skibidi main` of its own, only function definitions, and can't be run
+  directly.
+- Showcases:
+  - Splitting a program across multiple files.
+  - Relative path resolution (`#cooked` paths resolve relative to the file
+    containing the directive).
+
+**File Name:** `modules_named.brainrot`
+
+```c
+#cooked <mathutils>
+
+skibidi main {
+    yapping("square(6) = %d", square(6));
+    yapping("cube(3) = %d", cube(3));
+    bussin 0;
+}
+```
+
+Run with `BRAINROT_PATH=examples ./brainrot examples/modules_named.brainrot`.
+
+### What It Does
+
+- Demonstrates the angle-bracket form of `#cooked`: instead of a path,
+  `<mathutils>` names a module and lets `$BRAINROT_PATH` (and the other
+  module search-path tiers) find `mathutils.brainrot` for it.
+- Reuses the same `mathutils.brainrot` module as the example above — the two
+  `#cooked` forms splice in identical content, they just resolve the target
+  file differently.
+
+## 9. Ohio Engine — the first cursed game (raylib)
+
+**File Name:** `raylib/ohio_engine.brainrot`
+
+```c
+#cooked <raylib>
+
+skibidi main {
+    rl_init_window(1280, 720, "Ohio Engine");
+    rl_set_target_fps(60);
+
+    rizz x = 640;
+    rizz y = 360;
+    rizz vx = 6;
+    rizz vy = 5;
+
+    🚽 A native cap result is landed in a cap variable first, then tested.
+    cap running = W;
+
+    goon (running) {
+        cap boost = rl_is_key_down(32);   🚽 SPACE
+        rizz step = 1;
+        edgy (boost) { step = 2; }
+
+        x = x + vx * step;
+        y = y + vy * step;
+        🚽 ... bounce off the walls (elided) ...
+
+        rl_begin_drawing();
+        rl_clear_background(20, 20, 20, 255);
+        rl_draw_circle(x, y, 60.0, 255, 0, 255, 255);
+        rl_draw_text("ABSOLUTE CINEMA", x - 130, y - 16, 32, 255, 255, 255, 255);
+        rl_end_drawing();
+
+        cap wants_close = rl_window_should_close();
+        edgy (wants_close) { running = L; }
+    }
+
+    rl_close_window();
+    bussin 0;
+}
+```
+
+### What It Does
+
+- Runs an actual raylib game loop: a bouncing "ABSOLUTE CINEMA" orb with live
+  FPS. Hold **SPACE** to speed it up, **ESC** (or the window's close button)
+  to quit.
+- Demonstrates calling a real C library from Brainrot through the `rayrot`
+  native module, loaded with `#cooked <raylib>`.
+- Colors are passed as four separate `r, g, b, a` integers and textures would
+  be integer handles — the native ABI does not carry C structs by value yet
+  (see [`raylib/README.md`](raylib/README.md) and
+  [`docs/rayrot.md`](../docs/rayrot.md)).
+
+**Requires raylib** (an optional dependency). Install a system raylib first —
+on Ubuntu that is **not** `apt-get install libraylib-dev`; see the canonical
+setup guide [`docs/rayrot.md`](../docs/rayrot.md#installing-raylib) (Ubuntu
+PPA / source build, macOS `brew install raylib`). Then build the wrapper module
+`rayrot/raylib.so` and run (or just `make play`):
+
+```bash
+make rayrot
+BRAINROT_PATH=rayrot ./brainrot examples/raylib/ohio_engine.brainrot
+```
+
+`#cooked <raylib>` loads `rayrot/raylib.so`, not the system `libraylib.so`
+directly, so `BRAINROT_PATH` must point at a directory containing it.
+`make`, `make test`, and `make valgrind` do **not** build this module and do
+not require raylib.
+
+---
+
+## 9b. Ohio Engine II — the same loop, generated (raylib)
+
+**File Name:** `raylib/ohio_engine_gen.brainrot`
+
+```c
+#cooked <raylibgen>
+
+skibidi main {
+    rl_init_window(640, 360, "Ohio Engine II: Generated Boogaloo");
+
+    gang Vector2 pos;
+    pos.x = 320.0;
+    pos.y = 180.0;
+
+    gang Color orb;
+    orb.r = 255;
+    orb.g = 0;
+    orb.b = 255;
+    orb.a = 255;
+
+    🚽 ... loop ...
+    rl_draw_circle_v(pos, 60.0, orb);
+}
+```
+
+**Description:** The same game loop as above, but through a binding nobody
+wrote by hand.
+
+The difference is the point. Road A's `rl_draw_circle(640, 360, 100.0, 255, 0,
+255, 255)` flattens a position and a colour into seven loose scalars, because
+that was all hand-written wrappers could carry. Here the same call passes real
+aggregates by value — a `gang Vector2` and a `gang Color` — straight into
+raylib's own `DrawCircleV(Vector2, float, Color)`.
+
+Every function it calls is a generated adapter, and every `gang` it uses is a
+generated declaration whose byte layout is `_Static_assert`ed against the real
+raylib headers. It closes itself after 30 frames so it can run unattended.
+
+```bash
+make rayrot-gen   # generate + compile the binding, then verify its ABI
+make play-gen       # ... and run this example
+```
+
+**Key Concepts:**
+
+- By-value struct arguments across the native ABI (`STDROT_STRUCT`).
+- `#cooked <raylibgen>` resolves a generated *prelude*, which declares the
+  `gang` types and `gyatt` constants and itself cooks the native module — so
+  types and constants need no ABI support at all.
+- Generating the binding needs only Python and the pinned
+  `rayrot/raylib_api.json`; only compiling it needs raylib.
+
+See [`docs/rayrot.md`](../docs/rayrot.md#road-b--the-generated-binding) for
+what the generator covers (378 of raylib's 617 functions) and what it
+deliberately skips.
+
+---
+
+## 10. Array of Structs
+
+**File Name:** `array_of_structs.brainrot`
+
+```c
+gang Player {
+    rizz id;
+    rizz score;
+};
+
+skibidi main {
+    gang Player roster[4];
+    rizz i;
+
+    flex (i = 0; i < 4; i = i + 1) {
+        roster[i].id = i;
+        roster[i].score = ((i + 1) * 7) % 13;
+    }
+
+    rizz best = 0;
+    flex (i = 0; i < 4; i = i + 1) {
+        yapping("player %d scored %d", roster[i].id, roster[i].score);
+        edgy (roster[i].score > roster[best].score) {
+            best = i;
+        }
+    }
+
+    yapping("top scorer: player %d (%d)", roster[best].id, roster[best].score);
+    bussin 0;
+}
+```
+
+### What It Does
+
+- Declares `gang Player roster[4];` — an **array whose elements are whole
+  structs**, laid out with the struct's own alignment.
+- Index-then-access composes: `roster[i].id`, `roster[i].score`, and
+  `roster[best].score` all address the right element's blob.
+- Works with multi-dimensional arrays (`gang Point grid[2][2];`) and nested
+  struct fields (`lines[i].a.x`) too. See
+  [§7.9 of the language reference](../docs/the-brainrot-programming-language.md#79-structs-gang).
+
+---
+
+## 11. String Toolkit
+
+**File Name:** `string_toolkit.brainrot`
+
+```c
+rant full_name(rant first, rant last) {
+    bussin yapcat(yapcat(first, " "), last);
+}
+
+cap contains(rant haystack, rant needle) {
+    bussin yapidx(haystack, needle) >= 0;
+}
+
+skibidi main {
+    rant name = full_name("Big", "Chungus");
+
+    yapping("name:   %s", name);
+    yapping("length: %d", yaplen(name));
+    yapping("space:  %d", yapidx(name, " "));
+
+    yapping("contains 'hung': %d", contains(name, "hung"));
+
+    edgy (yapcmp("Chad", "Chadwick") < 0) {
+        yapping("Chad sorts before Chadwick");
+    }
+    bussin 0;
+}
+```
+
+### What It Does
+
+- Exercises the four v1 string builtins: `yaplen` (length in **bytes**),
+  `yapcat` (join, returning a **new** string), `yapcmp` (`-1`/`0`/`1`
+  ordering) and `yapidx` (byte index, or `-1`).
+- Shows the idiomatic "contains" test, `yapidx(h, n) >= 0` — which stays
+  correct even for an empty needle, because an empty needle returns `0`
+  rather than `-1`.
+- Builds a crude email validator out of nothing but two `yapidx` calls,
+  since v1 has **no substring or slice operation** yet — measure, join,
+  compare and search are the whole toolkit.
+- Ends by printing `yaplen("é")`, which is `2`: lengths count bytes, not
+  characters. See
+  [§8.9 of the language reference](../docs/the-brainrot-programming-language.md#89-strings-yaplen-yapcat-yapcmp-yapidx-si-sij).
+
+---
+
+## 12. String Parsing (`s[i]` and `s[i:j]`)
+
+**File Name:** `string_parsing.brainrot`
+
+```c
+🚽 Everything up to the first `sep`, or the whole string when it is absent.
+rant field_before(rant s, rant sep) {
+    rizz at = yapidx(s, sep);
+    edgy (at < 0) {
+        bussin s[0:yaplen(s)];
+    }
+    bussin s[0:at];
+}
+
+cap is_digit(yap c) {
+    bussin c >= 48 && c <= 57;
+}
+
+skibidi main {
+    rant record = "name=Chungus";
+    yapping("key   : %s", field_before(record, "="));
+    yapping("first : %c", record[0]);
+    yapping("last  : %c", record[yaplen(record) - 1]);
+    bussin 0;
+}
+```
+
+### What It Does
+
+- Uses the two **syntax** halves of the string library: `s[i]` (a byte, as a
+  `yap`) and `s[i:j]` (a new `rant` over the half-open range `[i, j)`).
+- Splits a delimited record into key and value — the smallest realistic task
+  that the four builtins **cannot** do alone, since none of them can pull a
+  piece *out* of a string.
+- Pairs slicing with `yapidx`: the `-1` "not found" result becomes the
+  fallback branch, so a record with no separator still yields sensible parts.
+- Shows per-character work (`count_digits`) which simply was not expressible
+  before indexing existed.
+- Ends on the v1 limitation worth knowing: bounds are **bytes**, so a two-byte
+  UTF-8 character is two indices and slicing between them splits it. Both
+  slice bounds are required and there are no negative indices — see
+  [§8.9 of the language reference](../docs/the-brainrot-programming-language.md#89-strings-yaplen-yapcat-yapcmp-yapidx-si-sij).
+
+---
+
+## 13. File I/O — Word Count (`SAUCE *`)
+
+**File Name:** `file_wordcount.brainrot`
+
+```c
+skibidi main {
+    SAUCE *out = crackopen("/tmp/demo.txt", "w");
+    yapto(out, "the quick brown fox\n");
+    peaceout(out);
+
+    SAUCE *in = crackopen("/tmp/demo.txt", "r");
+    edgy (!in) {
+        yapping("file got negative aura");
+        ragequit(1);
+    }
+
+    goon (!itsjoever(in)) {
+        rant line = skim(in);
+        yapping("%s", line);
+    }
+    peaceout(in);
+    bussin 0;
+}
+```
+
+### What It Does
+
+- Writes its own input file and reads it back, so it is self-contained and
+  re-runnable — nothing to set up.
+- Uses the `goon (!itsjoever(f))` read loop, which prints **exactly** the
+  file's lines. `itsjoever` peeks at the next byte rather than reporting a
+  past failure, so it avoids the phantom trailing iteration that makes C's
+  `while (!feof(f))` a classic bug.
+- Combines file I/O with the string library: `skim` returns a `rant`, and
+  `yaplen` / `s[i]` do the word counting.
+- Shows `doomscroll` (raw bytes, binary-safe, length-delimited), `zoink` /
+  `whereami` / `throwback` for seeking, and `yapto` for formatted writing.
+- Ends on the two failure shapes: a **missing** file is falsy and handled
+  (`edgy (!f)`), while an **invalid** handle is fatal and diagnosed.
+- A `SAUCE *` is an opaque handle the library owns — see
+  [`docs/file-io.md`](../docs/file-io.md) for the ownership model.
+
+---
+
 Feel free to explore and modify each example to learn more about how this language’s syntax and features work!

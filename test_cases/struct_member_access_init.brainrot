@@ -1,0 +1,36 @@
+🚽 Test case: #193 -- copy-initializing a struct variable from a by-value
+🚽 struct/union member-access sub-expression (`gang Point c = b.corner;`),
+🚽 the declaration counterpart of the struct-argument/return member-access
+🚽 support. Covers a plain nested member, independence from the source
+🚽 (mutating the original must not touch the copy), and a member reached
+🚽 through a pointer-field chain (`gang Point d = a.next.pt;`, composing
+🚽 with #197).
+gang Point {
+    rizz x;
+    rizz y;
+};
+gang Box {
+    gang Point corner;
+};
+gang Node {
+    gang Point pt;
+    gang Node *next;
+};
+
+skibidi main {
+    gang Box b;
+    b.corner.x = 5;
+    b.corner.y = 6;
+    gang Point c = b.corner;
+    yapping("%d %d", c.x, c.y);
+    b.corner.x = 999;
+    yapping("%d %d", c.x, c.y);
+
+    gang Node a;
+    gang Node n;
+    n.pt.x = 100;
+    n.pt.y = 200;
+    a.next = &n;
+    gang Point d = a.next.pt;
+    yapping("%d %d", d.x, d.y);
+}

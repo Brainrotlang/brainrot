@@ -1,0 +1,12 @@
+skibidi main
+{
+    🚽 a native call returning a string or char used directly as an
+    🚽 argument to another native call.
+    yap buf[32];
+    yapping("%s", slorp(buf));
+
+    yap c;
+    yapping("%c", slorp(c));
+
+    bussin 0;
+}

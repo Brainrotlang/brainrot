@@ -1,0 +1,25 @@
+🚽 Test case: #193 -- returning a struct-returning call result whose type
+🚽 does not match the declared return type (`bussin mk();` where `mk`
+🚽 returns `gang Other` but the function returns `gang Point`) is rejected
+🚽 at the return statement, and the temporary return blob is freed (no leak).
+gang Point {
+    rizz x;
+};
+gang Other {
+    rizz z;
+};
+
+gang Other mk() {
+    gang Other o;
+    o.z = 1;
+    bussin o;
+}
+
+gang Point relay() {
+    bussin mk();
+}
+
+skibidi main {
+    gang Point p = relay();
+    bussin 0;
+}

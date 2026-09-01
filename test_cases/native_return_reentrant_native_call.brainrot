@@ -1,0 +1,28 @@
+🚽 Test case: round-24 review finding #1 -- current_return_value is one
+🚽 global slot, and every function/native call overwrites it. handle_
+🚽 return_statement() used to set current_return_value.type/.pointer_level
+🚽 to the enclosing function's OWN declared return type before evaluating
+🚽 the return expression, then write only current_return_value.value.*
+🚽 afterward -- so if evaluating the expression invoked ANOTHER call (a
+🚽 typed native here: takes_cstring(), which returns STDROT_INT), that
+🚽 nested call's own completion overwrote current_return_value.type with
+🚽 ITS type (VAR_INT), which nothing ever restored. The outer function
+🚽 (declared gigachad/double) still correctly wrote the CONVERTED double
+🚽 payload into current_return_value.value.dvalue -- but handle_function_
+🚽 call()'s caller-side switch then read current_return_value.type (still
+🚽 VAR_INT, stolen from the nested call) and consumed the wrong union
+🚽 member entirely. Confirmed via a temporary A/B test (git stash to the
+🚽 pre-fix commit) that this printed "0.000000" instead of "3.000000".
+🚽 Fixed by evaluating into a local and only installing (type,
+🚽 pointer_level, value) together, atomically, after evaluation
+🚽 completes -- payload and metadata can no longer disagree about which
+🚽 call they belong to.
+gigachad widen() {
+    bussin takes_cstring("abc");
+}
+
+skibidi main {
+    gigachad x = widen();
+    yappin("%f\n", x);
+    bussin 0;
+}

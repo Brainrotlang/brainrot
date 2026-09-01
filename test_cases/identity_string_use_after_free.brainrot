@@ -1,0 +1,17 @@
+🚽 Test case: identity() is T -> T (STDROT_EXPORT_SIG_IDENTITY, returns
+🚽 args[0] unchanged). slorp(buf) as its nested argument marshals into a
+🚽 freshly allocated buffer (ast_expr_to_stdrot_value(), stdrot.c),
+🚽 tracked in owned_string_bufs[] to be freed once execute_native_call()
+🚽 is done with this call's arguments -- but identity()'s result is the
+🚽 SAME StdrotValue, same .val.str.data pointer, as that argument. Without
+🚽 materializing an independent copy before releasing argument scratch,
+🚽 this is a reproducible use-after-free: confirmed via a temporary A/B
+🚽 test (disabling the fix) that ASan's heap-use-after-free detector
+🚽 catches the exact free-then-read sequence through safe_strdup() in
+🚽 evaluate_expression_string()'s NODE_FUNC_CALL case.
+skibidi main {
+    yap buf[32];
+    rant s = identity(slorp(buf));
+    yapping("%s", s);
+    bussin 0;
+}

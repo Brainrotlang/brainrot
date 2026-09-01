@@ -1,0 +1,8 @@
+🚽 Test case: a native call inside a braced array initializer must be
+🚽 checked statically -- op.right is NULL for this declaration form, the
+🚽 call only exists on pending_initializer.
+skibidi main {
+    rizz arr[1] = {bet(2)};
+    yapping("%d", arr[0]);
+    bussin 0;
+}

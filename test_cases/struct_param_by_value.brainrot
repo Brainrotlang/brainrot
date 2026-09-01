@@ -1,0 +1,20 @@
+🚽 Test case: struct passed by value must be copied, not aliased --
+🚽 mutating the parameter inside the function must not affect the caller
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+rizz mutate_x(gang Point p) {
+    p.x = 999;
+    bussin p.x;
+}
+
+skibidi main {
+    gang Point q;
+    q.x = 3;
+    q.y = 4;
+    yapping("%d", mutate_x(q));
+    yapping("%d", q.x);
+    bussin 0;
+}

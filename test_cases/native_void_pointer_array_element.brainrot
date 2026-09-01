@@ -1,0 +1,16 @@
+🚽 Test case: round-23 review finding #1's VAR_VOID exhibit -- unlike the
+🚽 scalar base types (VAR_INT, VAR_FLOAT, ...), evaluate_multi_array_
+🚽 access()'s switch had NO case at all for VAR_VOID, so a pointer array
+🚽 of `skibidi *` (round 21 made this a legitimate pointer base type)
+🚽 hit "Unknown variable type" unconditionally at every element, not
+🚽 just element 1 onward. Fixed by the same pointer_level-dominates
+🚽 check that fixes every scalar base type's array-of-pointers stride
+🚽 bug at once.
+skibidi main {
+    skibidi *ptrs[1];
+    ptrs[0] = test_ptr_source();
+    edgy (ptrs[0] != 0) {
+        yapping("alive");
+    }
+    bussin 0;
+}

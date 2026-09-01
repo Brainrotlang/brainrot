@@ -1,0 +1,14 @@
+🚽 Test case: round-22 review finding #2, the opposite-direction exhibit
+🚽 -- `ragequit` wants STDROT_INT. Static checking previously saw
+🚽 `ptrs[0]` (a `rizz *` array element) as pointer_level 0 (the same
+🚽 unpopulated-node bug native_pointer_array_element_arg.brainrot's
+🚽 poke_int exhibit hits), so a genuinely pointer-typed argument was
+🚽 falsely approved against a scalar INT parameter -- only caught later
+🚽 by runtime ABI enforcement. Now rejected statically.
+skibidi main {
+    rizz x = 5;
+    rizz *ptrs[1];
+    ptrs[0] = &x;
+    ragequit(ptrs[0]);
+    bussin 0;
+}

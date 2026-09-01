@@ -1,0 +1,33 @@
+🚽 Test case: regression -- a `yap` value >= 128 must read the same way
+🚽 regardless of which storage shape it's read through. A scalar `yap`
+🚽 variable's own slot is always zero-extended (char_scalar_slot_value(),
+🚽 ast.h): `c = 1000` stores 232, and a direct scalar read gives 232, not
+🚽 -24. Packed reads (array elements, struct fields, pointer dereference)
+🚽 used to read that same byte as a signed `char` -- correct storage,
+🚽 wrong load. Plain `char` is signed on this platform, so bytes >= 128
+🚽 came back negative from every packed path while the scalar path
+🚽 stayed 0-255: confirmed, before this fix, this fixture printed
+🚽 "232 -24 -24 -24", not "232 232 232 232". A `%c`/ASCII-only fixture
+🚽 (ASCII tops out at 127) cannot see this at all -- every read here is
+🚽 forced into integer context (`+ 0` / `%d`) specifically so the sign
+🚽 disagreement, not just the byte value, is what's being checked.
+gang Box {
+    yap v;
+};
+
+skibidi main {
+    yap c;
+    c = 1000;
+    yapping("%d", c + 0);
+
+    yap a[1];
+    a[0] = 1000;
+    yapping("%d", a[0] + 0);
+
+    yap *p = &a[0];
+    yapping("%d", *p + 0);
+
+    gang Box box;
+    box.v = 1000;
+    yapping("%d", box.v + 0);
+}

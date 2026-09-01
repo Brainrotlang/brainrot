@@ -1,0 +1,13 @@
+🚽 Test case: a zero-argument slorp() as one leaf of a braced STRUCT
+🚽 initializer resolves its type from that specific FIELD's type, not
+🚽 from the declaration's own var_type (VAR_STRUCT, not a real scalar
+🚽 witness type) -- exercises
+🚽 propagate_contextual_type_into_struct_initializer(), the struct
+🚽 counterpart of slorp_contextual_braced_init.brainrot's array leaves,
+🚽 which are homogeneous and use a different helper (issue #229).
+gang Point { rizz x; rizz y; };
+skibidi main {
+    gang Point p = { slorp(), 1 };
+    yapping("%d %d", p.x, p.y);
+    bussin 0;
+}

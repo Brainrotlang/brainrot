@@ -1,0 +1,26 @@
+🚽 Test case: #196 -- same struct-tag check as
+🚽 struct_pointer_tag_mismatch_decl_fail.brainrot, but for a FUNCTION CALL
+🚽 argument bound to a pointer-to-struct parameter (PR #248 review, round
+🚽 2, finding 1's call-argument reproduction). Without this check,
+🚽 enter_function_scope() (ast.c) would follow `&r`'s address using
+🚽 `bump`'s declared `gang Point *pp` layout on an actually Rect-shaped
+🚽 blob.
+gang Point {
+    rizz x;
+    rizz y;
+};
+gang Rect {
+    rizz w;
+    rizz h;
+};
+
+skibidi bump(gang Point *pp) {
+    pp.x = 99;
+}
+
+skibidi main {
+    gang Rect r;
+    r.w = 11;
+    bump(&r);
+    yapping("%d", r.w);
+}

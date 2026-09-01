@@ -1,0 +1,12 @@
+🚽 Test case: a STDROT_ANY parameter (slorp's) must reject a numeric
+🚽 array identifier. Variable stores an array's backing pointer and a
+🚽 scalar's value in the same union (value.array_data aliases
+🚽 value.ivalue), and ast_expr_to_stdrot_value()'s VAR_INT case reads
+🚽 that union unconditionally with no is_array check -- without this
+🚽 rejection, slorp's deprecated write-back path could overwrite the
+🚽 array's backing pointer with whatever the user typed at stdin.
+skibidi main {
+    rizz arr[2] = {1, 2};
+    slorp(arr);
+    bussin 0;
+}

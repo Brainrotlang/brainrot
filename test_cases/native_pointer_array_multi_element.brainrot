@@ -1,0 +1,26 @@
+🚽 Test case: round-23 review finding #1 -- evaluate_multi_array_access()
+🚽 (ast.c) dispatched a pointer-typed array's (`rizz *ptrs[N]`) element
+🚽 address purely on the array's BASE VarType (sizeof(int) stride here),
+🚽 while get_type_size_for_descriptor() had already allocated each
+🚽 element as sizeof(uintptr_t) (round 21's own struct-field fix
+🚽 established this exact "pointer_level dominates representation"
+🚽 rule; the array-storage side of it was never applied here). Element 0
+🚽 happens to start at byte 0 under EITHER stride, masking the bug
+🚽 completely -- this fixture deliberately exercises element 1 and
+🚽 beyond, where the strides diverge: under the old (wrong) int stride,
+🚽 `ptrs[1]` would land 4 bytes into `ptrs[0]`'s own 8-byte slot instead
+🚽 of at its real 8-byte-aligned address, corrupting BOTH logical
+🚽 pointers on write. Confirmed via a temporary A/B test (git stash to
+🚽 the pre-fix commit) that this exact program crashed under ASan with a
+🚽 misaligned store followed by a SEGV.
+skibidi main {
+    rizz x = 1;
+    rizz y = 2;
+    rizz *ptrs[2];
+    ptrs[0] = &x;
+    ptrs[1] = &y;
+    yappin("%d %d\n", *ptrs[0], *ptrs[1]);
+    *ptrs[1] = 99;
+    yappin("%d %d\n", x, y);
+    bussin 0;
+}

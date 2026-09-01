@@ -1,0 +1,16 @@
+🚽 Test case: round-22 review finding #3's positive counterpart --
+🚽 dereferencing a `void **` is perfectly valid: it produces `void *`
+🚽 (VAR_VOID, pointer_level 1), a real pointer value, not bare void.
+🚽 Only a dereference landing at (VAR_VOID, 0) is rejected -- checked as
+🚽 its own condition (operand pointer_level == 1, not <= 1), specifically
+🚽 so a `void **` operand (pointer_level 2) is never caught by the
+🚽 void-pointee rejection.
+skibidi main {
+    skibidi *p = test_ptr_source();
+    skibidi **pp = &p;
+    skibidi *q = *pp;
+    edgy (q != 0) {
+        yapping("alive");
+    }
+    bussin 0;
+}

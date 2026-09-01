@@ -1,0 +1,14 @@
+🚽 Test case: legacy_ptr_leak() is a legacy/untyped export (STDROT_EXPORT,
+🚽 return_type == STDROT_ANY) whose C implementation actually returns a
+🚽 real STDROT_PTR. STDROT_ANY documents that pointer-valued results are
+🚽 not covered by "any type, unchecked" -- but the semantic analyzer has
+🚽 no way to catch this statically (the descriptor says ANY, not PTR, so
+🚽 infer_expression_pointer_level() reports 0 and every pointer guard
+🚽 downstream never fires). execute_native_call()'s return-type
+🚽 enforcement must reject this at the runtime boundary instead, or the
+🚽 static and runtime worlds disagree about what this expression is.
+skibidi main {
+    rizz x = legacy_ptr_leak();
+    yapping("%d", x);
+    bussin 0;
+}

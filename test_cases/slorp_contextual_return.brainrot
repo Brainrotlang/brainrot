@@ -1,0 +1,9 @@
+🚽 Test case: a zero-argument slorp() in return position resolves its type
+🚽 from the enclosing function's own declared return type (issue #229).
+rizz read_number() {
+    bussin slorp();
+}
+skibidi main {
+    yapping("%d", read_number());
+    bussin 0;
+}

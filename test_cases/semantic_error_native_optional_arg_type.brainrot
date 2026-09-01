@@ -1,0 +1,6 @@
+🚽 Test case: bet's optional second argument (the assertion message) is
+🚽 still type-checked as a string when the caller supplies one.
+skibidi main {
+    bet(W, L);
+    bussin 0;
+}

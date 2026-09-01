@@ -1,0 +1,19 @@
+🚽 Test case: round-17 review finding #2, the other half -- a legacy/
+🚽 untyped STDROT_EXPORT() export (legacy_int(), tests/stdrot/testabi.c)
+🚽 genuinely has no statically knowable return type (return_type.type ==
+🚽 STDROT_ANY, no return_like_arg -- "signature unknown" by design). For
+🚽 a bare sizeof operand, get_native_call_static_type() correctly reports
+🚽 that as NONE, and handle_sizeof() (ast.c) must reject the call rather
+🚽 than falling back to actually running it: sizeof's operand is never
+🚽 evaluated, so "the type is only knowable by running it" has to mean
+🚽 "reject as unknowable," not "run it anyway." (The error is reported
+🚽 ONCE. It used to appear twice, because ast_accept()'s pre-visit
+🚽 evaluated the declaration's initializer and interpreter_visit_
+🚽 declaration() then evaluated it again -- the same double evaluation
+🚽 func_call_evaluated_once.brainrot pins for calls. visitor.c now skips
+🚽 that pre-visit for any shape ast_accept_evaluates_expression() reports
+🚽 it would compute, sizeof among them.)
+skibidi main {
+    rizz n = maxxing(legacy_int());
+    bussin 0;
+}

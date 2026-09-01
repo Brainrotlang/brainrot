@@ -1,0 +1,35 @@
+🚽 Test case: #193 -- a by-value struct/union member-access sub-expression
+🚽 (`show(b.corner)`) can be passed as a struct argument, not just a plain
+🚽 struct variable. The member's blob lives inside the enclosing struct in
+🚽 the caller's scope and is deep-copied into the parameter like any other
+🚽 struct argument. Also covers a pointer-base member (`show(pb.corner)`,
+🚽 composing with #196) resolving to the real pointee's field, and by-value
+🚽 independence (mutating the parameter must not touch the caller's field).
+gang Point {
+    rizz x;
+    rizz y;
+};
+gang Box {
+    gang Point corner;
+};
+
+skibidi show(gang Point p) {
+    yapping("%d %d", p.x, p.y);
+}
+
+skibidi bump(gang Point p) {
+    p.x = 999;
+}
+
+skibidi main {
+    gang Box b;
+    b.corner.x = 3;
+    b.corner.y = 7;
+    show(b.corner);
+
+    gang Box *pb = &b;
+    show(pb.corner);
+
+    bump(b.corner);
+    yapping("%d", b.corner.x);
+}

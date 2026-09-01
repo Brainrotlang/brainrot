@@ -1,0 +1,16 @@
+🚽 Test case: round-15 review finding #2 -- is_variadic alone must not
+🚽 trigger C-style default argument promotion. A legacy/untyped
+🚽 STDROT_EXPORT() export (tests/stdrot/testabi.c's legacy_type_probe) is
+🚽 is_variadic == true purely because its real signature is unknown (arity
+🚽 unchecked for backward compatibility), not because it has a genuine C
+🚽 variadic tail -- its promote_variadic_tail (stdrot_api.h) stays false.
+🚽 legacy_type_probe(c) must receive args[0] still tagged STDROT_CHAR (6),
+🚽 not silently promoted to STDROT_INT (1), or every existing legacy
+🚽 binding that switches on args[i].type would have its observable ABI
+🚽 changed without recompiling or touching its own source.
+skibidi main {
+    yap c = 'A';
+    rizz t = legacy_type_probe(c);
+    yapping("%d", t);
+    bussin 0;
+}

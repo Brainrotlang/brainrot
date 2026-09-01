@@ -1,0 +1,13 @@
+🚽 Test case: a STDROT_ANY parameter (slorp's) must reject a struct
+🚽 identifier, not just a pointer. ast_expr_to_stdrot_value() has no
+🚽 representation for VAR_STRUCT -- without this check it would silently
+🚽 fall through to STDROT_NONE instead of being rejected statically.
+gang Foo {
+    rizz x;
+};
+
+skibidi main {
+    gang Foo f = { 42 };
+    slorp(f);
+    bussin 0;
+}

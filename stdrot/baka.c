@@ -16,39 +16,49 @@ void v_baka(const char *fmt, va_list ap)
     fflush(stderr);
 }
 
-static void process_baka_format(const char *format, const StdrotValue *args, int arg_count)
+static void process_baka_format(const char *format, const StdrotValue *args,
+                                int arg_count)
 {
     char buffer[1024];
     int buffer_offset = 0;
     int arg_idx = 0;
 
-    while (*format != '\0' && buffer_offset < (int)sizeof(buffer) - 1) {
-        if (*format == '%' && arg_idx < arg_count) {
+    while (*format != '\0' && buffer_offset < (int)sizeof(buffer) - 1)
+    {
+        if (*format == '%' && arg_idx < arg_count)
+        {
             const char *start = format;
             format++;
 
-            if (*format == '%') {
+            if (*format == '%')
+            {
                 buffer[buffer_offset++] = '%';
                 format++;
                 continue;
             }
 
-            while (strchr("-+ #0123456789.*", *format) != NULL) {
+            while (strchr("-+ #0123456789.*", *format) != NULL)
+            {
                 format++;
             }
 
-            if (*format == 'h' || *format == 'l') {
+            if (*format == 'h' || *format == 'l')
+            {
                 char first = *format;
                 format++;
-                if (*format == first) {
+                if (*format == first)
+                {
                     format++;
                 }
-            } else if (strchr("jztL", *format) != NULL) {
+            }
+            else if (strchr("jztL", *format) != NULL)
+            {
                 format++;
             }
 
             char spec = *format;
-            if (spec == '\0') break;
+            if (spec == '\0')
+                break;
 
             char specifier[32];
             size_t length = (size_t)(format - start + 1);
@@ -61,40 +71,83 @@ static void process_baka_format(const char *format, const StdrotValue *args, int
 
             const StdrotValue *arg = &args[arg_idx];
 
-            if (spec == 'b') {
+            if (spec == 'b')
+            {
                 bool b = false;
-                if (arg->type == STDROT_BOOL) b = arg->val.b;
-                else if (arg->type == STDROT_INT) b = (arg->val.i != 0);
-                buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, "%s", b ? "W" : "L");
-            } else if (strchr("diouxX", spec)) {
-                if (arg->type == STDROT_INT) {
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, arg->val.i);
-                } else if (arg->type == STDROT_SHORT) {
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, arg->val.s);
-                } else if (arg->type == STDROT_BOOL) {
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, (int)arg->val.b);
+                if (arg->type == STDROT_BOOL)
+                    b = arg->val.b;
+                else if (arg->type == STDROT_INT)
+                    b = (arg->val.i != 0);
+                buffer_offset += snprintf(buffer + buffer_offset,
+                                          sizeof(buffer) - buffer_offset, "%s",
+                                          b ? "W" : "L");
+            }
+            else if (strchr("diouxX", spec))
+            {
+                if (arg->type == STDROT_INT)
+                {
+                    buffer_offset += snprintf(buffer + buffer_offset,
+                                              sizeof(buffer) - buffer_offset,
+                                              specifier, arg->val.i);
                 }
-            } else if (strchr("fFeEgGaA", spec)) {
-                if (arg->type == STDROT_FLOAT) {
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, arg->val.f);
-                } else if (arg->type == STDROT_DOUBLE) {
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, specifier, arg->val.d);
+                else if (arg->type == STDROT_SHORT)
+                {
+                    buffer_offset += snprintf(buffer + buffer_offset,
+                                              sizeof(buffer) - buffer_offset,
+                                              specifier, arg->val.s);
                 }
-            } else if (spec == 'c') {
-                if (arg->type == STDROT_CHAR) {
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, "%c", arg->val.c);
-                } else if (arg->type == STDROT_INT) {
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, "%c", arg->val.i);
+                else if (arg->type == STDROT_BOOL)
+                {
+                    buffer_offset += snprintf(buffer + buffer_offset,
+                                              sizeof(buffer) - buffer_offset,
+                                              specifier, (int)arg->val.b);
                 }
-            } else if (spec == 's') {
-                if (arg->type == STDROT_STRING && arg->val.str.data) {
-                    buffer_offset += snprintf(buffer + buffer_offset, sizeof(buffer) - buffer_offset, "%s", arg->val.str.data);
+            }
+            else if (strchr("fFeEgGaA", spec))
+            {
+                if (arg->type == STDROT_FLOAT)
+                {
+                    buffer_offset += snprintf(buffer + buffer_offset,
+                                              sizeof(buffer) - buffer_offset,
+                                              specifier, arg->val.f);
+                }
+                else if (arg->type == STDROT_DOUBLE)
+                {
+                    buffer_offset += snprintf(buffer + buffer_offset,
+                                              sizeof(buffer) - buffer_offset,
+                                              specifier, arg->val.d);
+                }
+            }
+            else if (spec == 'c')
+            {
+                if (arg->type == STDROT_CHAR)
+                {
+                    buffer_offset += snprintf(buffer + buffer_offset,
+                                              sizeof(buffer) - buffer_offset,
+                                              "%c", arg->val.c);
+                }
+                else if (arg->type == STDROT_INT)
+                {
+                    buffer_offset += snprintf(buffer + buffer_offset,
+                                              sizeof(buffer) - buffer_offset,
+                                              "%c", arg->val.i);
+                }
+            }
+            else if (spec == 's')
+            {
+                if (arg->type == STDROT_STRING && arg->val.str.data)
+                {
+                    buffer_offset += snprintf(buffer + buffer_offset,
+                                              sizeof(buffer) - buffer_offset,
+                                              "%s", arg->val.str.data);
                 }
             }
 
             arg_idx++;
             format++;
-        } else {
+        }
+        else
+        {
             buffer[buffer_offset++] = *format++;
         }
     }
@@ -106,10 +159,17 @@ static void process_baka_format(const char *format, const StdrotValue *args, int
 
 static StdrotValue stdrot_baka(StdrotValue *args, int arg_count)
 {
-    if (arg_count > 0 && args[0].type == STDROT_STRING && args[0].val.str.data) {
+    if (arg_count > 0 && args[0].type == STDROT_STRING && args[0].val.str.data)
+    {
         process_baka_format(args[0].val.str.data, &args[1], arg_count - 1);
     }
     return (StdrotValue){STDROT_NONE, {0}};
 }
 
-STDROT_EXPORT("baka", stdrot_baka);
+static const StdrotParam baka_format_params[] = {
+    {STDROT_STRING, NULL, 0},
+};
+
+STDROT_EXPORT_SIG_VARIADIC("baka", stdrot_baka,
+                           ((StdrotParam){STDROT_NONE, NULL, 0}),
+                           baka_format_params, 1, 1);

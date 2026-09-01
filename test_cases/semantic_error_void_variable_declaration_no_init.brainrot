@@ -1,0 +1,10 @@
+🚽 Test case: round-20 review finding #1, no-initializer variant of the
+🚽 void-variable rejection -- `skibidi x;` still passes through
+🚽 create_default_node() (ast.c) to synthesize a placeholder initializer,
+🚽 then reaches the same semantic_visit_declaration() guard as
+🚽 `skibidi x = 5;`. This fixture keeps the no-initializer parse path
+🚽 covered without claiming create_default_node() rejects the declaration.
+skibidi main {
+    skibidi x;
+    bussin 0;
+}

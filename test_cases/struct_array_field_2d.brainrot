@@ -1,0 +1,21 @@
+🚽 Test case: #206 (3e) -- a multi-dimensional array field
+🚽 (`rizz cells[2][3];`), reusing the same `dimensions` grammar/
+🚽 calculate_array_offset() row-major math plain multi-dimensional array
+🚽 variables already use. maxxing() confirms the flattened element count
+🚽 (2*3 ints = 24 bytes).
+gang Grid {
+    rizz cells[2][3];
+};
+
+skibidi main {
+    gang Grid g;
+    g.cells[0][0] = 1;
+    g.cells[0][1] = 2;
+    g.cells[0][2] = 3;
+    g.cells[1][0] = 4;
+    g.cells[1][1] = 5;
+    g.cells[1][2] = 6;
+    yapping("%d %d %d %d %d %d", g.cells[0][0], g.cells[0][1],
+           g.cells[0][2], g.cells[1][0], g.cells[1][1], g.cells[1][2]);
+    yapping("%lu", maxxing(g));
+}

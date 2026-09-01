@@ -1,0 +1,11 @@
+🚽 Test case: negative explicit enum constant values, same as C
+gyatt Temp {
+    FREEZING = -1,
+    ZERO,
+    WARM = 5
+};
+
+skibidi main {
+    yapping("%d %d %d", FREEZING, ZERO, WARM);
+    bussin 0;
+}

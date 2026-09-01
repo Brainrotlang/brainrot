@@ -1,0 +1,21 @@
+🚽 Test case: an array of struct VALUES declared through a `lit` alias
+🚽 (`lit gang Point PointVal; PointVal arr[3];`). The same feature as the
+🚽 direct `gang Point arr[3];` spelling, reached through the typedef alias
+🚽 namespace -- member access and maxxing of an element both work.
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+lit gang Point PointVal;
+
+skibidi main {
+    PointVal arr[3];
+    arr[0].x = 5;
+    arr[0].y = 6;
+    arr[2].x = 9;
+    gang Point p;
+    yapping("%d %d %d %d", arr[0].x, arr[0].y, arr[2].x,
+            maxxing(arr[0]) == maxxing(p));
+    bussin 0;
+}

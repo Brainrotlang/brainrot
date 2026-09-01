@@ -1,0 +1,10 @@
+🚽 Test case: union initializer with more than one value must error
+chungus Data {
+    rizz i;
+    chad f;
+};
+
+skibidi main {
+    chungus Data d = {1, 2.0};
+    yapping("%d", d.i);
+}

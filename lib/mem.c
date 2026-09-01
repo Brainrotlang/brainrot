@@ -5,8 +5,9 @@
 /**
  * @brief Retrieves the memory block header from a user pointer
  *
- * Given a pointer to the user data portion of an allocation made by safe_malloc,
- * calculates and returns a pointer to the associated mem_block_t header.
+ * Given a pointer to the user data portion of an allocation made by
+ * safe_malloc, calculates and returns a pointer to the associated mem_block_t
+ * header.
  *
  * @param ptr Pointer to examine, must have been returned by safe_malloc
  * @return mem_block_t* Pointer to the block header, or NULL if ptr is NULL
@@ -22,12 +23,14 @@ static inline mem_block_t *get_block_ptr(const void *ptr)
 /**
  * @brief Aligns a size value to the platform's memory alignment requirement
  *
- * Rounds up the given size to the next multiple of ALIGNMENT, with overflow checking.
+ * Rounds up the given size to the next multiple of ALIGNMENT, with overflow
+ * checking.
  *
  * @param size Size value to align
  * @return size_t Aligned size value, or 0 if alignment would cause overflow
  *
- * @note The alignment value is platform-dependent and defined by ALIGNMENT macro
+ * @note The alignment value is platform-dependent and defined by ALIGNMENT
+ * macro
  */
 size_t align_size(size_t size)
 {
@@ -52,8 +55,8 @@ size_t align_size(size_t size)
  */
 void *handle_malloc_error(size_t size)
 {
-    fprintf(stderr, "Memory allocation failed - Size: %zu, Error: %s\n",
-            size, strerror(errno));
+    fprintf(stderr, "Memory allocation failed - Size: %zu, Error: %s\n", size,
+            strerror(errno));
     errno = ENOMEM;
     return NULL;
 }
@@ -61,7 +64,8 @@ void *handle_malloc_error(size_t size)
 /**
  * @brief Safely allocates and zero-initializes memory with overflow checking
  *
- * Allocates and zero-initializes memory for an array with the following safety features:
+ * Allocates and zero-initializes memory for an array with the following safety
+ * features:
  * - Overflow checking on element count and size
  * - Memory alignment
  * - Zero initialization
@@ -122,7 +126,6 @@ void *safe_calloc(size_t count, size_t size)
 
     return block->data;
 }
-
 
 /**
  * @brief Safely allocates memory with overflow checking and zero initialization
@@ -240,7 +243,7 @@ int is_safe_malloc_ptr(const void *ptr)
  * @note If ptr or *ptr is NULL, function returns without action
  * @note If pointer appears invalid, prints warning and returns without freeing
  */
-void safe_free(void **ptr, const char* file, int line, const char* func)
+void safe_free(void **ptr, const char *file, int line, const char *func)
 {
     if (!ptr || !*ptr)
     {
@@ -250,8 +253,10 @@ void safe_free(void **ptr, const char* file, int line, const char* func)
     mem_block_t *block = get_block_ptr(*ptr);
     if (!block || block->guard != MEMORY_GUARD)
     {
-        fprintf(stderr, "Warning: Attempt to free invalid/corrupted pointer, %s, %d, %s\n",
-                file, line, func);
+        fprintf(
+            stderr,
+            "Warning: Attempt to free invalid/corrupted pointer, %s, %d, %s\n",
+            file, line, func);
         return;
     }
 
@@ -351,19 +356,32 @@ void *safe_memcpy(void *dest, const void *src, size_t n)
  */
 String safe_strdup(const String *str)
 {
-    if (!str || !str->data) {
+    if (!str || !str->data)
+    {
         errno = EINVAL;
-        return (String){ .data = NULL, .len = 0 };
+        return (String){.data = NULL, .len = 0};
     }
 
     String out;
     out.len = str->len;
     out.data = safe_malloc(out.len + 1);
+    /* Round-20 review, finding #4 -- safe_malloc() genuinely can return
+       NULL (documented above: OOM, or out.len + 1 exceeding
+       MAX_ALLOC_SIZE for a pathologically large string), and this used
+       to proceed straight to memcpy() regardless -- a guaranteed NULL-
+       pointer write, not merely a leaked/mishandled failure. Every
+       caller that treats "this owns a valid independent copy now"
+       (finalize_native_string_result(), stdrot.c, is the sharpest
+       example: it's the ABI's own string-return ownership boundary)
+       depends on this actually meaning that, not crashing instead. */
+    if (!out.data)
+    {
+        errno = ENOMEM;
+        return (String){.data = NULL, .len = 0};
+    }
 
     memcpy(out.data, str->data, out.len);
     out.data[out.len] = '\0'; // optional
 
     return out;
 }
-
-

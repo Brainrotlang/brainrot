@@ -1,0 +1,22 @@
+🚽 Test case: an array of struct POINTERS (`gang P *ptrs[2];`). Each
+🚽 slot holds an address; member access through an element follows the
+🚽 pointer one level (`ptrs[i].x` reads like C's `ptrs[i]->x`).
+gang P {
+    rizz x;
+    rizz y;
+};
+
+skibidi main {
+    gang P a;
+    gang P b;
+    a.x = 1;
+    a.y = 2;
+    b.x = 3;
+    b.y = 4;
+
+    gang P *ptrs[2];
+    ptrs[0] = &a;
+    ptrs[1] = &b;
+    yapping("%d %d", ptrs[0].x, ptrs[1].y);
+    bussin 0;
+}

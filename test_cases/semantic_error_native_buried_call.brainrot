@@ -1,0 +1,8 @@
+🚽 Test case: a native call buried inside a binary operation that is itself
+🚽 a declaration's initializer must still be checked statically -- the
+🚽 initializer isn't only a bare NODE_FUNC_CALL here.
+skibidi main {
+    rizz x = bet() + 1;
+    yapping("%d", x);
+    bussin 0;
+}

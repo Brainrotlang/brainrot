@@ -1,0 +1,32 @@
+🚽 Test case: typedef aliases for enum variables, parameters, returns,
+🚽 struct fields, and switch cases.
+gyatt Color {
+    RED,
+    GREEN,
+    BLUE
+};
+
+lit gyatt Color Paint;
+
+gang Swatch {
+    Paint color;
+};
+
+Paint pick(Paint c) {
+    bussin c;
+}
+
+skibidi main {
+    Paint favorite = pick(GREEN);
+    gang Swatch s;
+    s.color = BLUE;
+
+    ohio (favorite) {
+        sigma rule GREEN:
+            yapping("green %d", s.color);
+            bruh;
+        based:
+            yapping("other");
+    }
+    bussin 0;
+}

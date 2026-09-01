@@ -1,0 +1,17 @@
+🚽 Test case: round-21 review finding #3, the struct-field half -- same
+🚽 gap as function parameters: `gang Abomination { skibidi hole; ... };`
+🚽 parsed with a by-value VAR_VOID field, which get_type_size_for_
+🚽 descriptor() reports as 0 bytes, tripped get_struct_field_size()'s own
+🚽 defensive "an unexpectedly zero-sized field still needs SOME layout
+🚽 size" fallback (there to protect a genuinely-should-have-resolved
+🚽 nested-struct lookup, not to invent storage for an invalid type), and
+🚽 silently gave the field sizeof(int) of storage. Now rejected at parse
+🚽 time, before layout is ever computed.
+gang Abomination {
+    skibidi hole;
+    rizz x;
+};
+
+skibidi main {
+    bussin 0;
+}

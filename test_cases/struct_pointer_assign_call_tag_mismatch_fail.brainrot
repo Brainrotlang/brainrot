@@ -1,0 +1,12 @@
+🚽 Test case: #193 -- assigning a wrong-tag call result to a struct
+🚽 pointer (`p = get_rect(&rc);`) is rejected, the assignment-site
+🚽 counterpart of the return-relay tag check.
+gang Point { rizz x; };
+gang Rect  { rizz w; };
+gang Rect  *get_rect(gang Rect *r) { bussin r; }
+skibidi main {
+    gang Rect rc; rc.w = 1;
+    gang Point *p;
+    p = get_rect(&rc);
+    yapping("%d", p.x);
+}

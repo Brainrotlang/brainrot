@@ -1,0 +1,34 @@
+🚽 Test case: issue #251 -- `s[i:j]` with a NEGATIVE start is a hard runtime
+🚽 error.
+🚽
+🚽 This pins open question 2 from the issue, answered "no": there are no
+🚽 Python-style negative indices in v1. `s[-1:2]` does not mean "from the
+🚽 last byte" -- it is simply out of range, and saying so is the whole
+🚽 point. If negative-index support is ever added, this fixture is the one
+🚽 that has to change, deliberately, rather than the meaning shifting
+🚽 underneath programs that relied on the error.
+🚽
+🚽 The same check covers the other three ways a slice can be out of range,
+🚽 which cannot share a fixture because each one exits the process:
+🚽   s[0:6]  on a 5-byte string -- end past the length
+🚽   s[3:1]                     -- end before start, an inverted range
+🚽   s[6:6]                     -- both bounds past the length
+🚽 All four were verified by hand to produce this same diagnostic with the
+🚽 offending numbers in it; only the negative case is pinned here, because
+🚽 it is the one encoding a DESIGN DECISION rather than plain arithmetic.
+🚽
+🚽 Note what is deliberately NOT an error: `s[5:5]` on a 5-byte string is
+🚽 legal and yields the empty string, because the upper bound is exclusive
+🚽 so 5 is a valid boundary even though `s[5]` is not a valid index. That
+🚽 asymmetry between the two constructs is real, easy to get wrong, and is
+🚽 pinned positively in string_indexing.brainrot's `empty at end` line.
+🚽
+🚽 `before` pins that execution got here; nothing follows it, because this
+🚽 must stop the program.
+skibidi main {
+    rant s = "hello";
+    yapping("before");
+    yapping("never [%s]", s[0 - 1:2]);
+    yapping("after");
+    bussin 0;
+}

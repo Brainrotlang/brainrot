@@ -14,40 +14,226 @@ on:
       - "CODEOWNERS"
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  lint:
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - name: Force Ubuntu archive mirror
+        run: |
+          sudo sed -i \
+            's|azure.archive.ubuntu.com|archive.ubuntu.com|g' \
+            /etc/apt/apt-mirrors.txt
+          cat /etc/apt/apt-mirrors.txt
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+            update
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+          install clang-format-15 -y
+
+      - name: Check formatting
+        run: make format-check
+
+  static-analysis:
+    runs-on: ubuntu-24.04
+    needs: lint
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Force Ubuntu archive mirror
+        run: |
+          sudo sed -i \
+            's|azure.archive.ubuntu.com|archive.ubuntu.com|g' \
+            /etc/apt/apt-mirrors.txt
+          cat /etc/apt/apt-mirrors.txt
+
+      - name: Install cppcheck
+        run: |
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+            update
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+          install cppcheck -y
+          cppcheck --version
+
+      - name: Run cppcheck
+        run: make cppcheck
+
+      - name: Install clang-tidy
+        run: |
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+            update
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+          install clang-tidy-15 libssl-dev -y
+
+      - name: Run clang-tidy
+        run: make tidy
+
+  build:
+    runs-on: ubuntu-24.04
+    needs: static-analysis
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Force Ubuntu archive mirror
+        run: |
+          sudo sed -i \
+            's|azure.archive.ubuntu.com|archive.ubuntu.com|g' \
+            /etc/apt/apt-mirrors.txt
+          cat /etc/apt/apt-mirrors.txt
 
       - name: Install build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install gcc flex bison libfl-dev libasan8 libubsan1 -y
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+            update
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+          install gcc flex bison libfl-dev libasan8 libubsan1 libssl-dev -y
 
       - name: Build Brainrot
         run: |
           make
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: brainrot
           path: |
             brainrot
             libstdrot.so
 
+  release-dry-run:
+    name: Release dry-run ${{ matrix.os }}/${{ matrix.arch }}
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ matrix.runner }}
+    needs: test
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            os: linux
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+          - runner: macos-15-intel
+            os: darwin
+            arch: amd64
+          - runner: macos-latest
+            os: darwin
+            arch: arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Build native release artifact
+        uses: ./.github/actions/native-release-build
+        with:
+          os: ${{ matrix.os }}
+          artifact-name: brainrot-release-${{ matrix.os }}-${{ matrix.arch }}
+
+  # Windows release dry-run (issue #337). Windows can't share the POSIX
+  # release-dry-run matrix above: that path runs `make release` and packages
+  # brainrot + libstdrot.so via the native-release-build composite action,
+  # whereas Windows is a single self-contained brainrot.exe from `make windows`
+  # (STDROT_STATIC, no libstdrot.so) built under MSYS2 -- hence a sibling job.
+  # Gated on `test` like every other release-dry-run job, so the whole suite
+  # must pass before any release artifact is packaged. No publish; just proves
+  # the shippable artifact builds and is self-contained. Wiring this into the
+  # real release (release.yml) is Stage 3.
+  release-dry-run-windows:
+    name: Release dry-run windows/amd64
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    needs: test
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up MSYS2 (MinGW-w64 toolchain)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            make
+            bison
+            flex
+
+      - name: Build release brainrot.exe
+        shell: msys2 {0}
+        run: make windows
+
+      # A shipped .exe must import only system DLLs. A dependency on
+      # libgcc_s_seh-1.dll / libwinpthread-1.dll would mean it only runs where
+      # MSYS2's bin is on PATH -- exactly the "works on the builder" trap the
+      # POSIX job's otool check guards against. -static (Makefile) prevents it;
+      # this fails the job loudly if that ever regresses.
+      - name: Verify self-contained
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          objdump -p brainrot.exe | grep -i 'DLL Name'
+          if objdump -p brainrot.exe | grep -iqE 'libgcc|libwinpthread|libstdc\+\+'; then
+            echo "ERROR: brainrot.exe depends on a MinGW runtime DLL;" \
+              "it must be statically linked (-static)." >&2
+            exit 1
+          fi
+          echo "objdump clean: no MinGW-runtime DLL imports."
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: brainrot-release-windows-amd64
+          path: brainrot.exe
+          if-no-files-found: error
+          retention-days: 1
+
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download Brainrot artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: brainrot
           path: .
@@ -55,42 +241,100 @@ jobs:
       - name: Grant execute permissions to Brainrot
         run: chmod +x brainrot
 
-      - name: Prepare shared library for tests
+      - name: Force Ubuntu archive mirror
         run: |
-          cp -f libstdrot.so tests/libstdrot.so
+          sudo sed -i \
+            's|azure.archive.ubuntu.com|archive.ubuntu.com|g' \
+            /etc/apt/apt-mirrors.txt
+          cat /etc/apt/apt-mirrors.txt
 
       - name: Install Python and dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install python3 python3-pip valgrind libfl-dev libasan8 libubsan1 -y
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+            update
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+          install gcc python3 python3-pip valgrind libfl-dev libasan8 libubsan1 libssl-dev -y
           python3 -m venv .venv
           source .venv/bin/activate
           pip install -r requirements.txt
         working-directory: tests
 
+      # tests/libstdrot.so is production stdrot/*.c PLUS tests/stdrot/*.c
+      # (test-only natives that exist solely so test_cases/*.brainrot can
+      # exercise ABI paths no production builtin uses, e.g. STDROT_PTR --
+      # see that directory's own file comment). Built fresh here rather
+      # than reusing the downloaded libstdrot.so build artifact, which is
+      # deliberately production-only, the same file `make install` and
+      # the wasm build see.
+      - name: Build test-only shared library
+        run: make tests/libstdrot.so
+
+      # tests/badnatives/*.so: one minimal .so per file, each holding a
+      # single deliberately malformed StdrotEntry that validate_native_
+      # registry() (stdrot.c) must reject at stdrot_load() time -- see that
+      # directory's own file comment. test_bad_registry_rejected_at_load
+      # (tests/test_brainrot.py) points STDROT_LIB_PATH at one of these per
+      # subprocess, never at the shared tests/libstdrot.so above.
+      - name: Build malformed-registry test libraries
+        run: make badnatives
+
+      # tests/old_abi_sim/fake_pre_v2_registry.so simulates a libstdrot.so
+      # built before STDROT_ABI_VERSION/stdrot_get_api_v2() existed (see
+      # that directory's own file comment) -- proves stdrot_load() detects
+      # the missing versioned entrypoint and fails loudly instead of
+      # misreading the old .so's memory as the current ABI shape.
+      - name: Build simulated pre-ABI-versioning library
+        run: make old-abi-sim
+
+      # tests/nativemodules/*.so: real native modules with a genuine
+      # brainrot_module_init() entrypoint (unlike tests/badnatives/*.so
+      # above, which simulate a malformed CORE libstdrot.so) -- exercise
+      # #cooked <name> resolving to a native ".so" (stdrot_load_module(),
+      # stdrot.c) end to end. See that directory's own file comments.
+      - name: Build native module test libraries
+        run: make nativemodules
+
+      # Host C unit tests for the arena allocator under ASan/UBSan (issue #286)
+      - name: Run host C arena tests
+        run: make arena-check
+
+      # Collect every test module in tests/, not just test_brainrot.py. Naming
+      # one file meant test_docs_consistency.py never ran on the merge gate,
+      # even though `make test` (plain `pytest -v` from the repo root) has
+      # always collected it -- so CI was strictly narrower than the command
+      # contributors are told to run, and the docs guards it holds could go
+      # stale while CI stayed green.
       - name: Run Pytest
         run: |
           source .venv/bin/activate
-          export LD_LIBRARY_PATH="$PWD:$LD_LIBRARY_PATH"
-          pytest -v test_brainrot.py
+          export STDROT_LIB_PATH="$GITHUB_WORKSPACE/tests/libstdrot.so"
+          pytest -v
         working-directory: tests
 
       - name: Run Valgrind on all .brainrot tests
         run: |
           chmod +x run_valgrind_tests.sh
+          export STDROT_LIB_PATH="$GITHUB_WORKSPACE/tests/libstdrot.so"
           ./run_valgrind_tests.sh
         working-directory: .
 
   wasm:
-    runs-on: ubuntu-latest
-    needs: build
+    name: Release dry-run wasm
+    runs-on: ubuntu-24.04
+    needs: test
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download native Brainrot artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: brainrot
           path: .
@@ -98,32 +342,145 @@ jobs:
       - name: Grant execute permissions to native Brainrot
         run: chmod +x brainrot
 
+      - name: Force Ubuntu archive mirror
+        run: |
+          sudo sed -i \
+            's|azure.archive.ubuntu.com|archive.ubuntu.com|g' \
+            /etc/apt/apt-mirrors.txt
+          cat /etc/apt/apt-mirrors.txt
+
       - name: Install build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install bison flex libfl-dev libasan8 libubsan1 -y
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+            update
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+          install bison flex libfl-dev libasan8 libubsan1 -y
 
       - name: Set up Emscripten
         # mymindstorm/setup-emsdk was transferred to emscripten-core/setup-emsdk;
         # SHA-pinned (v14) so a retagged release can't silently change what
         # builds the artifact the playground will consume.
-        uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
+        uses: emscripten-core/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
         with:
           version: 3.1.73
 
       - name: Build brainrot.wasm
         run: make wasm
 
-      - name: Run wasm smoke tests
-        run: node tests/run_wasm_tests.mjs
+      # Smoke-tests the actual artifact this job uploads/ships, before it
+      # gets anywhere near the test-augmented build below. A prior version
+      # of this job only ran the test-augmented module here, which meant
+      # brainrot.wasm/.mjs got compiled but never executed by anything --
+      # a green run proved nothing about whether the shipped artifact
+      # actually starts up (see run_wasm_tests.mjs's own comment: the two
+      # builds differ in more than just "extra natives" -- linker section
+      # contents, registry count, layout, and startup registry iteration
+      # all change too).
+      - name: Run wasm smoke tests (production artifact)
+        run: node tests/run_wasm_tests.mjs production
+
+      # tests/brainrot-test.wasm/.mjs adds tests/stdrot/*.c (test-only
+      # natives) on top of the same sources brainrot.wasm above just
+      # built from -- run_wasm_tests.mjs needs it so the pointer-ABI/
+      # return-type-enforcement fixtures actually execute under wasm32
+      # instead of being skipped (see that file's own comment for why
+      # that distinction matters: pointer/uintptr_t representation
+      # differs between wasm32 and native). Never uploaded or shipped.
+      - name: Build test-only brainrot.wasm
+        run: make wasm-test
+
+      - name: Run wasm smoke tests (ABI test suite)
+        run: node tests/run_wasm_tests.mjs test
 
       - name: Compare wasm output against native for examples/
         run: node tests/run_wasm_examples_check.mjs
 
       - name: Upload wasm artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: brainrot-wasm
           path: |
             brainrot.wasm
             brainrot.mjs
+
+  # Native Windows build (issue #337): prove the interpreter builds and runs on
+  # Windows via `make windows` (a single statically-linked brainrot.exe,
+  # -DSTDROT_STATIC, MinGW-w64). Independent of the Linux job chain. Stage 1
+  # smoke-tests the .exe against runnable examples; Stage 2 additionally builds
+  # a native module DLL and proves `#cooked <name>` LoadLibraryA-loads it. Uses
+  # its own runners rather than the dynamic-loader pytest suite (which needs the
+  # core libstdrot.so this build compiles in), mirroring the wasm job.
+  windows:
+    name: Windows (MinGW interpreter + native modules)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up MSYS2 (MinGW-w64 toolchain)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            make
+            bison
+            flex
+
+      - name: Build brainrot.exe
+        shell: msys2 {0}
+        run: make windows
+
+      - name: Smoke-test the interpreter
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          # brainrot.exe is a native PE; run it directly from the MSYS2 shell.
+          out="$(./brainrot.exe examples/hello_world.brainrot)"
+          test "$out" = "Hello, World!" \
+            || { echo "hello_world mismatch: [$out]"; exit 1; }
+          # Every dependency-free STANDALONE example must run and exit 0.
+          # Excludes: file_wordcount (reads a path), examples/raylib/ (native
+          # module), and mathutils (a #cooked library with no `skibidi main` --
+          # it's exercised via modules_named below, not run on its own).
+          for f in fibonacci fizz_buzz bubble_sort sieve_of_eras twoSum \
+                   array_of_structs string_parsing string_toolkit \
+                   heat_equation_1d; do
+            echo "-- $f --"
+            ./brainrot.exe "examples/$f.brainrot" >/dev/null \
+              || { echo "example $f failed"; exit 1; }
+          done
+          # #cooked prelude modules (relative + BRAINROT_PATH) work statically.
+          # modules_named cooks <mathutils>, so that module is covered here.
+          ./brainrot.exe examples/modules.brainrot >/dev/null
+          BRAINROT_PATH=examples ./brainrot.exe examples/modules_named.brainrot >/dev/null
+          echo "windows smoke tests passed"
+
+      # Stage 2: #cooked <name> resolves to a .dll (module_path.c) and is loaded
+      # via LoadLibraryA (stdrot.c). Build a native module DLL, then run a
+      # program that cooks it and calls its tripled(rizz) -> rizz (returns n*3).
+      # printf, not a heredoc, to avoid the YAML-block-indentation trap on the
+      # closing delimiter.
+      - name: Native module test (#cooked <name> .dll)
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          make windows-test-module
+          printf '#cooked <testnative>\nskibidi main {\n  yapping("%%d", tripled(14));\n  bussin 0;\n}\n' > nativemod.brainrot
+          out="$(BRAINROT_PATH=tests/nativemodules ./brainrot.exe nativemod.brainrot)"
+          test "$out" = "42" \
+            || { echo "native module mismatch: expected 42, got [$out]"; exit 1; }
+          echo "windows native-module (#cooked <name> .dll) test passed"
+
+      - name: Upload brainrot.exe
+        uses: actions/upload-artifact@v7
+        with:
+          name: brainrot-windows-amd64
+          path: brainrot.exe

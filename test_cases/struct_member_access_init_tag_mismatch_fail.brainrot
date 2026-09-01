@@ -1,0 +1,24 @@
+🚽 Test case: #193 -- copy-initializing a struct variable from a by-value
+🚽 member of a different type (`gang Big g = b.s;` where `b.s` is a `gang
+🚽 Small`) is rejected, not blindly memcpy'd -- the member-access
+🚽 counterpart of struct_type_mismatch_copy_fail (PR #253 review,
+🚽 finding 3). Sizes deliberately differ so a missing/inverted tag check
+🚽 would be an out-of-bounds copy.
+gang Small {
+    rizz x;
+};
+gang Big {
+    rizz a;
+    rizz b;
+    rizz c;
+    rizz d;
+};
+gang Box {
+    gang Small s;
+};
+
+skibidi main {
+    gang Box b;
+    gang Big g = b.s;
+    bussin 0;
+}

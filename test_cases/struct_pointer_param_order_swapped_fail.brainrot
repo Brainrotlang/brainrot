@@ -1,0 +1,25 @@
+🚽 Test case: the other half of the reversed-parameter bug.
+🚽
+🚽 Because the analyzer compared arguments against the parameter list
+🚽 backwards, this SWAPPED call -- which passes a World* where an Enemy*
+🚽 is declared and vice versa -- used to type-check. The runtime binds
+🚽 positionally and correctly, so it then ran the body with `e` pointing
+🚽 at a World and wrote an Enemy field's offset through it: silent
+🚽 cross-type memory corruption reached by trusting the diagnostic on the
+🚽 correct call and "fixing" it.
+🚽
+🚽 It must be rejected, and the message must name the right argument.
+gang World { chad dt; };
+gang Enemy { chad x; };
+
+skibidi step(gang Enemy *e, gang World *w) { e.x = e.x - w.dt; }
+
+skibidi main {
+    gang World wd;
+    wd.dt = 0.5;
+    gang Enemy en;
+    en.x = 10.0;
+    step(&wd, &en);
+    yapping("%.1f", en.x);
+    bussin 0;
+}

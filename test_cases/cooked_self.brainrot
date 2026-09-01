@@ -1,0 +1,6 @@
+🚽 A file #cooked-ing itself directly — must error, not hang or double-define.
+#cooked "cooked_self.brainrot"
+
+skibidi main {
+    bussin 0;
+}

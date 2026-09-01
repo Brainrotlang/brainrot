@@ -1,0 +1,11 @@
+🚽 Test case (error): indexing an array of structs out of bounds must be
+🚽 caught, the same bounds check any other array subscript gets.
+gang P {
+    rizz x;
+};
+
+skibidi main {
+    gang P a[2];
+    a[5].x = 1;
+    bussin 0;
+}

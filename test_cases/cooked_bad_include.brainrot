@@ -1,0 +1,4 @@
+🚽 The included module has a syntax error, while its own #cooked frame is
+🚽 still on the include stack — regression test for the flex buffer leak
+🚽 that cooked_cleanup() must unwind even on a plain parse-error exit.
+rizz broken( {

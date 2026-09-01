@@ -1,0 +1,11 @@
+🚽 Test case: explicit enum constant values and auto-increment continuation
+gyatt Status {
+    OK = 0,
+    WARN = 5,
+    ERR
+};
+
+skibidi main {
+    yapping("%d %d %d", OK, WARN, ERR);
+    bussin 0;
+}

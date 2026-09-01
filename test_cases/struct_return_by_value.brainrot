@@ -1,0 +1,23 @@
+🚽 Test case: struct returned by value from a function, and copy-initializing
+🚽 one struct variable from another
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+gang Point make_point(rizz a, rizz b) {
+    gang Point p;
+    p.x = a;
+    p.y = b;
+    bussin p;
+}
+
+skibidi main {
+    gang Point r = make_point(3, 4);
+    yapping("%d %d", r.x, r.y);
+
+    gang Point r2 = r;
+    r2.x = 999;
+    yapping("%d %d", r.x, r2.x);
+    bussin 0;
+}

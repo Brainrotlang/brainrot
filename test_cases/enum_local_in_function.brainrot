@@ -1,0 +1,17 @@
+🚽 Test case: enum declared and used inside a non-main function
+gyatt Color {
+    RED,
+    GREEN,
+    BLUE
+};
+
+rizz make_and_read() {
+    gyatt Color c;
+    c = GREEN;
+    bussin c;
+}
+
+skibidi main {
+    yapping("%d", make_and_read());
+    bussin 0;
+}

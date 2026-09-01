@@ -1,0 +1,20 @@
+gang Point {
+    rizz x;
+    rizz y;
+    rizz z;
+};
+
+gang Line {
+    gang Point start;
+    gang Point end;
+};
+
+skibidi main {
+    gang Point p = { 7 };
+    yappin("%d %d %d\n", p.x, p.y, p.z);
+
+    gang Line l = { {1, 2} };
+    yappin("%d %d %d %d\n", l.start.x, l.start.y, l.end.x, l.end.y);
+
+    bussin 0;
+}

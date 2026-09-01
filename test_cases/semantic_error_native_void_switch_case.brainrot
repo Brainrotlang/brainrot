@@ -1,0 +1,15 @@
+🚽 Test case: round-20 review finding #2 -- a `switch` (`ohio`)
+🚽 statement's discriminant was already covered by require_value_
+🚽 expression() (round 19), but its individual case (`sigma rule`) values
+🚽 were only recursively visited, never required to produce a value.
+🚽 A case value is consumed as an integer comparison against the
+🚽 discriminant at runtime (execute_switch_statement(), ast.c); now
+🚽 rejected statically instead.
+skibidi main {
+    rizz x = 1;
+    ohio (x) {
+        sigma rule yapping("oops"):
+            bussin 1;
+    }
+    bussin 0;
+}

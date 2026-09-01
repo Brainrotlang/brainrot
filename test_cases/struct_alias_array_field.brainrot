@@ -1,0 +1,33 @@
+🚽 Test case: #206 (3e) -- a fixed-size array struct field whose element
+🚽 type comes from a `lit` alias (`lit thicc rizz Big; gang S { Big
+🚽 vals[3]; };`). Proves the alias's modifiers reach BOTH layout and
+🚽 element STRIDE: `thicc` (long long) is 8 bytes, so `Big vals[3]`
+🚽 reserves 3*8 = 24 (maxxing(s)), each element's own sizeof is 8
+🚽 (maxxing(s.vals[0]) -- would be 4 if the access path strided by
+🚽 sizeof(int), PR #256 review), and elements are spaced 8 bytes apart,
+🚽 not packed 4 apart into the front of the reservation. Also covers
+🚽 per-element read/write and by-value deep-copy independence. (long long
+🚽 is 8 bytes on both LP64 and wasm32, so no per-platform override.)
+lit thicc rizz Big;
+
+gang S {
+    Big vals[3];
+};
+
+skibidi bump(gang S s) {
+    s.vals[0] = 999;
+}
+
+skibidi main {
+    gang S a;
+    a.vals[0] = 10;
+    a.vals[1] = 20;
+    a.vals[2] = 30;
+    yapping("%d %d %d %lu %lu", a.vals[0], a.vals[1], a.vals[2],
+            maxxing(a), maxxing(a.vals[0]));
+    bump(a);
+    yapping("%d", a.vals[0]);
+    gang S b = a;
+    b.vals[0] = 111;
+    yapping("%d %d", a.vals[0], b.vals[0]);
+}

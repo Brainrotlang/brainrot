@@ -1,0 +1,57 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for Brainrot
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement! Please check existing issues
+        and PRs first to avoid duplicate work — per `CONTRIBUTING.md`,
+        substantial features should be discussed here before implementation
+        starts.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What problem does this feature solve? Why is it needed?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: >
+        Describe the feature. If it touches lexer/grammar syntax
+        (`lang.l`/`lang.y`), note that existing keyword syntax is a public
+        compatibility surface — new syntax proposals are easier to land than
+        changes to existing keywords.
+    validations:
+      required: true
+
+  - type: textarea
+    id: example
+    attributes:
+      label: Example usage
+      description: Show what the feature would look like in a `.brainrot` program, if applicable.
+      render: c
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative approaches or workarounds you've considered.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Anything else relevant — related issues, links, etc.
+    validations:
+      required: false

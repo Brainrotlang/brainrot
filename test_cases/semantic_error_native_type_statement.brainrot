@@ -1,0 +1,6 @@
+🚽 Test case: #205's own accepted/rejected example -- bet(2) in statement
+🚽 position (not inside a declaration) must be a static type error.
+skibidi main {
+    bet(2);
+    bussin 0;
+}

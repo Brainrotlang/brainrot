@@ -1,0 +1,22 @@
+🚽 Example: a struct nested inside another struct, plus a 3-level chain
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+gang Line {
+    gang Point start;
+    gang Point end;
+};
+
+skibidi main {
+    gang Line l;
+    l.start.x = 1;
+    l.start.y = 2;
+    l.end.x = 10;
+    l.end.y = 20;
+    yapping("%d %d %d %d", l.start.x, l.start.y, l.end.x, l.end.y);
+
+    gang Line m = { {5, 6}, {7, 8} };
+    yapping("%d %d %d %d", m.start.x, m.start.y, m.end.x, m.end.y);
+}

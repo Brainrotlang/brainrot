@@ -1,0 +1,18 @@
+🚽 Test case: enum definition, declaration, assignment, and printing
+gyatt Color {
+    RED,
+    GREEN,
+    BLUE
+};
+
+skibidi main {
+    gyatt Color favorite;
+    favorite = GREEN;
+    yapping("%d", favorite);
+    yapping("%d %d %d", RED, GREEN, BLUE);
+
+    gyatt Color other = BLUE;
+    yapping("%d", other);
+
+    bussin 0;
+}

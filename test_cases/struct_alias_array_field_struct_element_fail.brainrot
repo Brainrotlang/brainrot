@@ -1,0 +1,20 @@
+🚽 Test case: #206 (3e) -- an array field whose element type is a
+🚽 struct/union (or enum) `lit` alias (`lit gang P PT; gang S { PT
+🚽 arr[2]; };`) is rejected: arrays of aggregate elements aren't supported
+🚽 yet, matching the primitive array-field rule (which never accepts a
+🚽 struct_or_union element type). A pointer-element array via alias is a
+🚽 different, already-supported path (lit_struct_pointer_alias_array).
+gang P {
+    rizz x;
+};
+
+lit gang P PT;
+
+gang S {
+    PT arr[2];
+};
+
+skibidi main {
+    gang S s;
+    yapping("unreached");
+}

@@ -1,0 +1,18 @@
+🚽 Test case: round-21 review finding #1 -- VAR_VOID now means both "no
+🚽 value" (base type void, pointer_level 0) and the base type of `void *`
+🚽 (VAR_VOID, pointer_level > 0), and require_value_expression() checked
+🚽 only the base type, rejecting a `skibidi *p` (void*) variable as if it
+🚽 held no value at all. test_ptr_source() (tests/stdrot/testptr.c)
+🚽 really returns STDROT_PTR; `skibidi *p = test_ptr_source();` is a
+🚽 coherent declaration under the (base type, pointer_level) model
+🚽 check_type_compatibility_ex() already uses. Using `p` as a binary-
+🚽 operator operand (`p != 0`) exercises require_value_expression()
+🚽 directly -- confirmed via a temporary A/B test (dropping the pointer_
+🚽 level check) that this was previously rejected as "Native call result
+🚽 (void) cannot be used in a binary operator operand context."
+skibidi main {
+    skibidi *p = test_ptr_source();
+    cap has_value = p != 0;
+    yappin("%d\n", has_value);
+    bussin 0;
+}

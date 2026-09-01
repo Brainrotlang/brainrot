@@ -1,0 +1,16 @@
+🚽 Test case: round-21 review finding #1's exhibit B -- `skibidi *p;`
+🚽 (no initializer) previously took the SAME parse-time crash path as
+🚽 `skibidi x;` (create_default_node()'s VAR_VOID case), despite the
+🚽 semantic analyzer explicitly distinguishing (VAR_VOID, 0) from
+🚽 (VAR_VOID, 1) everywhere else -- create_default_node() never had the
+🚽 opportunity to see pointer_level at all. This codebase has no general
+🚽 uninitialized-pointer-default policy for ANY base type today, though
+🚽 (`rizz *p;` alone already fails semantic analysis the same way,
+🚽 confirmed independently), so a pointer-typed default now falls
+🚽 through to the same plain-zero-node default every other pointer type
+🚽 already uses, reaching that SAME, already-established semantic
+🚽 rejection -- not a parse-time crash unique to void.
+skibidi main {
+    skibidi *p;
+    bussin 0;
+}

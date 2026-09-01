@@ -1,0 +1,16 @@
+🚽 Test case: a bare NATIVE call as the return expression of a void
+🚽 function (`bussin yapping(...);`) must run the native exactly once and
+🚽 not be reported as undefined. PR #254 skipped ast_accept()'s NODE_RETURN
+🚽 pre-visit for bare calls (to stop `bussin make();` double-running); the
+🚽 void/NONE arm compensates by executing the call itself, and must
+🚽 dispatch native vs. user-defined the same way every other bare-call site
+🚽 does (execute_function_call alone would search only the user table and
+🚽 wrongly report `yapping` undefined -- PR #254 review, finding 1).
+skibidi dump() {
+    bussin yapping("inside dump");
+}
+
+skibidi main {
+    dump();
+    yapping("after dump");
+}

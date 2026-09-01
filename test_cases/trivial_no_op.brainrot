@@ -1,0 +1,10 @@
+🚽 Trivial program used only as a load target for tests that care about
+🚽 stdrot_load()/validate_native_registry() (stdrot.c) behavior, never about
+🚽 anything this program itself does -- see tests/badnatives/ and
+🚽 tests/test_brainrot.py's test_bad_registry_* functions, which point
+🚽 STDROT_LIB_PATH at a deliberately malformed registry .so and expect the
+🚽 process to abort during stdrot_load(), before this file's single
+🚽 statement would ever run.
+skibidi main {
+    bussin 0;
+}

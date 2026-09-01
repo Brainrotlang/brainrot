@@ -3,11 +3,15 @@
 #include <stdlib.h>
 
 // Raw bet function: assert that condition is true
-static void bet(int condition, const char *message) {
-    if (!condition) {
-        fprintf(stderr, "Error: bet: assertion failed at line %d", g_exec_context.line_number);
-        
-        if (message) {
+static void bet(int condition, const char *message)
+{
+    if (!condition)
+    {
+        fprintf(stderr, "Error: bet: assertion failed at line %d",
+                g_exec_context.line_number);
+
+        if (message)
+        {
             fprintf(stderr, ": %s", message);
         }
         fprintf(stderr, "\n");
@@ -16,38 +20,59 @@ static void bet(int condition, const char *message) {
 }
 
 // Wrapper for dynamic dispatch
-StdrotValue stdrot_bet(StdrotValue *args, int argc) {
-    if (argc < 1) {
+StdrotValue stdrot_bet(StdrotValue *args, int argc)
+{
+    if (argc < 1)
+    {
         fprintf(stderr, "Error: bet: requires at least 1 argument\n");
         exit(1);
     }
 
     // First argument is the condition
     int condition = 0;
-    if (args[0].type == STDROT_INT) {
+    if (args[0].type == STDROT_INT)
+    {
         condition = args[0].val.i != 0;
-    } else if (args[0].type == STDROT_BOOL) {
+    }
+    else if (args[0].type == STDROT_BOOL)
+    {
         condition = args[0].val.b;
-    } else if (args[0].type == STDROT_DOUBLE) {
+    }
+    else if (args[0].type == STDROT_DOUBLE)
+    {
         condition = args[0].val.d != 0.0;
-    } else if (args[0].type == STDROT_FLOAT) {
+    }
+    else if (args[0].type == STDROT_FLOAT)
+    {
         condition = args[0].val.f != 0.0f;
     }
 
     // Optional second argument is the message
     const char *message = NULL;
-    if (argc > 1 && args[1].type == STDROT_STRING) {
+    if (argc > 1 && args[1].type == STDROT_STRING)
+    {
         message = args[1].val.str.data;
     }
 
     bet(condition, message);
 
-    // Return empty value (assertion succeeded)
+    // bet() above exit()s on failure, so reaching here means the assertion
+    // held -- return a real W (true), matching the declared cap return
+    // type instead of a placeholder int.
     StdrotValue result = {0};
-    result.type = STDROT_INT;
-    result.val.i = 0;
+    result.type = STDROT_BOOL;
+    result.val.b = true;
     return result;
 }
 
+// bet(cap, [const char *]) -> cap: the condition is mandatory (min_args=1),
+// the message is optional but still checked as a string when present
+// (param_count=2), and there's no further unchecked tail (is_variadic=false).
+static const StdrotParam bet_params[] = {
+    {STDROT_BOOL, NULL, 0},
+    {STDROT_STRING, NULL, 0},
+};
+
 // Register with auto-export macro
-STDROT_EXPORT("bet", stdrot_bet);
+STDROT_EXPORT_SIG("bet", stdrot_bet, ((StdrotParam){STDROT_BOOL, NULL, 0}),
+                  bet_params, 2, 1, false);

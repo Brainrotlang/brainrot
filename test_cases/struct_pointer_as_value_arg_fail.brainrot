@@ -1,0 +1,20 @@
+🚽 Test case: #193 -- passing a struct POINTER variable where a by-value
+🚽 struct argument is expected (`show(pp)` with `gang Point *pp`) is a type
+🚽 error, not an implicit dereference. The identifier arm enforces the same
+🚽 pointer_level == 0 invariant as the member-access arm (PR #253 review,
+🚽 finding 1).
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+skibidi show(gang Point p) {
+    yapping("%d", p.x);
+}
+
+skibidi main {
+    gang Point q;
+    q.x = 5;
+    gang Point *pp = &q;
+    show(pp);
+}

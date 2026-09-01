@@ -1,0 +1,26 @@
+🚽 Test case: round-13 review finding #3, combined with the earlier round's
+🚽 recursive struct-field inference fix -- o.inner.c (a chained
+🚽 NODE_STRUCT_ACCESS) is still an ordinary char lvalue in C regardless of
+🚽 chain depth; `takes_char(o.inner.c)` must type-check successfully as a
+🚽 char argument, not be rejected, the same as the single-level f.c case
+🚽 (native_char_struct_access.brainrot). Exercises both fixes together:
+🚽 infer_struct_def_static() must still resolve the chain (so this isn't
+🚽 approved merely by static inference failing open to NONE), and
+🚽 stdrot_char_narrows_to_int() must not narrow a NODE_STRUCT_ACCESS
+🚽 regardless of how deep the chain is. This fixture replaces the old
+🚽 semantic_error_native_nested_struct_access.brainrot, which asserted the
+🚽 rejection this fix removes.
+gang Inner {
+    yap c;
+};
+
+gang Outer {
+    gang Inner inner;
+};
+
+skibidi main {
+    gang Outer o = { { 'x' } };
+    rizz r = takes_char(o.inner.c);
+    yapping("%d", r);
+    bussin 0;
+}

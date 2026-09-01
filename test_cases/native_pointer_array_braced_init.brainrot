@@ -1,0 +1,23 @@
+🚽 Test case: round-24 review finding #2 -- round 23 fixed pointer_level
+🚽 dominating element representation for READING an array element back
+🚽 out (evaluate_multi_array_access()) and for ALLOCATING a pointer
+🚽 array's storage (get_type_size_for_descriptor(), sizeof(uintptr_t) per
+🚽 element), but populate_multi_array_variable() (the braced-initializer
+🚽 path, `rizz *ptrs[2] = { &x, &y };`) still dispatched purely on the
+🚽 array's base VarType, writing through an (int *) cast at the WRONG
+🚽 stride and evaluating each initializer (`&x`) with evaluate_
+🚽 expression_int() instead of evaluate_expression_pointer() -- reading a
+🚽 raw address through the wrong evaluator entirely. Confirmed via a
+🚽 temporary A/B test (reverting to the pre-fix version) that this
+🚽 crashed under ASan with a SEGV inside evaluate_expression_int() before
+🚽 the program ever printed anything. Fixed with the same pointer_level-
+🚽 dominates check applied at element read/allocation time.
+skibidi main {
+    rizz x = 1;
+    rizz y = 2;
+    rizz *ptrs[2] = { &x, &y };
+    yappin("%d %d\n", *ptrs[0], *ptrs[1]);
+    *ptrs[1] = 99;
+    yappin("%d %d\n", x, y);
+    bussin 0;
+}

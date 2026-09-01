@@ -1,0 +1,13 @@
+skibidi main
+{
+    🚽 a bare native call relying on the deprecated write-back convention,
+    🚽 used directly as a flex loop's increment clause. Proves it runs fresh
+    🚽 (and applies write-back) on every iteration rather than executing
+    🚽 once and getting stuck on a stale cached result.
+    rizz i;
+    flex (i = 0; i < 3; slorp(i))
+    {
+        yapping("i=%d", i);
+    }
+    bussin 0;
+}

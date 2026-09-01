@@ -1,0 +1,20 @@
+🚽 Test case: round-18 review finding #1 -- sizeof no longer executes a
+🚽 native call nested inside a larger expression, not just when the call
+🚽 is the whole operand by itself. legacy_int_prints() (tests/stdrot/
+🚽 testabi.c) is a legacy/untyped STDROT_EXPORT() export like legacy_int()
+🚽 (genuinely unknowable return type, "signature unknown" by design),
+🚽 except it also prints an unmistakable marker as a side effect -- if
+🚽 handle_sizeof() (ast.c) ever fell back to get_expression_type()'s
+🚽 execute-to-discover path for this call merely because it's nested
+🚽 inside `+ 1` rather than being the whole sizeof operand, "THIS MUST
+🚽 NEVER PRINT" would appear in this program's output despite the sizeof
+🚽 still being rejected. Rejected instead, with no such output, via
+🚽 infer_runtime_expression_type_noeval() (ast.c) recursing into the
+🚽 operation and propagating NONE up from the unknowable nested call
+🚽 before get_expression_type() (which alone would have executed it) is
+🚽 ever reached. (Reported once -- see semantic_error_native_sizeof_
+🚽 legacy_unknown's own comment for why it used to be twice.)
+skibidi main {
+    rizz n = maxxing(legacy_int_prints() + 1);
+    bussin 0;
+}

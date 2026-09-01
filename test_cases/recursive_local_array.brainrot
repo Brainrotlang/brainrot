@@ -1,0 +1,15 @@
+🚽 Test case: recursive function whose local array must get fresh storage
+🚽 on every call instead of a single shared instance
+rizz sum_to(rizz n) {
+    rizz local[1];
+    local[0] = n;
+    edgy (n <= 0) {
+        bussin local[0];
+    }
+    bussin local[0] + sum_to(n - 1);
+}
+
+skibidi main {
+    yapping("%d", sum_to(5));
+    bussin 0;
+}

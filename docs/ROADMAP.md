@@ -10,8 +10,8 @@ pipeline (Flex → Bison → AST → semantic analyzer → tree-walking interpre
 
 This roadmap describes how it becomes a cursed-but-genuinely-useful language:
 one that can call native C libraries, run a game loop, spawn threads, hold a
-hashmap, and serve HTTP — without any of those being one-off hacks bolted onto
-the interpreter.
+hashmap, serve HTTP, and roll cryptographically honest dice — without any of
+those being one-off hacks bolted onto the interpreter.
 
 **The organizing idea:** we do not port libraries into Brainrot. We build a good
 enough native ABI that every C library — raylib, SQLite, libcurl — becomes just
@@ -31,9 +31,12 @@ another binding, most of it generated.
 8. [Phase 6 — Threads (`yeet`)](#phase-6--threads-yeet)
 9. [Phase 7 — Hashmaps (`grindset`)](#phase-7--hashmaps-grindset)
 10. [Phase 8 — Sockets and web servers](#phase-8--sockets-and-web-servers)
-11. [Milestones](#milestones)
-12. [Appendix A — Reserved keywords](#appendix-a--reserved-keywords)
-13. [Appendix B — Open questions](#appendix-b--open-questions)
+11. [Phase 9 — Unit testing (`sussybaka`)](#phase-9--unit-testing-sussybaka)
+12. [Phase 10 — File I/O](#phase-10--file-io)
+13. [Phase 11 — Cryptographically safe `gamba()`](#phase-11--cryptographically-safe-gamba)
+14. [Milestones](#milestones)
+15. [Appendix A — Reserved keywords](#appendix-a--reserved-keywords)
+16. [Appendix B — Open questions](#appendix-b--open-questions)
 
 ---
 
@@ -62,7 +65,7 @@ everything that makes it *typed* and *composable*.
 | L5 | `StdrotValue` has no pointer, struct, or handle representation — only `int/float/double/short/bool/char/String/void`. | [stdrot/stdrot_api.h:49](../stdrot/stdrot_api.h#L49) |
 | L6 | `compute_struct_layout()` packs fields sequentially with no alignment or padding, so `gang` layouts do not match C. | [ast.c:3948](../ast.c#L3948) |
 | L7 | Struct member access only resolves when the base is a plain identifier; `a.b.c` is rejected outright. | [ast.c:346](../ast.c#L346) |
-| L8 | Functions cannot return structs. | [ast.c:2458](../ast.c#L2458) |
+| L8 | Functions can take/return a struct by value as a plain struct variable, a by-value member-access sub-expression (`take(b.corner)`, `bussin b.corner;`), or a struct-returning call result (`take(make_point())`, `bussin make_point();`) of the exact matching type, and can return a pointer to a struct (`gang Point *f()`). Resolved. | [ast.c:6606](../ast.c#L6606) (`enter_function_scope`) |
 | L9 | `StructField` keeps `VarType + pointer_level + offset` only — no struct type name, no arrays, no modifiers, so nested-struct and fixed-array fields are unrepresentable. | [ast.h:82](../ast.h#L82) |
 | L10 | Exactly one native library is ever loaded, hardcoded as `libstdrot.so`. | [Makefile:52](../Makefile#L52) |
 
@@ -107,7 +110,7 @@ skibidi main {
 
 ## Phase 1 — The keystone: native calls as expressions
 
-**Status: not started · Priority: P0 · Blocks: literally everything else**
+**Status: merged (#217) · Priority: P0 · Blocks: literally everything else**
 
 This is the single highest-leverage change in the entire roadmap. Until a native
 call is an ordinary expression, none of the rest is worth starting.
@@ -149,7 +152,7 @@ lands. Suggested path: support both forms for one release, warn on the old one.
 
 ## Phase 2 — A typed native ABI
 
-**Status: not started · Priority: P0 · Depends on: Phase 1**
+**Status: merged (#223) · Priority: P0 · Depends on: Phase 1**
 
 Right now the semantic analyzer cannot check a single builtin argument. Making
 native exports self-describing fixes that and unlocks generated bindings.
@@ -202,10 +205,27 @@ at [semantic_analyzer.c:352](../semantic_analyzer.c#L352).
 ### The string boundary
 
 Brainrot uses `String { char *data; size_t len; }`; C libraries want
-`const char *`. Define the conversion **once**, in the ABI layer, rather than
-scattering `malloc(len+1)/memcpy/'\0'` through every wrapper. Ownership rule to
-decide up front: adapter-owned scratch buffer, freed after the call, unless the
-signature is annotated as escaping.
+`const char *`. Defined **once**, in the ABI layer (`coerce_arg_to_param()`,
+`stdrot.c`), rather than scattering `malloc(len+1)/memcpy/'\0'` through every
+wrapper. Ownership rule, as actually implemented: `STDROT_CSTRING` arguments
+are **strictly non-escaping** -- adapter-owned scratch, freed immediately
+after the call (see `STDROT_CSTRING`'s own comment, `stdrot_api.h`). Return
+values get the mirror treatment: a native's `STDROT_STRING` return is
+materialized (deep-copied) into independent memory before any of that call's
+own argument scratch is released, so an identity-style native (`T -> T`,
+`STDROT_EXPORT_SIG_IDENTITY`) can safely hand back one of its own string
+arguments unchanged without triggering a use-after-free once the adapter's
+cleanup runs.
+
+**Deliberately out of scope for Phase 2**: an escaping-string annotation (a
+native's C implementation retaining a `const char *` past its own return --
+e.g. a C API like `set_global_name(const char *)` that keeps the pointer).
+Nothing in `StdrotParam` currently expresses that a parameter escapes, and
+none of Phase 2's natives need it. A future phase needs to either add an
+explicit `escapes` flag to `StdrotParam` with a defined ownership-transfer
+mechanism, or otherwise formally support escaping strings, before any native
+requiring one is written -- writing one against the current ABI is a
+guaranteed use-after-free, not an oversight to work around silently.
 
 ### Definition of done
 
@@ -217,7 +237,31 @@ signature is annotated as escaping.
 
 ## Phase 3 — C-compatible aggregates
 
-**Status: not started · Priority: P0 · Depends on: Phase 2**
+**Status: complete (#206) · Priority: P0 · Depends on: Phase 2**
+
+All five sub-items landed; the sections below are kept as the design record.
+
+- **3a** layout (alignment + trailing padding, `_Static_assert`/`offsetof`
+  ABI check) — #242.
+- **3b** unified `TypeDescriptor` in use across all five type carriers
+  (StructField, Parameter, Variable, Function return, ReturnValue) — #258,
+  #259, #260, #261.
+- **3c** `gang` as a first-class type: struct-typed fields/params/returns,
+  struct arguments and returns including member-access/call-result
+  sub-expressions and pointer-to-struct returns (#193) — #253, #254, #255.
+- **3d** address-based recursive member access, incl. as an assignment
+  target and through pointer fields (#196/#197) — #248, #252. (Member
+  access `.` precedence bug, surfaced by this work, fixed in #257.)
+- **3e** remaining C field types: unsigned/fixed-width scalars, pointer
+  fields, nested struct fields, fixed arrays in structs (incl. `lit`-alias
+  element types with correct stride), struct aliases — #247, #256. "Fixed
+  arrays in structs" meant SCALAR element types only until #311; a
+  struct/union-typed array field (`gang Pool { gang Entity es[8]; };`) was
+  a parse error, and is now supported.
+
+Struct assignment is value-copy (C semantics), decided and tested. Arrays
+of by-value structs as standalone declarations, and arrays as by-value
+function params/returns, remain out of scope here (the latter is #194).
 
 This is the big one. raylib is struct city: `Vector2`, `Vector3`, `Color`,
 `Rectangle`, `Texture2D`, `Image`, `Camera2D`, `Camera3D`, `Matrix`, and further
@@ -306,36 +350,69 @@ ordinary Brainrot integer constants. They stay on the wishlist.
 
 ## Phase 4 — Native modules and `#cooked`
 
-**Status: not started · Priority: P1 · Depends on: Phase 2**
+**Status: mechanism complete · Priority: P1 · Depends on: Phase 2**
 
 Today exactly one `.so` is loaded, by hardcoded name. Generalize to a module
 directory, each exporting a discovery entrypoint:
 
 ```
-stdrot/     brainray/     brainsql/     braincurl/
+stdrot/     rayrot/     brainsql/     braincurl/
 ```
 
 ```c
-StdrotAPI brainrot_module_init(void);
+StdrotAPI brainrot_module_init_v3(void);
 ```
 
 Then `#cooked <raylib>`, currently listed as unimplemented in the README, means:
 locate module → `dlopen` → fetch metadata → register types, constants, and
 functions. That is a far better fate for the directive than textual inclusion.
 
+**Landed:** the full mechanism. The angle-bracket directive and the module
+search path resolve `#cooked <name>` to either a `.brainrot` prelude or a
+native `.so`, checking the former before the latter within each directory.
+Search order: `$BRAINROT_PATH`, then exactly one of {the install module
+directory, `stdrot/` next to the running executable} — never both, decided
+by whether the running executable (resolved via
+`/proc/self/exe`/`_NSGetExecutablePath`, not `argv[0]`) is itself the
+installed binary (Appendix B Q11's resolution has the full reasoning). A
+resolved `.so` is `dlopen`'d and must export `StdrotAPI
+brainrot_module_init_v3(void)` (`stdrot_load_module()`, `stdrot.c`) — the exact
+signature this phase originally specified, given a collision-free exported
+name of its own (see `stdrot/registry.c`'s own comment: a naive same-named
+wrapper calling `stdrot_get_api_v3()` from inside a module is silently
+interposed by the always-loaded core library's own copy of that symbol).
+Its functions are registered alongside the core library's and any other
+already-cooked module's, with a load-time error on any name collision
+between them. The first real native module built on this mechanism is
+`rayrot` (raylib), shipped by Phase 5 Road A (#208) — this phase delivered
+the loader, not a binding, which was never its DoD. Types/constants
+registration is deferred past
+this phase entirely: `StdrotAPI` only carries a function table today, and
+nothing in-tree needs more than that yet — see
+[issue #207](https://github.com/Brainrotlang/brainrot/issues/207).
+
 ---
 
 ## Phase 5 — Bindings and the first cursed game
 
-**Status: not started · Priority: P1**
+**Status: Road A shipped (#208) · Road B shipped (#208) · Priority: P1**
 
 There are two roads here and we should walk both, in order.
 
 ### Road A — maximum brainrot, immediately (needs only Phase 1)
 
-Link raylib into `libstdrot.so` and hand-write ~20 wrappers over primitives
-only. Textures become integer handles; C owns the `Texture2D textures[]` array
-and Brainrot holds an ID.
+**Status: shipped (#208).** Delivered as a hand-written raylib native module,
+`rayrot/raylib.so`, loaded with `#cooked <raylib>` and built by the optional
+`make rayrot` target — *not* linked into `libstdrot.so` as this section
+originally proposed, because Phase 4's native-module mechanism (which landed
+after this was written) is the cleaner home and keeps raylib out of the core
+library's build. raylib stays an optional dependency: `make` / `make test` /
+`make valgrind` never build the module and don't need raylib installed. Ships
+~20 primitive wrappers plus `examples/raylib/ohio_engine.brainrot`; see
+[docs/rayrot.md](rayrot.md). The original design sketch follows.
+
+Hand-write ~20 wrappers over primitives only. Textures become integer handles;
+C owns the `Texture2D textures[]` array and Brainrot holds an ID.
 
 ```c
 skibidi main {
@@ -353,7 +430,8 @@ skibidi main {
 }
 ```
 
-The joke language runs a game loop. Ships as `examples/ohio_engine.brainrot`.
+The joke language runs a game loop. Ships as
+`examples/raylib/ohio_engine.brainrot`.
 
 ### Road B — generate the real binding (needs Phases 2–4)
 
@@ -361,7 +439,7 @@ raylib ships `tools/rlparser/output/raylib_api.json`, a machine-readable
 description of its entire API. Point a generator at it:
 
 ```
-raylib_api.json → brainray-gen → { C adapters, native descriptors,
+raylib_api.json → rayrot-gen → { C adapters, native descriptors,
                                    Brainrot constants/types, docs, ABI tests }
 ```
 
@@ -377,6 +455,49 @@ Generated C is compile-time correct and vastly easier to reason about than a
 dynamic call machine. Once this works, raylib is merely the first client: SDL,
 SQLite, libcurl, OpenSSL, PortAudio, Lua, FFmpeg, and libgit2 are the same
 problem.
+
+**Delivered (#208).** In two parts.
+
+*The ABI.* `STDROT_STRUCT` (`stdrot/stdrot_api.h`), ABI v3 — the by-value
+aggregate the sketch above assumes. A parameter declared
+`{STDROT_STRUCT, "Vector2", 0}` receives the `gang`'s C-ABI byte image,
+tag-checked both statically and at the runtime boundary, copied so the call is
+genuinely by value. **Argument direction only**, and the sketch above is
+deliberately still not implementable as written: its
+`stdrot_struct("Texture2D", &tex, sizeof(tex))` returns the address of a local
+that dies with the call. Struct returns stay rejected until Appendix B Q6
+(ownership of native resources) has an answer.
+
+*The generator.* `rayrot/rayrot_gen.py`, reading a vendored
+`rayrot/raylib_api.json` pinned by upstream commit SHA, emitting **378 of
+617 functions, 16 of 35 struct types, 305 constants** — plus an
+`_Static_assert`/`offsetof` translation unit whose compilation *is* the ABI
+drift check against real raylib headers. `make rayrot-gen-sources`
+(generate; raylib not required) and `make rayrot-gen` (also compile and
+verify) are opt-in and never prerequisites of `all`/`test`/`valgrind`.
+Demonstrated by `examples/raylib/ohio_engine_gen.brainrot`, which runs a real
+game loop passing `gang Vector2`/`gang Color`/`gang Rectangle` by value — the
+non-handle-hack demo this phase's DoD asked for.
+
+Two design notes worth carrying forward:
+
+- **Type/constant registration in `StdrotAPI` turned out to be unnecessary**,
+  which is why this phase shipped without it despite the DoD implying it. A
+  module name resolves a `<name>.brainrot` prelude *before* a `<name>.so`, and
+  a prelude may itself `#cooked` a native module — so the generator emits
+  types and constants as ordinary Brainrot source (`gang Vector2 { chad x;
+  chad y; }`, `gyatt KeyboardKey { KEY_SPACE = 32, ... }`) and only functions
+  go through the C ABI. Phase 4's deferral of that registration
+  ([#207](https://github.com/Brainrotlang/brainrot/issues/207)) cost nothing.
+- **Struct returns are the dominant coverage cost**, quantified: 113 of the
+  239 skipped functions. Answering Appendix B Q6 is the single highest-value
+  follow-up for this binding, worth more than the other five skip categories
+  combined.
+
+Road A's hand-written `rayrot/raylib.so` is untouched and still works;
+the generated binding is a separate module (`#cooked <raylibgen>`). Phase 11's `gamba()` is **not** that generated OpenSSL binding — it is
+a thin, hand-written `RAND_bytes` wrapper that ships earlier, the same way
+Road A ships a cursed game before Road B generates `rayrot`.
 
 ---
 
@@ -541,6 +662,565 @@ consumer of the FFI work.
 
 ---
 
+## Phase 9 — Unit testing (`sussybaka`)
+
+**Status: not started · Priority: P1 · Depends on: Phase 1 · Improves with Phases 2 and 4**
+
+Brainrot cannot currently test itself. `tests/test_brainrot.py` runs every
+`test_cases/*.brainrot` from the outside and string-matches stdout against
+`tests/expected_results.json`; the only in-language assertion is `bet`, which
+aborts the process on failure and reports nothing else. `sussybaka` is the
+missing half: an in-language unit testing library where you register tests,
+assert things, and get a report instead of a corpse.
+
+The name is the whole design brief. You are suspicious of your code, so you
+check it.
+
+This phase is P1 rather than P2 because it is not a side quest: the project's own
+test suite gets rewritten on top of it (§9c), which makes it load-bearing
+infrastructure rather than a nice-to-have.
+
+Three lettered work items — **9a** delivery, **9b** mocking, **9c** the suite
+rewrite — with the design they share described in the unlettered sections
+between them.
+
+### Shape: a library, not keywords
+
+Almost every operation here is "a call with arguments", which is exactly the case
+Appendix A says should stay an ordinary library function — keyword status would
+buy no syntax and cost a reserved identifier forever. The one exception is `npc`,
+the function-reference type that `larping` needs (§9b); that is a genuine type,
+so it is a genuine keyword.
+
+```c
+#cooked <sussybaka>
+
+skibidi sus_adds_two_numbers() {
+    fr(add(2, 2), 4);
+    nah(add(2, 2), 5);
+}
+
+skibidi sus_area_is_roughly_pi() {
+    lowkey(circle_area(1.0), 3.14159, 0.0001);
+}
+
+skibidi sus_divide_by_zero_explodes() {
+    ragebait(divide(1, 0));
+}
+
+skibidi main {
+    sussybaka("adds two numbers",     sus_adds_two_numbers);
+    sussybaka("area is roughly pi",   sus_area_is_roughly_pi);
+    sussybaka("divide by zero blows", sus_divide_by_zero_explodes);
+    bussin roasted();
+}
+```
+
+### 9a. Delivery: `#cooked <sussybaka>`
+
+`sussybaka` is **not** globally available the way `yapping` and `bet` are. You
+opt in by cooking it, which keeps twelve common words out of every program's
+namespace and gives the library a place to live that isn't "more builtins".
+
+That requires the angle-bracket form of the directive, which **landed as part of
+#207** (`lib/module_path.c`, `lang.l`'s `#cooked <name>` rule) rather than in this
+phase — Phase 4 needed the same search path Phase 9a was going to build, so it
+built it first. What remains for this phase specifically is `sussybaka` itself
+existing as a `.brainrot` prelude the resolver can find, not the resolver:
+
+| Form | Meaning | Status |
+| ---- | ------- | ------ |
+| `#cooked "path/to/file.brainrot"` | textual include, resolved relative to the including file | **implemented** |
+| `#cooked <name>` | resolve `name` on the **module search path** | **implemented** (#207) |
+
+Search-path resolution tries, in order:
+
+1. `$BRAINROT_PATH` entries, if set.
+2. Exactly ONE of the install module directory (`/usr/local/lib/brainrot`) or
+   the in-tree `stdrot/` directory next to the running executable — never
+   both; see Appendix B Q11's resolution for why the choice between them is
+   decided by which binary is actually running, not by trying both in a
+   fixed order. The in-tree half is what lets `#cooked <sussybaka>` resolve
+   `stdrot/sussybaka.brainrot` from a build with no install step, which the
+   test-suite rewrite in §9c depends on.
+
+A resolved name may be either a `.brainrot` **prelude** (implemented) or, once
+the rest of Phase 4 lands, a native `.so` **module**. That is deliberate: one
+syntax, one search path, two possible artifact kinds. It also settles what the
+roadmap previously left vague — Phase 4's `#cooked <raylib>` and this phase's
+`#cooked <sussybaka>` are the same mechanism.
+
+**How v1 splits:**
+
+- `stdrot/sussybaka.c` — the primitives, in `libstdrot.so`: the test registry,
+  result recording, comparison helpers, the timer, and report formatting. Not
+  intended to be called directly.
+- `stdrot/sussybaka.brainrot` — the surface, resolved by `#cooked <sussybaka>`:
+  the twelve names in the vocabulary table as thin `skibidi` wrappers, plus suite
+  bookkeeping.
+
+Programs only ever see the prelude. When Phase 4 arrives, prelude and primitives
+collapse into a real module and **not one line of user code changes** — the
+`#cooked <sussybaka>` line already says the right thing.
+
+### Vocabulary
+
+| Op | Function | Mnemonic |
+| -- | -------- | -------- |
+| register a test | `sussybaka` | you're suspicious of it, so you check it |
+| assert equal | `fr` | fr fr — it really is that |
+| assert not equal | `nah` | it's not that |
+| assert condition holds | `zesty` | it's giving correct |
+| assert condition fails | `capping` | it's cap, and you called it |
+| assert near (floats) | `lowkey` | approximately, roughly |
+| expect an abort/crash | `ragebait` | you provoked it on purpose |
+| skip a test | `touchgrass` | not today |
+| fail unconditionally | `mogg` | you just lost, unconditionally |
+| install a mock | `larping` | this function is pretending to be another one |
+| setup hook | `lockin` | lock in before each test |
+| teardown hook | `logoff` | log off after each test |
+| suite summary | `roasted` | your year in review |
+
+`capping` asserts a condition is **false** and `zesty` asserts it is **true** —
+the polarity follows the slang, where capping is lying.
+
+None of these collide with a keyword in `lang.l`, with a registered builtin
+(`yapping`, `yappin`, `baka`, `bet`, `chill`, `ragequit`, `slorp`), or with a
+name proposed elsewhere in this roadmap. `mogg` is deliberately distinct from
+Phase 6's `mogged`, and `sussybaka` from Phase 7's `sus`.
+
+### Relationship to `bet`
+
+`bet` is untouched. It stays the bare runtime assertion that aborts, and
+`test_cases/bet.brainrot` / `bet_fail.brainrot` keep passing unchanged.
+`sussybaka`'s assertions are a separate family with different semantics: they
+record a result and abort only the *current test*. No compatibility surface
+moves in this phase.
+
+### Runner mode
+
+```bash
+./brainrot --sus tests/sus_math.brainrot
+```
+
+`main()` at [lang.y:748](../lang.y#L748) hard-rejects `argc != 2`, so generalizing
+argument parsing is part of this phase.
+
+There is a tension to resolve up front: library-only registration means
+*something* has to execute the `sussybaka(...)` calls, but test bodies should
+carry no harness boilerplate. The resolution is that in `--sus` mode `main` is a
+**manifest, not a driver** — the runner executes `main` purely to collect
+registrations, then takes over and drives the tests itself, applying isolation,
+timing, output formatting, and the exit code. The test functions themselves stay
+plain `skibidi` functions.
+
+Registration takes a **function reference** (`npc`, §9b), so a typo is a semantic
+error at analysis time rather than a runtime lookup miss. If `npc` slips, the
+fallback is registration by name string — `sussybaka("adds two", "sus_add")`
+resolved through the existing function table — which works today but moves typos
+to run time.
+
+Semantics:
+
+1. Parse and analyze as usual.
+2. Run `main` to collect the manifest.
+3. For each registered test: `lockin` → body → `logoff`.
+4. Print the summary; exit `0` if and only if every test passed.
+
+### Failure isolation
+
+An assertion failure aborts the current test and the runner continues with the
+next one. Mechanically this reuses the existing `setjmp` machinery: the runner
+pushes a jump buffer ([ast.h:547](../ast.h#L547)) before each test body and a
+failing assertion `longjmp`s back into it.
+
+Two hazards, both of which need explicit handling and tests:
+
+- The jump-buffer stack is shared with `bruh`/loop handling, so a test that
+  aborts from inside a loop leaves frames behind. The runner must unwind the
+  stack back to its own frame, not merely pop one entry.
+- Scope and arena state from an aborted test must not leak into the next one.
+  This is the part most likely to produce ASan findings, so it gets tests before
+  it gets features.
+
+### Output
+
+Human-readable by default; TAP version 13 behind a flag, so CI and the existing
+pytest harness can consume results without parsing prose.
+
+```
+sussybaka: sus_math.brainrot
+  ✓ adds two numbers                    0.4ms
+  ✗ area is roughly pi                  0.3ms
+      lowkey: expected 3.14159 ± 0.0001, got 3.14158999
+      at sus_math.brainrot:12
+  ~ divide by zero blows               skipped (touchgrass)
+
+roasted: 1 passed, 1 failed, 1 skipped in 1.2ms
+```
+
+### In scope for this phase
+
+- **Core.** Registration, the assertion family above, per-test isolation,
+  summary, exit code.
+- **`lockin` / `logoff` hooks.** Run before/after each test in a suite.
+- **Suites.** Grouping registered tests under a named suite, so hooks and the
+  summary have a scope smaller than "the file".
+- **Skip and expected-failure.** `touchgrass` marks a test skipped;
+  `ragebait` asserts that an expression aborts, which is how you test
+  `ragequit`, `baka`, and division by zero.
+- **Parameterized tests.** Same body, a table of inputs, one result line each.
+  Cheapest form is an array of cases the body indexes; a real table syntax wants
+  Phase 3's aggregates.
+- **Per-test timing.** Monotonic clock around each body, reported in the summary.
+- **Mocking.** `larping` plus first-class functions — see §9b, which is the
+  largest single piece of work in this phase.
+
+### 9b. `larping` and first-class functions (`npc`)
+
+Mocking means substituting one function for another, which means a function has
+to be a *value*. Brainrot has no such thing today, so this phase introduces one.
+
+```c
+npc  /* a function reference: hand someone a script and they run it */
+```
+
+`npc` is the mnemonic pair to `larping` — an NPC runs whatever script it was
+given, and `larping` is how you hand it a different one. Minimum viable feature
+set:
+
+- `npc` as a type in declarations and parameters.
+- A bare function name in value position evaluates to a reference to it.
+- Calling through an `npc`-typed variable: `f(args)` where `f` is an `npc`.
+- Assignment and equality comparison of references.
+
+Not in scope: closures, capture, anonymous functions, returning `npc` from
+native code. Those are a language-design project; this is a pointer to a
+`FunctionDef`.
+
+```c
+#cooked <sussybaka>
+
+skibidi rizz fake_roll() {
+    bussin 4;   /* chosen by fair dice roll, guaranteed random */
+}
+
+skibidi sus_player_moves_four_spaces() {
+    larping(roll_dice, fake_roll);   /* roll_dice now LARPs as fake_roll */
+    fr(take_turn(), 4);
+}                                    /* restored when the test ends */
+```
+
+**Mechanism.** `larping(real, stub)` rebinds the callee `real` resolves to, for
+the duration of the current test, and the runner restores it afterwards. Two
+constraints that are easy to get wrong:
+
+- **Restoration must survive an abort.** A failing assertion `longjmp`s out of
+  the test body, so restoration cannot live at the end of the body. The runner
+  owns a per-test list of installed mocks and unwinds it in the same place it
+  unwinds the jump-buffer stack — the one code path that runs whether the test
+  passed, failed, or aborted.
+- **Signature compatibility.** `larping` should reject a stub whose signature
+  does not match the target. Fully checkable once Phase 2 lands; before that it
+  is an arity check plus a runtime type check at the call.
+
+**This is bigger than testing.** Function references unlock raylib callbacks,
+`yeet worker` taking a function rather than a syntactic call, socket handlers in
+Phase 8, and comparator arguments for any future sort. That is an argument for
+promoting `npc` out of Phase 9 into its own phase — see Appendix B.
+
+### 9c. Rewriting the project's test suite
+
+The end state is that `test_cases/` stops being a set of programs whose
+correctness lives in a separate JSON file, and becomes a set of programs that
+state their own expectations.
+
+Today:
+
+```c
+/* test_cases/add_two_numbers.brainrot */
+skibidi main { yapping("%d", 2 + 2); }
+```
+```json
+"add_two_numbers": "4"
+```
+
+After:
+
+```c
+#cooked <sussybaka>
+
+skibidi sus_addition() { fr(2 + 2, 4); }
+skibidi main { sussybaka("addition", sus_addition); bussin roasted(); }
+```
+
+The expectation moves next to the code, a failure says which assertion broke
+instead of diffing two blobs of stdout, and a test file is runnable on its own.
+
+**Migration must be incremental — 97 files do not move in one commit.**
+
+1. Land Phase 9 core and add `test_cases/sussybaka_*.brainrot` alongside the
+   existing suite. Nothing migrates yet.
+2. Teach `tests/test_brainrot.py` a second mode: a case with no
+   `expected_results.json` entry is run under `--sus --tap` and asserted on exit
+   code and TAP output instead of a stdout string. The two styles coexist.
+3. Migrate in batches by area (arrays, structs, `#cooked`, string builtins),
+   deleting each `expected_results.json` entry as its case converts.
+4. When the JSON is empty, delete it and simplify the harness.
+
+Two things that must keep working throughout:
+
+- `run_valgrind_tests.sh` iterates `test_cases/*.brainrot` and runs each under
+  valgrind. Migrated tests are still ordinary `.brainrot` files, so this keeps
+  working unchanged — but it needs to pass `--sus`, and a *deliberately failing*
+  sussybaka case must stay leak-clean or `make valgrind` goes red for the wrong
+  reason.
+- Error-path cases (`bet_fail`, `division_by_zero`, `cooked_missing`,
+  `cooked_circular`, and friends) assert on **stderr and a non-zero exit code**.
+  Those do not become sussybaka tests — the process is supposed to die. They stay
+  string-matched, so the JSON harness may never fully disappear, and step 4 above
+  should be treated as aspirational rather than committed.
+
+`AGENTS.md`'s testing requirement ("a `.brainrot` file in `test_cases/`, a
+corresponding entry in `tests/expected_results.json`") is written against the
+current layout and must be updated in the same PR as step 2.
+
+### Wishlist (not this phase)
+
+- **Leak assertions.** "Assert this block allocates nothing it doesn't free"
+  fits the project's ASan/valgrind-first culture perfectly, but needs allocator
+  instrumentation that doesn't exist yet.
+- **Closures and anonymous functions.** Once `npc` exists, someone will want
+  `larping(roll_dice, skibidi() { bussin 4; })`. Deliberately excluded from §9b.
+
+### Dependencies
+
+The library surface is buildable today in a degraded, statement-only form. The
+phase as scoped needs three things it does not have:
+
+- **Angle-bracket `#cooked` + a search path** (§9a). New, small, owned here.
+- **`npc` function references** (§9b). New, not small, and arguably its own phase.
+- **Phase 1** — assertions become expressions, so `zesty(fr(a, b))` composes and
+  an assertion can be used as a value rather than only as a statement.
+
+It gets better with **Phase 2** (typed signatures let the analyzer reject
+`fr("string", 42)` at analysis time, and make `larping`'s signature check exact)
+and with **Phase 4**, which upgrades the prelude to a real module without any
+program changing.
+
+Nothing in Phases 1–8 depends on this, and it does not block them.
+
+### Definition of done
+
+- `#cooked <sussybaka>` resolves through the module search path, with tests for
+  a missing module, a search-path hit, and the in-tree fallback.
+- `stdrot/sussybaka.c` primitives registered through `STDROT_EXPORT`, with
+  `stdrot/sussybaka.brainrot` as the cooked surface.
+- `npc` in the grammar, the analyzer, and the interpreter; `larping` installing
+  and restoring mocks, including on the abort path.
+- `--sus` runner mode with human and TAP output.
+- `test_cases/sussybaka_pass.brainrot`, `sussybaka_fail.brainrot`,
+  `sussybaka_skip.brainrot`, `sussybaka_larping.brainrot`, and
+  `sussybaka_abort_isolation.brainrot` (a test that fails inside a loop with a
+  mock installed, proving both that the next test still runs and that the mock
+  was restored), each with an entry in `tests/expected_results.json`.
+- One migrated batch of the existing suite, proving the §9c path end to end.
+- `docs/` reference page for the assertion vocabulary; README keyword table
+  updated for `npc`.
+- `make test` and `make valgrind` green — including under a deliberately failing
+  suite, since the abort path is the one most likely to leak.
+
+---
+
+## Phase 10 — File I/O
+
+**Status: not started · Priority: P2 · Depends on: Phase 1**
+
+`stdio.h`, rebranded. Like `sussybaka`, this is a **library, not keywords** —
+every operation here is "a call with arguments", so it belongs in `stdrot`
+alongside `yapping`, `slorp`, and `chill`, not in `lang.l`. Unlike `sussybaka`
+it is not gated behind `#cooked` — file I/O is common enough to stay globally
+available, the same way `slorp` is today. `stdrot/file.c` self-registers the
+functions below the same way `baka.c` and `yapping.c` do.
+
+**Type:** `FILE *` → **`SAUCE *`**
+
+| C | Brainrot | Why |
+| - | -------- | --- |
+| `fopen` | `crackopen` | you crack open the file |
+| `fclose` | `peaceout` | perfect opposite lifecycle |
+| `fread` | `doomscroll` | consuming data endlessly |
+| `fwrite` | `shitpost` | putting content into the file |
+| `fgets` | `skim` | silently reads a line |
+| `fputs` | `yapto` | yapping into a file |
+| `fseek` | `zoink` | literally moving through the file |
+| `ftell` | `whereami` | cursor position |
+| `rewind` | `throwback` | self-explanatory |
+| `feof` | `itsjoever` | **this one is mandatory** |
+| `ferror` | `bricked` | file operation got bricked |
+| `fflush` | `bustcache` | flush buffered output |
+
+`yapto` is deliberately distinct from raw `shitpost`: `shitpost` is
+`fwrite`-shaped (size/count, binary-safe), `yapto` is `fprintf`-shaped (a
+format string). That mirrors the existing split between `yapping` (stdout,
+formatted, newline) and `yappin` (stdout, formatted, no newline). None of
+these twelve names collide with `lockin`/`logoff` (Phase 9's sussybaka hooks)
+or `lurk` (Phase 8's `listen()`) — an earlier draft of this table did use
+those three names, which is why the family was renamed wholesale rather than
+resolved name-by-name.
+
+```c
+skibidi main {
+    SAUCE *f = crackopen("classified_lore.txt", "r");
+    edgy (!f) {
+        yapping("file got negative aura");
+        ragequit(1);
+    }
+
+    goon (!itsjoever(f)) {
+        rant line = skim(f);
+        yapping("%s", line);
+    }
+
+    peaceout(f);
+    bussin 0;
+}
+```
+
+```c
+SAUCE *manifesto = crackopen("schizo.txt", "w");
+yapto(manifesto, "aura = %d", aura);
+peaceout(manifesto);
+```
+
+### Work
+
+- A `SAUCE *handle type wrapping `FILE *`, following the same handle pattern
+  the ABI work in Phase 2 formalizes (`STDROT_HANDLE`) — this phase can ship
+  ahead of Phase 2 with a narrower, file-only handle representation and adopt
+  the general one once it lands.
+- `stdrot/file.c` implementing the twelve functions above via `STDROT_EXPORT`.
+- Since `SAUCE *f = crackopen(...)` needs the return value in an initializer,
+  this phase is blocked on Phase 1 exactly the way `sussybaka` is.
+
+### Definition of done
+
+- `test_cases/file_io.brainrot` covering open/read/write/close and the
+  `itsjoever` loop idiom above, plus a missing-file case (`crackopen`
+  returning a negative/falsy handle) exercised through `edgy (!f)`.
+- No leaked `FILE *` on any exit path — `make valgrind` is the relevant gate,
+  since an unclosed handle is exactly the kind of bug it exists to catch.
+- `docs/` reference page for the file I/O vocabulary; README keyword table
+  is **not** touched, since none of these are grammar keywords.
+
+---
+
+## Phase 11 — Cryptographically safe `gamba()`
+
+**Status: not started · Priority: P2 · Depends on: Phase 1 · OpenSSL**
+
+C's `rand()` is not a random number generator anyone should gamble with. It is
+seeded from the clock, has a tiny state, and `rand() % n` is biased on top of
+that. Brainrot does not wrap it. `gamba()` is the CSPRNG: OpenSSL
+`RAND_bytes` under the hood, unbiased ranges, and a hard abort if the
+generator fails — never a silent `0` that looks like a roll.
+
+`gamba` is a **standard-library builtin**, in the same class as `yapping`,
+`slorp`, `bet`, `chill`, and `ragequit`. It lives in `stdrot/gamba.c`,
+self-registers through `STDROT_EXPORT` into `libstdrot.so`, and is globally
+available in every program with no `#cooked` and no extra link step. It is
+**not** a keyword (`lang.l` is untouched), **not** an optional module, and
+**not** the generated OpenSSL binding from Phase 5 Road B — it is one
+function family that happens to need `libcrypto`, the same way `yapping`
+happens to need `stdio`.
+
+Because it is stdlib, OpenSSL is a **required native build dependency** of
+`libstdrot.so`. A `#cooked <gamba>` split that keeps the default stdlib
+OpenSSL-free is out of scope.
+
+`gamba` does not collide with a keyword in `lang.l`, with a registered
+builtin (`yapping`, `yappin`, `baka`, `bet`, `chill`, `ragequit`, `slorp`),
+or with any name proposed elsewhere in this roadmap.
+
+| Form | Meaning | Why it exists |
+| ---- | ------- | ------------- |
+| `gamba()` | unbiased `rizz` in `[0, INT_MAX]` | the `rand()` shape, but honest |
+| `gamba(n)` | unbiased `rizz` in `[0, n)` | so nobody writes `gamba() % n` |
+| `gamba(lo, hi)` | unbiased `rizz` in `[lo, hi]` inclusive | dice, damage rolls, closed ranges |
+| `gamba_bytes(buf, n)` | fill `n` bytes from the CSPRNG | tokens, nonces, keys |
+
+The ranged forms are **not optional**. Shipping only the no-arg shape
+guarantees that the first game in Phase 5 will do `gamba() % 6` and throw
+the cryptographic guarantee in the trash. Rejection sampling against
+`RAND_bytes`; no modulo, no libc `rand`/`srand`/`random`, no clock seed.
+
+There is no `srand` equivalent. OpenSSL seeds itself. A `gamba_seed`
+function would be a security bug dressed as an API.
+
+```c
+skibidi main {
+    rizz roll = gamba(1, 6);
+    yapping("you rolled %d", roll);
+
+    rizz nonce = gamba();
+    yapping("nonce %d", nonce);
+    bussin 0;
+}
+```
+
+### Work
+
+- `stdrot/gamba.c` implementing the four forms via `STDROT_EXPORT` (or
+  `STDROT_EXPORT_SIG` if Phase 2 has landed), calling OpenSSL `RAND_bytes`.
+  `RAND_bytes` returning anything other than `1` is a fatal error, the same
+  way a failed `bet` is — a CSPRNG failure is not a value.
+- Unbiased range reduction. `gamba(n)` and `gamba(lo, hi)` reject `n <= 0`
+  and `hi < lo` with a semantic or runtime error, not a wrap.
+- Link `libcrypto` into the **native** `libstdrot.so`. `pkg-config
+  --libs libcrypto` (or `-lcrypto`) on the `stdrot` link line; CI installs
+  `libssl-dev`. Native `make` without OpenSSL is a failed build, not a
+  `gamba`-less interpreter — the function is part of the stdlib, so the
+  library does not ship without it.
+- **No libc fallback.** A `#ifdef` that silently swaps in `rand()` is how
+  this phase fails. Missing OpenSSL fails the link; it does not compile a
+  weaker `gamba`.
+- The wasm target (`brainrot.wasm`, issue #175) does not pick up OpenSSL.
+  `gamba` is either absent there or a documented stub that errors; do not
+  drag `libcrypto` into the browser artifact. A Web Crypto / `getentropy`
+  backend is a follow-up, not this phase.
+- Since `rizz roll = gamba(1, 6);` needs the return value in an
+  initializer, this phase is blocked on Phase 1 exactly the way file I/O
+  and `sussybaka` are.
+
+### Testing
+
+A CSPRNG cannot be string-matched against `tests/expected_results.json`
+the way `2 + 2` can. The fixtures assert properties, not values:
+
+- `gamba(1, 1)` is `1`; `gamba(5)` is in `[0, 5)`; a few hundred draws
+  of `gamba(1, 6)` are not all the same face (catches "always return 0").
+- Invalid ranges (`gamba(0)`, `gamba(5, 3)`) error.
+- No fixture stores a concrete roll as expected stdout.
+
+### Definition of done
+
+- `test_cases/gamba.brainrot` covering the no-arg, `[0, n)`, and
+  `[lo, hi]` forms, plus the "not all the same" smoke check.
+- `test_cases/gamba_range_fail.brainrot` (or a `semantic_error_*` /
+  `*_fail` sibling) for invalid ranges.
+- `gamba_bytes` covered, or explicitly deferred with a reason.
+- Native `make` fails to link `libstdrot.so` without OpenSSL rather than
+  compiling a `rand()` stub or omitting `gamba`.
+- wasm build still succeeds without OpenSSL; `gamba` is absent or errors
+  there only, because the browser artifact cannot take `libcrypto`. Native
+  stdlib always has `gamba`.
+- Documented with the other builtins in `docs/the-brainrot-programming-language.md`
+  and `docs/brainrot-user-guide.md`. README keyword table is **not**
+  touched.
+- `make test` and `make valgrind` green on native with `libssl-dev`.
+
+---
+
 ## Milestones
 
 | Milestone | Contents | Unlocks |
@@ -554,9 +1234,17 @@ consumer of the FFI work.
 | **M7 — Concurrency** | Phase 6 | `yeet` / `mogged`. |
 | **M8 — Data structures** | Phase 7 | `grindset`. |
 | **M9 — Network** | Phase 8 | Brainrot serves HTTP. |
+| **M10 — Brainrot tests itself** | Phase 9a/9b | `#cooked <sussybaka>`, `npc`, `larping`, `./brainrot --sus`. |
+| **M11 — The suite is self-describing** | Phase 9c | `test_cases/` states its own expectations. |
+| **M12 — Files** | Phase 10 | `crackopen`/`peaceout`/`itsjoever` and the rest of the file I/O family. |
+| **M13 — Honest dice** | Phase 11 | `gamba()` / `gamba(n)` / `gamba(lo, hi)` via OpenSSL `RAND_bytes`. |
 
-M1–M4 are strictly ordered. M7 and M8 are independent of M2–M6 and can proceed
-in parallel by anyone who wants them.
+M1–M4 are strictly ordered. M7, M8, M10, M12, and M13 are independent of M2–M6
+and can proceed in parallel by anyone who wants them. M11 depends only on M10.
+
+M10 quietly delivers two things the rest of the roadmap wants: the module search
+path that Phase 4 builds on, and the function references that Phases 5, 6, and 8
+all need for callbacks. That is the real reason it is P1.
 
 ### If you only do one thing
 
@@ -595,6 +1283,7 @@ Proposed additions. Nothing here conflicts with a keyword currently in `lang.l`.
 | `dm` | send | 8 | proposed |
 | `peep` | recv | 8 | proposed |
 | `ghost` | close | 8 | proposed |
+| `npc` | function reference type | 9 | proposed |
 
 Every keyword here is a single word. Brainrot does have precedent for multi-word
 keywords — `"sigma rule"` lexes as `case` at [lang.l:72](../lang.l#L72) — but
@@ -602,9 +1291,12 @@ phrases read badly in call position (`soft launch(server, 8080)`), so the
 vocabulary stays single-token throughout.
 
 None of these collide with a keyword currently in `lang.l`, with a registered
-builtin (`yapping`, `yappin`, `baka`, `bet`, `chill`, `ragequit`, `slorp`), or
-with a proposed preprocessor directive. `letcook` is deliberately one word so it
-cannot be confused with the `#cooked` directive.
+builtin (`yapping`, `yappin`, `baka`, `bet`, `chill`, `ragequit`, `slorp`),
+with Phase 11's `gamba` / `gamba_bytes`, or with `#cooked` — which is the
+only preprocessor directive there is, and the only one planned (see the
+README's own note on why the `#ifdef`/`#define`/`#pragma` family was dropped
+rather than left as a TODO). `letcook` is deliberately one word so it cannot
+be confused with the `#cooked` directive.
 
 `bruh` was considered and rejected: it is already `break`
 ([lang.l:71](../lang.l#L71)).
@@ -612,6 +1304,20 @@ cannot be confused with the `#cooked` directive.
 Per `AGENTS.md`, the README keyword table is a public compatibility surface.
 These are additive, but the table must be updated in the same PR that implements
 each keyword, and any change to an *existing* keyword needs explicit sign-off.
+
+`npc` is the only Phase 9 addition in this table. The rest of the `sussybaka`
+vocabulary — `sussybaka`, `fr`, `nah`, `zesty`, `capping`, `lowkey`, `ragebait`,
+`touchgrass`, `mogg`, `larping`, `lockin`, `logoff`, `roasted` — is deliberately
+**absent**: it is a cooked library, so those are ordinary function names, not
+reserved words. Phase 11's `gamba` / `gamba_bytes` are absent for the same
+reason as Phase 10's file I/O family: they are `stdrot` functions, they never
+appear in the README keyword table, and they cost the grammar nothing. They still must not collide, and all thirteen were checked
+against `lang.l`, the registered builtins, and the proposals above — but they
+cost the grammar nothing, they only exist in files that say
+`#cooked <sussybaka>`, and they never appear in the README keyword table. They
+are the worked example of the rule in the next paragraph; `npc` is the worked
+example of the exception, because a type needs a spelling and no amount of
+library design will give it one.
 
 Several of these could reasonably be library functions instead of keywords —
 `ship`/`blorbo`/`dm`/`peep` in particular. Keyword status buys syntax; it costs
@@ -627,10 +1333,13 @@ per keyword, and default to "library function" when in doubt.
 
 1. **Write-back removal (Phase 1).** Does `slorp(x);` keep working? Deprecation
    window, or clean break?
-2. **`TypeDesc` migration (Phase 3b).** One large refactor, or incremental with
-   both representations alive? The latter is safer and uglier.
-3. **Struct assignment.** Value copy (C semantics) or reference? Affects
-   everything downstream.
+2. **`TypeDesc` migration (Phase 3b).** ~~One large refactor, or incremental with
+   both representations alive?~~ **Resolved:** incremental, one carrier per PR
+   (StructField, Parameter, Variable, Function return, ReturnValue — #258–#261),
+   each a mechanical, compiler-verified, behavior-neutral rename.
+3. **Struct assignment.** ~~Value copy (C semantics) or reference?~~ **Resolved:**
+   value copy, matching C — deep-copied on assignment, argument passing, and
+   return; tested.
 4. **Threading model (Phase 6).** Green threads, GIL, or thread-local state?
    Recommendation above is GIL-first, but this is a real fork in the road.
 5. **`grindset` generics (Phase 7).** String-keyed monomorphic, or a real type
@@ -638,7 +1347,108 @@ per keyword, and default to "library function" when in doubt.
 6. **Ownership of native resources.** Textures, sockets, and map entries all
    outlive statements. Brainrot has no destructors and no GC. Handles sidestep
    this by keeping ownership in C — is that the general answer?
-7. **Generated code in-tree or built?** `raylib_api.json` output could be
+7. **Generated code in-tree or built?** ~~`raylib_api.json` output could be
    committed or generated at build time. `AGENTS.md` forbids committing
    generated files; does that rule extend to bindings, and if so, does raylib
-   become a build dependency?
+   become a build dependency?~~ **Resolved (#208):** the rule extends to
+   bindings — generator *output* is never committed — but the question
+   conflates two artifacts that get opposite answers, and separating them
+   dissolves most of the dependency worry.
+   - **`raylib_api.json` is a committed source input, not generated output.**
+     It is raylib's own published description of its API, vendored and pinned
+     to a specific raylib version, the same way a schema or a `.proto` is
+     vendored. Nothing in this repo derives it; it is regenerated upstream by
+     raylib's `tools/rlparser`, which we deliberately do not want to run at
+     build time. Committing it is what makes the generator's output
+     reproducible from a clean checkout and reviewable as a diff when the
+     pinned version moves.
+   - **The C adapters the generator emits are derived, and are not
+     committed.** They are `lang.tab.c` by another name: produced into the
+     build tree (`rayrot/generated/`) by the `rayrot-gen-sources` and
+     `rayrot-gen` targets only -- NOT by `rayrot`, which builds Road A's
+     hand-written module and never runs the generator -- gitignored, never
+     hand-edited, and excluded from `make format-check` exactly as the
+     Bison/Flex output already is (a generator that has to satisfy
+     clang-format is a generator nobody wants to change).
+
+   So the answer to "does raylib become a build dependency?" is: no more than
+   it already is. `make rayrot` has required a pkg-config-visible raylib
+   since Road A, and Road B does not widen that — it needs raylib's *headers*
+   at adapter-compile time, which any installed raylib already provides, and
+   the pinned JSON for the generation step, which is in-tree. `make`, `make
+   test`, `make valgrind`, and `make format-check` continue to neither run the
+   generator nor require raylib, which is the constraint that actually matters
+   and is a Road B definition-of-done item in its own right.
+
+   Rejected alternatives: committing the adapters (option 1) buys a
+   raylib-free `rayrot` build that cannot exist anyway — the adapters
+   `#include <raylib.h>` and link against it — in exchange for carving a
+   permanent exception into a rule whose whole value is being absolute.
+   Generating in CI and committing nothing at all, not even the JSON (option
+   3 as originally sketched), makes a clean checkout unable to build
+   `rayrot` without network access and turns every upstream API change into
+   an invisible, unreviewable build-time surprise.
+8. **Should `npc` be its own phase (Phase 9b)?** Function references are a
+   language feature that Phases 5, 6, and 8 all want for callbacks, and they are
+   the largest item inside a phase otherwise made of library code. Leaving them
+   in Phase 9 means the testing library is gated on a grammar change; hoisting
+   them out means Phase 9 ships name-string registration first and gains
+   `larping` later. **Recommendation: hoist**, if anyone other than `sussybaka`
+   asks for them first.
+9. **Test discovery (Phase 9).** Registration-by-manifest in `main` versus
+   convention-based auto-discovery (`--sus` runs every zero-arg `skibidi`
+   function named `sus_*`). The manifest is explicit and needs no new machinery;
+   auto-discovery removes the last piece of boilerplate but makes the runner
+   depend on a naming convention.
+10. **Mock restoration on abort (Phase 9b).** `larping` stubs must be restored
+    even when a test `longjmp`s out mid-way. Does that need a general
+    "unwind actions" mechanism in the interpreter, which nothing else currently
+    has, or is a runner-owned restore list enough? The general mechanism would
+    also serve `logoff`, `gatekeep`/`letcook` (Phase 6), and `ghost` (Phase 8),
+    which all have the same "must run even on abnormal exit" shape.
+11. **Module search path (Phase 4/9a).** ~~`$BRAINROT_PATH` + install prefix +
+    in-tree `stdrot/` is proposed. Does the in-tree fallback apply always, or
+    only for an uninstalled build?~~ **Resolved (#207):** not "always, in a
+    fixed order" — exactly ONE of {install module directory, in-tree
+    `stdrot/`} is ever consulted for a given run, chosen by which binary is
+    actually running, so the two structurally cannot shadow each other in
+    either direction. The running executable's own directory is compared
+    against the install bin directory (`/usr/local/bin`); a match means this
+    IS the installed binary, so only the install module directory applies;
+    otherwise this is a source/dev build, so only `stdrot/` next to the
+    executable applies. "The running executable" is resolved via
+    `/proc/self/exe` (Linux) or `_NSGetExecutablePath` (macOS) —
+    deliberately not `argv[0]`, which for a bare `$PATH`-resolved command
+    name (typing `brainrot` after `make install`) has no directory
+    component at all and would resolve against cwd instead of the binary
+    that's actually running. `$BRAINROT_PATH` remains the highest-precedence
+    tier, checked before either half of this split.
+12. **Prelude versus builtins (Phase 9a).** The split is "primitives in
+    `libstdrot.so`, surface in a cooked `.brainrot` prelude". The primitives are
+    still globally visible builtins even when nobody cooks `sussybaka` — do they
+    need a naming convention (`__sus_record`) to signal "not for you", or does
+    the language need real module-private names, which nothing else has?
+13. **How far does the §9c migration actually go?** Error-path cases assert on
+    stderr and a non-zero exit code, so they cannot become sussybaka tests. That
+    means `tests/expected_results.json` probably survives forever in reduced
+    form. Is a permanently two-mode harness acceptable, or should the error-path
+    cases get their own mechanism (`ragebait` at file scope?) so the JSON can
+    genuinely be deleted?
+14. **`AGENTS.md` is a contract.** It currently requires an
+    `expected_results.json` entry for every test. Step 2 of §9c makes that false.
+    Update it in the same PR, or add the sussybaka mode alongside it and remove
+    the JSON requirement only when the migration completes?
+15. **OpenSSL as a build dependency (Phase 11).** **Settled:** `gamba` is
+    part of the Brainrot standard library, so `libcrypto` is a required
+    native dependency of `libstdrot.so`. `#cooked <gamba>` as a separate
+    `.so` is rejected. wasm still must not link OpenSSL; that is a
+    platform limitation of the browser artifact, not an optional stdlib.
+16. **`gamba()` no-arg range.** `[0, INT_MAX]` matches `rand()`'s shape.
+    Full `[0, 2^32)` wants `nonut rizz` / a wider type. Requiring an
+    explicit range and dropping the no-arg form is the safest API and the
+    worst meme. **Recommendation: keep `gamba()` as `[0, INT_MAX]`, but
+    ship `gamba(n)` / `gamba(lo, hi)` in the same PR.**
+17. **wasm `gamba` (Phase 11).** Absent, a stub that errors, or a later
+    Web Crypto / `getentropy` backend? **Recommendation for this phase:
+    absent or erroring stub.** Do not block the wasm playground on
+    OpenSSL.
