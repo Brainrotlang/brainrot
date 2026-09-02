@@ -1188,6 +1188,10 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
                         "struct or union type");
             return false;
         }
+        if (!report_errors)
+        {
+            return false;
+        }
         uintptr_t target = evaluate_expression_pointer(obj);
         if (!target)
         {
