@@ -66,6 +66,19 @@
 static Texture2D g_textures[RAYROT_MAX_TEXTURES];
 static bool g_texture_used[RAYROT_MAX_TEXTURES];
 
+/* ── Render-texture handle table (framebuffers for scaled presentation) ─── *
+ * A game can draw its fixed logical resolution into one of these and blit it
+ * letterboxed to any window size or fullscreen. Same Road A trick: a
+ * RenderTexture2D is a struct that cannot cross the ABI, so C owns the array
+ * and Brainrot holds an integer handle. A live handle implies a live GL
+ * context; rl_close_window() unloads every one still owned. Only a handful
+ * are ever needed. */
+
+#define RAYROT_MAX_RENDER_TEXTURES 4
+
+static RenderTexture2D g_render_textures[RAYROT_MAX_RENDER_TEXTURES];
+static bool g_render_texture_used[RAYROT_MAX_RENDER_TEXTURES];
+
 /* ── Audio handle tables (C owns the real Music/Sound objects) ──────────── *
  * Same Road A trick as textures: Music and Sound are structs that cannot
  * cross the ABI and outlive any single statement, so C keeps them and
@@ -223,6 +236,14 @@ static StdrotValue br_close_window(StdrotValue *args, int argc)
         {
             BR_RAYLIB_VOID(UnloadTexture(g_textures[i]));
             g_texture_used[i] = false;
+        }
+    }
+    for (int i = 0; i < RAYROT_MAX_RENDER_TEXTURES; i++)
+    {
+        if (g_render_texture_used[i])
+        {
+            BR_RAYLIB_VOID(UnloadRenderTexture(g_render_textures[i]));
+            g_render_texture_used[i] = false;
         }
     }
     BR_RAYLIB_VOID(CloseWindow());
@@ -802,6 +823,128 @@ static StdrotValue br_unload_sound(StdrotValue *args, int argc)
     return (StdrotValue){.type = STDROT_NONE};
 }
 
+/* ── Windowing / display extras (desktop pause + fullscreen scaling) ─────── */
+
+/* Rebind the exit key. Passing 0 (KEY_NULL) is how a game stops raylib from
+ * closing the window on ESC, so it can make ESC a pause instead. */
+static StdrotValue br_set_exit_key(StdrotValue *args, int argc)
+{
+    (void)argc;
+    BR_RAYLIB_VOID(SetExitKey(args[0].val.i));
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
+/* Config flags for the NEXT InitWindow (e.g. FLAG_WINDOW_RESIZABLE = 0x04). */
+static StdrotValue br_set_config_flags(StdrotValue *args, int argc)
+{
+    (void)argc;
+    BR_RAYLIB_VOID(SetConfigFlags((unsigned int)args[0].val.i));
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
+/* Borderless fullscreen: resizes the window to the monitor, no mode switch --
+ * the friendlier desktop toggle, and it pairs with the framebuffer blit which
+ * rescales to whatever size the window becomes. */
+static StdrotValue br_toggle_borderless_windowed(StdrotValue *args, int argc)
+{
+    (void)args;
+    (void)argc;
+    BR_RAYLIB_VOID(ToggleBorderlessWindowed());
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
+static StdrotValue br_is_window_resized(StdrotValue *args, int argc)
+{
+    (void)args;
+    (void)argc;
+    return (StdrotValue){.type = STDROT_BOOL, .val = {.b = IsWindowResized()}};
+}
+
+/* Allocate a framebuffer of (w, h). Handle table, same as textures: -1 on
+ * failure without consuming a slot, so a live handle is always a real target.
+ */
+static StdrotValue br_load_render_texture(StdrotValue *args, int argc)
+{
+    (void)argc;
+    RenderTexture2D rt = LoadRenderTexture(args[0].val.i, args[1].val.i);
+    if (rt.id == 0)
+    {
+        return (StdrotValue){.type = STDROT_INT, .val = {.i = -1}};
+    }
+    for (int i = 0; i < RAYROT_MAX_RENDER_TEXTURES; i++)
+    {
+        if (!g_render_texture_used[i])
+        {
+            g_render_textures[i] = rt;
+            g_render_texture_used[i] = true;
+            return (StdrotValue){.type = STDROT_INT, .val = {.i = i}};
+        }
+    }
+    BR_RAYLIB_VOID(UnloadRenderTexture(rt));
+    return (StdrotValue){.type = STDROT_INT, .val = {.i = -1}};
+}
+
+static StdrotValue br_begin_texture_mode(StdrotValue *args, int argc)
+{
+    (void)argc;
+    int h = args[0].val.i;
+    if (h >= 0 && h < RAYROT_MAX_RENDER_TEXTURES && g_render_texture_used[h])
+    {
+        BR_RAYLIB_VOID(BeginTextureMode(g_render_textures[h]));
+    }
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
+static StdrotValue br_end_texture_mode(StdrotValue *args, int argc)
+{
+    (void)args;
+    (void)argc;
+    BR_RAYLIB_VOID(EndTextureMode());
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
+/* Present the framebuffer to the window: scaled to fit and centred, with black
+ * bars (letter/pillarbox). The source height is negated because render
+ * textures are stored y-flipped. Call between BeginDrawing/EndDrawing. */
+static StdrotValue br_draw_render_texture_fit(StdrotValue *args, int argc)
+{
+    (void)argc;
+    int h = args[0].val.i;
+    if (h < 0 || h >= RAYROT_MAX_RENDER_TEXTURES || !g_render_texture_used[h])
+    {
+        return (StdrotValue){.type = STDROT_NONE};
+    }
+    Texture2D tex = g_render_textures[h].texture;
+    float sw = (float)GetScreenWidth();
+    float sh = (float)GetScreenHeight();
+    float fw = (float)tex.width;
+    float fh = (float)tex.height;
+    float scale = sw / fw;
+    if (sh / fh < scale)
+    {
+        scale = sh / fh;
+    }
+    float dw = fw * scale;
+    float dh = fh * scale;
+    Rectangle src = {0.0f, 0.0f, fw, -fh};
+    Rectangle dst = {(sw - dw) * 0.5f, (sh - dh) * 0.5f, dw, dh};
+    Vector2 origin = {0.0f, 0.0f};
+    BR_RAYLIB_VOID(DrawTexturePro(tex, src, dst, origin, 0.0f, WHITE));
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
+static StdrotValue br_unload_render_texture(StdrotValue *args, int argc)
+{
+    (void)argc;
+    int h = args[0].val.i;
+    if (h >= 0 && h < RAYROT_MAX_RENDER_TEXTURES && g_render_texture_used[h])
+    {
+        BR_RAYLIB_VOID(UnloadRenderTexture(g_render_textures[h]));
+        g_render_texture_used[h] = false;
+    }
+    return (StdrotValue){.type = STDROT_NONE};
+}
+
 /* ── Signatures / self-registration ──────────────────────────────────────── *
  * Param descriptors let the semantic analyzer check arity and argument
  * types ahead of the call, exactly like a Brainrot-defined function. A
@@ -963,3 +1106,26 @@ STDROT_EXPORT_SIG("rl_unload_sound", br_unload_sound, R_NONE, p_handle, 1, 1,
 static const StdrotParam p_unload_texture[] = {P_INT};
 STDROT_EXPORT_SIG("rl_unload_texture", br_unload_texture, R_NONE,
                   p_unload_texture, 1, 1, false);
+
+/* Windowing / display extras. */
+static const StdrotParam p_win_int1[] = {P_INT};
+static const StdrotParam p_render_wh[] = {P_INT, P_INT};
+
+STDROT_EXPORT_SIG("rl_set_exit_key", br_set_exit_key, R_NONE, p_win_int1, 1, 1,
+                  false);
+STDROT_EXPORT_SIG("rl_set_config_flags", br_set_config_flags, R_NONE,
+                  p_win_int1, 1, 1, false);
+STDROT_EXPORT_SIG("rl_toggle_borderless_windowed",
+                  br_toggle_borderless_windowed, R_NONE, NULL, 0, 0, false);
+STDROT_EXPORT_SIG("rl_is_window_resized", br_is_window_resized, R_BOOL, NULL, 0,
+                  0, false);
+STDROT_EXPORT_SIG("rl_load_render_texture", br_load_render_texture, R_INT,
+                  p_render_wh, 2, 2, false);
+STDROT_EXPORT_SIG("rl_begin_texture_mode", br_begin_texture_mode, R_NONE,
+                  p_win_int1, 1, 1, false);
+STDROT_EXPORT_SIG("rl_end_texture_mode", br_end_texture_mode, R_NONE, NULL, 0,
+                  0, false);
+STDROT_EXPORT_SIG("rl_draw_render_texture_fit", br_draw_render_texture_fit,
+                  R_NONE, p_win_int1, 1, 1, false);
+STDROT_EXPORT_SIG("rl_unload_render_texture", br_unload_render_texture, R_NONE,
+                  p_win_int1, 1, 1, false);
