@@ -371,6 +371,10 @@ Colors are always the trailing `r, g, b, a` integers (0–255, clamped).
 | `rl_set_target_fps(fps)` | `SetTargetFPS` | |
 | `rl_get_screen_width()` | `GetScreenWidth` | returns `rizz` |
 | `rl_get_screen_height()` | `GetScreenHeight` | returns `rizz` |
+| `rl_set_config_flags(flags)` | `SetConfigFlags` | before `rl_init_window`; e.g. `4` = `FLAG_WINDOW_RESIZABLE` |
+| `rl_set_exit_key(key)` | `SetExitKey` | `0` (`KEY_NULL`) stops ESC closing the window |
+| `rl_toggle_borderless_windowed()` | `ToggleBorderlessWindowed` | borderless fullscreen, no mode switch |
+| `rl_is_window_resized()` | `IsWindowResized` | returns `cap` |
 | `rl_begin_drawing()` | `BeginDrawing` | |
 | `rl_end_drawing()` | `EndDrawing` | |
 | `rl_clear_background(r, g, b, a)` | `ClearBackground` | |
@@ -389,6 +393,11 @@ Colors are always the trailing `r, g, b, a` integers (0–255, clamped).
 | `rl_draw_texture(handle, x, y, r, g, b, a)` | `DrawTexture` | `r,g,b,a` = tint |
 | `rl_draw_texture_rec(handle, sx, sy, sw, sh, x, y, r, g, b, a)` | `DrawTextureRec` | one sub-rectangle; see below |
 | `rl_unload_texture(handle)` | `UnloadTexture` | |
+| `rl_load_render_texture(width, height)` | `LoadRenderTexture` | offscreen framebuffer; returns handle or `-1` |
+| `rl_begin_texture_mode(handle)` | `BeginTextureMode` | draw the scene into the framebuffer |
+| `rl_end_texture_mode()` | `EndTextureMode` | |
+| `rl_draw_render_texture_fit(handle)` | `DrawTexturePro` | present the framebuffer scaled-to-fit and letterboxed; between begin/end drawing |
+| `rl_unload_render_texture(handle)` | `UnloadRenderTexture` | |
 | `rl_init_audio_device()` | `InitAudioDevice` | see below |
 | `rl_is_audio_device_ready()` | `IsAudioDeviceReady` | returns `cap` |
 | `rl_close_audio_device()` | `CloseAudioDevice` | unloads every live stream first |
