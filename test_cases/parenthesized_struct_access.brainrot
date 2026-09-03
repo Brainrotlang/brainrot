@@ -57,6 +57,11 @@ skibidi main {
     gang Inner returned = pick_inner(p);
     yapping("return: %.1f %d", returned.value, returned.marker);
 
+    🚽 Type queries must resolve the parenthesized pointer expression without
+    🚽 evaluating it, just like the equivalent pointer-index expression.
+    yapping("no-eval: %lu %lu", maxxing((p + 1).nested),
+            maxxing(p[1].nested));
+
     🚽 Neighboring elements must remain intact after the writes.
     yapping("neighbors: %.1f %.1f", pool[0].right, pool[2].right);
     bussin 0;

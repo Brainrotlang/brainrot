@@ -477,6 +477,12 @@ static StructField *static_struct_field(ASTNode *node)
         }
         parent = get_struct_def(outer->desc.struct_name);
     }
+    else if (obj && obj->type == NODE_OPERATION)
+    {
+        /* Pointer arithmetic has no storage to inspect during a no-eval
+           query, but its pointee layout is still statically available. */
+        parent = get_struct_def_for_expression(obj);
+    }
 
     if (!parent)
     {
