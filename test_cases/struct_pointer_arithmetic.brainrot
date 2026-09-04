@@ -37,13 +37,10 @@
 🚽 FIELD's size would still read element 0 correctly and only diverge from
 🚽 element 1 on, which is what the multi-element walks are for.
 🚽
-🚽 ── Deliberately absent ───────────────────────────────────────────────
-🚽 `(p + 1).x` -- member access directly on a parenthesized expression --
-🚽 is still unsupported, and is a pre-existing general limitation of
-🚽 resolve_struct_access() rather than anything specific to struct
-🚽 pointers: it resolves identifier, member-access, array-access and
-🚽 call bases, not arbitrary operations. Both forms this issue asked for
-🚽 (`p = p + 1` then `p.x`, and `p[i].x`) work without it.
+🚽 ── Parenthesized member access ───────────────────────────────────────
+🚽 `(p + 1).x` is supported as the direct equivalent of `p[1].x`; its
+🚽 dedicated runtime, analyzer, and no-eval coverage lives in
+🚽 parenthesized_struct_access.brainrot.
 gang Entity {
     chad x;
     rizz id;
