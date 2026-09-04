@@ -1,0 +1,68 @@
+🚽 Regression for #322: member access on a parenthesized struct-pointer
+🚽 expression. Wide is 24 bytes so the second element only resolves when
+🚽 pointer arithmetic uses the pointee's complete struct layout.
+gang Inner {
+    chad value;
+    rizz marker;
+};
+
+gang Wide {
+    gigachad left;
+    gang Inner nested;
+    gigachad right;
+};
+
+skibidi show_inner(gang Inner value) {
+    yapping("by value: %.1f %d", value.value, value.marker);
+}
+
+gang Inner pick_inner(gang Wide *p) {
+    bussin (p + 1).nested;
+}
+
+skibidi main {
+    gang Wide pool[3];
+    pool[0].left = 10.0;
+    pool[0].nested.value = 11.0;
+    pool[0].nested.marker = 12;
+    pool[0].right = 13.0;
+    pool[1].left = 20.0;
+    pool[1].nested.value = 21.0;
+    pool[1].nested.marker = 22;
+    pool[1].right = 23.0;
+    pool[2].left = 30.0;
+    pool[2].nested.value = 31.0;
+    pool[2].nested.marker = 32;
+    pool[2].right = 33.0;
+
+    gang Wide *p = &pool[0];
+
+    🚽 One-hop read and a second member-access hop.
+    yapping("read: %.1f %.1f %d", (p + 1).right,
+            (p + 1).nested.value, (p + 1).nested.marker);
+
+    🚽 The resolved element must remain an lvalue.
+    (p + 1).nested.value = 91.0;
+    (p + 1).right = 93.0;
+    yapping("write: %.1f %.1f", pool[1].nested.value, pool[1].right);
+
+    🚽 A compound operation still carries the original pointee tag.
+    yapping("compound: %.1f", (p + 2 - 1).left);
+
+    🚽 Struct-valued fields off the expression work at each by-value
+    🚽 consumer, not only for an immediate scalar read.
+    show_inner((p + 1).nested);
+    gang Inner copy = (p + 1).nested;
+    yapping("copy: %.1f %d", copy.value, copy.marker);
+    gang Inner returned = pick_inner(p);
+    yapping("return: %.1f %d", returned.value, returned.marker);
+
+    🚽 Type queries must resolve the parenthesized pointer expression without
+    🚽 evaluating it, just like the equivalent pointer-index expression.
+    yapping("no-eval: %lu %lu", maxxing((p + 1).nested),
+            maxxing(p[1].nested));
+
+    🚽 Neighboring elements must remain intact after the writes.
+    yapping("neighbors: %.1f %.1f", pool[0].right, pool[2].right);
+    bussin 0;
+}
