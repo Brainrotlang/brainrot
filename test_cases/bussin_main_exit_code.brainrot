@@ -1,0 +1,5 @@
+🚽 Regression for issue 246: `bussin N;` in skibidi main sets the process
+🚽 exit status to N (here 42). Verified via the harness ExitCode assertion.
+skibidi main {
+    bussin 42;
+}

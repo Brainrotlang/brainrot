@@ -625,6 +625,7 @@ extern TypeModifiers current_modifiers;
 extern Scope *current_scope;
 extern HashMap *function_map;
 extern ReturnValue current_return_value;
+extern int g_program_exit_code;
 extern JumpBuffer *jump_buffer;
 /* Function prototypes */
 bool set_int_variable(const String name, int value, TypeModifiers mods);

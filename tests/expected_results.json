@@ -415,7 +415,7 @@
     "string_stdlib_char_buffer": "slorp len 32\nslorp cmp 1\nslorp idx 1\ncat       [hi]\ncat len   33\nfixed len 8\nfixed str [hi]\nrant len  2\nrant cmp  0\n",
     "cap_returning_call_in_condition": "edgy true\nedgy false\ngoon ran 2\nnegated 0\n",
     "return_from_inside_loop": "for      2\nwhile    30\nnested   102\nswitch   11\nswitch d 99\nbreak    1\nvisiting 0\nvisiting 1\nstopping at 2\ndone",
-    "return_from_inside_loop_in_main_fail": "before\nStderr:\nError: No scope to exit at line 58\n",
+    "return_from_inside_loop_in_main": "before",
     "param_shadows_main_local": "getx  3.0\nuse   W\ntwice 6\nmine  41 100 1.0",
     "string_indexing": "stored [h]\ninline [d]\nas int 101\nvaridx [o]\nslice  [hello]\nlen    5\ninline [world]\nwhole  [hello world]\none    [o]\nempty  []\nempty at end []\nexpr   [llo]\nagree  [w] [w]\ncat    [hello world]\nrebuilt 0\nidx    1\nutf8 len 2\nutf8 halves -61 -87\n",
     "string_index_out_of_bounds_fail": "before\nStderr:\nError: String index out of bounds (index=5, length=5) at line 31\n",
@@ -429,5 +429,8 @@
     "file_io_stale_handle_fail": "close a 0\nsame handle 0\nb works, pos 5\nnow using the retired handle, while b is still open:\nStderr:\nError: yapto: not an open SAUCE -- it was already closed with peaceout, or was never a handle at all, at line 62\n",
     "freed_keywords_as_identifiers": "functions 42 42\nfields    2 3\nlocals    5 7\n",
     "sieve_of_eras": "2\n3\n5\n7\n11\n13\n17\n19\n23\n29\n31\n37\n41\n43\n47\n53\n59\n61\n67\n71\n73\n79\n83\n89\n97",
-    "parse_error_unsized_array_arity_fail": "Error: Initializer count does not match array dimensions at line 1\nParsing failed"
+    "parse_error_unsized_array_arity_fail": "Error: Initializer count does not match array dimensions at line 1\nParsing failed",
+    "bussin_main_exit_code": "ExitCode:42",
+    "bussin_main_stops": "before",
+    "bussin_main_edgy_exit": "ExitCode:3"
 }

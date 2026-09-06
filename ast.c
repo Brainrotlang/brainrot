@@ -29,6 +29,11 @@ bool struct_def_had_error = false;
    free_type_alias_registry(). */
 bool typedef_had_error = false;
 ReturnValue current_return_value;
+/* Process exit status set by `bussin N;` in skibidi main (#246). Distinct from
+   current_return_value, which a nested call overwrites -- this is written only
+   by main's own `bussin`, and lang.y's main() returns it after interpret().
+   Defaults to 0: no `bussin`, or falling off the end of main, exits 0. */
+int g_program_exit_code = 0;
 Arena arena;
 
 TypeModifiers current_modifiers = {false, false, false, false,
@@ -7701,6 +7706,33 @@ void handle_return_statement(ASTNode *expr)
                void function would otherwise be reported as an undefined
                function (PR #254 review, finding 1). */
         case NONE:
+            /* NONE (not VAR_VOID) is reached only for `bussin` in skibidi main,
+               which has no declared return type. Unlike a real void function --
+               which has nowhere to put a value -- main's `bussin N;` sets the
+               PROCESS exit status (#246), so evaluate the operand as an int
+               (main returns int, like C) and record it. A bare `bussin;` in
+               main yields 0. interpret() runs main under a function jump
+               buffer, so the LONGJMP at the end of this function actually
+               unwinds out of main (stopping any statements after the `bussin`),
+               and lang.y's main() returns g_program_exit_code. */
+            if (declared_type == NONE)
+            {
+                int result = expr ? evaluate_expression_int(expr) : 0;
+                /* Release any owned struct/string blob still sitting in the
+                   shared slot -- left by this bussin's own call expression, or
+                   by a prior statement whose call result nothing consumed --
+                   before overwriting it with the int, exactly as the void/NONE
+                   arm below does. Skipping this leaked such a blob (an earlier
+                   statement's unconsumed struct return) when main's `bussin`
+                   overwrote current_return_value. */
+                free_pending_return_value();
+                g_program_exit_code = result;
+                current_return_value.desc.type = VAR_INT;
+                current_return_value.desc.pointer_level = 0;
+                current_return_value.value.ivalue = result;
+                current_return_value.has_value = true;
+                break;
+            }
             if (expr && expr->type == NODE_FUNC_CALL)
             {
                 if (is_builtin_function(expr->data.func_call.function_name))
