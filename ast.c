@@ -3027,6 +3027,26 @@ static StructDef *get_struct_def_for_expression(ASTNode *expr)
             return get_struct_def_for_expression(expr->data.op.right);
         return NULL;
     }
+    case NODE_FUNC_CALL:
+    {
+        /* sizeof of a struct-returning call (`maxxing(make_point(1, 2))`,
+           #201): take the layout from the callee's declared return tag.
+           The call is NOT executed -- sizeof never evaluates its operand --
+           the tag alone gives the size. Only a by-value struct return
+           (pointer_level == 0) has a struct layout here; a pointer return is
+           sized as a pointer by handle_sizeof()'s plevel > 0 branch. No native
+           returns a struct across the ABI, so builtins never reach a def
+           (mirrors the NODE_FUNC_CALL guard in get_struct_field_alignment's
+           parent resolution above). */
+        if (is_builtin_function(expr->data.func_call.function_name))
+            return NULL;
+        Function *func = get_function(expr->data.func_call.function_name);
+        if (func && func->return_desc.type == VAR_STRUCT &&
+            func->return_desc.pointer_level == 0 &&
+            func->return_desc.struct_name.data)
+            return get_struct_def(func->return_desc.struct_name);
+        return NULL;
+    }
     default:
         return NULL;
     }
