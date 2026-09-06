@@ -215,6 +215,17 @@ void stdrot_format_to_stream(FILE *out, const char *format,
         }
     }
 
+    /* snprintf() returns the length it WOULD have written, not what it
+       actually wrote, so a formatted argument longer than the space left in
+       `buffer` advances buffer_offset past sizeof(buffer) (#269). snprintf
+       itself never overflows -- it honors the size arg -- but the terminator
+       write below would, and the loop guard above only stops re-entry, it
+       doesn't clamp. Clamp into range so `buffer[buffer_offset]` stays in
+       bounds; output is simply truncated to what fit. */
+    if (buffer_offset >= (int)sizeof(buffer))
+    {
+        buffer_offset = (int)sizeof(buffer) - 1;
+    }
     buffer[buffer_offset] = '\0';
     if (add_newline)
     {
