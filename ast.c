@@ -7923,26 +7923,24 @@ void handle_return_statement(ASTNode *expr)
        unwound every non-function scope before this point.
 
        ── Only drain when there IS a function frame to drain to ──────────
-       "abandoned by the longjmp below" assumes the longjmp happens, and
-       in `main` it does not. execute_function_call() is the only site
-       that pushes an is_function buffer, and `main`'s body is not run
-       through it (skibidi_function reduces to a bare statement list --
-       see semantic_analyzer.c's find_symbol() comment), so nothing below
-       a `bussin` in `main` is ever is_function.
+       Since #246 skibidi main runs under its OWN is_function frame too:
+       interpret() (interpreter.c) now wraps main's body in an is_function
+       scope plus a PUSH_FUNCTION_JUMP_BUFFER(), so a `bussin` in main --
+       including one inside a loop or switch -- drains the intervening
+       break frames and LONGJMP()s out of main exactly like any user
+       function. has_function_frame is therefore true in main as well, and
+       both the drain below and the LONGJMP() at the end of this function
+       now run for main.
 
-       Draining unconditionally there empties the whole stack, leaves
-       jump_buffer NULL, and skips the LONGJMP() entirely -- so execution
-       falls back into the loop body with its scopes already unwound and
-       every subsequent statement reports against a dead scope. That
-       turned `main`'s single "No scope to exit" into a four-error cascade
-       (PR #325 review). Checking first is strictly non-regressive: every
-       real function still gets the fix, and `main` keeps the one
-       diagnostic it had before.
-
-       `bussin` in `main` remains wrong either way -- it should end the
-       program, and even a plain `bussin 3;` there exits 0 rather than 3,
-       so the value is not plumbed. That is a separate, larger change than
-       this one and is deliberately not folded in here. */
+       The has_function_frame guard is nonetheless kept: it is the one
+       thing standing between this code and the pre-#246 failure mode, and
+       is correct defense if interpret() is ever reached without having
+       pushed a frame. Draining unconditionally with no function frame on
+       the stack would empty it, leave jump_buffer NULL, skip the LONGJMP()
+       entirely, and drop execution back into the loop body with its scopes
+       already unwound -- every subsequent statement then reporting against
+       a dead scope (the four-error cascade PR #325 first guarded against).
+       So: drain only when there is a function frame to land in. */
     bool has_function_frame = false;
     for (JumpBuffer *jb = jump_buffer; jb; jb = jb->next)
     {
@@ -7960,7 +7958,9 @@ void handle_return_statement(ASTNode *expr)
         }
     }
 
-    // skibidi main function do not have jump buffer
+    /* Both user functions and skibidi main (since #246) reach here with an
+       is_function jump buffer on the stack; exit the function scope and
+       unwind to it. The guard stays defensive in case there is none. */
     if (jump_buffer)
     {
         exit_scope(); // exit current function scope
