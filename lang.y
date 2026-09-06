@@ -1517,8 +1517,23 @@ declaration:
                 size_t total_inits = count_expression_list($6);
                 size_t trailing = 1;
                 for (int i = 1; i < dims.num_dimensions; i++) trailing *= (size_t)dims.dimensions[i];
-                if (trailing == 0) { yyerror("Invalid array dimensions"); YYABORT; }
-                if (total_inits % trailing != 0) { yyerror("Initializer count does not match array dimensions"); YYABORT; }
+                if (trailing == 0) {
+                    /* YYABORT does not run destructors for this rule's RHS
+                       (#185), so free what this action already owns -- the
+                       heap-allocated initializer list ($6, not yet handed to
+                       set_declaration_pending_initializer) and the lexer-copied
+                       declarator name ($3.name) -- before aborting. */
+                    yyerror("Invalid array dimensions");
+                    free_expression_list($6);
+                    SAFE_FREE($3.name);
+                    YYABORT;
+                }
+                if (total_inits % trailing != 0) {
+                    yyerror("Initializer count does not match array dimensions");
+                    free_expression_list($6);
+                    SAFE_FREE($3.name);
+                    YYABORT;
+                }
                 size_t first = total_inits / trailing;
                 dims.dimensions[0] = (int)first;
             }
@@ -1591,8 +1606,23 @@ declaration:
                 size_t total_inits = count_expression_list($6);
                 size_t trailing = 1;
                 for (int i = 1; i < dims.num_dimensions; i++) trailing *= (size_t)dims.dimensions[i];
-                if (trailing == 0) { yyerror("Invalid array dimensions"); YYABORT; }
-                if (total_inits % trailing != 0) { yyerror("Initializer count does not match array dimensions"); YYABORT; }
+                if (trailing == 0) {
+                    /* YYABORT does not run destructors for this rule's RHS
+                       (#185), so free what this action already owns -- the
+                       heap-allocated initializer list ($6, not yet handed to
+                       set_declaration_pending_initializer) and the lexer-copied
+                       declarator name ($3.name) -- before aborting. */
+                    yyerror("Invalid array dimensions");
+                    free_expression_list($6);
+                    SAFE_FREE($3.name);
+                    YYABORT;
+                }
+                if (total_inits % trailing != 0) {
+                    yyerror("Initializer count does not match array dimensions");
+                    free_expression_list($6);
+                    SAFE_FREE($3.name);
+                    YYABORT;
+                }
                 size_t first = total_inits / trailing;
                 dims.dimensions[0] = (int)first;
             }
