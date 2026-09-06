@@ -195,6 +195,16 @@ compilation for it to bridge and no linker to inform; and `cringe` (`goto`).
 Both had been reserved words that only ever produced a syntax error, so both
 names are now ordinary identifiers.
 
+> **wasm caveat:** in the browser/wasm build, `giga` (`long`) is **4 bytes**,
+> not the 8 it is on native, so `maxxing(giga)` reports `4` there. wasm32 uses
+> the ILP32 data model (`long` = 4 bytes) rather than native's LP64; `thicc`
+> (`long long`) is 8 bytes on both. Any program that assumes `sizeof(giga) == 8`
+> — manual pointer arithmetic, buffer sizing — will compute differently in the
+> playground. See the
+> [Building & Development Guide](docs/building.md#webassembly)
+> ([#177](https://github.com/Brainrotlang/brainrot/issues/177)) for the full
+> rationale.
+
 ### Preprocessor directives
 
 | Brainrot | C Equivalent |
