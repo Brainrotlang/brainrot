@@ -1,0 +1,30 @@
+🚽 Regression for issue 245: member access "." must bind tighter than every
+🚽 binary and assignment operator (it now sits at the highest precedence tier
+🚽 in lang.y). These shapes crashed or misparsed before that fix and are the
+🚽 ones struct_field_scalar_assign.brainrot does not already pin: a
+🚽 read-modify-write back into the SAME field, field+field / literal+field /
+🚽 field-field as a direct call argument (no assignment wrapper, no parens),
+🚽 and "and" of two fields in a condition. All must work with no parentheses
+🚽 and no sanitizer abort.
+gang Point { rizz x; rizz y; };
+
+skibidi main {
+    gang Point p;
+    gang Point a;
+    p.x = 5;
+    p.y = 0;
+    a.x = 3;
+    a.y = 4;
+
+    p.x = p.x + 1;             🚽 read-modify-write same field: 5 -> 6
+    yapping("%d", p.x);        🚽 6
+    yapping("%d", a.x + a.y);  🚽 field + field, direct arg: 7
+    yapping("%d", 1 + a.x);    🚽 literal + field: 4
+    yapping("%d", a.x - a.y);  🚽 field - field: -1
+    edgy (a.x && a.y) { yapping("both"); }  🚽 and of two fields
+
+    p.y = p.y + a.x;           🚽 RMW across structs: 0 + 3 -> 3
+    yapping("%d", p.y);        🚽 3
+
+    bussin 0;
+}
