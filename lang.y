@@ -469,10 +469,18 @@ static void register_anonymous_aggregate_typedef(String alias_name,
 %left OR                /* Logical OR */
 %left AND               /* Logical AND */
 %nonassoc EQ NE         /* Equality operators */
-%nonassoc LT GT LE GE DEC INC   /* Relational operators */
+%nonassoc LT GT LE GE   /* Relational operators */
 %left PLUS MINUS        /* Addition and subtraction */
 %left TIMES DIVIDE MOD  /* Multiplication, division, modulo */
 %right UMINUS           /* Unary minus */
+/* Increment/decrement bind TIGHTER than every arithmetic/relational operator,
+   matching C's postfix/prefix `++`/`--`. Kept at the relational tier before
+   (#281), the postfix form mis-grouped: on lookahead `++` after `a + b` the
+   parser reduced `a + b` first, so `i++ + i++` parsed as `(i++ + i)++` -- a
+   `++` applied to a NON-lvalue operation node, whose data union was then misread
+   as a variable name (heap-buffer-overflow). Above the binary operators, the
+   `++` shifts onto its own operand instead, so `i++ + i++` is `(i++) + (i++)`. */
+%nonassoc INC DEC
 /* Member access `.` (struct_access: expression DOT IDENTIFIER) is a
    postfix operator and must bind TIGHTER than every binary/assignment
    operator above, matching C -- otherwise `v = m.x` parses as `(v = m).x`
@@ -2136,13 +2144,13 @@ unary_operation:
         { $$ = create_unary_operation_node(OP_DEREFERENCE, $2); }
     | AMPERSAND expression %prec UMINUS
         { $$ = create_unary_operation_node(OP_ADDRESS_OF, $2); }
-    | INC expression %prec LOWER_THAN_ELSE
+    | INC expression %prec UMINUS
         { $$ = create_unary_operation_node(OP_PRE_INC, $2); }
-    | DEC expression %prec LOWER_THAN_ELSE
+    | DEC expression %prec UMINUS
         { $$ = create_unary_operation_node(OP_PRE_DEC, $2); }
-    | expression INC %prec LOWER_THAN_ELSE
+    | expression INC %prec INC
         { $$ = create_unary_operation_node(OP_POST_INC, $1); }
-    | expression DEC %prec LOWER_THAN_ELSE
+    | expression DEC %prec DEC
         { $$ = create_unary_operation_node(OP_POST_DEC, $1); }
     ;
 

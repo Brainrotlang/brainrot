@@ -4165,6 +4165,27 @@ static bool expression_is_truthy(ASTNode *expr)
 void *handle_unary_expression(ASTNode *node, void *operand_value,
                               int operand_type)
 {
+    /* ++/-- write back through the operand, so they require an lvalue: a plain
+       variable name. The four cases below read operand->data.name directly, so
+       a non-identifier operand (e.g. `5++`, `(a + b)++`) would misread the AST
+       union as a String and hand garbage to the hashmap (#281). Reject it here
+       with a clear diagnostic instead of corrupting memory. */
+    switch (node->data.unary.op)
+    {
+    case OP_PRE_INC:
+    case OP_PRE_DEC:
+    case OP_POST_INC:
+    case OP_POST_DEC:
+        if (node->data.unary.operand->type != NODE_IDENTIFIER)
+        {
+            yyerror("increment/decrement requires a variable operand");
+            return NULL;
+        }
+        break;
+    default:
+        break;
+    }
+
     switch (node->data.unary.op)
     {
     case OP_NEG:
