@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <errno.h>
 #include <sys/stat.h>
 #if !defined(_WIN32)
@@ -751,7 +752,23 @@ extern int yylineno;
 }
 
 [ \t\n]+         ; /* Ignore whitespace */
-.                { /* Ignore unrecognized characters */ }
+.                {
+    /* Any character no rule above recognizes. Previously silently discarded,
+       which let unsupported operators vanish instead of erroring: `~x` lexed
+       as just `x`, so `~5` printed 5 -- a bitwise complement that silently
+       isn't one -- and `rizz x $ = 7;` dropped the `$` (#285, #297). Report it
+       naming the character and line, and set lex_error_occurred so main()'s
+       post-yyparse gate fails compilation instead of running miscompiled code.
+       Lexing continues so a single stray character yields one clear error
+       rather than aborting mid-token. */
+    if (isprint((unsigned char)yytext[0]))
+        fprintf(stderr, "Error: unexpected character '%c' at line %d\n",
+                yytext[0], yylineno);
+    else
+        fprintf(stderr, "Error: unexpected byte 0x%02x at line %d\n",
+                (unsigned char)yytext[0], yylineno);
+    lex_error_occurred = true;
+}
 
 %%
 

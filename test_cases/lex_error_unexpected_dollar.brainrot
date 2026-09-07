@@ -1,0 +1,9 @@
+🚽 Regression test for issues #285 / #297: a stray character that is not an
+🚽 operator at all (here `$`) used to be silently dropped -- `rizz x $ = 7;`
+🚽 quietly declared `x = 7`. An unrecognized character is now reported naming
+🚽 the character and line, and fails the parse.
+skibidi main {
+    rizz x $ = 7;
+    yapping("%d", x);
+    bussin 0;
+}

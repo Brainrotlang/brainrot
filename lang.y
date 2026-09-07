@@ -2236,7 +2236,8 @@ int main(int argc, char *argv[]) {
     /* Phase 1: Parse the source code to build AST */
     /* typedef_had_error is set by lit alias registration/rejection helpers;
        those parse-time failures must stop before semantic analysis. */
-    if (yyparse() != 0 || struct_def_had_error || typedef_had_error) {
+    if (yyparse() != 0 || struct_def_had_error || typedef_had_error ||
+        lex_error_occurred) {
         if (!parse_error_already_reported) {
             fprintf(stderr, "Parsing failed\n");
         }

@@ -28,6 +28,8 @@ bool struct_def_had_error = false;
    semantic analysis/execution when true, and cleanup resets it through
    free_type_alias_registry(). */
 bool typedef_had_error = false;
+/* Set by lang.l's catch-all rule on an unrecognized character; see ast.h. */
+bool lex_error_occurred = false;
 ReturnValue current_return_value;
 /* See the declaration in ast.h: `grind` (continue) sets this, and the
    statement-list visitor and loop visitors consume it (#274). */
