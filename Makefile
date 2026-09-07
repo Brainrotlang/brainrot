@@ -12,7 +12,19 @@ SANITIZER_FLAGS := -fsanitize=address,undefined
 CFLAGS := -Wall -Wextra -Wpedantic -Werror -O2 -Wuninitialized $(SANITIZER_FLAGS) -fno-omit-frame-pointer -g
 VALGRIND_CFLAGS := $(filter-out $(SANITIZER_FLAGS),$(CFLAGS))
 LDFLAGS := -lfl -lm -ldl -rdynamic
-SO_CFLAGS := -fPIC -shared
+# libstdrot.so (and the test/badnatives .so's built with the same recipe) get
+# the same warning gate as the rest of the tree, so a warning in stdrot/ fails
+# an ordinary `make` -- not only the `Release dry-run wasm` job, which was the
+# sole thing compiling these sources with warnings before (#330). -Wpedantic is
+# deliberately EXCLUDED here (unlike CFLAGS): gcc flags STDROT_EXPORT_SIG's
+# static StdrotEntry initializer as "initializer element is not constant"
+# (24 warnings across stdrot/) while clang-15 and emcc accept it, so the wasm
+# job already covers -Wpedantic on this code with the compiler that agrees with
+# the standard here. Sanitizers are also intentionally absent: this .so is
+# dlopen'd by an already-sanitized host and `make valgrind` runs against these
+# same artifacts (ASan's shadow map and valgrind don't coexist everywhere), so
+# valgrind is the memory-safety gate for stdrot/ rather than ASan/UBSan.
+SO_CFLAGS := -fPIC -shared -Wall -Wextra -Wuninitialized -Werror
 SO_LDFLAGS :=
 
 # `make release` ships binaries (GitHub Actions release matrix). Drop

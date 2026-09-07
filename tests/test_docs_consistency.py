@@ -129,6 +129,46 @@ def test_no_bad_ubuntu_raylib_command_in_code_blocks():
     )
 
 
+# Warning flags the libstdrot.so recipe must carry so stdrot/ is warning-gated
+# in an ordinary `make`, not only the `Release dry-run wasm` job (#330).
+# -Wpedantic is deliberately NOT required here: gcc and clang disagree about
+# STDROT_EXPORT_SIG's static initializer, so the wasm (clang/emcc) job covers
+# -Wpedantic on this code -- see SO_CFLAGS's comment in the Makefile.
+STDROT_REQUIRED_WARNING_FLAGS = ["-Wall", "-Wextra", "-Werror"]
+
+
+def test_libstdrot_recipe_is_warning_gated():
+    """#330: libstdrot.so (stdrot/*.c + lib/input.c) used to compile at gcc's
+    default warning level -- no -Werror, no -Wall -- so a warning in the standard
+    library passed `build`, `test`, `lint` and `static-analysis` and failed only
+    the wasm job. Assert the actual recipe (read via `make -Bn`, so this tracks
+    the Makefile rather than duplicating flags) carries the warning gate, so an
+    introduced warning in stdrot/ fails an ordinary `make`."""
+    result = subprocess.run(
+        ["make", "-Bn", "libstdrot.so"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    compile_lines = [
+        line
+        for line in result.stdout.splitlines()
+        if "-o libstdrot.so" in line
+    ]
+    assert compile_lines, (
+        "no libstdrot.so compile command found in `make -Bn` output:\n"
+        + result.stdout
+    )
+    recipe = compile_lines[0]
+    missing = [f for f in STDROT_REQUIRED_WARNING_FLAGS if f not in recipe]
+    assert not missing, (
+        f"libstdrot.so recipe is missing {missing} -- stdrot/ would compile "
+        f"without a warning gate again (#330), so a warning there would fail "
+        f"only the wasm job. Recipe:\n{recipe}"
+    )
+
+
 # Every function rayrot exports is spelled `STDROT_EXPORT_SIG("rl_...", ...)`.
 RAYROT_EXPORT_PATTERN = re.compile(r'STDROT_EXPORT_SIG\(\s*"(rl_[a-z0-9_]+)"')
 

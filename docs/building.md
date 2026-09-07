@@ -126,7 +126,7 @@ Run `make help` for the annotated list. The ones that matter day to day:
 
 | Target | What it does |
 | --- | --- |
-| `make` / `make all` | interpreter + `libstdrot.so` (sanitizers on) — the default |
+| `make` / `make all` | interpreter (sanitizers on) + `libstdrot.so` (warning-gated, no sanitizers — `make valgrind` is its memory-safety check) — the default |
 | `make lib` | only `libstdrot.so` |
 | `make debug` | rebuild with `-g` (sanitizers on) for GDB |
 | `make release` | sanitizer-free, rpath'd build for shipping |
