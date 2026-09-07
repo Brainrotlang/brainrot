@@ -29,6 +29,9 @@ bool struct_def_had_error = false;
    free_type_alias_registry(). */
 bool typedef_had_error = false;
 ReturnValue current_return_value;
+/* See the declaration in ast.h: `grind` (continue) sets this, and the
+   statement-list visitor and loop visitors consume it (#274). */
+bool continue_requested = false;
 Arena arena;
 
 TypeModifiers current_modifiers = {false, false, false, false,
@@ -6551,6 +6554,10 @@ void execute_statement(ASTNode *node)
         // Signal to break out of the current loop/switch
         bruh();
         break;
+    case NODE_CONTINUE_STATEMENT:
+        // Signal the enclosing loop to skip to its next iteration (#274).
+        continue_requested = true;
+        break;
     case NODE_FUNCTION_DEF:
     {
         Function *func = create_function(
@@ -6722,6 +6729,14 @@ ASTNode *create_break_node()
 {
     ASTNode *node = ARENA_ALLOC_ASTNODE();
     node->type = NODE_BREAK_STATEMENT;
+    node->data.break_stmt = NULL;
+    return node;
+}
+
+ASTNode *create_continue_node()
+{
+    ASTNode *node = ARENA_ALLOC_ASTNODE();
+    node->type = NODE_CONTINUE_STATEMENT;
     node->data.break_stmt = NULL;
     return node;
 }

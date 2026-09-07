@@ -436,7 +436,7 @@ static void register_anonymous_aggregate_typedef(String alias_name,
 %type <node> return_statement
 %type <node> init_expr condition increment
 %type <node> if_statement
-%type <node> switch_statement break_statement
+%type <node> switch_statement break_statement continue_statement
 %type <case_node> case_list case_clause
 %type <node> binary_operation unary_operation parentheses
 %type <node> array_access
@@ -1394,6 +1394,8 @@ statement:
         { $$ = $1;  }
     | break_statement SEMICOLON
         { $$ = $1; }
+    | continue_statement SEMICOLON
+        { $$ = $1; }
     | expression SEMICOLON
         { $$ = $1; }
     ;
@@ -1420,7 +1422,12 @@ case_clause:
 break_statement:
     BREAK
         { $$ = create_break_node(); }
-    ;  
+    ;
+
+continue_statement:
+    CONTINUE
+        { $$ = create_continue_node(); }
+    ;
 
 if_statement:
       IF LPAREN expression RPAREN LBRACE statements RBRACE %prec LOWER_THAN_ELSE

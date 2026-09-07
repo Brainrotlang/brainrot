@@ -35,6 +35,7 @@ struct Visitor
     void (*visit_do_while_statement)(Visitor *self, ASTNode *node);
     void (*visit_switch_statement)(Visitor *self, ASTNode *node);
     void (*visit_break_statement)(Visitor *self, ASTNode *node);
+    void (*visit_continue_statement)(Visitor *self, ASTNode *node);
     void (*visit_return_statement)(Visitor *self, ASTNode *node);
     void (*visit_function_definition)(Visitor *self, ASTNode *node);
     void (*visit_statement_list)(Visitor *self, ASTNode *node);
