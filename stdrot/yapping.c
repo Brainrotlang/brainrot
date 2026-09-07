@@ -221,8 +221,15 @@ void stdrot_format_to_stream(FILE *out, const char *format,
        itself never overflows -- it honors the size arg -- but the terminator
        write below would, and the loop guard above only stops re-entry, it
        doesn't clamp. Clamp into range so `buffer[buffer_offset]` stays in
-       bounds; output is simply truncated to what fit. */
-    if (buffer_offset >= (int)sizeof(buffer))
+       bounds; output is simply truncated to what fit. The `< 0` branch guards
+       the rarer case where snprintf returned negative on an output/encoding
+       error, which would otherwise leave buffer_offset negative and underflow
+       the terminator write. */
+    if (buffer_offset < 0)
+    {
+        buffer_offset = 0;
+    }
+    else if (buffer_offset >= (int)sizeof(buffer))
     {
         buffer_offset = (int)sizeof(buffer) - 1;
     }
