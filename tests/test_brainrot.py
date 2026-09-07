@@ -103,6 +103,38 @@ def test_slorp_buffer_form_has_no_deprecation_warning():
     )
 
 
+def test_int_arithmetic_no_signed_overflow_ub():
+    """#280: rizz (int) +, -, *, and unary - must wrap with defined
+    two's-complement arithmetic, not signed-overflow UB. The JSON-driven suite
+    only diffs stdout, and UBSan defaults to print-and-continue, so it stays
+    green even when the UB fires. Run the fixture under
+    UBSAN_OPTIONS=halt_on_error=1 so any signed-overflow UB aborts the process
+    (nonzero exit) -- the fix makes it exit 0 with the wrapped values."""
+    brainrot_path = os.path.abspath(os.path.join(script_dir, "../brainrot"))
+    example_file_path = os.path.abspath(
+        os.path.join(script_dir, "../test_cases/int_overflow_wraps.brainrot"))
+
+    result = subprocess.run(
+        [brainrot_path, example_file_path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env={**os.environ, "UBSAN_OPTIONS": "halt_on_error=1"},
+    )
+
+    assert result.returncode == 0, (
+        f"int arithmetic aborted under UBSan halt_on_error (signed-overflow "
+        f"UB regressed, #280)\nStderr:\n{result.stderr}"
+    )
+    assert "runtime error" not in result.stderr, (
+        f"UBSan reported undefined behavior in int arithmetic (#280)\n"
+        f"Stderr:\n{result.stderr}"
+    )
+    assert result.stdout.strip() == "-2147483648\n2147483647\n-2\n-2147483648", (
+        f"Stdout:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+
+
 # ── validate_native_registry() rejection tests ──────────────────────────────
 # Each tests/badnatives/*.c file (built by `make badnatives`) registers
 # exactly one deliberately malformed StdrotEntry; validate_native_registry()
