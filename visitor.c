@@ -200,6 +200,11 @@ void ast_accept(ASTNode *node, Visitor *visitor)
             visitor->visit_break_statement(visitor, node);
         break;
 
+    case NODE_CONTINUE_STATEMENT:
+        if (visitor->visit_continue_statement)
+            visitor->visit_continue_statement(visitor, node);
+        break;
+
     case NODE_RETURN:
         /* A bare call as the return expression (`bussin make();`) is NOT
            pre-walked here: this generic pre-visit would run interpreter_

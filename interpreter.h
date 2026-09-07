@@ -47,6 +47,7 @@ void interpreter_visit_while_statement(Visitor *self, ASTNode *node);
 void interpreter_visit_do_while_statement(Visitor *self, ASTNode *node);
 void interpreter_visit_switch_statement(Visitor *self, ASTNode *node);
 void interpreter_visit_break_statement(Visitor *self, ASTNode *node);
+void interpreter_visit_continue_statement(Visitor *self, ASTNode *node);
 void interpreter_visit_return_statement(Visitor *self, ASTNode *node);
 void interpreter_visit_function_definition(Visitor *self, ASTNode *node);
 void interpreter_visit_statement_list(Visitor *self, ASTNode *node);

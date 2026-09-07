@@ -49,6 +49,8 @@ Interpreter *interpreter_new(void)
         interpreter_visit_do_while_statement;
     interp->base.visit_switch_statement = interpreter_visit_switch_statement;
     interp->base.visit_break_statement = interpreter_visit_break_statement;
+    interp->base.visit_continue_statement =
+        interpreter_visit_continue_statement;
     interp->base.visit_return_statement = interpreter_visit_return_statement;
     interp->base.visit_function_definition =
         interpreter_visit_function_definition;
@@ -795,6 +797,10 @@ void interpreter_visit_for_statement(Visitor *self, ASTNode *node)
                 ast_accept(node->data.for_stmt.body, self);
             }
 
+            /* `grind` in the body skipped to here; the increment still runs,
+               matching C's `continue` in a `for` loop (#274). */
+            continue_requested = false;
+
             if (node->data.for_stmt.incr)
             {
                 interpreter_accept_or_execute_call(node->data.for_stmt.incr,
@@ -825,6 +831,10 @@ void interpreter_visit_while_statement(Visitor *self, ASTNode *node)
             ast_accept(node->data.while_stmt.body, self);
         }
 
+        /* `grind` skipped the rest of the body; clear it and re-test the
+           condition on the next iteration (#274). */
+        continue_requested = false;
+
         exit_scope();
     }
     exit_scope();
@@ -850,6 +860,10 @@ void interpreter_visit_do_while_statement(Visitor *self, ASTNode *node)
             ast_accept(node->data.while_stmt.body, self);
         }
 
+        /* `grind` skipped the rest of the body; clear it so the condition is
+           still tested for the next iteration (#274). */
+        continue_requested = false;
+
         /* Exit scope before checking condition */
         exit_scope();
 
@@ -871,6 +885,17 @@ void interpreter_visit_break_statement(Visitor *self, ASTNode *node)
     (void)self;
     /* Use bruh() which calls LONGJMP() to break out of the current loop */
     bruh();
+}
+
+void interpreter_visit_continue_statement(Visitor *self, ASTNode *node)
+{
+    (void)node;
+    (void)self;
+    /* `grind` (continue): unlike break, it must resume the loop, not exit it,
+       so it can't longjmp out. Raise a flag the statement-list visitor honors
+       to stop the rest of the current body, unwinding through normal returns;
+       the enclosing loop clears it and runs its next iteration (#274). */
+    continue_requested = true;
 }
 
 void interpreter_visit_return_statement(Visitor *self, ASTNode *node)
@@ -922,6 +947,11 @@ void interpreter_visit_statement_list(Visitor *self, ASTNode *node)
     {
         if (stmt->statement)
             interpreter_accept_or_execute_call(stmt->statement, self);
+        /* `grind` (continue) stops the rest of this list and every enclosing
+           one, so control unwinds up to the loop that clears the flag (#274).
+         */
+        if (continue_requested)
+            break;
         stmt = stmt->next;
     }
 }

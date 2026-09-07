@@ -416,6 +416,7 @@ typedef enum
     NODE_CASE,
     NODE_DEFAULT_CASE,
     NODE_BREAK_STATEMENT,
+    NODE_CONTINUE_STATEMENT,
     NODE_SIZEOF,
     NODE_ARRAY_ACCESS,
     NODE_STRING_SLICE,
@@ -627,6 +628,12 @@ extern HashMap *function_map;
 extern ReturnValue current_return_value;
 extern int g_program_exit_code;
 extern JumpBuffer *jump_buffer;
+/* Set by `grind` (continue) and consumed by the enclosing loop: unlike `bruh`
+   (break), which longjmps straight out, continue must resume the loop, so it
+   unwinds the body via normal returns. interpreter_visit_statement_list() stops
+   running the rest of a statement list while this is set, propagating up to the
+   loop, which clears it and proceeds to the next iteration (#274). */
+extern bool continue_requested;
 /* Function prototypes */
 bool set_int_variable(const String name, int value, TypeModifiers mods);
 bool set_array_variable(String name, int length, TypeModifiers mods,
@@ -689,6 +696,7 @@ CaseNode *create_case_node(ASTNode *value, ASTNode *statements);
 CaseNode *create_default_case_node(ASTNode *statements);
 CaseNode *append_case_list(CaseNode *list, CaseNode *case_node);
 ASTNode *create_break_node(void);
+ASTNode *create_continue_node(void);
 ASTNode *create_default_node(VarType var_type, int pointer_level);
 ASTNode *create_return_node(ASTNode *expr);
 ExpressionList *create_expression_list(ASTNode *expr);
