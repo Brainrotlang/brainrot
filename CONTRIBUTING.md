@@ -130,7 +130,7 @@ By participating in this project, you are expected to uphold our [Code of Conduc
 - C compiler (gcc recommended)
 - Flex and Bison
 - Valgrind
-- clang-format
+- clang-format-15 (the exact version CI pins — see [Formatting](#formatting))
 - cppcheck (>= 2.13)
 - clang-tidy-15
 - Make
@@ -175,6 +175,17 @@ format-check` (fails on any diff, doesn't modify files). Before opening a PR:
 make format-check   # verify only
 make format          # apply formatting in-place
 ```
+
+**Use clang-format 15.** The `Makefile` pins `CLANG_FORMAT ?= clang-format-15`
+and the CI `lint` job installs `clang-format-15`, so that is the one version the
+committed formatting is guaranteed to match. Different major versions disagree
+on purely cosmetic spacing — most notably a cast immediately followed by a unary
+minus, e.g. `(NodeType)-1` (v14) vs `(NodeType) - 1` (v18) — so `make
+format-check` run with clang-format 14 (Ubuntu 22.04's apt default) or 18 can
+report spurious violations on code that is already correctly formatted (#187).
+Install `clang-format-15` specifically; if your v15 binary has a different name
+or path, point the make targets at it with
+`make format-check CLANG_FORMAT=/path/to/clang-format-15`.
 
 `make format-check`/`make format` never touch generated Flex/Bison output
 (`lang.tab.c`, `lang.tab.h`, `lex.yy.c`).

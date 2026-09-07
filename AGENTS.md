@@ -46,7 +46,10 @@ Run one pytest case: `cd tests && pytest -v -k <test_case_name>`.
 4-space indent, snake_case functions/vars, UPPER_SNAKE_CASE constants, ~80 col
 lines, brace-on-own-line (Allman), enforced by `make format` (clang-format) and
 gated in CI by the `lint` job (`make format-check`); never hand-format the
-gitignored `lang.tab.c`/`lang.tab.h`/`lex.yy.c`.
+gitignored `lang.tab.c`/`lang.tab.h`/`lex.yy.c`. Use **clang-format-15** — the
+version the `Makefile` pins (`CLANG_FORMAT ?= clang-format-15`) and CI installs;
+other major versions disagree on cosmetic spacing (e.g. `(type)-1` casts) and
+report spurious `format-check` diffs (#187).
 
 ```c
 static int semantic_check_binop(ASTNode *node, SymbolTable *scope)
