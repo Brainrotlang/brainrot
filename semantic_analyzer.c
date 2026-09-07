@@ -3794,15 +3794,37 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                     node->line_number > 0 ? node->line_number : 1);
             }
         }
+        else if (node->data.unary.op == OP_PRE_INC ||
+                 node->data.unary.op == OP_PRE_DEC ||
+                 node->data.unary.op == OP_POST_INC ||
+                 node->data.unary.op == OP_POST_DEC)
+        {
+            /* ++/-- write their result back through the operand, so they
+               need an lvalue, not just a value. handle_unary_expression()
+               (ast.c) reads operand->data.name to name the target, so a
+               non-identifier operand (`5++`, `(a + b)++`) would misread the
+               AST union as a variable name and hand garbage to the hashmap
+               (#281). This codebase's ++/-- only support a plain variable
+               as the target, so require exactly NODE_IDENTIFIER here and let
+               the semantic pass reject anything else before interpretation. */
+            if (!node->data.unary.operand ||
+                node->data.unary.operand->type != NODE_IDENTIFIER)
+            {
+                add_semantic_error(
+                    analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                    STRING_LITERAL(
+                        "increment/decrement requires a variable operand"),
+                    node->line_number > 0 ? node->line_number : 1);
+            }
+        }
         else
         {
             /* Every other unary operator (arithmetic negation, logical
-               not, increment/decrement, ...) genuinely consumes its
-               operand as a value -- unlike ADDRESS_OF (wants an lvalue
-               location, not a value; already rejects a non-lvalue
-               operand shape like a call above) and DEREFERENCE (wants a
-               pointer; already rejected by the pointer_level check
-               above), neither of which needed this. */
+               not, ...) genuinely consumes its operand as a value -- unlike
+               ADDRESS_OF (wants an lvalue location, not a value; already
+               rejects a non-lvalue operand shape like a call above) and
+               DEREFERENCE (wants a pointer; already rejected by the
+               pointer_level check above), neither of which needed this. */
             require_value_expression(analyzer, node->data.unary.operand,
                                      "unary operator operand");
         }

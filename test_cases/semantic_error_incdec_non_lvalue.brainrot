@@ -1,0 +1,12 @@
+🚽 Regression test for issue #281: a post/pre-increment applied to a
+🚽 non-lvalue operand (here `(a + b)++`, an operation node) must be rejected
+🚽 by the semantic analyzer -- not reach the interpreter, where
+🚽 handle_unary_expression() would misread the operand's AST union as a
+🚽 variable name and corrupt the hashmap. The diagnostic fires before any
+🚽 interpretation happens.
+skibidi main {
+    rizz a = 1;
+    rizz b = 2;
+    rizz c = (a + b)++;
+    bussin 0;
+}

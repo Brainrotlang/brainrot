@@ -1,0 +1,28 @@
+🚽 Regression test for issue #281: `i++ + i++` used to crash with a
+🚽 heap-buffer-overflow. Postfix/prefix ++ and -- sat at the relational
+🚽 precedence tier (below +), so `i++ + i++` parsed as `(i++ + i)++` -- a
+🚽 post-increment applied to a NON-lvalue operation node, whose AST union
+🚽 handle_unary_expression() then misread as a variable name and handed to
+🚽 the hashmap. ++/-- now bind tighter than every arithmetic operator, so
+🚽 each `++`/`--` shifts onto its own operand: `i++ + i++` is `(i++)+(i++)`.
+🚽
+🚽 The point of this test is that these expressions RUN without crashing or
+🚽 corrupting memory. The exact totals still reflect the pre-existing #225
+🚽 double-evaluation of a post/pre-inc operand in expression context (a
+🚽 separate, open issue) -- they are deterministic, platform-independent
+🚽 integer results, which is all this regression needs to pin.
+skibidi main {
+    rizz i = 5;
+    rizz r = i++ + i++;
+    yapping("%d %d", r, i);
+
+    rizz j = 5;
+    rizz s = ++j + ++j;
+    yapping("%d %d", s, j);
+
+    rizz k = 10;
+    rizz d = k-- + k--;
+    yapping("%d %d", d, k);
+
+    bussin 0;
+}
