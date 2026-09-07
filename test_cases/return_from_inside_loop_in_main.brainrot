@@ -1,0 +1,20 @@
+🚽 Regression for issue 246 (formerly return_from_inside_loop_in_main_fail):
+🚽 `bussin` inside a loop in skibidi main must terminate the program, unwinding
+🚽 out of the loop the same way it does from any user-defined function.
+🚽
+🚽 Before #246 main had no function frame, so `bussin` here neither stopped
+🚽 execution nor set the exit code -- it produced "Error: No scope to exit" and,
+🚽 without the #319 has_function_frame guard, a four-error cascade. Now interpret()
+🚽 runs main under a function jump buffer, so the `bussin` at i == 2 ends the
+🚽 program cleanly: "before" prints, the loop stops mid-iteration, "AFTER LOOP"
+🚽 never runs, and the process exits 0.
+skibidi main {
+    yapping("before");
+    flex (rizz i = 0; i < 5; i = i + 1) {
+        edgy (i == 2) {
+            bussin 0;
+        }
+    }
+    yapping("AFTER LOOP");
+    bussin 0;
+}

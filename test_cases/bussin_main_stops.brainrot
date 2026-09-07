@@ -1,0 +1,9 @@
+🚽 Regression for issue 246: statements after `bussin` in skibidi main do not
+🚽 run -- `bussin` unwinds out of main. Only "before" prints; "after" must not.
+🚽 (Uses bussin 0 so this can assert on stdout; the nonzero exit-status path is
+🚽 pinned by bussin_main_exit_code and bussin_main_edgy_exit.)
+skibidi main {
+    yapping("before");
+    bussin 0;
+    yapping("after");
+}

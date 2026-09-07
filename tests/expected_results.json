@@ -415,7 +415,6 @@
     "string_stdlib_char_buffer": "slorp len 32\nslorp cmp 1\nslorp idx 1\ncat       [hi]\ncat len   33\nfixed len 8\nfixed str [hi]\nrant len  2\nrant cmp  0\n",
     "cap_returning_call_in_condition": "edgy true\nedgy false\ngoon ran 2\nnegated 0\n",
     "return_from_inside_loop": "for      2\nwhile    30\nnested   102\nswitch   11\nswitch d 99\nbreak    1\nvisiting 0\nvisiting 1\nstopping at 2\ndone",
-    "return_from_inside_loop_in_main_fail": "before\nStderr:\nError: No scope to exit at line 58\n",
     "param_shadows_main_local": "getx  3.0\nuse   W\ntwice 6\nmine  41 100 1.0",
     "string_indexing": "stored [h]\ninline [d]\nas int 101\nvaridx [o]\nslice  [hello]\nlen    5\ninline [world]\nwhole  [hello world]\none    [o]\nempty  []\nempty at end []\nexpr   [llo]\nagree  [w] [w]\ncat    [hello world]\nrebuilt 0\nidx    1\nutf8 len 2\nutf8 halves -61 -87\n",
     "string_index_out_of_bounds_fail": "before\nStderr:\nError: String index out of bounds (index=5, length=5) at line 31\n",
@@ -437,6 +436,10 @@
     "sizeof_struct_call_and_deref": "8\n8\n8\n8\n8\n8",
     "slorp_overflow_fail": "Error: Input exceeded buffer size.",
     "struct_field_rmw_and_field_arith": "6\n7\n4\n-1\nboth\n3",
+    "return_from_inside_loop_in_main": "before",
+    "bussin_main_exit_code": "ExitCode:42",
+    "bussin_main_stops": "before",
+    "bussin_main_edgy_exit": "ExitCode:3",
     "continue_grind": "0\n1\n3\n4\nw1\nw3\nd1\nd3\n0-1\n1-1\n2-1",
     "semantic_error_grind_outside_loop": "Error: grind (continue) outside a loop at line 8"
 }

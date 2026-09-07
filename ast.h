@@ -626,6 +626,7 @@ extern TypeModifiers current_modifiers;
 extern Scope *current_scope;
 extern HashMap *function_map;
 extern ReturnValue current_return_value;
+extern int g_program_exit_code;
 extern JumpBuffer *jump_buffer;
 /* Set by `grind` (continue) and consumed by the enclosing loop: unlike `bruh`
    (break), which longjmps straight out, continue must resume the loop, so it
