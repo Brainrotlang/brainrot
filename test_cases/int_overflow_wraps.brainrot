@@ -1,0 +1,14 @@
+🚽 Regression for #280: rizz (int) +, -, *, and unary - are computed with
+🚽 defined two's-complement wrapping (via unsigned), not signed-overflow UB.
+🚽 The values are the documented wraps; the real assertion is that this runs
+🚽 UBSan-clean -- see tests/test_brainrot.py::test_int_arithmetic_no_signed_
+🚽 overflow_ub, which runs it under UBSAN_OPTIONS=halt_on_error=1.
+skibidi main {
+    rizz mx = 2147483647;
+    rizz mn = -2147483648;
+    yapping("%d", mx + 1);
+    yapping("%d", mn - 1);
+    yapping("%d", mx * 2);
+    yapping("%d", -mn);
+    bussin 0;
+}

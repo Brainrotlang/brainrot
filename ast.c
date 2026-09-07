@@ -3440,7 +3440,16 @@ void *handle_binary_operation(ASTNode *node)
     {
     case OP_PLUS:
         if (promoted_type == VAR_INT)
-            *(int *)result = *(int *)left_value + *(int *)right_value;
+            /* Wrap in unsigned to avoid signed-overflow UB (#280): `rizz` is
+               documented as two's-complement-wrapping
+               (integer_overflow.brainrot expects INT_MIN from INT_MAX + 1), but
+               `a + b` on signed int is UB on overflow. Unsigned wraps by
+               definition; the cast back is the
+               implementation-defined-but-universal two's-complement conversion.
+               VAR_SHORT below is fine: short promotes to int, so its sum can't
+               overflow int. */
+            *(int *)result = (int)((unsigned int)*(int *)left_value +
+                                   (unsigned int)*(int *)right_value);
         else if (promoted_type == VAR_FLOAT)
             *(float *)result = *(float *)left_value + *(float *)right_value;
         else if (promoted_type == VAR_DOUBLE)
@@ -3451,7 +3460,10 @@ void *handle_binary_operation(ASTNode *node)
 
     case OP_MINUS:
         if (promoted_type == VAR_INT)
-            *(int *)result = *(int *)left_value - *(int *)right_value;
+            /* Unsigned wrap: avoid signed-overflow UB, same as OP_PLUS (#280).
+             */
+            *(int *)result = (int)((unsigned int)*(int *)left_value -
+                                   (unsigned int)*(int *)right_value);
         else if (promoted_type == VAR_FLOAT)
             *(float *)result = *(float *)left_value - *(float *)right_value;
         else if (promoted_type == VAR_DOUBLE)
@@ -3463,7 +3475,10 @@ void *handle_binary_operation(ASTNode *node)
 
     case OP_TIMES:
         if (promoted_type == VAR_INT)
-            *(int *)result = *(int *)left_value * *(int *)right_value;
+            /* Unsigned wrap: avoid signed-overflow UB, same as OP_PLUS (#280).
+             */
+            *(int *)result = (int)((unsigned int)*(int *)left_value *
+                                   (unsigned int)*(int *)right_value);
         else if (promoted_type == VAR_FLOAT)
             *(float *)result = *(float *)left_value * *(float *)right_value;
         else if (promoted_type == VAR_DOUBLE)
@@ -4171,7 +4186,12 @@ void *handle_unary_expression(ASTNode *node, void *operand_value,
         if (operand_type == VAR_INT)
         {
             int *result = SAFE_MALLOC(int);
-            *result = -(*(int *)operand_value);
+            /* Negating INT_MIN is signed-overflow UB (#280). Negate in unsigned
+               (defined modular arithmetic) and cast back, so INT_MIN maps to
+               itself by two's-complement wrap rather than tripping UBSan.
+               VAR_SHORT below is safe: short promotes to int before negation.
+             */
+            *result = (int)(-(unsigned int)*(int *)operand_value);
             return result;
         }
         else if (operand_type == VAR_SHORT)
