@@ -93,6 +93,25 @@ void stdrot_format_to_stream(FILE *out, const char *format,
             memcpy(specifier, start, length);
             specifier[length] = '\0';
 
+            /* A '*' field width or precision makes snprintf() read an EXTRA int
+               argument (before the value) from its varargs. This marshalling
+               layer only ever pairs one Brainrot argument with one conversion,
+               so it never supplies that extra int -- passing the '*' through
+               would call snprintf with fewer arguments than the format
+               consumes: undefined behavior that reads an adjacent vararg slot
+               (garbage, a stack/register leak, or a crash for `%*s`). Reject it
+               with a diagnostic instead, emit nothing for this conversion, and
+               still consume the paired argument so the rest stay aligned
+               (#275). */
+            if (strchr(specifier, '*') != NULL)
+            {
+                fprintf(stderr, "Error: '*' dynamic width/precision is not "
+                                "supported in format strings\n");
+                arg_idx++;
+                format++;
+                continue;
+            }
+
             const StdrotValue *arg = &args[arg_idx];
 
             if (spec == 'b')
