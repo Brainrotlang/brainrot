@@ -60,6 +60,7 @@ SemanticAnalyzer *semantic_analyzer_new(void)
     analyzer->base.visit_do_while_statement = NULL;
     analyzer->base.visit_switch_statement = NULL;
     analyzer->base.visit_break_statement = NULL;
+    analyzer->base.visit_continue_statement = NULL;
     analyzer->base.visit_return_statement = NULL;
     analyzer->base.visit_statement_list = NULL;
     analyzer->base.visit_print_statement = NULL;
@@ -73,6 +74,7 @@ SemanticAnalyzer *semantic_analyzer_new(void)
     analyzer->is_collecting_phase = false;
     analyzer->scope_depth = 0;
     analyzer->current_function_name = (String){0};
+    analyzer->loop_depth = 0;
 
     return analyzer;
 }
@@ -3511,6 +3513,11 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         analyzer->scope_depth++;
         String outer_function_name = analyzer->current_function_name;
         analyzer->current_function_name = node->data.function_def.name;
+        /* A function body starts a fresh loop context: a `grind` in it must be
+           inside a loop of its OWN, never counted against an enclosing loop
+           (#274). Saved/restored so nothing leaks either direction. */
+        int outer_loop_depth = analyzer->loop_depth;
+        analyzer->loop_depth = 0;
 
         /* Process function body */
         if (node->data.function_def.body)
@@ -3520,6 +3527,7 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         }
 
         /* Exit function scope */
+        analyzer->loop_depth = outer_loop_depth;
         analyzer->current_function_name = outer_function_name;
         analyzer->scope_depth--;
         break;
@@ -3550,8 +3558,10 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         }
         if (node->data.for_stmt.body)
         {
+            analyzer->loop_depth++;
             semantic_analyze_with_scope_tracking(analyzer,
                                                  node->data.for_stmt.body);
+            analyzer->loop_depth--;
         }
 
         /* Exit loop scope */
@@ -3574,8 +3584,10 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         analyzer->scope_depth++;
         if (node->data.while_stmt.body)
         {
+            analyzer->loop_depth++;
             semantic_analyze_with_scope_tracking(analyzer,
                                                  node->data.while_stmt.body);
+            analyzer->loop_depth--;
         }
         analyzer->scope_depth--;
         break;
@@ -4498,8 +4510,10 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         analyzer->scope_depth++;
         if (node->data.while_stmt.body)
         {
+            analyzer->loop_depth++;
             semantic_analyze_with_scope_tracking(analyzer,
                                                  node->data.while_stmt.body);
+            analyzer->loop_depth--;
         }
         if (node->data.while_stmt.cond)
         {
@@ -4511,6 +4525,20 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         analyzer->scope_depth--;
         break;
     }
+
+    case NODE_CONTINUE_STATEMENT:
+        /* `grind` (continue) is a runtime flag the enclosing loop clears; used
+           outside any loop nothing ever clears it, silently truncating the rest
+           of the program and even leaking across a function call. Reject it
+           here the way C rejects `continue` outside a loop (#274). */
+        if (analyzer->loop_depth == 0)
+        {
+            add_semantic_error(
+                analyzer, SEMANTIC_ERROR_INVALID_OPERATION,
+                STRING_LITERAL("grind (continue) outside a loop"),
+                node->line_number);
+        }
+        break;
 
     case NODE_SWITCH_STATEMENT:
     {

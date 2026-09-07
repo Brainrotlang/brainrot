@@ -439,5 +439,7 @@
     "return_from_inside_loop_in_main": "before",
     "bussin_main_exit_code": "ExitCode:42",
     "bussin_main_stops": "before",
-    "bussin_main_edgy_exit": "ExitCode:3"
+    "bussin_main_edgy_exit": "ExitCode:3",
+    "continue_grind": "0\n1\n3\n4\nw1\nw3\nd1\nd3\n0-1\n1-1\n2-1",
+    "semantic_error_grind_outside_loop": "Error: grind (continue) outside a loop at line 8"
 }

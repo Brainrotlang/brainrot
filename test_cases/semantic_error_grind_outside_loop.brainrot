@@ -1,0 +1,11 @@
+🚽 Regression for #274: grind (continue) outside any loop is a compile-time
+🚽 error, not a silent no-op. Before the guard it set a runtime flag nothing
+🚽 cleared, truncating the rest of the program (only "A" would print) with no
+🚽 diagnostic -- and a bare grind in a helper called from a loop hijacked the
+🚽 caller's loop. Semantic analysis now rejects it, like C.
+skibidi main {
+    yapping("A");
+    grind;
+    yapping("B");
+    bussin 0;
+}
