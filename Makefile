@@ -510,6 +510,25 @@ $(ARENA_CHECK_BIN): tests/arena/arena_check.c $(SRC_DIR)/arena.c $(SRC_DIR)/mem.
 arena-check: $(ARENA_CHECK_BIN) ## Run the arena allocator unit tests (host reset/reuse under sanitizers). Clean memory, no cap.
 	./$(ARENA_CHECK_BIN)
 
+# Host ASan test for #269: the print formatters' fixed 1024-byte buffer must not
+# overflow on a formatted argument longer than it. It #includes stdrot/yapping.c
+# and stdrot/baka.c so their formatters (baka's is static) are compiled WITH
+# sanitizers -- unlike libstdrot.so, whose lack of instrumentation is exactly why
+# `make test`'s ASan build never caught this stack overflow (and Valgrind can't).
+# Flags deliberately omit -Werror/-Wpedantic: the STDROT_EXPORT_* registration
+# macros expand to file-scope compound-literal initializers that -pedantic
+# rejects (a GNU extension the production, non-pedantic libstdrot build relies
+# on). ASan is the point here, not warning coverage.
+PRINT_OVERFLOW_BIN := tests/print/print_overflow_check
+PRINT_OVERFLOW_CFLAGS := -Wall -Wextra $(SANITIZER_FLAGS) -fno-omit-frame-pointer -g -O1
+
+$(PRINT_OVERFLOW_BIN): tests/print/print_overflow_check.c $(STDROT_DIR)/yapping.c $(STDROT_DIR)/baka.c
+	$(CC) $(PRINT_OVERFLOW_CFLAGS) -I$(STDROT_DIR) -o $@ $< -lm
+
+.PHONY: print-overflow-check
+print-overflow-check: $(PRINT_OVERFLOW_BIN) ## Run the stdrot print-formatter overflow test (#269) under ASan.
+	./$(PRINT_OVERFLOW_BIN)
+
 # Main executable build
 $(TARGET): $(ALL_SRCS) $(STDROT_LIB) $(STDROT_ABI_HDR)
 	$(CC) $(CFLAGS) -o $@ $(ALL_SRCS) $(LDFLAGS)
@@ -560,7 +579,7 @@ $(FLEX_OUTPUT): lang.l
 
 # Run tests
 .PHONY: test
-test: $(TARGET) $(TEST_STDROT_LIB) badnatives nativemodules old-abi-sim abi-check arena-check ## Build, then run the pytest suite. Huggy Wuggy approves.
+test: $(TARGET) $(TEST_STDROT_LIB) badnatives nativemodules old-abi-sim abi-check arena-check print-overflow-check ## Build, then run the pytest suite. Huggy Wuggy approves.
 	STDROT_LIB_PATH=$(CURDIR)/$(TEST_STDROT_LIB) $(PYTHON) -m pytest -v
 	@echo "Tests ran bussin', no cap."
 
@@ -587,6 +606,7 @@ clean: ## Remove all build artifacts (never touches source). Amogus sussy impost
 	rm -f $(OLD_ABI_SIM_LIB)
 	rm -f $(ABI_CHECK_BIN)
 	rm -f $(ARENA_CHECK_BIN)
+	rm -f $(PRINT_OVERFLOW_BIN)
 	rm -f *.o
 	@echo "Blud cleaned up the mess like a true sigma coder."
 
