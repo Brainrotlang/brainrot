@@ -4074,8 +4074,21 @@ static void write_value_to_address(void *address, VarType type,
                 char_scalar_slot_value(evaluate_expression_int(expr));
         break;
     case VAR_STRING:
-        *(String *)address = evaluate_expression_string(expr);
+    {
+        /* A VAR_STRING variable owns its heap `.data` buffer (declaration
+           safe_strdup's it, hm_free frees it at scope teardown). A bare
+           overwrite here orphaned the previous buffer on every reassignment
+           (#277). Evaluate the new string FIRST -- evaluate_expression_string()
+           always returns an independently safe_strdup'd copy, so even `s = s`
+           can't alias -- then free the old buffer and install the new one. On a
+           first write the slot is zero-initialized (variable_new memset), so
+           the free is a safe no-op. */
+        String new_str = evaluate_expression_string(expr);
+        String *slot = (String *)address;
+        SAFE_FREE(slot->data);
+        *slot = new_str;
         break;
+    }
     case VAR_ENUM:
         *(int *)address = evaluate_expression_int(expr);
         break;
@@ -4120,8 +4133,18 @@ static void initialize_variable_from_expr(Variable *var, ASTNode *expr)
             char_scalar_slot_value(evaluate_expression_int(expr));
         break;
     case VAR_STRING:
-        var->value.strvalue = evaluate_expression_string(expr);
+    {
+        /* Free any buffer this VAR_STRING slot already owns before taking the
+           new one (#277). On a plain declaration the slot is zeroed
+           (variable_new memset), so this is a no-op; if this path is ever
+           reached for a re-init it frees the old buffer instead of leaking it.
+           Evaluate first: the result is always an independent safe_strdup'd
+           copy, so freeing the old buffer afterward can't alias it. */
+        String new_str = evaluate_expression_string(expr);
+        SAFE_FREE(var->value.strvalue.data);
+        var->value.strvalue = new_str;
         break;
+    }
     case VAR_ENUM:
         var->value.ivalue = evaluate_expression_int(expr);
         break;
