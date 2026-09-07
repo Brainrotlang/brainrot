@@ -1,0 +1,22 @@
+🚽 Regression for #276: exponent-form float literals without a decimal point
+🚽 (1e10, 2E5, 1e3) now parse as floats -- they used to lex as an integer
+🚽 followed by an identifier (e10) and fail. Also covers the leading-dot (.5)
+🚽 and trailing-dot (1.) forms, that existing d.d[eE]d literals still work, and
+🚽 that a plain integer still routes to the integer rule.
+skibidi main {
+    gigachad a = 1e10;
+    gigachad b = 2E5;
+    gigachad c = 1e3;
+    gigachad d = .5;
+    gigachad e = 1.;
+    gigachad f = 1.0e-3;
+    rizz i = 123;
+    yapping("%.1f", a);
+    yapping("%.1f", b);
+    yapping("%.1f", c);
+    yapping("%.2f", d);
+    yapping("%.2f", e);
+    yapping("%.4f", f);
+    yapping("%d", i);
+    bussin 0;
+}
