@@ -4,6 +4,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <sys/stat.h>
 #if !defined(_WIN32)
 #include <libgen.h> /* dirname/basename -- POSIX only; Windows uses the helpers below */
@@ -691,24 +692,33 @@ extern int yylineno;
     int next_char = input();    // Peek at the next character
     unput(next_char);           // Put it back into the input stream
 
+    /* strtoll, not atoi: atoi's behavior on a value that overflows int is
+       UNDEFINED, so a literal above INT_MAX (e.g. 5000000000) silently
+       truncated. strtoll parses the full 64 bits (clamping to LLONG_MAX with
+       errno on genuine 64-bit overflow), and a value outside 32-bit int range
+       becomes a giga/thicc LONG_LITERAL instead of a truncated INT (#282). */
+    errno = 0;
+    long long v = strtoll(yytext, NULL, 10);
+
     if (next_char == ']') {
-        // If the next character is ']', treat this numeric literal as an integer.
-        yylval.ival = atoi(yytext);
+        // An array index/size is an int; keep the existing narrow behavior.
+        yylval.ival = (int)v;
         return INT_LITERAL;
     }
 
-    // Otherwise, follow the existing type-based logic.
     if (current_var_type == VAR_SHORT) {
-        yylval.sval = (short)atoi(yytext);
+        yylval.sval = (short)v;
         return SHORT_LITERAL;
-    } else if (current_var_type == VAR_INT || current_var_type == NONE) {
-        yylval.ival = atoi(yytext);
-        return INT_LITERAL;
-    } else {
-        // Default behavior for unexpected types
-        yylval.ival = atoi(yytext);
-        return INT_LITERAL;
     }
+
+    if (v > INT_MAX || v < INT_MIN) {
+        // Doesn't fit in 32 bits -- a 64-bit (giga/thicc) literal.
+        yylval.llval = v;
+        return LONG_LITERAL;
+    }
+
+    yylval.ival = (int)v;
+    return INT_LITERAL;
 }
 
 '.' { yylval.ival = yytext[1]; return CHAR; }

@@ -1,0 +1,14 @@
+🚽 Issue #282, the exact reproduction: a giga (long) value above 2^32 used to
+🚽 truncate (5000000000 printed 705032704) because storage, the atoi literal
+🚽 path, and native-call marshalling were all 32-bit. giga now round-trips the
+🚽 full value. (This is about value width; sizeof(giga) reporting 4 on wasm32
+🚽 is the separate, still-open #177 -- not exercised here.)
+skibidi main {
+    giga rizz x = 5000000000;
+    yapping("%lld", x);          🚽 5000000000, not 705032704
+
+    giga rizz y = x * 2;
+    yapping("%lld", y);          🚽 10000000000
+
+    bussin 0;
+}

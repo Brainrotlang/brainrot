@@ -311,7 +311,17 @@ typedef enum
                         borrowed buffers has eventually turned into a
                         use-after-free (see STDROT_STRING's own comment
                         for the last two). */
-    STDROT_NONE     /* void return */
+    STDROT_NONE,    /* void return */
+    /* 64-bit integer -- a giga (long) / thicc (long long) value (#282).
+       APPENDED after STDROT_NONE deliberately, unlike v2->v3's STDROT_STRUCT:
+       appending preserves every existing enum value, and StdrotValue's union
+       does not grow (the new `ll` member is 8 bytes, no wider than the existing
+       `d`/`blob`), so an old v3 .so's memory can never be misread -- no
+       STDROT_ABI_VERSION bump is required (see STDROT_ABI_VERSION's comment for
+       when a bump IS). It sits after the STDROT_NONE sentinel only so the
+       numbering stays stable; switches that stop at STDROT_NONE simply add an
+       explicit STDROT_LONG case. */
+    STDROT_LONG
 } StdrotType;
 
 typedef struct
@@ -320,6 +330,7 @@ typedef struct
     union
     {
         int i;
+        long long ll; /* STDROT_LONG: 64-bit giga/thicc value (#282) */
         float f;
         double d;
         short s;

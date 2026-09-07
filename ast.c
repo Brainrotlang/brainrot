@@ -304,6 +304,26 @@ static void *array_element_address(void *element_base, size_t offset,
                                    VarType type, int pointer_level,
                                    TypeModifiers mods,
                                    const String struct_name);
+/* Packed giga/thicc element access. The element width follows the platform
+   type -- giga is sizeof(long) (8 native, 4 on wasm32), thicc is
+   sizeof(long long) (8 everywhere) -- so a packed array/struct slot must be
+   read and written through the matching C type, NOT always long long: on
+   wasm32 an 8-byte write into a 4-byte giga slot overflows the array (#282,
+   and the width divergence of #177). A scalar giga/thicc lives in the
+   Variable's 8-byte union instead and uses llvalue directly, not these. */
+static long long packed_long_load(const void *addr, TypeModifiers mods)
+{
+    if (mods.is_long_long)
+        return *(const long long *)addr;
+    return (long long)*(const long *)addr; /* is_long: platform long width */
+}
+static void packed_long_store(void *addr, long long value, TypeModifiers mods)
+{
+    if (mods.is_long_long)
+        *(long long *)addr = value;
+    else
+        *(long *)addr = (long)value; /* is_long: platform long width */
+}
 
 // Symbol table functions
 bool set_variable(const String name, void *value, VarType type,
@@ -319,13 +339,14 @@ bool set_variable(const String name, void *value, VarType type,
 
         case VAR_INT:
         {
-            if (var->desc.modifiers.is_long)
+            /* giga/thicc store the full 64 bits in llvalue; a plain rizz uses
+               ivalue (#282). This generic path receives an int* source, so a
+               true 64-bit value arrives via set_long_variable()/
+               initialize_variable_from_expr() instead -- here the long branch
+               only widens the 32-bit source consistently. */
+            if (var->desc.modifiers.is_long || var->desc.modifiers.is_long_long)
             {
-                var->value.ivalue = (long long)(*(int *)value);
-            }
-            else if (var->desc.modifiers.is_long_long)
-            {
-                var->value.ivalue = (long)(*(int *)value);
+                var->value.llvalue = (long long)(*(int *)value);
             }
             else
             {
@@ -2070,6 +2091,25 @@ bool set_int_variable(const String name, int value, TypeModifiers mods)
     return set_variable(name, &value, VAR_INT, mods);
 }
 
+/* Store a full 64-bit giga/thicc value. set_variable()'s generic path takes an
+   int* source and so can't carry 64 bits; this writes llvalue directly (#282).
+   Forces is_long_long so the slot is unambiguously read back through the long
+   path. Requires the variable to already exist, like set_int_variable(). */
+bool set_long_variable(const String name, long long value, TypeModifiers mods)
+{
+    Variable *var = get_variable(name);
+    if (var != NULL)
+    {
+        var->desc.type = VAR_INT;
+        var->desc.modifiers = mods;
+        if (!mods.is_long && !mods.is_long_long)
+            var->desc.modifiers.is_long_long = true;
+        var->value.llvalue = value;
+        return true;
+    }
+    return false;
+}
+
 bool set_char_variable(const String name, int value, TypeModifiers mods)
 {
     return set_variable(name, &value, VAR_CHAR, mods);
@@ -2288,6 +2328,20 @@ ASTNode *create_int_node(int value)
 {
     ASTNode *node = create_node(NODE_INT, VAR_INT, current_modifiers);
     SET_DATA_INT(node, value);
+    return node;
+}
+
+/* A 64-bit integer literal (a value the lexer found outside 32-bit int range,
+   e.g. 5000000000). Still a NODE_INT/VAR_INT, but flagged is_long_long so
+   get_expression_type() reports it as 64-bit and the value is read through the
+   long path (evaluate_expression_long / STDROT_LONG marshalling) rather than
+   truncated to int (#282). */
+ASTNode *create_long_node(long long value)
+{
+    TypeModifiers mods = current_modifiers;
+    mods.is_long_long = true;
+    ASTNode *node = create_node(NODE_INT, VAR_INT, mods);
+    node->data.llvalue = value;
     return node;
 }
 
@@ -2956,6 +3010,77 @@ VarType get_expression_type(ASTNode *node)
     default:
         yyerror("Unknown node type in get_expression_type");
         return NONE;
+    }
+}
+
+/* Whether an integer expression is 64-bit wide (a giga/thicc), i.e. carries
+   the is_long/is_long_long modifier. get_expression_type() collapses giga/thicc
+   to VAR_INT, so this is the companion width query the 64-bit paths consult
+   before choosing evaluate_expression_long()/STDROT_LONG over the 32-bit ones
+   (#282). Mirrors the type-propagation rules: an operation is long if either
+   operand is (C's usual arithmetic conversions), a unary inherits its operand,
+   and each lvalue form reports its own declared width. Anything else is 32-bit.
+*/
+bool expression_is_long(ASTNode *node)
+{
+    if (!node)
+        return false;
+    if (get_expression_pointer_level(node) > 0)
+        return false;
+    switch (node->type)
+    {
+    case NODE_INT:
+        return node->modifiers.is_long || node->modifiers.is_long_long;
+    case NODE_IDENTIFIER:
+    {
+        Variable *var = get_variable(node->data.name);
+        if (var != NULL && var->desc.type == VAR_INT)
+            return var->desc.modifiers.is_long ||
+                   var->desc.modifiers.is_long_long;
+        return false;
+    }
+    case NODE_OPERATION:
+        return expression_is_long(node->data.op.left) ||
+               expression_is_long(node->data.op.right);
+    case NODE_UNARY_OPERATION:
+        return expression_is_long(node->data.unary.operand);
+    case NODE_ARRAY_ACCESS:
+    {
+        /* The array-access node's own modifiers are unreliable: it is built at
+           parse time, before the variable exists, so resolve the element width
+           from the array variable itself. */
+        Variable *var = node->data.array.name.data
+                            ? get_variable(node->data.array.name)
+                            : NULL;
+        if (var != NULL && var->desc.type == VAR_INT)
+            return var->desc.modifiers.is_long ||
+                   var->desc.modifiers.is_long_long;
+        return node->modifiers.is_long || node->modifiers.is_long_long;
+    }
+    case NODE_FUNC_CALL:
+    {
+        Function *fn = get_function(node->data.func_call.function_name);
+        if (fn != NULL && fn->return_desc.type == VAR_INT)
+            return fn->return_desc.modifiers.is_long ||
+                   fn->return_desc.modifiers.is_long_long;
+        return false;
+    }
+    case NODE_STRUCT_ACCESS:
+    {
+        StructDef *def = NULL;
+        void *base = NULL;
+        StructField *fld = NULL;
+        if (resolve_struct_access(node, &def, &base, &fld, false))
+            return fld->desc.type == VAR_INT &&
+                   (fld->desc.modifiers.is_long ||
+                    fld->desc.modifiers.is_long_long);
+        fld = static_struct_field(node);
+        return fld != NULL && fld->desc.type == VAR_INT &&
+               (fld->desc.modifiers.is_long ||
+                fld->desc.modifiers.is_long_long);
+    }
+    default:
+        return false;
     }
 }
 
@@ -4054,7 +4179,23 @@ static void write_value_to_address(void *address, VarType type,
     switch (type)
     {
     case VAR_INT:
-        *(int *)address = evaluate_expression_int(expr);
+        /* giga/thicc (#282). A scalar target is the Variable's own 8-byte
+           union, so it always takes the full 64 bits (llvalue). A packed
+           array/struct element follows the platform element width via
+           packed_long_store (giga = sizeof(long), thicc = sizeof(long long)),
+           so an 8-byte write can't overflow a 4-byte wasm32 giga slot. */
+        if (mods.is_long || mods.is_long_long)
+        {
+            if (packed_storage)
+                packed_long_store(address, evaluate_expression_long(expr),
+                                  mods);
+            else
+                *(long long *)address = evaluate_expression_long(expr);
+        }
+        else
+        {
+            *(int *)address = evaluate_expression_int(expr);
+        }
         break;
     case VAR_SHORT:
         *(short *)address = evaluate_expression_short(expr);
@@ -4116,7 +4257,12 @@ static void initialize_variable_from_expr(Variable *var, ASTNode *expr)
     switch (var->desc.type)
     {
     case VAR_INT:
-        var->value.ivalue = evaluate_expression_int(expr);
+        /* giga/thicc keep the full 64 bits; a plain rizz stays 32-bit (#282).
+         */
+        if (var->desc.modifiers.is_long || var->desc.modifiers.is_long_long)
+            var->value.llvalue = evaluate_expression_long(expr);
+        else
+            var->value.ivalue = evaluate_expression_int(expr);
         break;
     case VAR_SHORT:
         var->value.svalue = evaluate_expression_short(expr);
@@ -5252,6 +5398,263 @@ static double identifier_numeric_value(ASTNode *node, const String error)
     return promoted != NULL ? *promoted : 0.0;
 }
 
+/* An identifier's value as a 64-bit integer, read from the variable's OWN
+   storage without the lossy double promotion identifier_numeric_value() uses --
+   a giga/thicc above 2^53 must round-trip exactly (#282). A giga/thicc reads
+   llvalue; every narrower integer/real type widens to long long. */
+static long long identifier_long_value(ASTNode *node, const String error)
+{
+    if (!check_and_mark_identifier(node, error))
+        ragequit(1);
+    Variable *var = get_variable(node->data.name);
+    if (var == NULL)
+    {
+        /* An unscoped enum constant is an int value, not a variable. */
+        EnumConstant *ec = find_global_enum_constant(node->data.name);
+        if (ec != NULL)
+            return (long long)ec->value;
+        yyerror(error.data);
+        return 0;
+    }
+    switch (var->desc.type)
+    {
+    case VAR_INT:
+    case VAR_ENUM:
+        if (var->desc.modifiers.is_long || var->desc.modifiers.is_long_long)
+            return var->value.llvalue;
+        return (long long)var->value.ivalue;
+    case VAR_SHORT:
+        return (long long)var->value.svalue;
+    case VAR_CHAR:
+        /* stored zero-extended (char_scalar_slot_value), so 0-255 */
+        return (long long)var->value.ivalue;
+    case VAR_BOOL:
+        return var->value.bvalue ? 1 : 0;
+    case VAR_FLOAT:
+        return (long long)var->value.fvalue;
+    case VAR_DOUBLE:
+        return (long long)var->value.dvalue;
+    default:
+        yyerror("Unsupported variable type in integer context");
+        return 0;
+    }
+}
+
+/* 64-bit integer evaluator for giga/thicc expressions -- the long-width sibling
+   of evaluate_expression_int(), used wherever an expression's declared width is
+   long/long long so the value is never truncated to 32 bits (#282). Arithmetic
+   uses unsigned wrapping for defined overflow, matching the int path (#280). */
+long long evaluate_expression_long(ASTNode *node)
+{
+    if (!node)
+        return 0;
+
+    switch (node->type)
+    {
+    case NODE_INT:
+        return (node->modifiers.is_long || node->modifiers.is_long_long)
+                   ? node->data.llvalue
+                   : (long long)node->data.ivalue;
+    case NODE_BOOLEAN:
+        return node->data.bvalue ? 1 : 0;
+    case NODE_CHAR:
+        return (long long)node->data.ivalue;
+    case NODE_SHORT:
+        return (long long)node->data.svalue;
+    case NODE_FLOAT:
+        yyerror("Cannot use float in integer context");
+        return (long long)node->data.fvalue;
+    case NODE_DOUBLE:
+        yyerror("Cannot use double in integer context");
+        return (long long)node->data.dvalue;
+    case NODE_SIZEOF:
+        return handle_sizeof(node);
+    case NODE_IDENTIFIER:
+    {
+        if (get_expression_pointer_level(node) > 0)
+        {
+            yyerror("Cannot use pointer in integer context");
+            return 0;
+        }
+        String error = {.data = "Undefined variable",
+                        .len = sizeof("Undefined variable") - 1};
+        return identifier_long_value(node, error);
+    }
+    case NODE_OPERATION:
+    {
+        if (get_expression_type(node) == VAR_BOOL)
+            return evaluate_expression_bool(node) ? 1 : 0;
+        if (get_expression_pointer_level(node) > 0)
+        {
+            yyerror("Cannot use pointer in integer context");
+            return 0;
+        }
+        OperatorType op = node->data.op.op;
+        if (op == OP_AND)
+        {
+            if (!evaluate_expression_long(node->data.op.left))
+                return 0;
+            return evaluate_expression_long(node->data.op.right) != 0;
+        }
+        if (op == OP_OR)
+        {
+            if (evaluate_expression_long(node->data.op.left))
+                return 1;
+            return evaluate_expression_long(node->data.op.right) != 0;
+        }
+        long long l = evaluate_expression_long(node->data.op.left);
+        long long r = evaluate_expression_long(node->data.op.right);
+        unsigned long long ul = (unsigned long long)l;
+        unsigned long long ur = (unsigned long long)r;
+        switch (op)
+        {
+        case OP_PLUS:
+            return (long long)(ul + ur);
+        case OP_MINUS:
+            return (long long)(ul - ur);
+        case OP_TIMES:
+            return (long long)(ul * ur);
+        case OP_DIVIDE:
+            if (r == 0)
+            {
+                yyerror("Division by zero");
+                return 0;
+            }
+            return l / r;
+        case OP_MOD:
+            if (r == 0)
+            {
+                yyerror("Modulo by zero");
+                return 0;
+            }
+            return l % r;
+        case OP_LT:
+            return l < r;
+        case OP_GT:
+            return l > r;
+        case OP_LE:
+            return l <= r;
+        case OP_GE:
+            return l >= r;
+        case OP_EQ:
+            return l == r;
+        case OP_NE:
+            return l != r;
+        default:
+            yyerror("Unsupported operator in integer context");
+            return 0;
+        }
+    }
+    case NODE_UNARY_OPERATION:
+    {
+        if (node->data.unary.op == OP_NOT)
+            return expression_is_truthy(node->data.unary.operand) ? 0 : 1;
+        if (node->data.unary.op == OP_NEG)
+            return (long long)(-(unsigned long long)evaluate_expression_long(
+                node->data.unary.operand));
+        if (node->data.unary.op == OP_PRE_INC ||
+            node->data.unary.op == OP_PRE_DEC ||
+            node->data.unary.op == OP_POST_INC ||
+            node->data.unary.op == OP_POST_DEC)
+        {
+            /* The operand is a plain variable (a non-lvalue is rejected in
+               semantic analysis, #281). Read/modify/write in 64 bits. */
+            ASTNode *operand = node->data.unary.operand;
+            long long cur = evaluate_expression_long(operand);
+            bool inc = node->data.unary.op == OP_PRE_INC ||
+                       node->data.unary.op == OP_POST_INC;
+            long long updated = inc ? cur + 1 : cur - 1;
+            set_long_variable(operand->data.name, updated,
+                              get_variable_modifiers(operand->data.name));
+            bool is_pre = node->data.unary.op == OP_PRE_INC ||
+                          node->data.unary.op == OP_PRE_DEC;
+            return is_pre ? updated : cur;
+        }
+        yyerror("Unsupported unary operator in integer context");
+        return 0;
+    }
+    case NODE_ARRAY_ACCESS:
+    {
+        if (get_expression_pointer_level(node) > 0)
+        {
+            yyerror("Cannot use pointer in integer context");
+            return 0;
+        }
+        void *addr = evaluate_multi_array_access(node);
+        if (addr == NULL)
+            return 0;
+        if (expression_is_long(node))
+        {
+            Variable *var = node->data.array.name.data
+                                ? get_variable(node->data.array.name)
+                                : NULL;
+            TypeModifiers m = var ? var->desc.modifiers : node->modifiers;
+            return packed_long_load(addr, m);
+        }
+        return (long long)numeric_load(addr, get_expression_type(node));
+    }
+    case NODE_FUNC_CALL:
+    {
+        if (get_expression_pointer_level(node) > 0)
+        {
+            yyerror("Cannot use pointer in integer context");
+            return 0;
+        }
+        void *raw = handle_function_call(node);
+        if (raw == NULL)
+        {
+            warn_if_native_result_void("integer");
+            return 0;
+        }
+        long long result;
+        if (current_return_value.desc.type == VAR_INT &&
+            (current_return_value.desc.modifiers.is_long ||
+             current_return_value.desc.modifiers.is_long_long))
+        {
+            result = current_return_value.value.llvalue;
+        }
+        else
+        {
+            double value;
+            if (!unbox_native_numeric_result(
+                    raw, current_return_value.desc.type, &value))
+            {
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "%s call result (%s) cannot be used in an "
+                         "integer context",
+                         native_call_qualifier(node),
+                         vartype_to_string(current_return_value.desc.type));
+                yyerror(error_msg);
+                free_native_result_box(raw, current_return_value.desc.type);
+                return 0;
+            }
+            result = (long long)value;
+        }
+        SAFE_FREE(raw);
+        return result;
+    }
+    case NODE_STRUCT_ACCESS:
+    {
+        if (expression_is_long(node))
+        {
+            StructDef *def = NULL;
+            void *base = NULL;
+            StructField *fld = NULL;
+            if (resolve_struct_access(node, &def, &base, &fld, true))
+                return packed_long_load((char *)base + fld->offset,
+                                        fld->desc.modifiers);
+            return 0;
+        }
+        return (long long)evaluate_expression_int(node);
+    }
+    default:
+        /* Anything without a dedicated 64-bit path falls back to the 32-bit
+           evaluator (widened), matching the narrow types it handles. */
+        return (long long)evaluate_expression_int(node);
+    }
+}
+
 short evaluate_expression_short(ASTNode *node)
 {
     if (!node)
@@ -5723,6 +6126,12 @@ static void marshal_native_return_value(ASTNode *node)
     case STDROT_INT:
         current_return_value.value.ivalue = result.val.i;
         break;
+    case STDROT_LONG:
+        /* 64-bit giga/thicc return (#282): store the full width and mark the
+           descriptor long long so later reads take the 64-bit path. */
+        current_return_value.value.llvalue = result.val.ll;
+        current_return_value.desc.modifiers.is_long_long = true;
+        break;
     case STDROT_FLOAT:
         current_return_value.value.fvalue = result.val.f;
         break;
@@ -5990,6 +6399,45 @@ bool evaluate_expression_bool(ASTNode *node)
                 return true;
             bool right = evaluate_expression_bool(node->data.op.right);
             return right;
+        }
+
+        /* A comparison with a giga/thicc operand must compare all 64 bits, not
+           the 32 handle_binary_operation() would use (#282). Restricted to the
+           case where BOTH operands are integer-typed: a float/double operand
+           promotes the comparison to floating point, which stays on the
+           handle_binary_operation() path below. */
+        OperatorType cop = node->data.op.op;
+        if ((cop == OP_LT || cop == OP_GT || cop == OP_LE || cop == OP_GE ||
+             cop == OP_EQ || cop == OP_NE) &&
+            (expression_is_long(node->data.op.left) ||
+             expression_is_long(node->data.op.right)))
+        {
+            VarType lt = get_expression_type(node->data.op.left);
+            VarType rt = get_expression_type(node->data.op.right);
+            bool l_int = lt == VAR_INT || lt == VAR_SHORT || lt == VAR_CHAR ||
+                         lt == VAR_BOOL || lt == VAR_ENUM;
+            bool r_int = rt == VAR_INT || rt == VAR_SHORT || rt == VAR_CHAR ||
+                         rt == VAR_BOOL || rt == VAR_ENUM;
+            if (l_int && r_int)
+            {
+                long long l = evaluate_expression_long(node->data.op.left);
+                long long r = evaluate_expression_long(node->data.op.right);
+                switch (cop)
+                {
+                case OP_LT:
+                    return l < r;
+                case OP_GT:
+                    return l > r;
+                case OP_LE:
+                    return l <= r;
+                case OP_GE:
+                    return l >= r;
+                case OP_EQ:
+                    return l == r;
+                default: /* OP_NE */
+                    return l != r;
+                }
+            }
         }
 
         // Regular integer operations
@@ -7123,7 +7571,15 @@ static void populate_struct_fields(StructDef *def, void *base,
             {
             case VAR_INT:
             case VAR_ENUM:
-                *(int *)addr = evaluate_expression_int(cur->expr);
+                /* A giga/thicc field follows the platform element width (#282);
+                   packed_long_store avoids overflowing a 4-byte wasm32 giga. */
+                if (fld->desc.type == VAR_INT &&
+                    (fld->desc.modifiers.is_long ||
+                     fld->desc.modifiers.is_long_long))
+                    packed_long_store(addr, evaluate_expression_long(cur->expr),
+                                      fld->desc.modifiers);
+                else
+                    *(int *)addr = evaluate_expression_int(cur->expr);
                 break;
             case VAR_SHORT:
                 *(short *)addr = evaluate_expression_short(cur->expr);
@@ -7228,8 +7684,23 @@ void populate_multi_array_variable(String name, ExpressionList *list,
         {
         case VAR_INT:
         {
-            int *array = (int *)var->value.array_data;
-            array[index] = evaluate_expression_int(current->expr);
+            /* A giga/thicc array's elements follow the platform width (#282):
+               use array_element_address + packed_long_store so a giga element
+               is sizeof(long) (4 on wasm32, matching its stride) and a thicc
+               element is sizeof(long long). A plain rizz stays 32-bit. */
+            if (var->desc.modifiers.is_long || var->desc.modifiers.is_long_long)
+            {
+                size_t stride = get_array_element_stride(
+                    VAR_INT, 0, var->desc.modifiers, (String){0});
+                void *addr = (char *)var->value.array_data + index * stride;
+                packed_long_store(addr, evaluate_expression_long(current->expr),
+                                  var->desc.modifiers);
+            }
+            else
+            {
+                int *array = (int *)var->value.array_data;
+                array[index] = evaluate_expression_int(current->expr);
+            }
             break;
         }
         case VAR_SHORT:
@@ -7467,6 +7938,12 @@ Function *create_function_ex(String name, VarType return_type,
     func->name = safe_strdup(&name);
     func->return_desc.type = return_type;
     func->return_desc.pointer_level = return_pointer_level;
+    /* SAFE_MALLOC doesn't zero: initialize the modifiers explicitly so a
+       reader (e.g. expression_is_long(), #282) never sees garbage long/
+       unsigned bits. current_modifiers is not the return type's here (by this
+       point it reflects the last parameter parsed), so start from none; a
+       giga/thicc return type is not yet supported at the grammar level. */
+    func->return_desc.modifiers = (TypeModifiers){0};
     func->parameters = params;
     func->body = body;
 
@@ -8332,8 +8809,15 @@ bool enter_function_scope(Function *func, ArgumentList *args)
         case VAR_INT:
         case VAR_CHAR:
         case VAR_ENUM:
-            arg_values[arg_count].ivalue =
-                evaluate_expression_int(curr_arg->expr);
+            /* A giga/thicc parameter carries the full 64 bits (#282). */
+            if (curr_param->desc.type == VAR_INT &&
+                (curr_param->desc.modifiers.is_long ||
+                 curr_param->desc.modifiers.is_long_long))
+                arg_values[arg_count].llvalue =
+                    evaluate_expression_long(curr_arg->expr);
+            else
+                arg_values[arg_count].ivalue =
+                    evaluate_expression_int(curr_arg->expr);
             break;
         case VAR_FLOAT:
             arg_values[arg_count].fvalue =
@@ -8577,7 +9061,12 @@ bool enter_function_scope(Function *func, ArgumentList *args)
         switch (curr_param->desc.type)
         {
         case VAR_INT:
-            set_int_variable(curr_param->name, arg_values[i].ivalue, mods);
+            /* giga/thicc parameters bind the full 64-bit value (#282). */
+            if (mods.is_long || mods.is_long_long)
+                set_long_variable(curr_param->name, arg_values[i].llvalue,
+                                  mods);
+            else
+                set_int_variable(curr_param->name, arg_values[i].ivalue, mods);
             break;
         case VAR_CHAR:
             /* Not set_int_variable(): that calls set_variable(...,

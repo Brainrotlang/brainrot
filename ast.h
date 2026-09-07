@@ -279,6 +279,11 @@ typedef struct
     union
     {
         int ivalue;
+        long long llvalue; /* giga/thicc (VAR_INT + is_long/is_long_long): the
+                              full 64-bit value. Shares the union with ivalue,
+                              but a giga/thicc variable is written and read only
+                              through llvalue, a plain rizz only through ivalue,
+                              so they never alias for the same slot (#282). */
         float fvalue;
         double dvalue;
         bool bvalue;
@@ -326,6 +331,11 @@ typedef struct
     union
     {
         int ivalue;
+        long long llvalue; /* giga/thicc (VAR_INT + is_long/is_long_long): the
+                              full 64-bit value. Shares the union with ivalue,
+                              but a giga/thicc variable is written and read only
+                              through llvalue, a plain rizz only through ivalue,
+                              so they never alias for the same slot (#282). */
         short svalue;
         bool bvalue;
         float fvalue;
@@ -352,6 +362,11 @@ typedef union
     union
     {
         int ivalue;
+        long long llvalue; /* giga/thicc (VAR_INT + is_long/is_long_long): the
+                              full 64-bit value. Shares the union with ivalue,
+                              but a giga/thicc variable is written and read only
+                              through llvalue, a plain rizz only through ivalue,
+                              so they never alias for the same slot (#282). */
         short svalue;
         bool bvalue;
         float fvalue;
@@ -523,6 +538,11 @@ struct ASTNode
         short svalue;
         bool bvalue;
         int ivalue;
+        long long llvalue; /* giga/thicc (VAR_INT + is_long/is_long_long): the
+                              full 64-bit value. Shares the union with ivalue,
+                              but a giga/thicc variable is written and read only
+                              through llvalue, a plain rizz only through ivalue,
+                              so they never alias for the same slot (#282). */
         float fvalue;
         double dvalue;
         String strvalue;
@@ -636,6 +656,8 @@ extern JumpBuffer *jump_buffer;
 extern bool continue_requested;
 /* Function prototypes */
 bool set_int_variable(const String name, int value, TypeModifiers mods);
+bool set_long_variable(const String name, long long value, TypeModifiers mods);
+long long evaluate_expression_long(ASTNode *node);
 bool set_array_variable(String name, int length, TypeModifiers mods,
                         VarType type);
 bool set_short_variable(const String name, short value, TypeModifiers mods);
@@ -662,6 +684,7 @@ VarType get_function_return_type(const String name);
 
 /* Node creation functions */
 ASTNode *create_int_node(int value);
+ASTNode *create_long_node(long long value);
 ASTNode *create_array_declaration_node(String name, int length, VarType type);
 ASTNode *create_array_access_node(String name, ASTNode *index);
 ASTNode *create_short_node(short value);
@@ -758,6 +781,7 @@ void reset_modifiers(void);
 bool check_and_mark_identifier(ASTNode *node, const String contextErrorMessage);
 bool is_expression(ASTNode *node, VarType type);
 VarType get_expression_type(ASTNode *node);
+bool expression_is_long(ASTNode *node);
 int get_expression_pointer_level(ASTNode *node);
 uintptr_t evaluate_expression_pointer(ASTNode *node);
 void *evaluate_lvalue_address(ASTNode *node);

@@ -372,6 +372,7 @@ static void register_anonymous_aggregate_typedef(String alias_name,
 
 %union {
     int ival;
+    long long llval;
     short sval;
     float fval;
     double dval;
@@ -401,6 +402,7 @@ static void register_anonymous_aggregate_typedef(String alias_name,
 %token LBRACKET RBRACKET
 %token <strval> IDENTIFIER TYPE_NAME
 %token <ival> INT_LITERAL
+%token <llval> LONG_LITERAL
 %token <sval> SHORT_LITERAL
 %token <strval> STRING_LITERAL
 %token <cval> CHAR
@@ -2066,6 +2068,7 @@ sizeof_expression:
     ;
 literal:
       INT_LITERAL        { $$ = create_int_node($1); }
+    | LONG_LITERAL       { $$ = create_long_node($1); }
     | FLOAT_LITERAL      { $$ = create_float_node($1); }
     | DOUBLE_LITERAL     { $$ = create_double_node($1); }
     | CHAR               { $$ = create_char_node($1); }
