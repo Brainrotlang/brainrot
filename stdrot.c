@@ -945,6 +945,10 @@ VarType stdrot_type_to_vartype(StdrotType type)
     {
     case STDROT_INT:
         return VAR_INT;
+    case STDROT_LONG:
+        /* giga/thicc: a 64-bit integer is still VAR_INT at the type level;
+           its width lives in the is_long/is_long_long modifiers (#282). */
+        return VAR_INT;
     case STDROT_FLOAT:
         return VAR_FLOAT;
     case STDROT_DOUBLE:
@@ -1126,6 +1130,12 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
         out->val.str = expr->data.name;
         return;
     case NODE_INT:
+        if (expr->modifiers.is_long || expr->modifiers.is_long_long)
+        {
+            out->type = STDROT_LONG;
+            out->val.ll = expr->data.llvalue;
+            return;
+        }
         out->type = STDROT_INT;
         out->val.i = expr->data.ivalue;
         return;
@@ -1171,6 +1181,12 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
         switch (var->desc.type)
         {
         case VAR_INT:
+            if (var->desc.modifiers.is_long || var->desc.modifiers.is_long_long)
+            {
+                out->type = STDROT_LONG;
+                out->val.ll = var->value.llvalue;
+                return;
+            }
             out->type = STDROT_INT;
             out->val.i = var->value.ivalue;
             return;
@@ -1272,8 +1288,18 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
              expr->type == NODE_UNARY_OPERATION ||
              expr->type == NODE_STRUCT_ACCESS)
     {
-        out->type = STDROT_INT;
-        out->val.i = evaluate_expression_int(expr);
+        /* giga/thicc-width integer expressions marshal at full 64 bits (#282);
+           a plain rizz stays 32-bit. */
+        if (expression_is_long(expr))
+        {
+            out->type = STDROT_LONG;
+            out->val.ll = evaluate_expression_long(expr);
+        }
+        else
+        {
+            out->type = STDROT_INT;
+            out->val.i = evaluate_expression_int(expr);
+        }
     }
 }
 

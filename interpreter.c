@@ -244,7 +244,12 @@ void *interpreter_visit_unary_operation(Visitor *self, ASTNode *node)
             evaluate_expression_double(node);
             break;
         default:
-            evaluate_expression_int(node);
+            /* giga/thicc step in 64 bits so `x++` on a long doesn't truncate
+               through the int path (#282); a plain rizz stays 32-bit. */
+            if (expression_is_long(node))
+                evaluate_expression_long(node);
+            else
+                evaluate_expression_int(node);
             break;
         }
     }
@@ -690,8 +695,15 @@ void interpreter_visit_declaration(Visitor *self, ASTNode *node)
             {
             case VAR_INT:
             {
-                int int_value = evaluate_expression_int(node->data.op.right);
-                scope_var->value.ivalue = int_value;
+                /* giga/thicc keep all 64 bits; a plain rizz stays 32-bit
+                   (#282). */
+                if (scope_var->desc.modifiers.is_long ||
+                    scope_var->desc.modifiers.is_long_long)
+                    scope_var->value.llvalue =
+                        evaluate_expression_long(node->data.op.right);
+                else
+                    scope_var->value.ivalue =
+                        evaluate_expression_int(node->data.op.right);
                 break;
             }
             case VAR_FLOAT:

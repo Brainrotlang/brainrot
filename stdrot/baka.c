@@ -5,6 +5,7 @@
  */
 
 #include "stdrot_api.h"
+#include "stdrot_format.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
@@ -97,6 +98,8 @@ static void process_baka_format(const char *format, const StdrotValue *args,
                     b = arg->val.b;
                 else if (arg->type == STDROT_INT)
                     b = (arg->val.i != 0);
+                else if (arg->type == STDROT_LONG)
+                    b = (arg->val.ll != 0);
                 buffer_offset += snprintf(buffer + buffer_offset,
                                           sizeof(buffer) - buffer_offset, "%s",
                                           b ? "W" : "L");
@@ -108,6 +111,15 @@ static void process_baka_format(const char *format, const StdrotValue *args,
                     buffer_offset += snprintf(buffer + buffer_offset,
                                               sizeof(buffer) - buffer_offset,
                                               specifier, arg->val.i);
+                }
+                else if (arg->type == STDROT_LONG)
+                {
+                    char llspec[40];
+                    stdrot_ll_specifier(specifier, spec, llspec,
+                                        sizeof(llspec));
+                    buffer_offset += snprintf(buffer + buffer_offset,
+                                              sizeof(buffer) - buffer_offset,
+                                              llspec, arg->val.ll);
                 }
                 else if (arg->type == STDROT_SHORT)
                 {
@@ -136,6 +148,12 @@ static void process_baka_format(const char *format, const StdrotValue *args,
                                               sizeof(buffer) - buffer_offset,
                                               specifier, arg->val.d);
                 }
+                else if (arg->type == STDROT_LONG)
+                {
+                    buffer_offset += snprintf(buffer + buffer_offset,
+                                              sizeof(buffer) - buffer_offset,
+                                              specifier, (double)arg->val.ll);
+                }
             }
             else if (spec == 'c')
             {
@@ -150,6 +168,12 @@ static void process_baka_format(const char *format, const StdrotValue *args,
                     buffer_offset += snprintf(buffer + buffer_offset,
                                               sizeof(buffer) - buffer_offset,
                                               "%c", arg->val.i);
+                }
+                else if (arg->type == STDROT_LONG)
+                {
+                    buffer_offset += snprintf(buffer + buffer_offset,
+                                              sizeof(buffer) - buffer_offset,
+                                              "%c", (int)arg->val.ll);
                 }
             }
             else if (spec == 's')

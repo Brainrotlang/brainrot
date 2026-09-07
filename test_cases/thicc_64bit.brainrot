@@ -1,0 +1,47 @@
+🚽 Issue #282: giga (long) / thicc (long long) used to silently truncate to
+🚽 32 bits -- no 64-bit storage, literal, or native-call marshalling. This
+🚽 exercises thicc (long long, 8 bytes on every platform incl. wasm) end to
+🚽 end: a literal above INT_MAX, storage, printing via %lld AND %d, 64-bit
+🚽 arithmetic (+, -, *), increment, a thicc parameter, and defined wrapping on
+🚽 overflow (computed with unsigned semantics, so UBSan stays quiet, #280).
+rizz show(thicc rizz a)
+{
+    yapping("param %lld", a);
+    bussin 0;
+}
+
+skibidi main {
+    thicc rizz x = 5000000000;   🚽 5e9, needs 64 bits
+    yapping("%lld", x);          🚽 5000000000
+    yapping("%d", x);            🚽 5000000000 (width forced to ll)
+
+    x = x + 3000000000;
+    yapping("%lld", x);          🚽 8000000000
+
+    thicc rizz neg = 0 - 9000000000;
+    yapping("%lld", neg);        🚽 -9000000000
+
+    thicc rizz prod = 3000000000 * 3;
+    yapping("%lld", prod);       🚽 9000000000
+
+    x++;
+    yapping("%lld", x);          🚽 8000000001
+
+    show(4000000000);            🚽 param 4000000000
+
+    🚽 defined two's-complement wrapping at the 64-bit boundary
+    thicc rizz wrap = 9223372036854775807 + 1;
+    yapping("%lld", wrap);       🚽 -9223372036854775808
+
+    🚽 a comparison must see all 64 bits, not the low 32
+    edgy (x > 1000000000) {
+        yapping("cmp big");      🚽 cmp big
+    }
+
+    🚽 8-byte array elements round-trip
+    thicc rizz arr[3] = {5000000000, 6000000000, 7000000000};
+    yapping("%lld", arr[0]);     🚽 5000000000
+    yapping("%lld", arr[2]);     🚽 7000000000
+
+    bussin 0;
+}

@@ -121,6 +121,8 @@ void stdrot_format_to_stream(FILE *out, const char *format,
                     b = arg->val.b;
                 else if (arg->type == STDROT_INT)
                     b = (arg->val.i != 0);
+                else if (arg->type == STDROT_LONG)
+                    b = (arg->val.ll != 0);
                 else if (arg->type == STDROT_SHORT)
                     b = (arg->val.s != 0);
                 buffer_offset += snprintf(buffer + buffer_offset,
@@ -134,6 +136,17 @@ void stdrot_format_to_stream(FILE *out, const char *format,
                     buffer_offset += snprintf(buffer + buffer_offset,
                                               sizeof(buffer) - buffer_offset,
                                               specifier, arg->val.i);
+                }
+                else if (arg->type == STDROT_LONG)
+                {
+                    /* Force an `ll` length modifier so the 64-bit value prints
+                       correctly whether the source wrote %d, %ld or %lld. */
+                    char llspec[40];
+                    stdrot_ll_specifier(specifier, spec, llspec,
+                                        sizeof(llspec));
+                    buffer_offset += snprintf(buffer + buffer_offset,
+                                              sizeof(buffer) - buffer_offset,
+                                              llspec, arg->val.ll);
                 }
                 else if (arg->type == STDROT_SHORT)
                 {
@@ -187,6 +200,12 @@ void stdrot_format_to_stream(FILE *out, const char *format,
                                               sizeof(buffer) - buffer_offset,
                                               specifier, (double)arg->val.i);
                 }
+                else if (arg->type == STDROT_LONG)
+                {
+                    buffer_offset += snprintf(buffer + buffer_offset,
+                                              sizeof(buffer) - buffer_offset,
+                                              specifier, (double)arg->val.ll);
+                }
                 else if (arg->type == STDROT_SHORT)
                 {
                     buffer_offset += snprintf(buffer + buffer_offset,
@@ -213,6 +232,12 @@ void stdrot_format_to_stream(FILE *out, const char *format,
                     buffer_offset += snprintf(buffer + buffer_offset,
                                               sizeof(buffer) - buffer_offset,
                                               "%c", arg->val.i);
+                }
+                else if (arg->type == STDROT_LONG)
+                {
+                    buffer_offset += snprintf(buffer + buffer_offset,
+                                              sizeof(buffer) - buffer_offset,
+                                              "%c", (int)arg->val.ll);
                 }
             }
             else if (spec == 's')
