@@ -317,7 +317,8 @@ Brainrot supports common arithmetic and logical operators:
 - **`slorp`**: reads user input, similar to `scanf` but safe.
 - **`gamba`**: cryptographically safe random integers (OpenSSL `RAND_bytes`).
 - **`yaplen`**: length of a `rant`, in bytes.
-- **`yapcat`**: joins two `rant`s into a new one.
+- **`yapcat`**: joins two `rant`s into a new one. **Deprecated** — use the
+  `+` operator (`a + b`) instead.
 - **`yapcmp`**: lexicographic comparison, returning `-1`, `0` or `1`.
 - **`yapidx`**: byte index of the first occurrence of one `rant` in another,
   or `-1`.
@@ -1312,15 +1313,23 @@ skibidi main {
 ### 8.9. Strings: `yaplen`, `yapcat`, `yapcmp`, `yapidx`, `s[i]`, `s[i:j]`
 
 ```c
+rant a + b;                           /* concatenation: a joined to b       */
 rizz yaplen(rant s);                  /* length in BYTES                    */
-rant yapcat(rant a, rant b);          /* a joined to b, as a new string     */
+rant yapcat(rant a, rant b);          /* DEPRECATED -- use `a + b`          */
 rizz yapcmp(rant a, rant b);          /* -1 if a < b, 0 if equal, 1 if a > b */
 rizz yapidx(rant hay, rant needle);   /* byte index of needle, or -1        */
 ```
 
-The v1 string library. All four are standard-library builtins -- no `#cooked`,
-no keyword -- and all of them take and return ordinary `rant` and `rizz`
-values.
+Concatenate two `rant`s with **`+`**: `a + b` is a new `rant` (neither operand
+is touched) and chains left-to-right, so `"Big" + " " + "Chungus"` builds
+`"Big Chungus"`. `+` concatenates **only when both operands are `rant`s** — a
+`rant` mixed with a number is a type error, not implicit stringification.
+`a + b` is exactly `yapcat(a, b)`; **`yapcat` is deprecated** in favour of `+`
+but still works.
+
+The rest of the v1 string library (`yaplen`, `yapcmp`, `yapidx`, `s[i]`,
+`s[i:j]`) are standard-library builtins -- no `#cooked`, no keyword -- and all
+take and return ordinary `rant` and `rizz` values.
 
 **Everything is bytes, not characters.** A `rant` is a length-prefixed byte
 buffer, so `yaplen("é")` is `2`, not `1`: that is two bytes of UTF-8.

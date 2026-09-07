@@ -1,0 +1,33 @@
+🚽 Issue #368: concatenate rants with the + operator, the readable
+🚽 replacement for yapcat(a, b). Same return-new semantics -- neither operand
+🚽 is touched, the result is an independently owned rant. Covers: two
+🚽 variables, a chained literal expression (left-associative), the empty-string
+🚽 identities, reassignment building a string up, a concatenating return value,
+🚽 and a concatenation passed straight to a native (yaplen).
+rant greet(rant who)
+{
+    bussin "hi " + who;
+}
+
+skibidi main {
+    rant a = "foo";
+    rant b = "bar";
+    yapping("%s", a + b);              🚽 foobar
+
+    rant name = "Big" + " " + "Chungus";
+    yapping("%s", name);              🚽 Big Chungus
+
+    yapping("%s", a + "");           🚽 foo  (identity, fresh copy)
+    yapping("%s", "" + b);           🚽 bar  (identity, fresh copy)
+
+    rant s = "a";
+    s = s + "b";
+    s = s + "c";
+    yapping("%s", s);                🚽 abc
+
+    yapping("%s", greet("bob"));      🚽 hi bob
+
+    yapping("%d", yaplen("foo" + "bar"));  🚽 6
+
+    bussin 0;
+}

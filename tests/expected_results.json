@@ -1,4 +1,6 @@
 {
+    "string_concat": "foobar\nBig Chungus\nfoo\nbar\nabc\nhi bob\n6",
+    "semantic_error_string_plus_int": "Error: Arithmetic operation requires numeric types, got string and int at line 1",
     "thicc_64bit": "5000000000\n5000000000\n8000000000\n-9000000000\n9000000000\n8000000001\nparam 4000000000\n-9223372036854775808\ncmp big\n5000000000\n7000000000",
     "giga_64bit": "5000000000\n10000000000",
     "comparison_edge_case": "1\n",
