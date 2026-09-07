@@ -1,0 +1,36 @@
+🚽 Regression for #201: maxxing (sizeof) on struct/union-typed expressions that
+🚽 are neither a plain identifier, a field access, nor a single-identifier deref
+🚽 -- the shapes #198 left erroring with "Invalid type in sizeof". sizeof never
+🚽 evaluates its operand, so the struct-returning call below must size from the
+🚽 callee's return tag WITHOUT running make_point (no "ran" line prints).
+🚽 Also pins the neighbouring shapes that already work so they can't regress:
+🚽 a pointer operand, a union-typed field, and a by-value struct parameter.
+gang Point { rizz x; rizz y; };            🚽 2x rizz -> 8
+chungus Data { rizz i; gigachad d; };      🚽 union: max(4, 8) -> 8
+gang Wrap { chungus Data data; };          🚽 struct with a union-typed field
+
+gang Point make_point(rizz a, rizz b) {
+    yapping("make_point ran");             🚽 must NOT print under maxxing
+    gang Point p;
+    p.x = a;
+    p.y = b;
+    bussin p;
+}
+
+skibidi by_value_param(gang Point bp) {
+    yapping("%lu", maxxing(bp));           🚽 by-value struct param -> 8
+}
+
+skibidi main {
+    gang Point p;
+    gang Point *q = &p;
+    gang Point **pp = &q;
+    gang Wrap w;
+
+    yapping("%lu", maxxing(make_point(1, 2)));  🚽 struct-returning call -> 8
+    yapping("%lu", maxxing(**pp));              🚽 double deref -> 8
+    yapping("%lu", maxxing(q));                 🚽 pointer size (8 LP64 / 4 wasm)
+    yapping("%lu", maxxing(&p));                🚽 pointer size (8 LP64 / 4 wasm)
+    yapping("%lu", maxxing(w.data));            🚽 union-typed field -> 8
+    by_value_param(p);                          🚽 prints 8
+}
