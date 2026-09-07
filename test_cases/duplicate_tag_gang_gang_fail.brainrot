@@ -1,0 +1,6 @@
+gang Foo { rizz a; };
+gang Foo { rizz b; };
+
+skibidi main {
+    bussin 0;
+}

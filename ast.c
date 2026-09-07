@@ -8586,6 +8586,27 @@ void register_struct_def(StructDef *def)
     }
     if (!struct_registry)
         struct_registry = hm_new();
+    /* gang and chungus share one tag namespace (see docs
+       the-brainrot-programming-language.md 7.10), so a second definition of an
+       existing tag is a redefinition error, not a silent overwrite (#189).
+       Keep the first definition in the lookup table; still thread the rejected
+       def onto the teardown list so free_struct_registry() reclaims it rather
+       than leaking it. The `lit` alias path in lang.y guards this before
+       constructing a def; this covers the plain `gang Foo {...}` /
+       `chungus Foo {...}` grammar action, which did not. */
+    if (get_struct_def(def->name))
+    {
+        char msg[MAX_BUFFER_LEN];
+        snprintf(msg, sizeof(msg),
+                 "Redefinition of tag '%s' -- gang and chungus share one tag "
+                 "namespace",
+                 def->name.data ? def->name.data : "?");
+        yyerror_current_line(msg);
+        struct_def_had_error = true;
+        def->next_def = struct_registry_list;
+        struct_registry_list = def;
+        return;
+    }
     size_t len = def->name.len;
     hm_put(struct_registry, def->name.data, len, def, sizeof(StructDef));
     def->next_def = struct_registry_list;
