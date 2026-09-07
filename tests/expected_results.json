@@ -435,6 +435,7 @@
     "duplicate_tag_gang_gang_fail": "Error: Redefinition of tag 'Foo' -- gang and chungus share one tag namespace at line 2\nParsing failed",
     "sizeof_struct_call_and_deref": "8\n8\n8\n8\n8\n8",
     "slorp_overflow_fail": "Error: Input exceeded buffer size.",
+    "struct_field_rmw_and_field_arith": "6\n7\n4\n-1\nboth\n3",
     "return_from_inside_loop_in_main": "before",
     "bussin_main_exit_code": "ExitCode:42",
     "bussin_main_stops": "before",
