@@ -118,6 +118,11 @@ const WASM_EXPECTED_OVERRIDES = {
   giga: "4\n4",
   giga_array: "1\n2\n3\n12",
   native_sizeof_ptr_result: "4",
+  // sizeof_struct_pointer_param's second line is maxxing(q) on a `gang Point *`
+  // parameter -- a pointer, so 4 bytes on wasm32 ILP32 vs 8 on native LP64
+  // (same root cause as native_sizeof_ptr_result). The first line, maxxing(*q),
+  // is the pointee struct size (2 rizz = 8) and is platform-independent.
+  sizeof_struct_pointer_param: "8\n4",
   native_identity_abi_type_char_array: "8",
   native_void_pointer_struct_field: "8",
   // struct_field_long_modifier's `Meters` field is a `lit giga rizz`
