@@ -227,7 +227,26 @@ void *interpreter_visit_unary_operation(Visitor *self, ASTNode *node)
         node->data.unary.op == OP_POST_INC ||
         node->data.unary.op == OP_POST_DEC)
     {
-        evaluate_expression_int(node);
+        /* Dispatch on the operand's real type. Routing every inc/dec through
+           evaluate_expression_int() reads a chad/gigachad slot's bits as an
+           int and then writes the int result back through set_int_variable()
+           on a VAR_FLOAT/VAR_DOUBLE slot, corrupting the value (#284) --
+           `++f` on `chad f = 1.5` gave 2.0, not 2.5. The float/double
+           evaluators already take handle_unary_expression()'s correct
+           VAR_FLOAT/VAR_DOUBLE branches; int/short/char stay on the integer
+           path, which handles them correctly. */
+        switch (get_expression_type(node))
+        {
+        case VAR_FLOAT:
+            evaluate_expression_float(node);
+            break;
+        case VAR_DOUBLE:
+            evaluate_expression_double(node);
+            break;
+        default:
+            evaluate_expression_int(node);
+            break;
+        }
     }
     return NULL;
 }

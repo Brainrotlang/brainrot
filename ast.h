@@ -757,6 +757,7 @@ void execute_if_statement(ASTNode *node);
 void reset_modifiers(void);
 bool check_and_mark_identifier(ASTNode *node, const String contextErrorMessage);
 bool is_expression(ASTNode *node, VarType type);
+VarType get_expression_type(ASTNode *node);
 int get_expression_pointer_level(ASTNode *node);
 uintptr_t evaluate_expression_pointer(ASTNode *node);
 void *evaluate_lvalue_address(ASTNode *node);

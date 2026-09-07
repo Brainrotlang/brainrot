@@ -1,0 +1,42 @@
+🚽 Regression test for issue #284: ++/-- (prefix and postfix) on a chad
+🚽 (float) or gigachad (double) variable used to corrupt the value instead
+🚽 of adding/subtracting 1.0. interpreter_visit_unary_operation() routed
+🚽 every inc/dec through evaluate_expression_int(), reading the float slot's
+🚽 bits as an int and writing an int back through set_int_variable() on a
+🚽 VAR_FLOAT/VAR_DOUBLE slot -- so `++f` on `chad f = 1.5` produced 2.0, not
+🚽 2.5. It now dispatches on the operand's real type, using the float/double
+🚽 branches handle_unary_expression() already had. Integer inc/dec is
+🚽 unaffected (still on the integer path).
+skibidi main {
+    🚽 chad (float) statement-context ++/--
+    chad f = 1.5;
+    ++f;
+    yapping("%.2f", f);   🚽 2.50
+    f++;
+    yapping("%.2f", f);   🚽 3.50
+    --f;
+    yapping("%.2f", f);   🚽 2.50
+    f--;
+    yapping("%.2f", f);   🚽 1.50
+
+    🚽 gigachad (double) statement-context ++/--
+    gigachad g = 2.5;
+    ++g;
+    yapping("%.2f", g);   🚽 3.50
+    g--;
+    yapping("%.2f", g);   🚽 2.50
+
+    🚽 float counter driven by a loop increment
+    chad sum = 0.0;
+    flex (chad c = 0.5; c < 3.0; ++c)
+    {
+        sum = sum + c;
+    }
+    yapping("%.2f", sum); 🚽 0.5 + 1.5 + 2.5 = 4.50
+
+    🚽 integer inc/dec still works (regression guard)
+    rizz n = 5;
+    ++n;
+    yapping("%d", n);     🚽 6
+    bussin 0;
+}

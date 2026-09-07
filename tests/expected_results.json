@@ -444,5 +444,6 @@
     "semantic_error_grind_outside_loop": "Error: grind (continue) outside a loop at line 8",
     "format_star_width_rejected": "[][]\nStderr:\nError: '*' dynamic width/precision is not supported in format strings\nError: '*' dynamic width/precision is not supported in format strings",
     "rant_reassign_no_leak": "iter",
-    "float_exponent_literal": "10000000000.0\n200000.0\n1000.0\n0.50\n1.00\n0.0010\n123"
+    "float_exponent_literal": "10000000000.0\n200000.0\n1000.0\n0.50\n1.00\n0.0010\n123",
+    "float_inc_dec": "2.50\n3.50\n2.50\n1.50\n3.50\n2.50\n4.50\n6"
 }
