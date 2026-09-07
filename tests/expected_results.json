@@ -446,6 +446,7 @@
     "float_exponent_literal": "10000000000.0\n200000.0\n1000.0\n0.50\n1.00\n0.0010\n123",
     "inc_dec_in_expression": "15 9\n17 9\n15 6",
     "semantic_error_incdec_non_lvalue": "Error: increment/decrement requires a variable operand at line 10",
+    "int_overflow_wraps": "-2147483648\n2147483647\n-2\n-2147483648",
     "rant_reassign_no_leak": "iter",
     "float_exponent_literal": "10000000000.0\n200000.0\n1000.0\n0.50\n1.00\n0.0010\n123"
 }
