@@ -92,6 +92,12 @@ typedef struct
        another's lookup. Maintained by both collect_declarations and
        semantic_analyze_with_scope_tracking around NODE_FUNCTION_DEF. */
     String current_function_name;
+    /* Lexical loop-nesting depth during analysis: bumped around each loop
+       body, reset to 0 on entering a function body. `grind` (continue) is
+       rejected when this is 0, so continue outside any loop is a compile-time
+       error instead of silently setting a runtime flag nothing clears (#274).
+     */
+    int loop_depth;
 } SemanticAnalyzer;
 
 /* Create and destroy semantic analyzer */

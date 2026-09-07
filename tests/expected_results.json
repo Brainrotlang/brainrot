@@ -440,5 +440,7 @@
     "bussin_main_exit_code": "ExitCode:42",
     "bussin_main_stops": "before",
     "bussin_main_edgy_exit": "ExitCode:3",
+    "continue_grind": "0\n1\n3\n4\nw1\nw3\nd1\nd3\n0-1\n1-1\n2-1",
+    "semantic_error_grind_outside_loop": "Error: grind (continue) outside a loop at line 8",
     "float_exponent_literal": "10000000000.0\n200000.0\n1000.0\n0.50\n1.00\n0.0010\n123"
 }

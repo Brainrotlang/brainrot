@@ -1,0 +1,39 @@
+🚽 Regression for #274: grind (continue) skips the rest of the current loop
+🚽 iteration and resumes the loop -- in flex (for), goon (while), and mewing
+🚽 (do-while) -- nests so an inner grind leaves the outer loop alone, and
+🚽 coexists with bruh (break) in the same body. Before this it was a hard parse
+🚽 error ("unexpected CONTINUE") in every loop.
+skibidi main {
+    🚽 for: grind skips i == 2
+    flex (rizz i = 0; i < 5; i = i + 1) {
+        edgy (i == 2) { grind; }
+        yapping("%d", i);
+    }
+
+    🚽 while: increment before grind, so it still makes progress; prints odds
+    rizz w = 0;
+    goon (w < 4) {
+        w = w + 1;
+        edgy (w % 2 == 0) { grind; }
+        yapping("w%d", w);
+    }
+
+    🚽 do-while: same shape
+    rizz d = 0;
+    mewing {
+        d = d + 1;
+        edgy (d % 2 == 0) { grind; }
+        yapping("d%d", d);
+    } goon (d < 4);
+
+    🚽 nested: inner grind (b == 0) and inner bruh (b == 2) affect only the
+    🚽 inner loop
+    flex (rizz a = 0; a < 3; a = a + 1) {
+        flex (rizz b = 0; b < 3; b = b + 1) {
+            edgy (b == 0) { grind; }
+            edgy (b == 2) { bruh; }
+            yapping("%d-%d", a, b);
+        }
+    }
+    bussin 0;
+}
