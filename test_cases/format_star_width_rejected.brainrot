@@ -1,0 +1,11 @@
+🚽 Regression for #275: a '*' dynamic field width or precision in a format
+🚽 string used to be copied straight into the snprintf conversion, which then
+🚽 read an EXTRA vararg this marshalling layer never supplies -- undefined
+🚽 behavior: garbage output, a stack/register leak, or a crash for %*s (the
+🚽 leaked slot is dereferenced as a char*). It is now rejected with a
+🚽 diagnostic and emits nothing for that conversion; literals around it and the
+🚽 arguments after it stay intact.
+skibidi main {
+    yapping("[%*d][%*s]", 5, "hi");
+    bussin 0;
+}

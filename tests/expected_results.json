@@ -439,5 +439,6 @@
     "return_from_inside_loop_in_main": "before",
     "bussin_main_exit_code": "ExitCode:42",
     "bussin_main_stops": "before",
-    "bussin_main_edgy_exit": "ExitCode:3"
+    "bussin_main_edgy_exit": "ExitCode:3",
+    "format_star_width_rejected": "[][]\nStderr:\nError: '*' dynamic width/precision is not supported in format strings\nError: '*' dynamic width/precision is not supported in format strings"
 }
