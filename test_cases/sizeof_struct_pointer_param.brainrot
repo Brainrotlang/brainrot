@@ -1,0 +1,21 @@
+🚽 Regression for #200: maxxing (sizeof) on a struct POINTER PARAMETER.
+🚽 maxxing(*q) must report the pointee struct size, and maxxing(q) the pointer
+🚽 size, when q is a `gang Point *` function parameter -- not just a local
+🚽 (which #198 added and sizeof_struct.brainrot already pins). The parameter
+🚽 path was wired through by #336 (member access on pointer expressions); this
+🚽 guards it from regressing.
+gang Point {
+    rizz x;
+    rizz y;
+};
+
+skibidi size_of_ptr(gang Point *q) {
+    yapping("%lu", maxxing(*q));   🚽 pointee struct size -> 8
+    yapping("%lu", maxxing(q));    🚽 pointer size -> 8 (native LP64)
+}
+
+skibidi main {
+    gang Point p;
+    gang Point *qp = &p;
+    size_of_ptr(qp);
+}
