@@ -2247,9 +2247,15 @@ int main(int argc, char *argv[]) {
     interpreter_free(global_interpreter);
     global_interpreter = NULL;
 
+    /* skibidi main's `bussin N;` sets the process exit status (#246), recorded
+       in g_program_exit_code by handle_return_statement(). No `bussin` / falling
+       off the end leaves it 0. Truncated to 8 bits, matching POSIX exit-status
+       conventions (and ragequit's own wrapping). */
+    int exit_code = g_program_exit_code & 0xFF;
+
     /* Note: cleanup and stdrot_unload are called via atexit */
-    
-    return 0;
+
+    return exit_code;
 }
 
 void yyerror(const char *s) {

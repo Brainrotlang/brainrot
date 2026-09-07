@@ -1,0 +1,8 @@
+🚽 Regression for issue 246: a `bussin` nested inside edgy in main both stops
+🚽 execution (no "after if") and sets the exit code (3).
+skibidi main {
+    edgy (W) {
+        bussin 3;
+    }
+    yapping("after if");
+}

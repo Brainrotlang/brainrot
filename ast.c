@@ -29,6 +29,11 @@ bool struct_def_had_error = false;
    free_type_alias_registry(). */
 bool typedef_had_error = false;
 ReturnValue current_return_value;
+/* Process exit status set by `bussin N;` in skibidi main (#246). Distinct from
+   current_return_value, which a nested call overwrites -- this is written only
+   by main's own `bussin`, and lang.y's main() returns it after interpret().
+   Defaults to 0: no `bussin`, or falling off the end of main, exits 0. */
+int g_program_exit_code = 0;
 Arena arena;
 
 TypeModifiers current_modifiers = {false, false, false, false,
@@ -7721,6 +7726,33 @@ void handle_return_statement(ASTNode *expr)
                void function would otherwise be reported as an undefined
                function (PR #254 review, finding 1). */
         case NONE:
+            /* NONE (not VAR_VOID) is reached only for `bussin` in skibidi main,
+               which has no declared return type. Unlike a real void function --
+               which has nowhere to put a value -- main's `bussin N;` sets the
+               PROCESS exit status (#246), so evaluate the operand as an int
+               (main returns int, like C) and record it. A bare `bussin;` in
+               main yields 0. interpret() runs main under a function jump
+               buffer, so the LONGJMP at the end of this function actually
+               unwinds out of main (stopping any statements after the `bussin`),
+               and lang.y's main() returns g_program_exit_code. */
+            if (declared_type == NONE)
+            {
+                int result = expr ? evaluate_expression_int(expr) : 0;
+                /* Release any owned struct/string blob still sitting in the
+                   shared slot -- left by this bussin's own call expression, or
+                   by a prior statement whose call result nothing consumed --
+                   before overwriting it with the int, exactly as the void/NONE
+                   arm below does. Skipping this leaked such a blob (an earlier
+                   statement's unconsumed struct return) when main's `bussin`
+                   overwrote current_return_value. */
+                free_pending_return_value();
+                g_program_exit_code = result;
+                current_return_value.desc.type = VAR_INT;
+                current_return_value.desc.pointer_level = 0;
+                current_return_value.value.ivalue = result;
+                current_return_value.has_value = true;
+                break;
+            }
             if (expr && expr->type == NODE_FUNC_CALL)
             {
                 if (is_builtin_function(expr->data.func_call.function_name))
@@ -7911,26 +7943,24 @@ void handle_return_statement(ASTNode *expr)
        unwound every non-function scope before this point.
 
        ── Only drain when there IS a function frame to drain to ──────────
-       "abandoned by the longjmp below" assumes the longjmp happens, and
-       in `main` it does not. execute_function_call() is the only site
-       that pushes an is_function buffer, and `main`'s body is not run
-       through it (skibidi_function reduces to a bare statement list --
-       see semantic_analyzer.c's find_symbol() comment), so nothing below
-       a `bussin` in `main` is ever is_function.
+       Since #246 skibidi main runs under its OWN is_function frame too:
+       interpret() (interpreter.c) now wraps main's body in an is_function
+       scope plus a PUSH_FUNCTION_JUMP_BUFFER(), so a `bussin` in main --
+       including one inside a loop or switch -- drains the intervening
+       break frames and LONGJMP()s out of main exactly like any user
+       function. has_function_frame is therefore true in main as well, and
+       both the drain below and the LONGJMP() at the end of this function
+       now run for main.
 
-       Draining unconditionally there empties the whole stack, leaves
-       jump_buffer NULL, and skips the LONGJMP() entirely -- so execution
-       falls back into the loop body with its scopes already unwound and
-       every subsequent statement reports against a dead scope. That
-       turned `main`'s single "No scope to exit" into a four-error cascade
-       (PR #325 review). Checking first is strictly non-regressive: every
-       real function still gets the fix, and `main` keeps the one
-       diagnostic it had before.
-
-       `bussin` in `main` remains wrong either way -- it should end the
-       program, and even a plain `bussin 3;` there exits 0 rather than 3,
-       so the value is not plumbed. That is a separate, larger change than
-       this one and is deliberately not folded in here. */
+       The has_function_frame guard is nonetheless kept: it is the one
+       thing standing between this code and the pre-#246 failure mode, and
+       is correct defense if interpret() is ever reached without having
+       pushed a frame. Draining unconditionally with no function frame on
+       the stack would empty it, leave jump_buffer NULL, skip the LONGJMP()
+       entirely, and drop execution back into the loop body with its scopes
+       already unwound -- every subsequent statement then reporting against
+       a dead scope (the four-error cascade PR #325 first guarded against).
+       So: drain only when there is a function frame to land in. */
     bool has_function_frame = false;
     for (JumpBuffer *jb = jump_buffer; jb; jb = jb->next)
     {
@@ -7948,7 +7978,9 @@ void handle_return_statement(ASTNode *expr)
         }
     }
 
-    // skibidi main function do not have jump buffer
+    /* Both user functions and skibidi main (since #246) reach here with an
+       is_function jump buffer on the stack; exit the function scope and
+       unwind to it. The guard stays defensive in case there is none. */
     if (jump_buffer)
     {
         exit_scope(); // exit current function scope

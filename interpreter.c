@@ -89,8 +89,25 @@ void interpret(ASTNode *root, Interpreter *interp)
         enter_scope();
     }
 
-    /* Execute the AST using visitor pattern */
-    ast_accept(root, (Visitor *)interp);
+    /* Run skibidi main inside its own function frame so `bussin N;` unwinds out
+       of main the same way it does out of any user-defined function (#246): a
+       function-marked scope for handle_return_statement()'s scope walk to stop
+       at, and a function jump buffer for its LONGJMP to land in. Without this,
+       main's `bussin` fell through and statements after it still ran. main is
+       not a registered Function, so the frame's function_name stays empty --
+       get_function() returns NULL for it and declared_type stays NONE, which is
+       exactly what routes main's return through the exit-code path above. */
+    enter_scope();
+    current_scope->is_function_scope = true;
+    PUSH_FUNCTION_JUMP_BUFFER();
+    if (setjmp(CURRENT_JUMP_BUFFER()) == 0)
+    {
+        ast_accept(root, (Visitor *)interp);
+        /* Fell off the end of main with no `bussin`: exit code stays 0. */
+        if (current_scope && current_scope->is_function_scope)
+            exit_scope();
+    }
+    POP_JUMP_BUFFER();
 
     /* Clear global interpreter pointer */
     current_interpreter = NULL;

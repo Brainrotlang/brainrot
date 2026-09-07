@@ -295,7 +295,13 @@ Brainrot supports common arithmetic and logical operators:
 
 ### 7.5. Return Statements (`bussin`)
 
-- **`bussin expression;`** to end the main function (or any function, if you extend the language).
+- **`bussin expression;`** returns from the current function. In a user-defined
+  function it hands `expression` back to the caller; in `skibidi main` it ends
+  the program and sets the **process exit status** to `expression` (like C's
+  `return` from `main`), so `bussin 0;` exits `0` and `bussin 42;` exits `42`.
+- Statements after a `bussin` do not run — including a `bussin` inside an `edgy`
+  or a loop, which unwinds out of `main` entirely. Falling off the end of `main`
+  with no `bussin` exits `0`.
 - Example:
   ```c
   bussin 0;
