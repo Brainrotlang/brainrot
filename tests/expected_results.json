@@ -434,5 +434,6 @@
     "gang_chungus_distinct_tags": "3\n4\n42",
     "duplicate_tag_gang_chungus_fail": "Error: Redefinition of tag 'Foo' -- gang and chungus share one tag namespace at line 2\nParsing failed",
     "duplicate_tag_gang_gang_fail": "Error: Redefinition of tag 'Foo' -- gang and chungus share one tag namespace at line 2\nParsing failed",
+    "sizeof_struct_call_and_deref": "8\n8\n8\n8\n8\n8",
     "struct_field_rmw_and_field_arith": "6\n7\n4\n-1\nboth\n3"
 }

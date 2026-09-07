@@ -123,6 +123,12 @@ const WASM_EXPECTED_OVERRIDES = {
   // (same root cause as native_sizeof_ptr_result). The first line, maxxing(*q),
   // is the pointee struct size (2 rizz = 8) and is platform-independent.
   sizeof_struct_pointer_param: "8\n4",
+  // sizeof_struct_call_and_deref's lines 3-4 are maxxing(q)/maxxing(&p) --
+  // pointers, so 4 bytes on wasm32 ILP32 vs 8 on native LP64 (same root cause
+  // as native_sizeof_ptr_result). The other four lines (struct-returning call,
+  // double deref, union-typed field, by-value struct param) are all struct/
+  // union sizes and stay 8 on both targets.
+  sizeof_struct_call_and_deref: "8\n8\n4\n4\n8\n8",
   native_identity_abi_type_char_array: "8",
   native_void_pointer_struct_field: "8",
   // struct_field_long_modifier's `Meters` field is a `lit giga rizz`
