@@ -6738,6 +6738,7 @@ ASTNode *create_continue_node()
     ASTNode *node = ARENA_ALLOC_ASTNODE();
     node->type = NODE_CONTINUE_STATEMENT;
     node->data.break_stmt = NULL;
+    node->line_number = yylineno;
     return node;
 }
 

@@ -437,5 +437,6 @@
     "sizeof_struct_call_and_deref": "8\n8\n8\n8\n8\n8",
     "slorp_overflow_fail": "Error: Input exceeded buffer size.",
     "struct_field_rmw_and_field_arith": "6\n7\n4\n-1\nboth\n3",
-    "continue_grind": "0\n1\n3\n4\nw1\nw3\nd1\nd3\n0-1\n1-1\n2-1"
+    "continue_grind": "0\n1\n3\n4\nw1\nw3\nd1\nd3\n0-1\n1-1\n2-1",
+    "semantic_error_grind_outside_loop": "Error: grind (continue) outside a loop at line 8"
 }
