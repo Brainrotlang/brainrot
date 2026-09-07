@@ -152,6 +152,24 @@ static void process_baka_format(const char *format, const StdrotValue *args,
         }
     }
 
+    /* snprintf() returns the length it WOULD have written, not what it
+       actually wrote, so a formatted argument longer than the space left in
+       `buffer` advances buffer_offset past sizeof(buffer) (#269). snprintf
+       itself never overflows -- it honors the size arg -- but the terminator
+       write below would, and the loop guard above only stops re-entry, it
+       doesn't clamp. Clamp into range so `buffer[buffer_offset]` stays in
+       bounds; output is simply truncated to what fit. The `< 0` branch guards
+       the rarer case where snprintf returned negative on an output/encoding
+       error, which would otherwise leave buffer_offset negative and underflow
+       the terminator write. */
+    if (buffer_offset < 0)
+    {
+        buffer_offset = 0;
+    }
+    else if (buffer_offset >= (int)sizeof(buffer))
+    {
+        buffer_offset = (int)sizeof(buffer) - 1;
+    }
     buffer[buffer_offset] = '\0';
     fprintf(stderr, "%s", buffer);
     fflush(stderr);
