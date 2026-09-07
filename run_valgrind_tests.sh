@@ -30,6 +30,7 @@ for f in test_cases/*.brainrot; do
         slorp_char)   input="c" ;;
         slorp_bool)   input="1" ;;
         slorp_string) input="skibidi bop bop yes yes" ;;
+        slorp_overflow_fail) input="abcdefghij" ;;
         slorp_identity_char_array)             input="hello" ;;
         native_cstring_param_char_array)       input="hello" ;;
         native_char_array_access)              input="hello" ;;

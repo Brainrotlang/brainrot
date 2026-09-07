@@ -1,0 +1,12 @@
+🚽 Regression for #270: a line longer than the slorp buffer must be reported as
+🚽 an overflow, not silently truncated. buf holds 8 bytes; fgets stores 7 chars
+🚽 with no newline, so input_string() must return INPUT_BUFFER_OVERFLOW and
+🚽 slorp_string() must error and exit -- before #270 the len == buffer_size
+🚽 check was dead (fgets never fills to buffer_size), so this printed "abcdefg"
+🚽 and left "hij" polluting the next read.
+skibidi main {
+    yap buf[8];
+    slorp(buf);
+    yapping("%s", buf);
+    bussin 0;
+}

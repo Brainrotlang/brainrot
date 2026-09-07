@@ -86,12 +86,29 @@ input_status input_string(char *buffer, size_t buffer_size, size_t *chars_read)
         return INPUT_SUCCESS;
     }
 
-    // Check if the input was truncated (no newline found)
+    // Detect a line longer than the buffer. fgets() writes at most
+    // buffer_size - 1 characters plus the NUL, so strnlen() can never reach
+    // buffer_size -- the old `len == buffer_size` test was dead code and
+    // over-long input was silently truncated, with the remainder left to
+    // corrupt the next read (#270). A full buffer (len == buffer_size - 1)
+    // with no trailing '\n' is the candidate case, but it is ambiguous on its
+    // own: it happens both when the line genuinely overflowed AND when the line
+    // was exactly buffer_size - 1 characters and only its terminating newline
+    // didn't fit (e.g. a 1-char read into input_char()'s 2-byte buffer). Peek
+    // one character to tell them apart: a real overflow has more of the line
+    // still queued, whereas an exact fit is followed immediately by '\n' (which
+    // we consume so it can't pollute the next read) or EOF.
     size_t len = strnlen(buffer, buffer_size);
-    if (len == buffer_size && buffer[len - 1] != '\n')
+    if (len == buffer_size - 1 && buffer[len - 1] != '\n')
     {
-        clear_stdin_buffer();
-        return INPUT_BUFFER_OVERFLOW;
+        int next = getchar();
+        if (next != '\n' && next != EOF)
+        {
+            clear_stdin_buffer(); // discard the rest of the over-long line
+            return INPUT_BUFFER_OVERFLOW;
+        }
+        // Exact fit: the line's own newline (or EOF) followed; treat as a
+        // complete read of buffer_size - 1 characters.
     }
 
     // Remove trailing newline if present
