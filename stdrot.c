@@ -1274,12 +1274,14 @@ static void ast_expr_to_stdrot_value(ASTNode *expr, StdrotValue *out)
         out->type = STDROT_CHAR;
         out->val.c = (char)evaluate_expression_int(expr);
     }
-    else if (!stdrot_char_narrows_to_int(expr->type,
-                                         expr->type == NODE_UNARY_OPERATION
-                                             ? expr->data.unary.op
-                                             : OP_PLUS) &&
-             is_expression(expr, VAR_STRING))
+    else if (is_expression(expr, VAR_STRING))
     {
+        /* No char-narrowing guard here (unlike the VAR_CHAR branch above): a
+           string-typed expression is never a "char promoted to int" case. In
+           particular `rant + rant` is a NODE_OPERATION that stays a string
+           (#368) -- guarding it with stdrot_char_narrows_to_int(), which
+           returns true for every NODE_OPERATION, would misroute it to the
+           STDROT_INT fallback and marshal a concatenation as an int. */
         out->type = STDROT_STRING;
         out->val.str = evaluate_expression_string(expr);
     }
@@ -2166,8 +2168,14 @@ NativeResult execute_native_call(const String func_name, ArgumentList *args,
 
            NODE_STRING_SLICE joined NODE_FUNC_CALL when `s[i:j]` was added
            (#251) -- without it, `yapping("%s", s[0:2])` leaked one buffer
-           per call, which is what LeakSanitizer caught. */
-        if ((expr->type == NODE_FUNC_CALL || expr->type == NODE_STRING_SLICE) &&
+           per call, which is what LeakSanitizer caught. NODE_OPERATION
+           joined for the same reason when `rant + rant` concatenation was
+           added (#368): a string `+` builds a fresh buffer too, so
+           `yapping("%s", a + b)` would otherwise leak it. The
+           STDROT_STRING guard below keeps a numeric NODE_OPERATION (tagged
+           STDROT_INT/STDROT_LONG) out of this. */
+        if ((expr->type == NODE_FUNC_CALL || expr->type == NODE_STRING_SLICE ||
+             expr->type == NODE_OPERATION) &&
             arg_values[arg_count].type == STDROT_STRING)
         {
             owned_string_bufs[arg_count] = arg_values[arg_count].val.str.data;

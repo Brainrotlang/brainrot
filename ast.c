@@ -2874,6 +2874,13 @@ VarType get_expression_type(ASTNode *node)
         return VAR_BOOL;
     case NODE_CHAR:
         return VAR_INT;
+    case NODE_STRING_LITERAL:
+    case NODE_STRING:
+        /* A string literal is a rant. Grouped with the slice below: also
+           needed here (not just in the declaration path) so
+           get_expression_type() can type a NODE_OPERATION whose operands are
+           string literals -- e.g. `yaplen("foo" + "bar")`, where marshalling
+           recurses into the operands (#368). */
     case NODE_STRING_SLICE:
         /* `s[i:j]` is a rant, always -- see create_string_slice_node()'s
            own comment for why the node does not consult the variable. */
@@ -2929,6 +2936,11 @@ VarType get_expression_type(ASTNode *node)
             return right_type;
         if (left_level > 0 || right_level > 0)
             return left_type;
+
+        /* `rant + rant` is string concatenation, yielding a rant (#368). */
+        if (op == OP_PLUS && left_type == VAR_STRING &&
+            right_type == VAR_STRING)
+            return VAR_STRING;
 
         if (left_type == VAR_DOUBLE || right_type == VAR_DOUBLE)
             return VAR_DOUBLE;
@@ -5371,6 +5383,50 @@ String evaluate_expression_string(ASTNode *node)
         SAFE_FREE(res->data);
         SAFE_FREE(res);
         return result;
+    }
+    case NODE_OPERATION:
+    {
+        /* `rant + rant` concatenates into a new rant (#368) -- the readable
+           replacement for yapcat(a, b), with the same return-new semantics
+           (neither operand is touched; the result is independently owned).
+           `+` is the only operator that lowers to a string here; the semantic
+           analyzer has already rejected any other string operation. */
+        if (node->data.op.op != OP_PLUS)
+        {
+            yyerror("Invalid string operation");
+            return (String){.data = NULL, .len = 0};
+        }
+        String left = evaluate_expression_string(node->data.op.left);
+        String right = evaluate_expression_string(node->data.op.right);
+        size_t llen = left.data ? left.len : 0;
+        size_t rlen = right.data ? right.len : 0;
+        size_t total = llen + rlen;
+        /* Overflow would wrap the allocation and memcpy past it. Unreachable
+           with real strings; checked because the consequence is a heap
+           overflow, not a wrong answer (mirrors yapcat's own guard). */
+        if (total < llen || total == (size_t)-1)
+        {
+            yyerror("String concatenation length overflows");
+            SAFE_FREE(left.data);
+            SAFE_FREE(right.data);
+            return (String){.data = NULL, .len = 0};
+        }
+        char *buf = safe_malloc(total + 1); /* +1 for a C-friendly NUL */
+        if (!buf)
+        {
+            yyerror("Out of memory concatenating strings");
+            SAFE_FREE(left.data);
+            SAFE_FREE(right.data);
+            return (String){.data = NULL, .len = 0};
+        }
+        if (llen)
+            memcpy(buf, left.data, llen);
+        if (rlen)
+            memcpy(buf + llen, right.data, rlen);
+        buf[total] = '\0';
+        SAFE_FREE(left.data);
+        SAFE_FREE(right.data);
+        return (String){.data = buf, .len = total};
     }
     default:
         yyerror("Invalid string expression");

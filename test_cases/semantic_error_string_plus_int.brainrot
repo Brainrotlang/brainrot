@@ -1,0 +1,8 @@
+🚽 Issue #368: `+` overloads only for rant + rant. Mixing a rant with a
+🚽 number is rejected by the semantic analyzer (no implicit stringification),
+🚽 not silently coerced.
+skibidi main {
+    rant a = "foo";
+    a + 5;
+    bussin 0;
+}

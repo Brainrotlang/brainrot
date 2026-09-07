@@ -377,7 +377,7 @@ Brainrot includes some built-in functions for convenience:
 | **bet**      | `stderr`    | No           | Tests conditions and terminates with error message if false.          |
 | **gamba**    | -           | -            | Cryptographically safe random integers (OpenSSL `RAND_bytes`).        |
 | **yaplen**   | -           | -            | Length of a `rant`, in bytes.                                         |
-| **yapcat**   | -           | -            | Joins two `rant`s into a new one.                                     |
+| **yapcat**   | -           | -            | Joins two `rant`s into a new one. **Deprecated — use `a + b`.**       |
 | **yapcmp**   | -           | -            | Lexicographic comparison: `-1`, `0` or `1`.                           |
 | **yapidx**   | -           | -            | Byte index of one `rant` inside another, or `-1`.                     |
 | **file I/O** | files       | -            | `crackopen`/`peaceout`/`skim`/`yapto`/… — see [docs/file-io.md](file-io.md). |
@@ -633,8 +633,9 @@ skibidi main {
 **Prototypes**
 
 ```c
+rant a + b;                           /* concatenation: a joined to b        */
 rizz yaplen(rant s);                  /* length in BYTES                     */
-rant yapcat(rant a, rant b);          /* a joined to b, as a new string      */
+rant yapcat(rant a, rant b);          /* DEPRECATED -- use `a + b`           */
 rizz yapcmp(rant a, rant b);          /* -1 if a < b, 0 if equal, 1 if a > b */
 rizz yapidx(rant hay, rant needle);   /* byte index of needle, or -1         */
 
@@ -644,7 +645,13 @@ rant sub = s[i:j];                    /* half-open [i, j)    -- SYNTAX       */
 
 **Description**
 
-- The v1 string library: measure, join, compare, search. All four are
+- **Concatenate two `rant`s with `+`.** `a + b` is a new `rant` (neither
+  operand is touched), and it chains left-to-right: `"Big" + " " + "Chungus"`.
+  `+` overloads for concatenation **only when both operands are `rant`s** — a
+  `rant` mixed with a number is a type error, not implicit stringification.
+  This is the readable replacement for **`yapcat`, which is now deprecated**
+  but still works; `a + b` is exactly `yapcat(a, b)`.
+- The rest of the v1 string library: measure, compare, search. All three are
   standard-library builtins -- no `#cooked`, no keyword.
 - **Byte-oriented, not character-oriented.** `yaplen("é")` is `2`, because
   that is two bytes of UTF-8. Comparison and searching work on bytes for the
@@ -693,7 +700,7 @@ rant sub = s[i:j];                    /* half-open [i, j)    -- SYNTAX       */
 
 ```c
 skibidi main {
-    rant name = yapcat(yapcat("Big", " "), "Chungus");
+    rant name = "Big" + " " + "Chungus";  🚽 yapcat is the deprecated way
 
     yapping("%s", name);              🚽 Big Chungus
     yapping("%d", yaplen(name));      🚽 11

@@ -1253,6 +1253,17 @@ bool validate_binary_operation(ASTNode *left, ASTNode *right, OperatorType op,
     switch (op)
     {
     case OP_PLUS:
+        /* `rant + rant` concatenates into a new rant (#368), the readable
+           replacement for yapcat(a, b). Only two strings overload `+`: a
+           string mixed with a number falls through to the numeric check below
+           and is rejected (no implicit stringification). */
+        if (left_pointer_level == 0 && right_pointer_level == 0 &&
+            left_type == VAR_STRING && right_type == VAR_STRING)
+        {
+            return true;
+        }
+        /* fallthrough to shared +/- handling */
+        __attribute__((fallthrough));
     case OP_MINUS:
         if (left_pointer_level > 0 || right_pointer_level > 0)
         {
