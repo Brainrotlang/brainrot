@@ -186,9 +186,10 @@ Join our community on:
 | thicc      | long long    | ✅           |
 | rant       | string type  | ✅           |
 | lit        | typedef      | ✅           |
-| unc        | `__asm__`    | ❌           |
 
-Every keyword above is implemented except `unc`. Two former entries were
+Every keyword above is implemented. `unc` (`__asm__`, inline assembly) was a
+planned entry that has been dropped: a tree-walking interpreter has no code
+generation for inline assembly to target. Two other former entries were
 removed rather than implemented: `whopper` (`extern`), because `#cooked`
 splices source and native modules self-register, so there is no separate
 compilation for it to bridge and no linker to inform; and `cringe` (`goto`).
