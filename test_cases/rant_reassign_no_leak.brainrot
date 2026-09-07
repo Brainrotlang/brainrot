@@ -1,0 +1,15 @@
+🚽 Regression for #277: reassigning a rant (string) frees the buffer it
+🚽 previously owned instead of orphaning it. The write path used to overwrite
+🚽 the strvalue slot without freeing the old .data, leaking once per assignment.
+🚽 This reassigns in a loop (would leak N buffers) and self-assigns (s = s, which
+🚽 must not double-free or use-after-free). The interpreter is ASan-instrumented,
+🚽 so `make test` fails on any leak -- a green run is the assertion.
+skibidi main {
+    rant s = "start";
+    flex (rizz i = 0; i < 5; i = i + 1) {
+        s = "iter";
+    }
+    s = s;
+    yapping("%s", s);
+    bussin 0;
+}
