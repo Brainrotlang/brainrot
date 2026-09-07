@@ -906,6 +906,12 @@ bool resolve_by_value_struct_source(ASTNode *expr, void **blob_out,
    for why we don't YYABORT for these instead. */
 extern bool struct_def_had_error;
 extern bool typedef_had_error;
+/* Set by lang.l's catch-all rule on a character no token rule recognizes
+   (a stray `~`, `$`, `@`). Like the two flags above, lang.y's post-yyparse
+   gate treats it as a parse failure, so an unrecognized character is reported
+   and stops compilation instead of being silently discarded (#285, #297).
+   One-shot per process, like struct_def_had_error/typedef_had_error. */
+extern bool lex_error_occurred;
 
 /* Enum types (see the comment on EnumDef above for the registry split). */
 void register_enum_def(EnumDef *def);

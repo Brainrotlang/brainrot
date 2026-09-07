@@ -1,0 +1,10 @@
+🚽 Regression test for issues #285 / #297: the lexer's catch-all rule used
+🚽 to silently discard any character it did not recognize, so an unsupported
+🚽 operator vanished instead of erroring. `~` is not a token, so `~x` lexed
+🚽 as just `x` and this program printed 5 -- a bitwise complement that
+🚽 silently wasn't one. The stray `~` is now a lex error that fails the parse.
+skibidi main {
+    rizz x = 5;
+    yapping("%d", ~x);
+    bussin 0;
+}
