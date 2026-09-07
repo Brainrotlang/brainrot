@@ -151,41 +151,41 @@ Join our community on:
 
 ### Keywords
 
-| Brainrot   | C Equivalent | Implemented? |
-| ---------- | ------------ | ------------ |
-| skibidi    | void         | ✅           |
-| rizz       | int          | ✅           |
-| cap        | bool         | ✅           |
-| flex       | for          | ✅           |
-| bussin     | return       | ✅           |
-| edgy       | if           | ✅           |
-| amogus     | else         | ✅           |
-| goon       | while        | ✅           |
-| bruh       | break        | ✅           |
-| grind      | continue     | ✅           |
-| chad       | float        | ✅           |
-| gigachad   | double       | ✅           |
-| yap        | char         | ✅           |
-| deadass    | const        | ✅           |
-| sigma rule | case         | ✅           |
-| based      | default      | ✅           |
-| mewing     | do           | ✅           |
-| gyatt      | enum         | ✅           |
-| giga       | long         | ✅           |
-| smol       | short        | ✅           |
-| nut        | signed       | ✅           |
-| maxxing    | sizeof       | ✅           |
-| salty      | static       | ✅           |
-| gang       | struct       | ✅           |
-| ohio       | switch       | ✅           |
-| chungus    | union        | ✅           |
-| nonut      | unsigned     | ✅           |
-| schizo     | volatile     | ✅           |
-| W          | true         | ✅           |
-| L          | false        | ✅           |
-| thicc      | long long    | ✅           |
-| rant       | string type  | ✅           |
-| lit        | typedef      | ✅           |
+| Brainrot   | C Equivalent |
+| ---------- | ------------ |
+| skibidi    | void         |
+| rizz       | int          |
+| cap        | bool         |
+| flex       | for          |
+| bussin     | return       |
+| edgy       | if           |
+| amogus     | else         |
+| goon       | while        |
+| bruh       | break        |
+| grind      | continue     |
+| chad       | float        |
+| gigachad   | double       |
+| yap        | char         |
+| deadass    | const        |
+| sigma rule | case         |
+| based      | default      |
+| mewing     | do           |
+| gyatt      | enum         |
+| giga       | long         |
+| smol       | short        |
+| nut        | signed       |
+| maxxing    | sizeof       |
+| salty      | static       |
+| gang       | struct       |
+| ohio       | switch       |
+| chungus    | union        |
+| nonut      | unsigned     |
+| schizo     | volatile     |
+| W          | true         |
+| L          | false        |
+| thicc      | long long    |
+| rant       | string type  |
+| lit        | typedef      |
 
 Every keyword above is implemented. `unc` (`__asm__`, inline assembly) was a
 planned entry that has been dropped: a tree-walking interpreter has no code
