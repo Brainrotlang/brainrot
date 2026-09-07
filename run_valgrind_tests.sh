@@ -8,6 +8,12 @@
 # for anyone who built that target first.
 TARGET="${1:-./brainrot-valgrind}"
 
+# Directory the fixtures are swept from. Defaults to the repo's test_cases/;
+# overridable so the suite can be pointed at a subset and so
+# tests/test_valgrind_runner.py can drive this script against crafted targets
+# in a temp directory without touching the real fixtures.
+TESTCASES_DIR="${TESTCASES_DIR:-test_cases}"
+
 if ! command -v valgrind >/dev/null 2>&1; then
     echo "Error: valgrind is not installed or not in PATH" >&2
     exit 1
@@ -18,7 +24,7 @@ if [[ ! -x "$TARGET" ]]; then
     exit 1
 fi
 
-for f in test_cases/*.brainrot; do
+for f in "$TESTCASES_DIR"/*.brainrot; do
     echo "Running Valgrind on $f..."
     base=$(basename "$f" .brainrot)
 
@@ -86,6 +92,25 @@ for f in test_cases/*.brainrot; do
     if [[ $valgrind_exit_code -eq 126 || $valgrind_exit_code -eq 127 ]] \
         && grep -q '^valgrind: ' "$fd_log"; then
         echo "Valgrind could not execute '$TARGET' on $f (exit $valgrind_exit_code)"
+        rm -f "$fd_log"
+        exit 1
+    fi
+
+    # Fail on a child that died from a SIGNAL rather than exiting normally. When
+    # the child is killed by signal N, Valgrind re-raises it and this script
+    # sees exit code 128+N -- e.g. 139 (SIGSEGV), 134 (SIGABRT), 136 (SIGFPE).
+    # The exit-100 gate above never catches these: a crash that isn't a
+    # Valgrind-detected memory error (an ASan-build binary mis-run under
+    # Valgrind and SIGSEGV'ing at startup -- the #186 case -- an assertion
+    # abort, a stack overflow) leaves --error-exitcode unfired, so the sweep
+    # used to sail past a program that executed nothing (#203). The
+    # interpreter's own deliberate non-zero exits stay well below this: parse/
+    # semantic errors exit 1, and the largest ragequit(N) fixture exits 69, so
+    # >128 cleanly separates "crashed" from "exited with an error". (126/127
+    # launch failures are handled just above; a child that legitimately exits
+    # 126/127, e.g. ragequit(127), is passed through there.)
+    if [[ $valgrind_exit_code -gt 128 ]]; then
+        echo "Valgrind child crashed (killed by signal $((valgrind_exit_code - 128))) on $f (exit $valgrind_exit_code)"
         rm -f "$fd_log"
         exit 1
     fi
