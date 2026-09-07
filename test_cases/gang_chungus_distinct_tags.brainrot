@@ -1,0 +1,14 @@
+gang Point { rizz x; rizz y; };
+chungus Num { rizz i; chad f; };
+
+skibidi main {
+    gang Point p;
+    p.x = 3;
+    p.y = 4;
+    chungus Num n;
+    n.i = 42;
+    yapping("%d", p.x);
+    yapping("%d", p.y);
+    yapping("%d", n.i);
+    bussin 0;
+}
