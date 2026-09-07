@@ -665,7 +665,15 @@ extern int yylineno;
 
 "W"              { yylval.ival = 1; return BOOLEAN; }
 "L"              { yylval.ival = 0; return BOOLEAN; }
-[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?[LlFf]? {
+(([0-9]+\.[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+)[LlFf]? {
+    /* A floating-point literal is: a mantissa with a decimal point (digits on
+       either or both sides -- 1.5, 1., .5) and an optional exponent, OR an
+       integer mantissa that MUST carry an exponent (1e10, 2E5). The
+       exponent-only-with-a-dot form was the old rule's whole pattern, so
+       `1e10`/`2E5` fell through to the integer rule and lexed as `1`/`2`
+       followed by an identifier `e10`/`E5` -- a syntax error (#276). A bare
+       integer (no dot, no exponent) matches NEITHER alternative here and still
+       routes to the [0-9]+ integer rule below. */
     char *endptr;
     if (strchr(yytext, 'f') || strchr(yytext, 'F')) {
         yylval.fval = strtof(yytext, &endptr);
