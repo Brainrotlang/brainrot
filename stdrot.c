@@ -944,10 +944,10 @@ VarType stdrot_type_to_vartype(StdrotType type)
     switch (type)
     {
     case STDROT_INT:
-        return VAR_INT;
+    /* giga/thicc (STDROT_LONG): a 64-bit integer is still VAR_INT at the type
+       level; its width lives in the is_long/is_long_long modifiers (#282). It
+       shares this branch with STDROT_INT rather than a clone of it. */
     case STDROT_LONG:
-        /* giga/thicc: a 64-bit integer is still VAR_INT at the type level;
-           its width lives in the is_long/is_long_long modifiers (#282). */
         return VAR_INT;
     case STDROT_FLOAT:
         return VAR_FLOAT;
