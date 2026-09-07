@@ -29,17 +29,14 @@ bool struct_def_had_error = false;
    free_type_alias_registry(). */
 bool typedef_had_error = false;
 ReturnValue current_return_value;
-<<<<<<< HEAD
 /* See the declaration in ast.h: `grind` (continue) sets this, and the
    statement-list visitor and loop visitors consume it (#274). */
 bool continue_requested = false;
-=======
 /* Process exit status set by `bussin N;` in skibidi main (#246). Distinct from
    current_return_value, which a nested call overwrites -- this is written only
    by main's own `bussin`, and lang.y's main() returns it after interpret().
    Defaults to 0: no `bussin`, or falling off the end of main, exits 0. */
 int g_program_exit_code = 0;
->>>>>>> origin/main
 Arena arena;
 
 TypeModifiers current_modifiers = {false, false, false, false,
