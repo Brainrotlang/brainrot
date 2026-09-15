@@ -757,7 +757,7 @@ extern int yylineno;
         c = yytext[1];
     }
     
-    yylval.ival = c;  // Put the character in the parser’s yylval
+    yylval.cval = c;  // Put the character in the parser’s yylval
     return CHAR;
 }
 
