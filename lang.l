@@ -758,7 +758,7 @@ extern int yylineno;
     }
     
     yylval.ival = c;  // Put the character in the parser’s yylval
-    return YAP; 
+    return CHAR;
 }
 
 [ \t\n]+         ; /* Ignore whitespace */

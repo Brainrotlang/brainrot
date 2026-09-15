@@ -1,0 +1,7 @@
+skibidi main {
+    yap newline = '\n';
+    yap tab = '\t';
+    yap slash = '\\';
+    yapping("%d %d %d", newline, tab, slash);
+    bussin 0;
+}
