@@ -26,17 +26,17 @@ static void process_baka_format(const char *format, const StdrotValue *args,
 
     while (*format != '\0' && buffer_offset < (int)sizeof(buffer) - 1)
     {
+        if (format[0] == '%' && format[1] == '%')
+        {
+            buffer[buffer_offset++] = '%';
+            format += 2;
+            continue;
+        }
+
         if (*format == '%' && arg_idx < arg_count)
         {
             const char *start = format;
             format++;
-
-            if (*format == '%')
-            {
-                buffer[buffer_offset++] = '%';
-                format++;
-                continue;
-            }
 
             while (strchr("-+ #0123456789.*", *format) != NULL)
             {

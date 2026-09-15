@@ -1,0 +1,6 @@
+skibidi main {
+    yapping("100%%");
+    yapping("with arg %d and %%", 5);
+    yapping("%% at start and end %%");
+    bussin 0;
+}
