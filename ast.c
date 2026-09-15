@@ -6742,7 +6742,12 @@ static bool get_lvalue_root_name(const ASTNode *node, String *name)
         return get_lvalue_root_name(node->data.array.base, name);
     }
     if (node->type == NODE_STRUCT_ACCESS)
-        return get_lvalue_root_name(node->data.struct_access.object, name);
+    {
+        ASTNode *object = node->data.struct_access.object;
+        if (get_expression_pointer_level(object) > 0)
+            return false;
+        return get_lvalue_root_name(object, name);
+    }
     return false;
 }
 

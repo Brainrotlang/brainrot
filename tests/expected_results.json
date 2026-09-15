@@ -455,5 +455,6 @@
     "float_inc_dec": "2.50\n3.50\n2.50\n1.50\n3.50\n2.50\n4.50\n6",
     "lex_error_unexpected_tilde": "Error: unexpected character '~' at line 8\nParsing failed",
     "lex_error_unexpected_dollar": "Error: unexpected character '$' at line 6\nParsing failed",
-    "semantic_error_const_array": "Error: Cannot modify const variable at line 4"
+    "semantic_error_const_array": "Error: Cannot modify const variable at line 4",
+    "const_struct_pointer_member_write": "55\n77\n"
 }
