@@ -59,7 +59,7 @@ void stdrot_format_to_stream(FILE *out, const char *format,
             }
 
             /* Skip flags, width, precision */
-            while (strchr("-+ #0123456789.*", *format) != NULL)
+            while (*format && strchr("-+ #0123456789.*", *format) != NULL)
             {
                 format++;
             }
@@ -74,7 +74,7 @@ void stdrot_format_to_stream(FILE *out, const char *format,
                     format++;
                 }
             }
-            else if (strchr("jztL", *format) != NULL)
+            else if (*format && strchr("jztL", *format) != NULL)
             {
                 format++;
             }

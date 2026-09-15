@@ -455,5 +455,6 @@
     "float_exponent_literal": "10000000000.0\n200000.0\n1000.0\n0.50\n1.00\n0.0010\n123",
     "float_inc_dec": "2.50\n3.50\n2.50\n1.50\n3.50\n2.50\n4.50\n6",
     "lex_error_unexpected_tilde": "Error: unexpected character '~' at line 8\nParsing failed",
-    "lex_error_unexpected_dollar": "Error: unexpected character '$' at line 6\nParsing failed"
+    "lex_error_unexpected_dollar": "Error: unexpected character '$' at line 6\nParsing failed",
+    "format_bare_percent": "A\nB\nC\nD\nE\nF\nG\nok"
 }

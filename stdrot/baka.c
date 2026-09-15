@@ -38,7 +38,7 @@ static void process_baka_format(const char *format, const StdrotValue *args,
                 continue;
             }
 
-            while (strchr("-+ #0123456789.*", *format) != NULL)
+            while (*format && strchr("-+ #0123456789.*", *format) != NULL)
             {
                 format++;
             }
@@ -52,7 +52,7 @@ static void process_baka_format(const char *format, const StdrotValue *args,
                     format++;
                 }
             }
-            else if (strchr("jztL", *format) != NULL)
+            else if (*format && strchr("jztL", *format) != NULL)
             {
                 format++;
             }
