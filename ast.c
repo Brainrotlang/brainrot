@@ -2832,6 +2832,8 @@ int get_expression_pointer_level(ASTNode *node)
         }
         return fld->desc.pointer_level;
     }
+    case NODE_ASSIGNMENT:
+        return get_expression_pointer_level(node->data.op.left);
     default:
         return node->pointer_level;
     }
@@ -3019,6 +3021,8 @@ VarType get_expression_type(ASTNode *node)
         }
         return fld->desc.type;
     }
+    case NODE_ASSIGNMENT:
+        return get_expression_type(node->data.op.left);
     default:
         yyerror("Unknown node type in get_expression_type");
         return NONE;
@@ -3091,6 +3095,8 @@ bool expression_is_long(ASTNode *node)
                (fld->desc.modifiers.is_long ||
                 fld->desc.modifiers.is_long_long);
     }
+    case NODE_ASSIGNMENT:
+        return expression_is_long(node->data.op.left);
     default:
         return false;
     }
@@ -3331,6 +3337,8 @@ static VarType infer_runtime_expression_type_noeval(ASTNode *expr)
         }
         return fld->desc.type;
     }
+    case NODE_ASSIGNMENT:
+        return infer_runtime_expression_type_noeval(expr->data.op.left);
     default:
         return NONE;
     }
@@ -4119,6 +4127,9 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
         void *addr = evaluate_struct_member_address(node);
         return addr ? *(uintptr_t *)addr : (uintptr_t)0;
     }
+    case NODE_ASSIGNMENT:
+        execute_assignment(node);
+        return evaluate_expression_pointer(node->data.op.left);
     default:
         break;
     }
@@ -4931,6 +4942,9 @@ float evaluate_expression_float(ASTNode *node)
             return 0;
         }
     }
+    case NODE_ASSIGNMENT:
+        execute_assignment(node);
+        return evaluate_expression_float(node->data.op.left);
     default:
         yyerror("Invalid float expression");
         return 0.0f;
@@ -5084,6 +5098,9 @@ double evaluate_expression_double(ASTNode *node)
             return 0;
         }
     }
+    case NODE_ASSIGNMENT:
+        execute_assignment(node);
+        return evaluate_expression_double(node->data.op.left);
     default:
         yyerror("Invalid double expression");
         return 0.0L;
@@ -5428,6 +5445,9 @@ String evaluate_expression_string(ASTNode *node)
         SAFE_FREE(right.data);
         return (String){.data = buf, .len = total};
     }
+    case NODE_ASSIGNMENT:
+        execute_assignment(node);
+        return evaluate_expression_string(node->data.op.left);
     default:
         yyerror("Invalid string expression");
         return (String){.data = NULL, .len = 0};
@@ -5704,6 +5724,9 @@ long long evaluate_expression_long(ASTNode *node)
         }
         return (long long)evaluate_expression_int(node);
     }
+    case NODE_ASSIGNMENT:
+        execute_assignment(node);
+        return evaluate_expression_long(node->data.op.left);
     default:
         /* Anything without a dedicated 64-bit path falls back to the 32-bit
            evaluator (widened), matching the narrow types it handles. */
@@ -5889,6 +5912,9 @@ short evaluate_expression_short(ASTNode *node)
             return 0;
         }
     }
+    case NODE_ASSIGNMENT:
+        execute_assignment(node);
+        return evaluate_expression_short(node->data.op.left);
     default:
         yyerror("Invalid short expression");
         return 0;
@@ -6113,6 +6139,9 @@ int evaluate_expression_int(ASTNode *node)
             return 0;
         }
     }
+    case NODE_ASSIGNMENT:
+        execute_assignment(node);
+        return evaluate_expression_int(node->data.op.left);
     default:
         yyerror("Invalid integer expression");
         return 0;
@@ -6617,6 +6646,9 @@ bool evaluate_expression_bool(ASTNode *node)
             return 0;
         }
     }
+    case NODE_ASSIGNMENT:
+        execute_assignment(node);
+        return evaluate_expression_bool(node->data.op.left);
     default:
         yyerror("Invalid boolean expression");
         return 0;
@@ -6832,6 +6864,8 @@ bool is_expression(ASTNode *node, VarType type)
         }
         return fld->desc.type == type;
     }
+    case NODE_ASSIGNMENT:
+        return get_expression_type(node) == type;
     default:
         return node->type == VART_TO_NODET(type);
     }

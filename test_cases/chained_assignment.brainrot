@@ -1,0 +1,19 @@
+skibidi main {
+    rizz a;
+    rizz b;
+    a = b = 5;
+    yapping("a=%d b=%d\n", a, b);
+
+    rizz c = (b = 7);
+    yapping("b=%d c=%d\n", b, c);
+
+    rizz d = (b = 10) + 2;
+    yapping("b=%d d=%d\n", b, d);
+
+    chad f1;
+    chad f2;
+    f1 = f2 = 3.5;
+    yapping("f1=%.1f f2=%.1f\n", f1, f2);
+
+    bussin 0;
+}
