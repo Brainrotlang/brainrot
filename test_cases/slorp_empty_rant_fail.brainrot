@@ -1,0 +1,8 @@
+🚽 Regression for #377: reading into an empty rant buffer must not assume a
+🚽 fabricated capacity of 1024 bytes and heap-overflow. It should safely report
+🚽 buffer overflow / buffer size exceeded without crashing.
+skibidi main {
+    rant s = "";
+    slorp(s);
+    bussin 0;
+}

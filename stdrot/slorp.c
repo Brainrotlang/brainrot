@@ -173,8 +173,6 @@ static StdrotValue stdrot_slorp(StdrotValue *args, int argc)
         if (args[0].val.str.data)
         {
             size_t size = args[0].val.str.len;
-            if (size == 0)
-                size = 1024;
             slorp_string(args[0].val.str.data, size);
             out.type = STDROT_STRING;
             out.val.str = args[0].val.str;
