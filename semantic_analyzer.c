@@ -3024,8 +3024,8 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node)
        comparing its necessarily NONE/0 inferred type/pointer-level
        against the target here would raise a second, misleading error for
        the same node. */
-    if ((target_pointer_level > 0 || value_pointer_level > 0) &&
-        !is_unresolved_contextual_call(node->data.op.right) &&
+    if (!is_unresolved_contextual_call(node->data.op.right) &&
+        target_type != NONE && value_type != NONE &&
         !check_type_compatibility_ex(target_type, target_pointer_level,
                                      value_type, value_pointer_level))
     {
