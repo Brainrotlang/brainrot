@@ -27,6 +27,7 @@
     "struct_alias_array_field_stride": "1 0 2 0\n",
     "struct_alias_array_field_struct_element_fail": "Error: Array field 'arr' of a struct/union/enum alias element type is not supported at line 13\nParsing failed",
     "char": "c\n",
+    "escaped_char_literals": "10 9 92 13 0",
     "float": "3.141592\n",
     "modulo": "2\n",
     "switch_case": "You chose 2, gigachad move!\n",
