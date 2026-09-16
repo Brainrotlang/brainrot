@@ -1,0 +1,7 @@
+🚽 Regression for #378: scalar assignment type mismatches must be caught
+🚽 at semantic analysis time with an error and exit 1, not degrade to runtime.
+skibidi main {
+    rizz n = 3;
+    n = "text";
+    bussin 0;
+}
