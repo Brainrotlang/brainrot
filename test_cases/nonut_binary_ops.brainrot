@@ -1,0 +1,23 @@
+skibidi main {
+    nonut rizz a = 3000000000;
+    edgy (a > 5) {
+        yapping("big\n");
+    } amogus {
+        yapping("small\n");
+    }
+
+    nonut rizz b = 2;
+    yapping("%u\n", a / b);
+
+    nonut rizz c = 3000000001;
+    nonut rizz d = 10;
+    yapping("%u\n", c % d);
+
+    edgy (a < 5) {
+        yapping("less\n");
+    } amogus {
+        yapping("not less\n");
+    }
+
+    bussin 0;
+}

@@ -3096,6 +3096,65 @@ bool expression_is_long(ASTNode *node)
     }
 }
 
+bool expression_is_unsigned(ASTNode *node)
+{
+    if (!node)
+        return false;
+    if (get_expression_pointer_level(node) > 0)
+        return false;
+    if (node->modifiers.is_unsigned)
+        return true;
+    switch (node->type)
+    {
+    case NODE_INT:
+    case NODE_SHORT:
+        return node->modifiers.is_unsigned;
+    case NODE_IDENTIFIER:
+    {
+        Variable *var = get_variable(node->data.name);
+        if (var != NULL)
+            return var->desc.modifiers.is_unsigned;
+        return false;
+    }
+    case NODE_OPERATION:
+        return node->modifiers.is_unsigned ||
+               expression_is_unsigned(node->data.op.left) ||
+               expression_is_unsigned(node->data.op.right);
+    case NODE_UNARY_OPERATION:
+        return expression_is_unsigned(node->data.unary.operand);
+    case NODE_ARRAY_ACCESS:
+    {
+        Variable *var = node->data.array.name.data
+                            ? get_variable(node->data.array.name)
+                            : NULL;
+        if (var != NULL)
+            return var->desc.modifiers.is_unsigned;
+        return node->modifiers.is_unsigned;
+    }
+    case NODE_FUNC_CALL:
+    {
+        Function *fn = get_function(node->data.func_call.function_name);
+        if (fn != NULL)
+            return fn->return_desc.modifiers.is_unsigned;
+        return false;
+    }
+    case NODE_STRUCT_ACCESS:
+    {
+        StructDef *def = NULL;
+        void *base = NULL;
+        StructField *fld = NULL;
+        if (resolve_struct_access(node, &def, &base, &fld, false))
+            return fld->desc.modifiers.is_unsigned;
+        fld = static_struct_field(node);
+        return fld != NULL && fld->desc.modifiers.is_unsigned;
+    }
+    case NODE_ASSIGNMENT:
+        return expression_is_unsigned(node->data.op.left);
+    default:
+        return false;
+    }
+}
+
 static StructDef *get_struct_def_for_expression(ASTNode *expr)
 {
     if (!expr)
@@ -3492,6 +3551,11 @@ void *handle_binary_operation(ASTNode *node)
     else if (left_type == VAR_INT || right_type == VAR_INT)
         promoted_type = VAR_INT;
 
+    bool is_unsigned = node->modifiers.is_unsigned ||
+                       expression_is_unsigned(node->data.op.left) ||
+                       expression_is_unsigned(node->data.op.right);
+    node->modifiers.is_unsigned = is_unsigned;
+
     void *result = NULL;
 
     // Allocate and evaluate operands based on promoted type.
@@ -3635,33 +3699,11 @@ void *handle_binary_operation(ASTNode *node)
                 *(int *)result =
                     0; // Define a fallback behavior for int division by zero
             }
-            /* The OTHER trapping case, and the one a zero check alone
-               misses: INT_MIN / -1. The mathematical result (2147483648)
-               is not representable in int, C leaves it undefined, and on
-               x86-64 `idiv` raises #DE for it exactly as it does for a
-               zero divisor -- so this crashed the interpreter with SIGFPE
-               rather than producing a value or a diagnostic (#272/#273).
-               Handled like division by zero, since the situation is the
-               same one: there is no correct int to return, so say so
-               instead of trapping.
-
-               Unlike OP_MOD's matching guard below, this one does NOT
-               consider node->modifiers.is_unsigned -- because this arm
-               has no unsigned branch at all to order it against. That
-               asymmetry is deliberate rather than an omission, and it is
-               recorded here because it will matter to whoever wires
-               unsigned arithmetic through: 0x80000000 / 0xFFFFFFFF is
-               perfectly well defined unsigned (and its answer really is
-               0), so once is_unsigned actually reaches a binary-op node
-               this branch would emit a diagnostic about "the most
-               negative rizz" for operands the user declared nonut.
-               Adding a check today would only pair one dead branch with
-               another: is_unsigned is never set on these nodes as things
-               stand -- `nonut rizz a = 0 - 1; a % 3` yields -1, not the
-               unsigned 0 -- so OP_MOD's own unsigned handling is
-               unreachable in that shape too (PR #310 review). Fix the
-               propagation first; then this guard needs the same
-               is_unsigned ordering OP_MOD already has. */
+            else if (is_unsigned)
+            {
+                *(int *)result = (int)((unsigned int)*(int *)left_value /
+                                       (unsigned int)*(int *)right_value);
+            }
             else if (*(int *)left_value == INT_MIN && *(int *)right_value == -1)
             {
                 yyerror("Division overflow: the most negative rizz divided "
@@ -3688,6 +3730,11 @@ void *handle_binary_operation(ASTNode *node)
                 yyerror("Division by zero");
                 *(short *)result =
                     0; // Define a fallback behavior for short division by zero
+            }
+            else if (is_unsigned)
+            {
+                *(short *)result = (short)((unsigned short)*(short *)left_value /
+                                           (unsigned short)*(short *)right_value);
             }
             else
             {
@@ -3763,6 +3810,11 @@ void *handle_binary_operation(ASTNode *node)
                 yyerror("Modulo by zero");
                 *(short *)result = 0;
             }
+            else if (is_unsigned)
+            {
+                *(short *)result = (short)((unsigned short)*(short *)left_value %
+                                           (unsigned short)*(short *)right_value);
+            }
             else
             {
                 *(short *)result = *(short *)left_value % *(short *)right_value;
@@ -3771,46 +3823,62 @@ void *handle_binary_operation(ASTNode *node)
         break;
     case OP_LT:
         if (promoted_type == VAR_INT)
-            *(int *)result = *(int *)left_value < *(int *)right_value;
+            *(int *)result = is_unsigned
+                ? ((unsigned int)*(int *)left_value < (unsigned int)*(int *)right_value)
+                : (*(int *)left_value < *(int *)right_value);
         else if (promoted_type == VAR_FLOAT)
             *(int *)result = *(float *)left_value < *(float *)right_value;
         else if (promoted_type == VAR_DOUBLE)
             *(int *)result = *(double *)left_value < *(double *)right_value;
         else if (promoted_type == VAR_SHORT)
-            *(int *)result = *(short *)left_value < *(short *)right_value;
+            *(int *)result = is_unsigned
+                ? ((unsigned short)*(short *)left_value < (unsigned short)*(short *)right_value)
+                : (*(short *)left_value < *(short *)right_value);
         break;
 
     case OP_GT:
         if (promoted_type == VAR_INT)
-            *(int *)result = *(int *)left_value > *(int *)right_value;
+            *(int *)result = is_unsigned
+                ? ((unsigned int)*(int *)left_value > (unsigned int)*(int *)right_value)
+                : (*(int *)left_value > *(int *)right_value);
         else if (promoted_type == VAR_FLOAT)
             *(int *)result = *(float *)left_value > *(float *)right_value;
         else if (promoted_type == VAR_DOUBLE)
             *(int *)result = *(double *)left_value > *(double *)right_value;
         else if (promoted_type == VAR_SHORT)
-            *(int *)result = *(short *)left_value > *(short *)right_value;
+            *(int *)result = is_unsigned
+                ? ((unsigned short)*(short *)left_value > (unsigned short)*(short *)right_value)
+                : (*(short *)left_value > *(short *)right_value);
         break;
 
     case OP_LE:
         if (promoted_type == VAR_INT)
-            *(int *)result = *(int *)left_value <= *(int *)right_value;
+            *(int *)result = is_unsigned
+                ? ((unsigned int)*(int *)left_value <= (unsigned int)*(int *)right_value)
+                : (*(int *)left_value <= *(int *)right_value);
         else if (promoted_type == VAR_FLOAT)
             *(int *)result = *(float *)left_value <= *(float *)right_value;
         else if (promoted_type == VAR_DOUBLE)
             *(int *)result = *(double *)left_value <= *(double *)right_value;
         else if (promoted_type == VAR_SHORT)
-            *(int *)result = *(short *)left_value <= *(short *)right_value;
+            *(int *)result = is_unsigned
+                ? ((unsigned short)*(short *)left_value <= (unsigned short)*(short *)right_value)
+                : (*(short *)left_value <= *(short *)right_value);
         break;
 
     case OP_GE:
         if (promoted_type == VAR_INT)
-            *(int *)result = *(int *)left_value >= *(int *)right_value;
+            *(int *)result = is_unsigned
+                ? ((unsigned int)*(int *)left_value >= (unsigned int)*(int *)right_value)
+                : (*(int *)left_value >= *(int *)right_value);
         else if (promoted_type == VAR_FLOAT)
             *(int *)result = *(float *)left_value >= *(float *)right_value;
         else if (promoted_type == VAR_DOUBLE)
             *(int *)result = *(double *)left_value >= *(double *)right_value;
         else if (promoted_type == VAR_SHORT)
-            *(int *)result = *(short *)left_value >= *(short *)right_value;
+            *(int *)result = is_unsigned
+                ? ((unsigned short)*(short *)left_value >= (unsigned short)*(short *)right_value)
+                : (*(short *)left_value >= *(short *)right_value);
         break;
 
     case OP_EQ:
@@ -5562,6 +5630,10 @@ long long evaluate_expression_long(ASTNode *node)
         long long r = evaluate_expression_long(node->data.op.right);
         unsigned long long ul = (unsigned long long)l;
         unsigned long long ur = (unsigned long long)r;
+        bool is_unsigned = node->modifiers.is_unsigned ||
+                           expression_is_unsigned(node->data.op.left) ||
+                           expression_is_unsigned(node->data.op.right);
+        node->modifiers.is_unsigned = is_unsigned;
         switch (op)
         {
         case OP_PLUS:
@@ -5576,22 +5648,22 @@ long long evaluate_expression_long(ASTNode *node)
                 yyerror("Division by zero");
                 return 0;
             }
-            return l / r;
+            return is_unsigned ? (long long)(ul / ur) : (l / r);
         case OP_MOD:
             if (r == 0)
             {
                 yyerror("Modulo by zero");
                 return 0;
             }
-            return l % r;
+            return is_unsigned ? (long long)(ul % ur) : (l % r);
         case OP_LT:
-            return l < r;
+            return is_unsigned ? (ul < ur) : (l < r);
         case OP_GT:
-            return l > r;
+            return is_unsigned ? (ul > ur) : (l > r);
         case OP_LE:
-            return l <= r;
+            return is_unsigned ? (ul <= ur) : (l <= r);
         case OP_GE:
-            return l >= r;
+            return is_unsigned ? (ul >= ur) : (l >= r);
         case OP_EQ:
             return l == r;
         case OP_NE:
