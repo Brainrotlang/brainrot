@@ -553,6 +553,8 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
             find_struct_field(static_def, node->data.struct_access.member_name);
         return f ? f->desc.pointer_level : 0;
     }
+    case NODE_ASSIGNMENT:
+        return infer_expression_pointer_level(node->data.op.left, analyzer);
     default:
         return node->pointer_level;
     }
@@ -1092,6 +1094,9 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
             find_struct_field(static_def, node->data.struct_access.member_name);
         return f ? f->desc.type : NONE;
     }
+
+    case NODE_ASSIGNMENT:
+        return infer_expression_type(node->data.op.left, analyzer);
 
     default:
         return NONE;
