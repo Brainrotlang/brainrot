@@ -1,0 +1,20 @@
+🚽 Regression for #376: yapping/baka/yapto format parser must not read past
+🚽 end of buffer on a bare/incomplete % specifier. Previously the flag-skipping
+🚽 loop used strchr(set, *format) without a NUL guard, and strchr(set, '\0')
+🚽 returns non-NULL (the set's own terminator), so a format ending with "%",
+🚽 "%5", "%.*", "%l", "%h", "%j" etc walked off the end and read OOB.
+🚽 Fixed by guarding the loop with *format && and guarding the length-modifier
+🚽 check similarly. Each yapping below ends with an incomplete specifier and
+🚽 must not crash, not emit garbage, and must still flush the literal prefix
+🚽 deterministically (the incomplete conversion is dropped, prefix is kept).
+skibidi main {
+    yapping("A%", 1);
+    yapping("B%5", 2);
+    yapping("C%.*", 3);
+    yapping("D%l", 4);
+    yapping("E%h", 5);
+    yapping("F%j", 6);
+    yapping("G%#", 7);
+    yapping("ok");
+    bussin 0;
+}
