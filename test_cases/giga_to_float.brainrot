@@ -1,0 +1,18 @@
+🚽 Issue #372: giga/thicc widening to float/double without 32-bit truncation
+skibidi main {
+    giga rizz a = 5000000000;
+    gigachad d = a;
+    yappin("%f\n", d);
+
+    gigachad mult = a * 2.0;
+    yappin("%f\n", mult);
+
+    thicc rizz b = 8000000000;
+    gigachad d2 = b;
+    yappin("%f\n", d2);
+
+    gigachad mult2 = 2.0 * b;
+    yappin("%f\n", mult2);
+
+    bussin 0;
+}
