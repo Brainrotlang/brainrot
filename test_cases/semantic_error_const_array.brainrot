@@ -1,0 +1,6 @@
+🚽 Test case: const array element assignment error
+skibidi main {
+    deadass rizz a[3] = {1, 2, 3};
+    a[1] = a[1] + 100;
+    bussin 0;
+}
