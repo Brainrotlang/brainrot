@@ -2555,7 +2555,10 @@ void *handle_identifier(ASTNode *node, const String contextErrorMessage,
                 return &promoted_value;
             case VAR_INT:
             case VAR_ENUM:
-                promoted_value.dvalue = (double)var->value.ivalue;
+                if (var->desc.modifiers.is_long || var->desc.modifiers.is_long_long)
+                    promoted_value.dvalue = (double)var->value.llvalue;
+                else
+                    promoted_value.dvalue = (double)var->value.ivalue;
                 return &promoted_value;
             case VAR_CHAR:
             case VAR_SHORT:
@@ -2582,7 +2585,10 @@ void *handle_identifier(ASTNode *node, const String contextErrorMessage,
                 return &var->value.fvalue;
             case VAR_INT:
             case VAR_ENUM:
-                promoted_value.fvalue = (float)var->value.ivalue;
+                if (var->desc.modifiers.is_long || var->desc.modifiers.is_long_long)
+                    promoted_value.fvalue = (float)var->value.llvalue;
+                else
+                    promoted_value.fvalue = (float)var->value.ivalue;
                 return &promoted_value.fvalue;
             case VAR_CHAR:
             case VAR_SHORT:
@@ -3509,11 +3515,15 @@ void *handle_binary_operation(ASTNode *node)
         right_value = SAFE_MALLOC(float);
         *(float *)left_value =
             (left_type == VAR_INT)
-                ? (float)evaluate_expression_int(node->data.op.left)
+                ? (float)(expression_is_long(node->data.op.left)
+                              ? evaluate_expression_long(node->data.op.left)
+                              : evaluate_expression_int(node->data.op.left))
                 : evaluate_expression_float(node->data.op.left);
         *(float *)right_value =
             (right_type == VAR_INT)
-                ? (float)evaluate_expression_int(node->data.op.right)
+                ? (float)(expression_is_long(node->data.op.right)
+                              ? evaluate_expression_long(node->data.op.right)
+                              : evaluate_expression_int(node->data.op.right))
                 : evaluate_expression_float(node->data.op.right);
         break;
 
@@ -3522,13 +3532,17 @@ void *handle_binary_operation(ASTNode *node)
         right_value = SAFE_MALLOC(double);
         *(double *)left_value =
             (left_type == VAR_INT)
-                ? (double)evaluate_expression_int(node->data.op.left)
+                ? (double)(expression_is_long(node->data.op.left)
+                               ? evaluate_expression_long(node->data.op.left)
+                               : evaluate_expression_int(node->data.op.left))
             : (left_type == VAR_FLOAT)
                 ? (double)evaluate_expression_float(node->data.op.left)
                 : evaluate_expression_double(node->data.op.left);
         *(double *)right_value =
             (right_type == VAR_INT)
-                ? (double)evaluate_expression_int(node->data.op.right)
+                ? (double)(expression_is_long(node->data.op.right)
+                               ? evaluate_expression_long(node->data.op.right)
+                               : evaluate_expression_int(node->data.op.right))
             : (right_type == VAR_FLOAT)
                 ? (double)evaluate_expression_float(node->data.op.right)
                 : evaluate_expression_double(node->data.op.right);
@@ -4806,7 +4820,9 @@ float evaluate_expression_float(ASTNode *node)
     case NODE_DOUBLE:
         return (float)node->data.dvalue;
     case NODE_INT:
-        return (float)node->data.ivalue;
+        return (float)((node->modifiers.is_long || node->modifiers.is_long_long)
+                           ? node->data.llvalue
+                           : (long long)node->data.ivalue);
     case NODE_IDENTIFIER:
     {
         if (get_expression_pointer_level(node) > 0)
@@ -4959,7 +4975,9 @@ double evaluate_expression_double(ASTNode *node)
     case NODE_FLOAT:
         return (double)node->data.fvalue;
     case NODE_INT:
-        return (double)node->data.ivalue;
+        return (double)((node->modifiers.is_long || node->modifiers.is_long_long)
+                            ? node->data.llvalue
+                            : (long long)node->data.ivalue);
     case NODE_IDENTIFIER:
     {
         if (get_expression_pointer_level(node) > 0)
