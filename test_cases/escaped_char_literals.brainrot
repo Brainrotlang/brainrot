@@ -4,6 +4,7 @@ skibidi main {
     yap slash = '\\';
     yap carriage = '\r';
     yap nul = '\0';
-    yapping("%d %d %d %d %d", newline, tab, slash, carriage, nul);
+    yap quote = '\'';   🚽 the escaped char is also the token delimiter
+    yapping("%d %d %d %d %d %d", newline, tab, slash, carriage, nul, quote);
     bussin 0;
 }
