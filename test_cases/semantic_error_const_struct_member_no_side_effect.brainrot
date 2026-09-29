@@ -1,0 +1,19 @@
+🚽 #375: a write to a member of a deadass struct must be rejected during
+🚽 semantic analysis, so the program never starts running and the yapping()
+🚽 below never executes. Covers a direct member write and a nested member
+🚽 chain, whose root is found by recursing through the inner member access.
+gang Point {
+    rizz x;
+};
+gang Outer {
+    gang Point inner;
+};
+
+skibidi main {
+    deadass gang Point p;
+    deadass gang Outer o;
+    yapping("side effect");
+    p.x = 2;
+    o.inner.x = 3;
+    bussin 0;
+}

@@ -1,0 +1,10 @@
+🚽 #375: a write to an element of a deadass array must be rejected during
+🚽 semantic analysis -- the same contract a const scalar gets -- so the
+🚽 program never starts running. The yapping() below must never execute: if
+🚽 the check were only a runtime trap, "side effect" would print first.
+skibidi main {
+    deadass rizz a[1] = {1};
+    yapping("side effect");
+    a[0] = 2;
+    bussin 0;
+}

@@ -6723,6 +6723,34 @@ void check_const_assignment(const String name)
     }
 }
 
+static bool get_lvalue_root_name(const ASTNode *node, String *name)
+{
+    if (!node)
+        return false;
+    if (node->type == NODE_IDENTIFIER)
+    {
+        *name = node->data.name;
+        return true;
+    }
+    if (node->type == NODE_ARRAY_ACCESS)
+    {
+        if (node->data.array.name.data)
+        {
+            *name = node->data.array.name;
+            return true;
+        }
+        return get_lvalue_root_name(node->data.array.base, name);
+    }
+    if (node->type == NODE_STRUCT_ACCESS)
+    {
+        ASTNode *object = node->data.struct_access.object;
+        if (get_expression_pointer_level(object) > 0)
+            return false;
+        return get_lvalue_root_name(object, name);
+    }
+    return false;
+}
+
 bool is_expression(ASTNode *node, VarType type)
 {
     if (!node)
@@ -6907,10 +6935,13 @@ void execute_assignment(ASTNode *node)
     int target_pointer_level = get_expression_pointer_level(target);
     TypeModifiers mods = node->modifiers;
 
+    String root_name = {0};
+    if (get_lvalue_root_name(target, &root_name))
+        check_const_assignment(root_name);
+
     if (target->type == NODE_IDENTIFIER)
     {
         String name = target->data.name;
-        check_const_assignment(name);
         Variable *var = get_variable(name);
         if (!var)
         {
