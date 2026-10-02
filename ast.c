@@ -749,6 +749,48 @@ ASTNode *create_struct_field_array_access_node(ASTNode *base,
     return node;
 }
 
+/* C array-to-pointer decay (#389), as an in-place rewrite: the array
+   expression `node` -- a bare array identifier (`xs`) or an array-typed
+   struct field (`s.arr`) -- becomes `&xs[0]` / `&s.arr[0]`.
+
+   Done as a rewrite, not as a new runtime rule, because `&xs[0]` already
+   works everywhere a pointer does -- call arguments, initializers,
+   assignments, returns, pointer arithmetic, struct-tag checks -- so every
+   one of those paths gets decay for free instead of each learning that an
+   array identifier may now stand for an address. The semantic analyzer
+   decides WHERE a pointer is expected and calls this; see
+   decay_array_operand() there.
+
+   In place because the parent holds `node` by pointer, and every node lives
+   in the AST arena, so nothing is freed and nothing leaks. */
+void decay_array_node_in_place(ASTNode *node)
+{
+    ASTNode *zero = create_int_node(0);
+    zero->modifiers = (TypeModifiers){0};
+    zero->line_number = node->line_number;
+    ASTNode *indices[1] = {zero};
+
+    ASTNode *element;
+    if (node->type == NODE_IDENTIFIER)
+    {
+        element = create_multi_array_access_node(node->data.name, indices, 1);
+    }
+    else
+    {
+        ASTNode *base = ARENA_ALLOC_ASTNODE();
+        *base = *node;
+        element = create_struct_field_array_access_node(base, indices, 1);
+    }
+    element->line_number = node->line_number;
+
+    memset(&node->data, 0, sizeof(node->data));
+    node->type = NODE_UNARY_OPERATION;
+    node->var_type = NONE;
+    node->pointer_level = 0;
+    node->is_array = false;
+    SET_DATA_UNARY_OP(node, element, OP_ADDRESS_OF);
+}
+
 // Function to rename the old create_array_access_node to maintain compatibility
 ASTNode *create_array_access_node_single(String name, ASTNode *index)
 {

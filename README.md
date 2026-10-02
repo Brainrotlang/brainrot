@@ -281,10 +281,6 @@ Current limitations include:
   (a parameter or other storage that outlives the call) rather than a
   copy — returning `&local` dangles once the call returns, the same
   undefined behavior as a scalar pointer return in C
-- Arrays cannot be passed or returned by value. Pass the first element's
-  address to a pointer parameter instead (`fill(&xs[0], n)`, not
-  `fill(xs, n)` — there is no array-to-pointer decay); the callee indexes it
-  as `p[i]` / `*(p + i)`, aliasing the caller's array like in C
 
 ## 🗺️ Roadmap
 

@@ -807,6 +807,7 @@ ASTNode *create_multi_array_access_node(String name, ASTNode *indices[],
 ASTNode *create_struct_field_array_access_node(ASTNode *base,
                                                ASTNode *indices[],
                                                int num_indices);
+void decay_array_node_in_place(ASTNode *node);
 
 /* User-defined functions */
 Function *create_function(String name, VarType return_type, Parameter *params,

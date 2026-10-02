@@ -1,0 +1,33 @@
+🚽 Test case: issue #389 -- the array forms that still do NOT decay, each
+🚽 refused with a message naming what to write instead.
+🚽
+🚽 1. A 2-D array. In C it decays to a pointer to its first ROW
+🚽    (`rizz (*)[2]`), a type this language cannot spell; quietly decaying
+🚽    it to `&m[0][0]` would accept code C rejects.
+🚽 2. An array whose element type is not the pointer's. Decay makes this
+🚽    one keystroke away, and without the check the callee reads and
+🚽    writes float bits as ints. The same check applies to an explicit
+🚽    `&fs[0]`, which used to be accepted silently too.
+🚽 3. `&xs`. In C that is a pointer to the whole array; here it used to
+🚽    evaluate to the interpreter's own slot holding the array's storage
+🚽    pointer -- a valid-looking pointer to the wrong thing (`*p` printed
+🚽    an unrelated number).
+🚽
+🚽 An array passed to a NON-pointer parameter is covered by
+🚽 array_arg_scalar_param_fail.brainrot.
+
+rizz first(rizz *p) {
+    bussin p[0];
+}
+
+skibidi main {
+    rizz m[2][2];
+    chad fs[2] = {1.5, 2.5};
+    rizz xs[2] = {4, 5};
+
+    yapping("%d", first(m));
+    yapping("%d", first(fs));
+    yapping("%d", first(&fs[0]));
+    rizz *p = &xs;
+    bussin 0;
+}

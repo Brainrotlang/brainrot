@@ -49,9 +49,12 @@ typedef struct SymbolEntry
     bool is_const;
     bool is_function;
     /* Set for a `T name[N]` declaration (NODE_DECLARATION's own
-       ASTNode.is_array, see ast.h) -- distinct from pointer_level: this
-       language doesn't decay arrays to pointers, so an array identifier
-       reports pointer_level 0, the same as a scalar. type still holds
+       ASTNode.is_array, see ast.h) -- distinct from pointer_level: an
+       array identifier reports pointer_level 0, the same as a scalar.
+       Where a pointer is expected, the analyzer rewrites it to `&name[0]`
+       instead (C array-to-pointer decay, #389 -- decay_array_operand(),
+       semantic_analyzer.c), so nothing downstream ever sees an array
+       identifier standing for an address. type still holds
        the ELEMENT type (VAR_INT for `rizz arr[N]`), so callers that need
        to tell "array of T" from "a single T" apart (e.g. STDROT_ANY
        argument checking, where Variable's value union aliases a
@@ -60,6 +63,12 @@ typedef struct SymbolEntry
        symbols -- those don't track array-ness in Parameter (ast.h) at
        all yet. */
     bool is_array;
+    /* Number of dimensions of an is_array symbol (1 for `rizz a[N]`, 2 for
+       `rizz m[R][C]`), 0 otherwise or when unknown. Only a 1-D array
+       decays to a pointer to its first element (#389) -- a 2-D one would
+       decay to a pointer-to-row, a type this language has no spelling for.
+     */
+    int array_rank;
     VarType return_type; /* For functions */
     int return_pointer_level;
     int line_number;

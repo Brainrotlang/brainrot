@@ -1,0 +1,132 @@
+🚽 Test case: issue #389 -- C array-to-pointer decay, and array parameters.
+🚽
+🚽 Before, an array could not reach a function at all: `fill(xs, 3)` for a
+🚽 `rizz *p` parameter was rejected ("int arrays cannot be passed to a
+🚽 function"), `rizz sum(rizz a[], rizz n)` was a syntax error, and the
+🚽 only route was spelling out `&xs[0]` by hand. Now an array used where a
+🚽 pointer is expected stands for the address of its first element, as in
+🚽 C, and `T a[]` / `T a[N]` parameters are pointers.
+🚽
+🚽 Every decay context is exercised below, and each one is checked by
+🚽 WRITING through the decayed pointer and reading the caller's array
+🚽 back -- a decay that produced a copy, or the address of the wrong
+🚽 thing, would leave the caller's values unchanged.
+
+gang E {
+    chad x;
+    rizz id;
+};
+
+gang Box {
+    rizz vals[3];
+};
+
+skibidi fill(rizz *p, rizz n) {
+    flex (rizz i = 0; i < n; i = i + 1) {
+        p[i] = i * 10;
+    }
+}
+
+rizz sum(rizz a[], rizz n) {
+    rizz t = 0;
+    flex (rizz i = 0; i < n; i = i + 1) {
+        t = t + a[i];
+    }
+    bussin t;
+}
+
+🚽 N is not checked, as in C -- the parameter is a pointer.
+rizz sum3(rizz a[3]) {
+    bussin a[0] + a[1] + a[2];
+}
+
+🚽 The callee sees a pointer, so maxxing(a) is a pointer's size, not the
+🚽 caller's array size.
+rizz param_size(rizz a[]) {
+    bussin maxxing(a);
+}
+
+skibidi bump_all(gang E pool[], rizz n) {
+    flex (rizz i = 0; i < n; i = i + 1) {
+        pool[i].x = pool[i].x + 100.0;
+    }
+}
+
+skibidi shout(yap *s) {
+    s[0] = 'H';
+}
+
+rizz deref_second(rizz **pp) {
+    bussin *pp[1];
+}
+
+🚽 `bussin` of an array field from a pointer-returning function.
+rizz *vals_of(gang Box *bp) {
+    bussin bp.vals;
+}
+
+skibidi main {
+    rizz xs[3] = {1, 2, 3};
+
+    🚽 As a call argument, to `T *` and to `T a[]` / `T a[N]`.
+    fill(xs, 3);
+    yapping("fill: %d %d %d", xs[0], xs[1], xs[2]);
+    yapping("sum: %d sum3: %d", sum(xs, 3), sum3(xs));
+    yapping("sizes: %zu %d", maxxing(xs), param_size(xs));
+
+    🚽 As an initializer and an assigned value.
+    rizz *p = xs;
+    p[2] = 99;
+    yapping("init: %d %d", *p, xs[2]);
+    p = xs + 1;
+    *p = 11;
+    yapping("assign: %d", xs[1]);
+
+    🚽 Under `*`, beside an integer, and compared with a pointer.
+    *xs = 5;
+    *(xs + 2) = 7;
+    yapping("deref: %d %d %d", xs[0], xs[1], *(xs + 2));
+    edgy (p == xs + 1) {
+        yapping("compare: ok");
+    }
+
+    🚽 Struct arrays and array struct fields decay the same way.
+    gang E pool[2];
+    pool[0].x = 1.5;
+    pool[1].x = 2.5;
+    bump_all(pool, 2);
+    gang E *ep = pool;
+    yapping("structs: %.1f %.1f", pool[0].x, ep[1].x);
+
+    gang Box b;
+    b.vals[0] = 7;
+    b.vals[1] = 8;
+    b.vals[2] = 9;
+    yapping("field: %d", sum(b.vals, 3));
+    rizz *v = vals_of(&b);
+    v[1] = 80;
+    yapping("returned: %d", b.vals[1]);
+
+    🚽 A yap array still prints as a string through a native, and also
+    🚽 decays for a Brainrot `yap *` parameter.
+    yap buf[3];
+    buf[0] = 'h';
+    buf[1] = 'i';
+    buf[2] = 0;
+    shout(buf);
+    yapping("yap: %s", buf);
+
+    🚽 An array of pointers decays to a pointer to pointer.
+    rizz a = 1;
+    rizz c = 2;
+    rizz *ptrs[2] = {&a, &c};
+    yapping("pointers: %d", deref_second(ptrs));
+
+    🚽 Each element of an array-of-pointers braced initializer decays.
+    rizz ys[2] = {6, 7};
+    rizz *rows[2] = {xs, ys};
+    rizz *r = rows[1];
+    r[0] = 60;
+    yapping("rows: %d %d", *rows[0], ys[0]);
+    bussin 0;
+}
