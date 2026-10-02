@@ -390,7 +390,8 @@ skibidi main {
 
 - An **array** cannot be passed as an argument — a parameter can never be an
   array type, and array-to-pointer decay is not implemented. Pass an element
-  (`f(arr[0])`) or its address (`f(&arr[0])`).
+  (`f(arr[0])`) or its address (`f(&arr[0])`); a `rizz *p` parameter given
+  `&arr[0]` reaches the whole array as `p[i]` (see §7.8).
 - Reassigning a `rant` — parameter or local — leaks its previous buffer
   ([#277](https://github.com/Brainrotlang/brainrot/issues/277)).
 - Argument types are only checked against parameter types in specific cases
@@ -425,6 +426,36 @@ Supported forms:
 - Dereference: `*expr`
 - Pointer assignment and comparison
 - Pointer arithmetic: `pointer +/- integer`
+- Indexing: `p[i]` is `*(p + i)`, as a value or an assignment target
+- Store through a computed address: `*(p + i) = v;`
+
+#### Walking an array through a pointer
+
+An array can't be passed to a function (see §7.7), but its first element's
+address can — and indexing that pointer reaches every element, aliasing the
+caller's array exactly as in C:
+
+```c
+skibidi fill(rizz *p, rizz n) {
+    flex (rizz i = 0; i < n; i = i + 1) {
+        p[i] = i * 10;
+    }
+}
+
+skibidi main {
+    rizz xs[3] = {1, 2, 3};
+    fill(&xs[0], 3);                         🚽 pass &xs[0], not xs
+    yapping("%d %d %d", xs[0], xs[1], xs[2]);  🚽 0 10 20
+    bussin 0;
+}
+```
+
+`p[i]` strides by the pointee's size (`chad *` by 4 bytes, `gigachad *` by 8,
+a `rizz **` by a pointer's width) and works on any typed pointer — a `skibidi *`
+has no pointee size and can't be indexed. As in C, a pointer carries no
+extent, so `p[i]` is **not** bounds-checked; an array index is. Only one index
+is accepted: index a `rizz **pp` one level at a time (`rizz *row = pp[i];
+row[j]`).
 
 #### Call by reference (pointer-based)
 
@@ -1475,7 +1506,9 @@ indexing and slicing used to split a delimited record.
 - Complex data structures beyond basic structs, and advanced memory management are not fully supported.
 - Struct/union function parameters and return values must be a plain
   variable of the exact matching type (see [§7.9](#79-structs-gang)); arrays
-  can't be passed or returned by value at all, only via a pointer parameter.
+  can't be passed or returned by value at all, only via a pointer parameter
+  given the first element's address (`f(&arr[0])`, then `p[i]` in the
+  callee — see [§7.8](#78-pointers-and-call-by-reference)).
 - Error reporting is minimal, typically halting on the first serious parse error.
 
 ---

@@ -455,5 +455,7 @@
     "float_exponent_literal": "10000000000.0\n200000.0\n1000.0\n0.50\n1.00\n0.0010\n123",
     "float_inc_dec": "2.50\n3.50\n2.50\n1.50\n3.50\n2.50\n4.50\n6",
     "lex_error_unexpected_tilde": "Error: unexpected character '~' at line 8\nParsing failed",
-    "lex_error_unexpected_dollar": "Error: unexpected character '$' at line 6\nParsing failed"
+    "lex_error_unexpected_dollar": "Error: unexpected character '$' at line 6\nParsing failed",
+    "scalar_pointer_index": "bump: 199\ncaller sees: 100 99 3\nfill: 0 10 20\nfill_via_deref: 1 11 21\nchad: 0.5 1.5 2.5\ngigachad: 0.25 0.75 3.00\nyap: abZ\nsmol: 1 2 300\ncap: 0 1\nnonut: 1 4000000000\ngiga: 5000000000 3\nrelative: 10 21 30 40\nvalue: 42 20 40\ncondition: ok\nsizeof: 4 8\nmulti-level: 1 50",
+    "scalar_pointer_two_index_fail": "Error: A pointer takes exactly one index -- index a multi-level pointer one level at a time at line 20"
 }

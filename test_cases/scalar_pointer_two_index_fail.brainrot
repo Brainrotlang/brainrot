@@ -1,0 +1,20 @@
+🚽 Test case: issue #389 -- a scalar pointer takes exactly one index.
+🚽
+🚽 `p[i]` is *(p + i), computed from p's own value. `pp[i][j]` on a
+🚽 `rizz **` would need the first index's result re-read as a pointer
+🚽 before the second applies, which the single-node element-address
+🚽 computation does not do -- so it is refused with a message naming the
+🚽 workaround, rather than silently applying the second index to the
+🚽 wrong base. The same shape on a `rizz *` (where C would reject p[i][j]
+🚽 outright) is refused the same way.
+🚽
+🚽 Index one level at a time instead: `rizz *row = pp[i]; row[j]` (see
+🚽 scalar_pointer_index.brainrot).
+
+skibidi main {
+    rizz xs[2] = {1, 2};
+    rizz *p = &xs[0];
+    rizz **pp = &p;
+    yapping("before: %d", pp[0][1]);
+    bussin 0;
+}

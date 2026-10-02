@@ -2101,6 +2101,12 @@ assignment_target:
             { $$ = $1; }
     | TIMES assignment_target %prec UMINUS
         { $$ = create_unary_operation_node(OP_DEREFERENCE, $2); }
+    /* `*(p + i) = v` -- a write through a computed address. The read form
+       `*(p + i)` was already an expression; without this the matching
+       store was a syntax error, so a callee handed `&arr[0]` could read
+       the caller's array but not write it (#389). */
+    | TIMES LPAREN expression RPAREN %prec UMINUS
+        { $$ = create_unary_operation_node(OP_DEREFERENCE, $3); }
     ;
 
 multi_dimension_access:

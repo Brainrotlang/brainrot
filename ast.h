@@ -791,6 +791,8 @@ size_t handle_sizeof(ASTNode *node);
 size_t get_type_size(String name);
 size_t get_type_size_for_descriptor(VarType type, int pointer_level,
                                     TypeModifiers mods);
+bool is_indexable_scalar_pointer(VarType type, int pointer_level,
+                                 bool is_array);
 void *handle_function_call(ASTNode *node);
 ASTNode *create_multi_array_declaration_node(String name,
                                              const int dimensions[],

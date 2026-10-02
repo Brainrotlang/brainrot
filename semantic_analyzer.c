@@ -434,7 +434,17 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
         SymbolEntry *symbol = find_symbol(analyzer, node->data.array.name);
         if (symbol && symbol->is_array)
             return symbol->pointer_level;
+        /* `p[i]` on a scalar pointer is one level less than p (#389) --
+           the static mirror of resolve_array_access_element()'s branch. */
+        if (symbol &&
+            is_indexable_scalar_pointer(symbol->type, symbol->pointer_level,
+                                        symbol->is_array))
+            return symbol->pointer_level - 1;
         Variable *var = get_variable(node->data.array.name);
+        if (var &&
+            is_indexable_scalar_pointer(var->desc.type, var->desc.pointer_level,
+                                        var->desc.is_array))
+            return var->desc.pointer_level - 1;
         return var && var->desc.is_array ? var->desc.pointer_level
                                          : node->pointer_level;
     }
@@ -930,9 +940,17 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
            cover it. */
         if (symbol && symbol->type == VAR_STRING && !symbol->is_array)
             return VAR_CHAR;
+        /* `p[i]` on a scalar pointer yields its pointee type (#389). */
+        if (symbol &&
+            is_indexable_scalar_pointer(symbol->type, symbol->pointer_level,
+                                        symbol->is_array))
+            return symbol->type;
 
         Variable *var = get_variable(array_name);
-        if (var && var->desc.is_array)
+        if (var &&
+            (var->desc.is_array ||
+             is_indexable_scalar_pointer(
+                 var->desc.type, var->desc.pointer_level, var->desc.is_array)))
             return var->desc.type;
         if (var && var->desc.type == VAR_STRING && !var->desc.is_array &&
             var->desc.pointer_level == 0)

@@ -293,6 +293,26 @@ size_t get_type_size_for_descriptor(VarType type, int pointer_level,
     }
 }
 
+/* Whether `p[i]` on a non-array variable of this descriptor is the C
+   element access *(p + i) (#389): a pointer whose pointee size is known,
+   so the stride is get_type_size_for_descriptor(type, pointer_level - 1).
+
+   Struct/union pointers are excluded -- they have their own branch (#311),
+   because their stride comes from the tag's StructDef, which this
+   descriptor-only signature cannot see. So is an opaque single-level
+   VAR_PTR/VAR_VOID pointer, whose pointee size is unknown: the same shape
+   pointer arithmetic already refuses. Shared by the runtime
+   (resolve_array_access_element(), evaluate_multi_array_access()) and the
+   semantic analyzer's static mirrors, so the two cannot disagree about
+   which pointers are indexable. */
+bool is_indexable_scalar_pointer(VarType type, int pointer_level, bool is_array)
+{
+    if (is_array || pointer_level <= 0 || type == VAR_STRUCT)
+        return false;
+    return get_type_size_for_descriptor(type, pointer_level - 1,
+                                        (TypeModifiers){0}) != 0;
+}
+
 static void write_value_to_address(void *address, VarType type,
                                    int pointer_level, ASTNode *expr,
                                    TypeModifiers mods, bool packed_storage);
@@ -1984,6 +2004,46 @@ void *evaluate_multi_array_access(ASTNode *node)
         return (char *)ptr_base + idx * (ptrdiff_t)pointee->total_size;
     }
 
+    /* The scalar counterpart (#389): `p[i]` on a `rizz *`, `chad *`,
+       `yap *`, ... or on a multi-level pointer, whose element is itself a
+       pointer. Same reasoning as the struct branch above -- *(p + i), no
+       extent, so no bounds check -- with the stride taken from the
+       pointee's descriptor, as pointer_arith_scale() does for `p + i`.
+       Unlike that function this reads the Variable's own modifiers rather
+       than the node's, which is what makes a `giga rizz *` stride 8.
+
+       A single index only: `pp[i][j]` would need the first index's result
+       re-read as a pointer, which this one-node address computation does
+       not do. `(pp[i])[j]` is not expressible either, so the user writes
+       the C-equivalent two steps (`rizz *row = pp[i]; row[j]`). */
+    if (is_indexable_scalar_pointer(var->desc.type, var->desc.pointer_level,
+                                    var->desc.is_array))
+    {
+        if (num_indices != 1 || !node->data.array.indices[0])
+        {
+            yyerror("A pointer takes exactly one index -- index a "
+                    "multi-level pointer one level at a time");
+            exit(EXIT_FAILURE);
+        }
+        void *ptr_base = (void *)var->value.pvalue;
+        if (!ptr_base)
+        {
+            yyerror("Indexing a null pointer");
+            exit(EXIT_FAILURE);
+        }
+        size_t stride = get_type_size_for_descriptor(
+            var->desc.type, var->desc.pointer_level - 1, var->desc.modifiers);
+        ptrdiff_t idx = evaluate_expression_int(node->data.array.indices[0]);
+        return (char *)ptr_base + idx * (ptrdiff_t)stride;
+    }
+    if (!var->desc.is_array && var->desc.pointer_level > 0 &&
+        var->desc.type != VAR_STRUCT)
+    {
+        yyerror("Cannot index a type-erased pointer -- its pointee size is "
+                "unknown");
+        exit(EXIT_FAILURE);
+    }
+
     /* `s[i]` on a `rant` -- byte indexing (#251). The counterpart of
        resolve_array_access_element()'s VAR_STRING branch, which is what
        already told the caller to read the result as a VAR_CHAR; this
@@ -2715,6 +2775,19 @@ static bool resolve_array_access_element(ASTNode *node, ArrayAccessElement *out)
     {
         out->type = VAR_CHAR;
         out->pointer_level = 0;
+        out->modifiers = var->desc.modifiers;
+        out->dimensions = &var->desc.array_dimensions;
+        return true;
+    }
+    /* `p[i]` on a scalar pointer (#389) yields the pointee: one pointer
+       level less than p itself, as *(p + i) does. Reported here for the
+       same single-choke-point reason as the rant branch above -- every
+       scalar evaluator asks this what width to read. */
+    if (is_indexable_scalar_pointer(var->desc.type, var->desc.pointer_level,
+                                    var->desc.is_array))
+    {
+        out->type = var->desc.type;
+        out->pointer_level = var->desc.pointer_level - 1;
         out->modifiers = var->desc.modifiers;
         out->dimensions = &var->desc.array_dimensions;
         return true;
@@ -9096,6 +9169,10 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             if (bound)
             {
                 bound->desc.pointer_level = curr_param->desc.pointer_level;
+                /* The pointee's width modifiers (`giga rizz *p`, `nonut
+                   rizz *p`) decide the stride of `p[i]` (#389) -- dropping
+                   them strode a 64-bit pointee by sizeof(int). */
+                bound->desc.modifiers = mods;
                 /* A pointer-to-struct/union parameter (`gang Foo *pp`)
                    needs its tag copied too, same as the by-value VAR_STRUCT
                    case below -- resolve_struct_access()'s NODE_IDENTIFIER
