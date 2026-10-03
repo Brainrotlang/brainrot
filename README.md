@@ -281,8 +281,6 @@ Current limitations include:
   (a parameter or other storage that outlives the call) rather than a
   copy — returning `&local` dangles once the call returns, the same
   undefined behavior as a scalar pointer return in C
-- Arrays cannot be passed or returned by value (only via a pointer
-  parameter, which aliases the caller's array like in C)
 
 ## 🗺️ Roadmap
 

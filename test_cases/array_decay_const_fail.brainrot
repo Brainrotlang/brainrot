@@ -1,0 +1,22 @@
+🚽 Test case: issue #389 x #375 -- writing a deadass array through its
+🚽 decayed name.
+🚽
+🚽 `*cx = v` and `*(cx + i) = v` are the same write as `cx[i] = v`, which
+🚽 #381 rejects during semantic analysis. Before decay they did not
+🚽 compile at all ("Cannot dereference a non-pointer expression"); decay
+🚽 must not turn them into a way around const. The check runs before the
+🚽 operand decays -- afterwards the target is a dereferenced pointer, and
+🚽 writes through a pointer are deliberately not const-traced.
+🚽
+🚽 The yapping() before the writes is the point, as in
+🚽 semantic_error_const_array_no_side_effect: the harness compares stdout
+🚽 when it is non-empty, so this fails if interpretation ever starts.
+
+skibidi main {
+    deadass rizz cx[2] = {1, 2};
+    yapping("side effect");
+    *cx = 3;
+    *(cx + 1) = 4;
+    *(1 + cx) = 5;
+    bussin 0;
+}
