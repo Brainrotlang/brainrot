@@ -3123,6 +3123,55 @@ void semantic_visit_declaration(Visitor *self, ASTNode *node)
    array-index/struct-access/dereference-operand shapes of data.op.left
    are walked by the switch's NODE_ASSIGNMENT case before this is called,
    per the traversal invariant on semantic_analyze_with_scope_tracking(). */
+/* The variable whose constness governs a write to an element/member lvalue
+   (#375): an array element's root is the array it indexes, a struct member's
+   root is the aggregate it selects from, recursively (`s.arr[i]`,
+   `arr[i].f`, `s.a.b`). Mirrors get_lvalue_root_name() in ast.c -- the
+   runtime backstop execute_assignment() still runs -- including its implicit
+   pointer boundary: `p.x` with p a pointer writes the pointee, not p, so
+   constness does not propagate across that dereference. Inferred pointer
+   levels are used because runtime Variables don't exist yet here. */
+static bool semantic_lvalue_root_name(SemanticAnalyzer *analyzer, ASTNode *node,
+                                      String *name)
+{
+    if (!node)
+        return false;
+    switch (node->type)
+    {
+    case NODE_IDENTIFIER:
+        *name = node->data.name;
+        return true;
+    case NODE_ARRAY_ACCESS:
+        if (node->data.array.name.data)
+        {
+            *name = node->data.array.name;
+            return true;
+        }
+        return semantic_lvalue_root_name(analyzer, node->data.array.base, name);
+    case NODE_STRUCT_ACCESS:
+    {
+        ASTNode *object = node->data.struct_access.object;
+        if (infer_expression_pointer_level(object, analyzer) > 0)
+            return false;
+        return semantic_lvalue_root_name(analyzer, object, name);
+    }
+    default:
+        return false;
+    }
+}
+
+/* Same constness lookup the NODE_IDENTIFIER path below uses: the analyzer's
+   own symbol table first, then a runtime Variable as the fallback. */
+static bool semantic_name_is_const(SemanticAnalyzer *analyzer,
+                                   const String name)
+{
+    SymbolEntry *symbol = find_symbol(analyzer, name);
+    if (symbol)
+        return symbol->is_const;
+    Variable *var = get_variable(name);
+    return var && var->desc.modifiers.is_const;
+}
+
 void semantic_visit_assignment(Visitor *self, ASTNode *node)
 {
     SemanticAnalyzer *analyzer = (SemanticAnalyzer *)self;
@@ -3221,6 +3270,30 @@ void semantic_visit_assignment(Visitor *self, ASTNode *node)
                                    node->line_number > 0 ? node->line_number
                                                          : 1);
             }
+        }
+    }
+
+    /* An element/member write into a deadass aggregate gets the same
+       contract a const scalar gets just above (#375): rejected here, during
+       semantic analysis, so interpretation never starts and no earlier
+       statement runs. execute_assignment()'s runtime check stays as a
+       defensive backstop. */
+    if (!analyzer->is_collecting_phase &&
+        (node->data.op.left->type == NODE_ARRAY_ACCESS ||
+         node->data.op.left->type == NODE_STRUCT_ACCESS))
+    {
+        String root_name = {0};
+        if (semantic_lvalue_root_name(analyzer, node->data.op.left,
+                                      &root_name) &&
+            semantic_name_is_const(analyzer, root_name))
+        {
+            char error_msg[MAX_BUFFER_LEN];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Cannot assign to an element of const variable '%s'",
+                     root_name.data);
+            add_semantic_error(analyzer, SEMANTIC_ERROR_CONST_ASSIGNMENT,
+                               STRING_LITERAL(error_msg),
+                               node->line_number > 0 ? node->line_number : 1);
         }
     }
 
@@ -3900,9 +3973,44 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
         if (node->data.op.left &&
             node->data.op.left->type == NODE_UNARY_OPERATION &&
             node->data.op.left->data.unary.op == OP_DEREFERENCE)
-            decay_array_operand(analyzer,
-                                node->data.op.left->data.unary.operand,
-                                node->line_number);
+        {
+            /* `*xs = v` and `*(xs + i) = v` write the array directly --
+               the same write as `xs[i] = v`, so a deadass array is refused
+               with the same error (#375/#381). Checked here, before the
+               operand decays: afterwards the target is a dereferenced
+               pointer, and writes through a pointer are deliberately not
+               const-traced. */
+            ASTNode *operand = node->data.op.left->data.unary.operand;
+            ASTNode *written = NULL;
+            if (array_expression_rank(operand, analyzer))
+                written = operand;
+            else if (operand && operand->type == NODE_OPERATION &&
+                     (operand->data.op.op == OP_PLUS ||
+                      operand->data.op.op == OP_MINUS))
+            {
+                if (array_expression_rank(operand->data.op.left, analyzer))
+                    written = operand->data.op.left;
+                else if (operand->data.op.op == OP_PLUS &&
+                         array_expression_rank(operand->data.op.right,
+                                               analyzer))
+                    written = operand->data.op.right;
+            }
+            String root_name = {0};
+            if (written &&
+                semantic_lvalue_root_name(analyzer, written, &root_name) &&
+                semantic_name_is_const(analyzer, root_name))
+            {
+                char error_msg[MAX_BUFFER_LEN];
+                snprintf(error_msg, sizeof(error_msg),
+                         "Cannot assign to an element of const variable '%s'",
+                         root_name.data);
+                add_semantic_error(analyzer, SEMANTIC_ERROR_CONST_ASSIGNMENT,
+                                   STRING_LITERAL(error_msg),
+                                   node->line_number > 0 ? node->line_number
+                                                         : 1);
+            }
+            decay_array_operand(analyzer, operand, node->line_number);
+        }
         if (node->data.op.left && node->data.op.right &&
             array_expression_rank(node->data.op.left, analyzer) == 0 &&
             infer_expression_pointer_level(node->data.op.left, analyzer) > 0)

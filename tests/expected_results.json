@@ -27,6 +27,7 @@
     "struct_alias_array_field_stride": "1 0 2 0\n",
     "struct_alias_array_field_struct_element_fail": "Error: Array field 'arr' of a struct/union/enum alias element type is not supported at line 13\nParsing failed",
     "char": "c\n",
+    "escaped_char_literals": "10 9 92 13 0 39",
     "float": "3.141592\n",
     "modulo": "2\n",
     "switch_case": "You chose 2, gigachad move!\n",
@@ -452,12 +453,17 @@
     "semantic_error_incdec_non_lvalue": "Error: increment/decrement requires a variable operand at line 10",
     "int_overflow_wraps": "-2147483648\n2147483647\n-2\n-2147483648",
     "rant_reassign_no_leak": "iter",
-    "float_exponent_literal": "10000000000.0\n200000.0\n1000.0\n0.50\n1.00\n0.0010\n123",
     "float_inc_dec": "2.50\n3.50\n2.50\n1.50\n3.50\n2.50\n4.50\n6",
     "lex_error_unexpected_tilde": "Error: unexpected character '~' at line 8\nParsing failed",
     "lex_error_unexpected_dollar": "Error: unexpected character '$' at line 6\nParsing failed",
     "scalar_pointer_index": "bump: 199\ncaller sees: 100 99 3\nfill: 0 10 20\nfill_via_deref: 1 11 21\nchad: 0.5 1.5 2.5\ngigachad: 0.25 0.75 3.00\nyap: abZ\nsmol: 1 2 300\ncap: 0 1\nnonut: 1 4000000000\ngiga: 5000000000 3\nrelative: 10 21 30 40\nvalue: 42 20 40\ncondition: ok\nsizeof: 4 8\nmulti-level: 1 50",
     "scalar_pointer_two_index_fail": "Error: A pointer takes exactly one index -- index a multi-level pointer one level at a time at line 20",
     "array_decay": "fill: 0 10 20\nsum: 30 sum3: 30\nsizes: 12 8\ninit: 0 99\nassign: 11\nderef: 5 11 7\ncompare: ok\nstructs: 101.5 102.5\nfield: 24\nreturned: 80\nyap: Hi\npointers: 2\nrows: 5 60",
-    "array_decay_fail": "Error: Cannot take the address of array 'xs' -- use 'xs', which decays to the address of its first element (`&xs[0]`) at line 31\nError: 'first' argument 1: expected a pointer to int (level 1), got a pointer to float (level 1) at line 30\nError: 'first' argument 1: expected a pointer to int (level 1), got a pointer to float (level 1) at line 29\nError: Multi-dimensional array 'm' cannot be used as a pointer -- pass the address of its first element (`&m[0][0]`) at line 28"
+    "array_decay_fail": "Error: Cannot take the address of array 'xs' -- use 'xs', which decays to the address of its first element (`&xs[0]`) at line 31\nError: 'first' argument 1: expected a pointer to int (level 1), got a pointer to float (level 1) at line 30\nError: 'first' argument 1: expected a pointer to int (level 1), got a pointer to float (level 1) at line 29\nError: Multi-dimensional array 'm' cannot be used as a pointer -- pass the address of its first element (`&m[0][0]`) at line 28",
+    "semantic_error_const_array": "Error: Cannot modify const variable at line 4",
+    "const_struct_pointer_member_write": "55\n77\n",
+    "semantic_error_const_array_no_side_effect": "Error: Cannot modify const variable at line 8",
+    "semantic_error_const_struct_member_no_side_effect": "Error: Cannot modify const variable at line 17\nError: Cannot modify const variable at line 16",
+    "format_bare_percent": "A\nB\nC\nD\nE\nF\nG\nok",
+    "array_decay_const_fail": "Error: Cannot modify const variable at line 20\nError: Cannot modify const variable at line 19\nError: Cannot modify const variable at line 18"
 }

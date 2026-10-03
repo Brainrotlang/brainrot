@@ -744,6 +744,8 @@ extern int yylineno;
         switch (yytext[2]) {
             case 'n':  c = '\n'; break;
             case 't':  c = '\t'; break;
+            case 'r':  c = '\r'; break;
+            case '0':  c = '\0'; break;
             case '\\': c = '\\'; break;
             case '\'': c = '\''; break;
             // You can add more escapes if you need them
@@ -757,8 +759,8 @@ extern int yylineno;
         c = yytext[1];
     }
     
-    yylval.ival = c;  // Put the character in the parser’s yylval
-    return YAP; 
+    yylval.cval = c;  // Put the character in the parser’s yylval
+    return CHAR;
 }
 
 [ \t\n]+         ; /* Ignore whitespace */

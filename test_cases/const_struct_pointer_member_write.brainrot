@@ -1,0 +1,21 @@
+🚽 Test case: constness stops at implicit pointer dereference boundaries.
+gang Node {
+    rizz val;
+};
+gang Holder {
+    gang Node *next;
+};
+
+skibidi main {
+    gang Node a;
+    a.val = 2;
+    deadass gang Node *p = &a;
+    p.val = 55;
+    yapping("%d", a.val);
+
+    gang Node b;
+    b.val = 3;
+    deadass gang Holder h = { &b };
+    h.next.val = 77;
+    yapping("%d", b.val);
+}
