@@ -20,6 +20,13 @@
 
 /* Forward declarations */
 typedef struct ASTNode ASTNode;
+
+typedef enum
+{
+    SIGNEDNESS_UNKNOWN = 0,
+    SIGNEDNESS_SIGNED,
+    SIGNEDNESS_UNSIGNED,
+} Signedness;
 typedef struct StatementList StatementList;
 typedef struct ArgumentList ArgumentList;
 typedef struct CaseNode CaseNode;
@@ -494,6 +501,12 @@ struct ASTNode
     VarType var_type;
     bool already_checked;
     bool is_valid_symbol;
+    /* Runtime memo for expression_is_unsigned() / operation_is_unsigned()
+       (ast.c, #371): whether this integer expression is a 32-bit unsigned
+       value -- or, for a binary operation, whether it is carried out in
+       unsigned int. SIGNEDNESS_UNKNOWN (0, from the zeroing allocator)
+       until first asked. */
+    Signedness signedness_memo;
     bool is_array;
     int pointer_level;
     int array_length;
@@ -783,6 +796,7 @@ bool check_and_mark_identifier(ASTNode *node, const String contextErrorMessage);
 bool is_expression(ASTNode *node, VarType type);
 VarType get_expression_type(ASTNode *node);
 bool expression_is_long(ASTNode *node);
+bool expression_is_unsigned(ASTNode *node);
 int get_expression_pointer_level(ASTNode *node);
 uintptr_t evaluate_expression_pointer(ASTNode *node);
 void *evaluate_lvalue_address(ASTNode *node);
