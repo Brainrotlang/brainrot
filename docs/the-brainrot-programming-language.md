@@ -366,8 +366,10 @@ cap isPrime = is_prime(11)
 
 #### Parameter types
 
-Scalars (`rizz`, `chad`, `gigachad`, `cap`, `yap`, `smol`), pointers, `gang`/
-`chungus` by value, `gyatt`, and `rant` (strings) may all be parameters.
+Scalars (`rizz`, `chad`, `gigachad`, `cap`, `yap`, `smol`), pointers, arrays
+(`rizz a[]`), `gang`/`chungus` by value, `gyatt`, and `rant` (strings) may all
+be parameters. An array parameter is a pointer, as in C — see
+[§7.8](#78-pointers-and-call-by-reference).
 
 A `rant` parameter takes its **own copy** of the string, so it behaves as an
 ordinary local `rant`: assigning to it inside the callee does not disturb the
@@ -388,9 +390,6 @@ skibidi main {
 
 #### Current Limitations
 
-- An **array** cannot be passed as an argument — a parameter can never be an
-  array type, and array-to-pointer decay is not implemented. Pass an element
-  (`f(arr[0])`) or its address (`f(&arr[0])`).
 - Reassigning a `rant` — parameter or local — leaks its previous buffer
   ([#277](https://github.com/Brainrotlang/brainrot/issues/277)).
 - Argument types are only checked against parameter types in specific cases
@@ -425,6 +424,72 @@ Supported forms:
 - Dereference: `*expr`
 - Pointer assignment and comparison
 - Pointer arithmetic: `pointer +/- integer`
+- Indexing: `p[i]` is `*(p + i)`, as a value or an assignment target
+- Store through a computed address: `*(p + i) = v;`
+
+#### Arrays and pointers
+
+As in C, an array used where a pointer is expected **decays** to the address
+of its first element, so passing an array to a function hands the callee the
+caller's own storage:
+
+```c
+skibidi fill(rizz a[], rizz n) {         🚽 same as `rizz *a`
+    flex (rizz i = 0; i < n; i = i + 1) {
+        a[i] = i * 10;
+    }
+}
+
+skibidi main {
+    rizz xs[3] = {1, 2, 3};
+    fill(xs, 3);
+    yapping("%d %d %d", xs[0], xs[1], xs[2]);  🚽 0 10 20
+    bussin 0;
+}
+```
+
+An array decays when it is a pointer parameter's argument, a pointer's
+initializer or assigned value (`rizz *p = xs;`), the `bussin` value of a
+pointer-returning function, the operand of `*` (`*xs` is `xs[0]`), added to or
+subtracted from an integer (`xs + 2`), or compared with a pointer. Everywhere
+else it is still the array: `maxxing(xs)` is the whole array's size. `&xs` is
+an error — in C it is a pointer to the whole array, a type Brainrot can't
+spell — so write `xs` (or `&xs[0]`). Struct arrays (`gang E pool[N]` →
+`gang E *`) and array struct fields (`f(box.vals)`) decay the same way.
+
+An array **parameter** — `rizz a[]` or `rizz a[N]` — is a pointer, exactly as C
+adjusts it: `N` is not checked, and `maxxing(a)` in the callee is a pointer's
+size. A pointer argument must point to the same storage as the parameter:
+the same element type *and* width/sign (`chad fs[N]` can't go to a `rizz *`
+parameter, and neither can `rizz xs[N]` to a `giga rizz *` or `nonut rizz *`
+one — `p[1]` on a `giga rizz *` strides 8 bytes). A pointer whose pointee
+can't be determined is refused too. The exception is a native's opaque
+pointer result (`STDROT_PTR`), which converts like C's `void *`: only its
+pointer level is checked, whether it's passed directly or stored in a
+pointer first. A `skibidi *` parameter takes any pointer.
+
+Only a one-dimensional array decays. A `rizz m[R][C]` would decay to a pointer
+to its first row, a type Brainrot can't spell, so pass `&m[0][0]` and index the
+flattened storage yourself. An array still can't be passed to a non-pointer
+parameter, and — as in C — a function can't return an array, only a pointer.
+Returning one of the function's own local arrays (`bussin xs;`, `bussin xs +
+1;`, `bussin b.vals;`) is an error, since that storage is freed when the call
+returns; make it `salty` (static) or have the caller pass the array in.
+
+Writing a `deadass` array through its decayed name is refused just like
+`cx[i] = v`, however the address is computed: `*cx = v`, `*(cx + i + j) = v`
+and `*(&cx[i]) = v` are all errors. (A write through a pointer *variable* is not
+traced, as before.)
+
+`p[i]` and `*(p + i)` are the same element, read and written at the pointee's
+declared width — including 64-bit `giga`/`thicc` pointees.
+
+`p[i]` strides by the pointee's size (`chad *` by 4 bytes, `gigachad *` by 8,
+a `rizz **` by a pointer's width) and works on any typed pointer — a `skibidi *`
+has no pointee size and can't be indexed. As in C, a pointer carries no
+extent, so `p[i]` is **not** bounds-checked; an array index is. Only one index
+is accepted: index a `rizz **pp` one level at a time (`rizz *row = pp[i];
+row[j]`).
 
 #### Call by reference (pointer-based)
 
@@ -1474,8 +1539,7 @@ indexing and slicing used to split a delimited record.
 - Functions other than `skibidi main` not fully supported (unless you add them).
 - Complex data structures beyond basic structs, and advanced memory management are not fully supported.
 - Struct/union function parameters and return values must be a plain
-  variable of the exact matching type (see [§7.9](#79-structs-gang)); arrays
-  can't be passed or returned by value at all, only via a pointer parameter.
+  variable of the exact matching type (see [§7.9](#79-structs-gang)).
 - Error reporting is minimal, typically halting on the first serious parse error.
 
 ---
