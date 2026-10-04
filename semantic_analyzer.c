@@ -1722,6 +1722,19 @@ static const char *storage_modifier_prefix(TypeModifiers m)
     return "";
 }
 
+/* A native call whose declared return is STDROT_PTR: a pointer whose base
+   type the ABI erases on purpose (stdrot_api.h's STDROT_PTR comment), so
+   there is nothing to compare but its level. */
+static bool is_type_erased_native_pointer(ASTNode *expr)
+{
+    if (!expr || expr->type != NODE_FUNC_CALL ||
+        !is_builtin_function(expr->data.func_call.function_name))
+        return false;
+    const StdrotEntry *entry =
+        get_native_function(expr->data.func_call.function_name);
+    return entry && entry->return_type.type == STDROT_PTR;
+}
+
 /* Same storage width and signedness: `giga`/`thicc` change the size of a
    VAR_INT, `nonut` its interpretation. Qualifiers (`deadass`, `schizo`,
    `salty`) do not change what a pointer addresses, so they are ignored. */
@@ -2915,9 +2928,14 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
 
                        Fails closed: a pointer argument whose pointee type
                        or modifiers cannot be inferred is refused rather
-                       than assumed to match. Struct pointers have their
-                       own tag check below, and a `skibidi *` parameter
-                       accepts any pointer, as in C. */
+                       than assumed to match. The one deliberate exception
+                       is a native's STDROT_PTR result, which is type-erased
+                       by contract (stdrot_api.h) and converts like C's
+                       `void *` -- only its level is checked, exactly as a
+                       pointer declaration initialized from it is, so
+                       `f(native())` and `rizz *p = native(); f(p);` agree.
+                       Struct pointers have their own tag check below, and
+                       a `skibidi *` parameter accepts any pointer. */
                     if (param->desc.pointer_level > 0 &&
                         param->desc.type != VAR_STRUCT &&
                         param->desc.type != VAR_VOID &&
@@ -2933,7 +2951,17 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
                                          arg->expr, analyzer, &actual_mods);
                         char error_msg[MAX_BUFFER_LEN];
                         error_msg[0] = '\0';
-                        if (actual_pl > 0 && !known)
+                        if (actual_pl > 0 &&
+                            is_type_erased_native_pointer(arg->expr))
+                        {
+                            if (actual_pl != param->desc.pointer_level)
+                                snprintf(error_msg, sizeof(error_msg),
+                                         "'%s' argument %d: expected a "
+                                         "pointer of level %d, got level %d",
+                                         func_name.data, arg_index,
+                                         param->desc.pointer_level, actual_pl);
+                        }
+                        else if (actual_pl > 0 && !known)
                         {
                             snprintf(
                                 error_msg, sizeof(error_msg),

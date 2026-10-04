@@ -4066,6 +4066,42 @@ void *evaluate_lvalue_address(ASTNode *node)
     return NULL;
 }
 
+/* The field a member access names, found from declared types alone --
+   never by evaluating the object, so an index expression in it (`ss[f()]
+   .v`) runs no extra time. Covers the objects get_struct_def_for_
+   expression() can type without evaluation (a variable, an element of a
+   struct array, either through an implicit pointer), nested member chains
+   of those, and whatever static_struct_field() already handles (a call
+   result, pointer arithmetic). NULL when none of those apply. */
+static StructField *declared_struct_field(ASTNode *node)
+{
+    if (!node || node->type != NODE_STRUCT_ACCESS)
+        return NULL;
+
+    ASTNode *obj = node->data.struct_access.object;
+    StructDef *parent = NULL;
+    if (obj && (obj->type == NODE_IDENTIFIER ||
+                (obj->type == NODE_ARRAY_ACCESS && !obj->data.array.base)))
+    {
+        parent = get_struct_def_for_expression(obj);
+    }
+    else if (obj && obj->type == NODE_STRUCT_ACCESS)
+    {
+        StructField *outer = declared_struct_field(obj);
+        if (outer && outer->desc.type == VAR_STRUCT &&
+            outer->desc.struct_name.data)
+            parent = get_struct_def(outer->desc.struct_name);
+    }
+    else
+    {
+        return static_struct_field(node);
+    }
+
+    return parent
+               ? find_struct_field(parent, node->data.struct_access.member_name)
+               : NULL;
+}
+
 /* The width/sign modifiers (`giga`, `thicc`, `nonut`, ...) of the value
    `node` denotes, read from the DECLARATION that types it: the Variable,
    the array/pointer element (resolve_array_access_element()), the struct
@@ -4094,6 +4130,17 @@ TypeModifiers get_expression_modifiers(ASTNode *node)
     }
     case NODE_ARRAY_ACCESS:
     {
+        /* A struct-field array (`ss[i].arr[j]`): the field's declared
+           modifiers, found statically -- resolve_array_access_element()
+           would resolve the base, which EVALUATES its index expressions,
+           re-running their side effects just to learn a static property
+           (#389 review). */
+        if (node->data.array.base)
+        {
+            StructField *fld = declared_struct_field(node->data.array.base);
+            if (fld && fld->desc.is_array)
+                return fld->desc.modifiers;
+        }
         ArrayAccessElement elem;
         if (resolve_array_access_element(node, &elem))
             return elem.modifiers;
@@ -4101,11 +4148,18 @@ TypeModifiers get_expression_modifiers(ASTNode *node)
     }
     case NODE_STRUCT_ACCESS:
     {
-        StructDef *def = NULL;
-        void *base = NULL;
-        StructField *fld = NULL;
-        if (!resolve_struct_access(node, &def, &base, &fld, false))
-            fld = static_struct_field(node);
+        /* Declared types first, for the same reason: `ss[idx()].v = 5`
+           must not call idx() once more to learn v's width. The runtime
+           resolution is only a fallback for a field the static walk
+           cannot name. */
+        StructField *fld = declared_struct_field(node);
+        if (!fld)
+        {
+            StructDef *def = NULL;
+            void *base = NULL;
+            if (!resolve_struct_access(node, &def, &base, &fld, false))
+                fld = NULL;
+        }
         return fld ? fld->desc.modifiers : node->modifiers;
     }
     case NODE_UNARY_OPERATION:
@@ -7158,7 +7212,7 @@ void execute_assignment(ASTNode *node)
     ASTNode *value_node = node->data.op.right;
     VarType target_type = get_expression_type(target);
     int target_pointer_level = get_expression_pointer_level(target);
-    TypeModifiers mods = node->modifiers;
+    TypeModifiers mods; /* both branches below set it */
 
     String root_name = {0};
     if (get_lvalue_root_name(target, &root_name))

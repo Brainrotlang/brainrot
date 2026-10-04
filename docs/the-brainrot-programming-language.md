@@ -463,8 +463,10 @@ size. A pointer argument must point to the same storage as the parameter:
 the same element type *and* width/sign (`chad fs[N]` can't go to a `rizz *`
 parameter, and neither can `rizz xs[N]` to a `giga rizz *` or `nonut rizz *`
 one — `p[1]` on a `giga rizz *` strides 8 bytes). A pointer whose pointee
-can't be determined (e.g. one returned by a native) is refused too; a
-`skibidi *` parameter takes any pointer.
+can't be determined is refused too. The exception is a native's opaque
+pointer result (`STDROT_PTR`), which converts like C's `void *`: only its
+pointer level is checked, whether it's passed directly or stored in a
+pointer first. A `skibidi *` parameter takes any pointer.
 
 Only a one-dimensional array decays. A `rizz m[R][C]` would decay to a pointer
 to its first row, a type Brainrot can't spell, so pass `&m[0][0]` and index the
