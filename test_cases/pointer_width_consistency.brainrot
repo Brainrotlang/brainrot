@@ -1,0 +1,56 @@
+🚽 Test case: issue #389 review, finding 3 -- `p[i]` and `*(p + i)` must
+🚽 address, load and store the same element at the same width.
+🚽
+🚽 `p[i]` took its stride from the pointer Variable's modifiers, while
+🚽 `p + i` (pointer_arith_scale()) read the parse-time node's, so on a
+🚽 `giga rizz *` the two spellings landed on different bytes:
+🚽
+🚽   g = {10, 20, 30}:   p[1] p[2] -> 20 30    *(p + 1) *(p + 2) -> 0 20
+🚽
+🚽 Both now take the pointee's modifiers from one place
+🚽 (get_expression_modifiers()) and one stride function (pointee_stride()).
+🚽 The same source now sets the WIDTH of a store: execute_assignment()
+🚽 used the assignment node's modifiers, so a 64-bit value stored through
+🚽 `p[i]`, `*(p + i)`, `*p` -- or even into a plain `thicc` array element
+🚽 -- kept only its low 32 bits.
+🚽
+🚽 Portable by construction: the values above 32 bits use thicc (long
+🚽 long, 8 bytes everywhere); the giga section uses small values, since
+🚽 giga is C long -- 8 bytes natively, 4 on wasm32 (#177) -- and either
+🚽 way both spellings must agree.
+
+skibidi giga_both(giga rizz *p) {
+    yapping("giga index: %ld %ld", p[1], p[2]);
+    yapping("giga arith: %ld %ld", *(p + 1), *(p + 2));
+}
+
+skibidi thicc_store(thicc rizz *p) {
+    p[1] = 5000000000;
+    *(p + 2) = 6000000000;
+    *p = 7000000000;
+}
+
+skibidi thicc_both(thicc rizz *p) {
+    yapping("thicc index: %lld %lld %lld", p[0], p[1], p[2]);
+    yapping("thicc arith: %lld %lld %lld", *p, *(p + 1), *(p + 2));
+}
+
+skibidi main {
+    giga rizz g[3] = {10, 20, 30};
+    giga_both(g);
+
+    thicc rizz t[3] = {1, 2, 3};
+    thicc_store(t);
+    thicc_both(t);
+
+    🚽 A plain array element store, no pointer involved.
+    t[1] = 8000000000;
+    yapping("thicc element: %lld", t[1]);
+
+    🚽 Through a pointer to a scalar.
+    thicc rizz one = 0;
+    thicc rizz *q = &one;
+    *q = 9000000000;
+    yapping("thicc scalar: %lld", one);
+    bussin 0;
+}

@@ -1,0 +1,30 @@
+🚽 Test case: issue #389 review -- a native's opaque pointer result passed
+🚽 to a typed user-defined pointer parameter.
+🚽
+🚽 STDROT_PTR erases its base type by contract (stdrot_api.h), so the
+🚽 width-aware pointer-argument check has nothing to compare but the
+🚽 level, and treats it like C's `void *`. An earlier revision refused
+🚽 `first(test_ptr_source())` ("cannot determine what this pointer points
+🚽 to") while accepting `rizz *p = test_ptr_source(); first(p);` -- the
+🚽 same pointer, the same information -- so the rule depended on spelling.
+🚽 Both spellings are accepted now, and both write the same static int.
+🚽
+🚽 Needs tests/stdrot/testptr.c, so it is in WASM_PRODUCTION_SKIP
+🚽 (tests/run_wasm_tests.mjs).
+
+skibidi set_first(rizz *p, rizz v) {
+    p[0] = v;
+}
+
+rizz first(rizz *p) {
+    bussin p[0];
+}
+
+skibidi main {
+    set_first(test_ptr_source(), 41);
+    rizz *p = test_ptr_source();
+    yapping("inline: %d", first(test_ptr_source()));
+    set_first(p, 42);
+    yapping("stored: %d", first(p));
+    bussin 0;
+}

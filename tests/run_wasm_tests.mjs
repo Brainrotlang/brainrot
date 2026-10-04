@@ -228,6 +228,7 @@ const WASM_PRODUCTION_SKIP = new Set([
   "native_struct_ptr_field_arg",
   "native_void_pointer_parameter",
   "native_user_pointer_return",
+  "native_ptr_user_pointer_param",
   "native_pointer_array_element_arg",
   "semantic_error_slorp_ptr_native_arg",
   "semantic_error_void_pointer_dereference_write",
