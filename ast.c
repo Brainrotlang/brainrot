@@ -313,6 +313,19 @@ bool is_indexable_scalar_pointer(VarType type, int pointer_level, bool is_array)
                                         (TypeModifiers){0}) != 0;
 }
 
+/* sizeof(*p) for a pointer of this descriptor: the one stride `p + i`
+   (pointer_arith_scale()) and `p[i]` (evaluate_multi_array_access()) both
+   use, so the two spellings of the same element can never land on
+   different bytes. 0 when the pointee's size does not follow from the
+   descriptor (a struct pointee, or an opaque VAR_PTR/VAR_VOID). */
+static size_t pointee_stride(VarType type, int pointer_level,
+                             TypeModifiers mods)
+{
+    if (pointer_level <= 0)
+        return 0;
+    return get_type_size_for_descriptor(type, pointer_level - 1, mods);
+}
+
 static void write_value_to_address(void *address, VarType type,
                                    int pointer_level, ASTNode *expr,
                                    TypeModifiers mods, bool packed_storage);
@@ -2050,9 +2063,10 @@ void *evaluate_multi_array_access(ASTNode *node)
        `yap *`, ... or on a multi-level pointer, whose element is itself a
        pointer. Same reasoning as the struct branch above -- *(p + i), no
        extent, so no bounds check -- with the stride taken from the
-       pointee's descriptor, as pointer_arith_scale() does for `p + i`.
-       Unlike that function this reads the Variable's own modifiers rather
-       than the node's, which is what makes a `thicc rizz *` stride 8.
+       pointee's descriptor via pointee_stride() -- the same function, fed
+       the same Variable modifiers (get_expression_modifiers()), that
+       pointer_arith_scale() uses for `p + i`, so `p[i]` and `*(p + i)`
+       address the same element for every pointee width.
 
        A single index only: `pp[i][j]` would need the first index's result
        re-read as a pointer, which this one-node address computation does
@@ -2073,8 +2087,8 @@ void *evaluate_multi_array_access(ASTNode *node)
             yyerror("Indexing a null pointer");
             exit(EXIT_FAILURE);
         }
-        size_t stride = get_type_size_for_descriptor(
-            var->desc.type, var->desc.pointer_level - 1, var->desc.modifiers);
+        size_t stride = pointee_stride(var->desc.type, var->desc.pointer_level,
+                                       var->desc.modifiers);
         ptrdiff_t idx = evaluate_expression_int(node->data.array.indices[0]);
         return (char *)ptr_base + idx * (ptrdiff_t)stride;
     }
@@ -3170,6 +3184,18 @@ bool expression_is_long(ASTNode *node)
         return expression_is_long(node->data.op.left) ||
                expression_is_long(node->data.op.right);
     case NODE_UNARY_OPERATION:
+        /* `*p` / `*(p + i)` on a `giga rizz *` loads the pointee at its
+           declared width, like `p[i]` does (#389 review). The operand is a
+           pointer, so the recursion below would always say no. */
+        if (node->data.unary.op == OP_DEREFERENCE)
+        {
+            ASTNode *operand = node->data.unary.operand;
+            if (get_expression_pointer_level(operand) != 1 ||
+                get_expression_type(operand) != VAR_INT)
+                return false;
+            TypeModifiers m = get_expression_modifiers(operand);
+            return m.is_long || m.is_long_long;
+        }
         return expression_is_long(node->data.unary.operand);
     case NODE_ARRAY_ACCESS:
     {
@@ -4040,6 +4066,74 @@ void *evaluate_lvalue_address(ASTNode *node)
     return NULL;
 }
 
+/* The width/sign modifiers (`giga`, `thicc`, `nonut`, ...) of the value
+   `node` denotes, read from the DECLARATION that types it: the Variable,
+   the array/pointer element (resolve_array_access_element()), the struct
+   field, or the function's return descriptor. For an address expression
+   (`p`, `p + i`, `&x`) these are the pointee's modifiers, and for `*e` they
+   are e's -- so a pointer's stride, a load through it and a store through
+   it all read the same descriptor.
+
+   node->modifiers is NOT that: an identifier/array node is built at parse
+   time, before the variable exists, so its own modifiers are whatever the
+   parser's state was (expression_is_long()'s NODE_ARRAY_ACCESS comment).
+   Reading it is how `*(p + 1)` on a `giga rizz *` came to stride 4 bytes
+   while `p[1]` strode 8 (#389 review). It is only the fallback here, for a
+   node no declaration can be found for. */
+TypeModifiers get_expression_modifiers(ASTNode *node)
+{
+    if (!node)
+        return (TypeModifiers){0};
+
+    switch (node->type)
+    {
+    case NODE_IDENTIFIER:
+    {
+        Variable *var = get_variable(node->data.name);
+        return var ? var->desc.modifiers : node->modifiers;
+    }
+    case NODE_ARRAY_ACCESS:
+    {
+        ArrayAccessElement elem;
+        if (resolve_array_access_element(node, &elem))
+            return elem.modifiers;
+        return node->modifiers;
+    }
+    case NODE_STRUCT_ACCESS:
+    {
+        StructDef *def = NULL;
+        void *base = NULL;
+        StructField *fld = NULL;
+        if (!resolve_struct_access(node, &def, &base, &fld, false))
+            fld = static_struct_field(node);
+        return fld ? fld->desc.modifiers : node->modifiers;
+    }
+    case NODE_UNARY_OPERATION:
+        if (node->data.unary.op == OP_ADDRESS_OF ||
+            node->data.unary.op == OP_DEREFERENCE ||
+            node->data.unary.op == OP_NEG)
+            return get_expression_modifiers(node->data.unary.operand);
+        return node->modifiers;
+    case NODE_OPERATION:
+        if (node->data.op.op == OP_PLUS || node->data.op.op == OP_MINUS)
+        {
+            /* Pointer arithmetic keeps the pointer operand's pointee. */
+            if (get_expression_pointer_level(node->data.op.left) > 0)
+                return get_expression_modifiers(node->data.op.left);
+            if (get_expression_pointer_level(node->data.op.right) > 0)
+                return get_expression_modifiers(node->data.op.right);
+        }
+        return node->modifiers;
+    case NODE_FUNC_CALL:
+    {
+        Function *fn = get_function(node->data.func_call.function_name);
+        return fn ? fn->return_desc.modifiers : node->modifiers;
+    }
+    default:
+        return node->modifiers;
+    }
+}
+
 /* Byte stride for pointer arithmetic on `expr`, whose pointer level is
  * `ptr_level` -- i.e. sizeof(*expr), the amount `expr + 1` advances by.
  *
@@ -4066,8 +4160,8 @@ static size_t pointer_arith_scale(ASTNode *expr, int ptr_level)
     if (!expr || ptr_level <= 0)
         return 0;
 
-    size_t scale = get_type_size_for_descriptor(get_expression_type(expr),
-                                                ptr_level - 1, expr->modifiers);
+    size_t scale = pointee_stride(get_expression_type(expr), ptr_level,
+                                  get_expression_modifiers(expr));
     if (scale != 0)
         return scale;
 
@@ -5741,6 +5835,22 @@ long long evaluate_expression_long(ASTNode *node)
                           node->data.unary.op == OP_PRE_DEC;
             return is_pre ? updated : cur;
         }
+        if (node->data.unary.op == OP_DEREFERENCE)
+        {
+            /* Only reached for a 64-bit pointee (expression_is_long()'s
+               OP_DEREFERENCE case). The pointee is packed storage -- an
+               array/struct slot, or a scalar's 8-byte union slot, whose
+               low bytes are the same value -- read at its declared width. */
+            ASTNode *operand = node->data.unary.operand;
+            // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
+            void *addr = (void *)evaluate_expression_pointer(operand);
+            if (!addr)
+            {
+                yyerror("Dereferencing a null pointer");
+                return 0;
+            }
+            return packed_long_load(addr, get_expression_modifiers(operand));
+        }
         yyerror("Unsupported unary operator in integer context");
         return 0;
     }
@@ -7071,6 +7181,15 @@ void execute_assignment(ASTNode *node)
        target_type/target_pointer_level resolved correctly above via
        get_expression_type()/get_expression_pointer_level(), which both
        route through resolve_struct_access(). */
+    else
+    {
+        /* The store width comes from the target's declaration -- the
+           element, field or pointee -- not from the assignment node, whose
+           modifiers are parser state. Reading the node's is why `g[1] =
+           5000000000` on a `giga rizz g[N]`, `p[1] = ...` and `*(p + 1) =
+           ...` through a `giga rizz *` all stored 32 bits (#389 review). */
+        mods = get_expression_modifiers(target);
+    }
 
     /* Every evaluate_lvalue_address() case except NODE_IDENTIFIER writes
        into packed storage (an array/struct blob, or wherever a

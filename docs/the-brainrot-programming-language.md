@@ -459,14 +459,28 @@ spell — so write `xs` (or `&xs[0]`). Struct arrays (`gang E pool[N]` →
 
 An array **parameter** — `rizz a[]` or `rizz a[N]` — is a pointer, exactly as C
 adjusts it: `N` is not checked, and `maxxing(a)` in the callee is a pointer's
-size. The argument's element type must match the pointer's (`chad fs[N]` can't
-go to a `rizz *` parameter); a `skibidi *` parameter takes any pointer.
+size. A pointer argument must point to the same storage as the parameter:
+the same element type *and* width/sign (`chad fs[N]` can't go to a `rizz *`
+parameter, and neither can `rizz xs[N]` to a `giga rizz *` or `nonut rizz *`
+one — `p[1]` on a `giga rizz *` strides 8 bytes). A pointer whose pointee
+can't be determined (e.g. one returned by a native) is refused too; a
+`skibidi *` parameter takes any pointer.
 
 Only a one-dimensional array decays. A `rizz m[R][C]` would decay to a pointer
 to its first row, a type Brainrot can't spell, so pass `&m[0][0]` and index the
 flattened storage yourself. An array still can't be passed to a non-pointer
-parameter, and — as in C — a function can't return an array, only a pointer
-(returning a pointer into a local array dangles once the call returns).
+parameter, and — as in C — a function can't return an array, only a pointer.
+Returning one of the function's own local arrays (`bussin xs;`, `bussin xs +
+1;`, `bussin b.vals;`) is an error, since that storage is freed when the call
+returns; make it `salty` (static) or have the caller pass the array in.
+
+Writing a `deadass` array through its decayed name is refused just like
+`cx[i] = v`, however the address is computed: `*cx = v`, `*(cx + i + j) = v`
+and `*(&cx[i]) = v` are all errors. (A write through a pointer *variable* is not
+traced, as before.)
+
+`p[i]` and `*(p + i)` are the same element, read and written at the pointee's
+declared width — including 64-bit `giga`/`thicc` pointees.
 
 `p[i]` strides by the pointee's size (`chad *` by 4 bytes, `gigachad *` by 8,
 a `rizz **` by a pointer's width) and works on any typed pointer — a `skibidi *`

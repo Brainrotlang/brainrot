@@ -8,6 +8,12 @@
 🚽    one keystroke away, and without the check the callee reads and
 🚽    writes float bits as ints. The same check applies to an explicit
 🚽    `&fs[0]`, which used to be accepted silently too.
+🚽    The match covers storage WIDTH and signedness, not just the base
+🚽    type (#389 review): `giga rizz *` and `rizz *` are both "pointer to
+🚽    int" to a VarType-only check, but `p[1]` on the giga one strides 8
+🚽    bytes, so a `rizz xs[2]` passed to it was an ASan heap-buffer-
+🚽    overflow. `nonut rizz *` vs `rizz` stays in bounds but reinterprets
+🚽    the bits. Both directions of each are refused.
 🚽 3. `&xs`. In C that is a pointer to the whole array; here it used to
 🚽    evaluate to the interpreter's own slot holding the array's storage
 🚽    pointer -- a valid-looking pointer to the wrong thing (`*p` printed
@@ -20,14 +26,27 @@ rizz first(rizz *p) {
     bussin p[0];
 }
 
+skibidi set_wide(giga rizz *p) {
+    p[1] = 7;
+}
+
+skibidi set_unsigned(nonut rizz *p) {
+    p[1] = 7;
+}
+
 skibidi main {
     rizz m[2][2];
     chad fs[2] = {1.5, 2.5};
     rizz xs[2] = {4, 5};
+    giga rizz gs[2] = {4, 5};
+    nonut rizz us[2] = {4, 5};
 
     yapping("%d", first(m));
     yapping("%d", first(fs));
     yapping("%d", first(&fs[0]));
     rizz *p = &xs;
+    set_wide(xs);
+    set_unsigned(xs);
+    yapping("%d %d", first(gs), first(us));
     bussin 0;
 }

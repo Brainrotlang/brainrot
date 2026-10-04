@@ -8,15 +8,32 @@
 🚽 operand decays -- afterwards the target is a dereferenced pointer, and
 🚽 writes through a pointer are deliberately not const-traced.
 🚽
+🚽 The const array is found structurally -- through any depth of pointer
+🚽 arithmetic, or an explicit `&cx[i]` -- not by matching a list of
+🚽 shapes. An earlier version recognized only `cx`, `cx +- e` and `e + cx`,
+🚽 so `*(cx + 1 + 0) = 9` got through and printed `1 9 8` (#389 review).
+🚽 The longer forms below are that regression.
+🚽
 🚽 The yapping() before the writes is the point, as in
 🚽 semantic_error_const_array_no_side_effect: the harness compares stdout
 🚽 when it is non-empty, so this fails if interpretation ever starts.
 
+gang Box {
+    rizz vals[3];
+};
+
 skibidi main {
-    deadass rizz cx[2] = {1, 2};
+    deadass rizz cx[3] = {1, 2, 3};
+    deadass gang Box b;
     yapping("side effect");
     *cx = 3;
     *(cx + 1) = 4;
     *(1 + cx) = 5;
+    *(cx + 1 + 0) = 9;
+    *(cx + 0 + 2) = 8;
+    *(2 + (cx - 1)) = 7;
+    *(&cx[1]) = 6;
+    *(&cx[0] + 1) = 5;
+    *(b.vals + 1) = 4;
     bussin 0;
 }

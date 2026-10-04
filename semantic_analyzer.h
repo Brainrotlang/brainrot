@@ -69,6 +69,11 @@ typedef struct SymbolEntry
        decay to a pointer-to-row, a type this language has no spelling for.
      */
     int array_rank;
+    /* Declared width/sign modifiers (`giga`, `thicc`, `nonut`; for an
+       array or pointer, the element's/pointee's). Two pointers are only
+       interchangeable when these agree -- `giga rizz *` and `rizz *` are
+       both VAR_INT at level 1 but stride 8 vs 4 bytes (#389 review). */
+    TypeModifiers modifiers;
     VarType return_type; /* For functions */
     int return_pointer_level;
     int line_number;

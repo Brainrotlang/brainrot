@@ -23,10 +23,9 @@
 🚽 was bound (enter_function_scope() copied type and pointer_level, not
 🚽 modifiers), so `p[1]` strode 4 bytes and read the upper half of t[0]:
 🚽 0 instead of 5000000000. thicc, not giga: giga is C long, which is only
-🚽 32 bits on wasm32 (#177), where 5000000000 does not fit at all. Only
-🚽 READ here: storing a 64-bit value into a thicc element truncates to 32
-🚽 bits even for a plain array (`t[1] = ...`), a separate pre-existing bug
-🚽 this change does not touch.
+🚽 32 bits on wasm32 (#177), where 5000000000 does not fit at all. 64-bit
+🚽 stores and `p[i]` vs `*(p + i)` agreement are covered by
+🚽 pointer_width_consistency.brainrot.
 
 rizz bump(rizz *p) {
     p[1] = 99;

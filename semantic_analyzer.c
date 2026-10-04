@@ -1610,6 +1610,127 @@ static int array_expression_rank(ASTNode *expr, SemanticAnalyzer *analyzer)
     return 0;
 }
 
+/* The declared width/sign modifiers of the storage `expr` denotes -- for
+   an address expression (`p`, `&xs[0]`, `p + i`), the pointee's -- read
+   statically from the declaration that types it: a symbol, a struct field,
+   or a function's return descriptor. The static counterpart of
+   get_expression_modifiers() (ast.c), which the interpreter uses for the
+   same question when it strides, loads and stores.
+
+   Returns false when no declaration can be found. Callers comparing two
+   pointers must then refuse rather than assume: a wrong guess here is a
+   wrong stride at runtime. */
+static bool infer_storage_modifiers(ASTNode *expr, SemanticAnalyzer *analyzer,
+                                    TypeModifiers *out)
+{
+    if (!expr)
+        return false;
+
+    switch (expr->type)
+    {
+    case NODE_IDENTIFIER:
+    case NODE_ARRAY_ACCESS:
+    {
+        if (expr->type == NODE_ARRAY_ACCESS && expr->data.array.base)
+            return infer_storage_modifiers(expr->data.array.base, analyzer,
+                                           out);
+        const String name = expr->type == NODE_IDENTIFIER
+                                ? expr->data.name
+                                : expr->data.array.name;
+        SymbolEntry *sym = find_symbol(analyzer, name);
+        if (sym && !sym->is_function)
+        {
+            *out = sym->modifiers;
+            return true;
+        }
+        Variable *var = get_variable(name);
+        if (var)
+        {
+            *out = var->desc.modifiers;
+            return true;
+        }
+        return false;
+    }
+    case NODE_STRUCT_ACCESS:
+    {
+        StructDef *def = NULL;
+        void *base = NULL;
+        StructField *fld = NULL;
+        if (!resolve_struct_access(expr, &def, &base, &fld, false))
+        {
+            StructDef *static_def = infer_struct_def_static(
+                expr->data.struct_access.object, analyzer);
+            fld = static_def
+                      ? find_struct_field(static_def,
+                                          expr->data.struct_access.member_name)
+                      : NULL;
+        }
+        if (!fld)
+            return false;
+        *out = fld->desc.modifiers;
+        return true;
+    }
+    case NODE_UNARY_OPERATION:
+        if (expr->data.unary.op == OP_ADDRESS_OF ||
+            expr->data.unary.op == OP_DEREFERENCE)
+            return infer_storage_modifiers(expr->data.unary.operand, analyzer,
+                                           out);
+        return false;
+    case NODE_OPERATION:
+        if (expr->data.op.op == OP_PLUS || expr->data.op.op == OP_MINUS)
+        {
+            ASTNode *left = expr->data.op.left;
+            ASTNode *right = expr->data.op.right;
+            if (infer_expression_pointer_level(left, analyzer) > 0 ||
+                array_expression_rank(left, analyzer))
+                return infer_storage_modifiers(left, analyzer, out);
+            if (infer_expression_pointer_level(right, analyzer) > 0 ||
+                array_expression_rank(right, analyzer))
+                return infer_storage_modifiers(right, analyzer, out);
+        }
+        return false;
+    case NODE_FUNC_CALL:
+    {
+        if (is_builtin_function(expr->data.func_call.function_name))
+            return false;
+        Function *fn = get_function(expr->data.func_call.function_name);
+        if (!fn)
+            return false;
+        *out = fn->return_desc.modifiers;
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
+/* "unsigned ", "long long ", ... -- the C spelling of the modifiers that
+   same_storage_modifiers() compares, for prefixing vartype_to_string() in a
+   diagnostic. */
+static const char *storage_modifier_prefix(TypeModifiers m)
+{
+    if (m.is_unsigned && m.is_long_long)
+        return "unsigned long long ";
+    if (m.is_unsigned && m.is_long)
+        return "unsigned long ";
+    if (m.is_unsigned)
+        return "unsigned ";
+    if (m.is_long_long)
+        return "long long ";
+    if (m.is_long)
+        return "long ";
+    return "";
+}
+
+/* Same storage width and signedness: `giga`/`thicc` change the size of a
+   VAR_INT, `nonut` its interpretation. Qualifiers (`deadass`, `schizo`,
+   `salty`) do not change what a pointer addresses, so they are ignored. */
+static bool same_storage_modifiers(TypeModifiers a, TypeModifiers b)
+{
+    return a.is_long == b.is_long && a.is_long_long == b.is_long_long &&
+           a.is_unsigned == b.is_unsigned;
+}
+
 /* C array-to-pointer decay (#389): where a pointer is expected, an array
    stands for the address of its first element, so `fill(xs, n)`, `rizz *p
    = xs;`, `bussin xs;`, `*xs` and `xs + 1` all mean what they mean in C.
@@ -2784,14 +2905,19 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
                     }
 
                     /* A scalar pointer parameter must get a pointer to the
-                       same type. Decay made the mistake one keystroke away
-                       -- `fill(fs, n)` with a `chad fs[N]` for a `rizz *p`
-                       -- and nothing else here would catch it: the callee
-                       would read and write float bits as ints. Checked
-                       only when the argument is itself a pointer of known
-                       type; struct pointers have their own tag check
-                       below, and a `skibidi *` parameter accepts any
-                       pointer, as in C. */
+                       same STORAGE: the same base type, pointer level and
+                       width/sign modifiers. Decay made the mistake one
+                       keystroke away -- `fill(fs, n)` with a `chad fs[N]`
+                       for a `rizz *p` -- and nothing else here catches it.
+                       Width is not a detail: `p[i]` on a `giga rizz *p`
+                       strides 8 bytes, so a `rizz xs[2]` passed to it is a
+                       heap overflow at p[1] (#389 review).
+
+                       Fails closed: a pointer argument whose pointee type
+                       or modifiers cannot be inferred is refused rather
+                       than assumed to match. Struct pointers have their
+                       own tag check below, and a `skibidi *` parameter
+                       accepts any pointer, as in C. */
                     if (param->desc.pointer_level > 0 &&
                         param->desc.type != VAR_STRUCT &&
                         param->desc.type != VAR_VOID &&
@@ -2801,19 +2927,44 @@ void *semantic_visit_function_call(Visitor *self, ASTNode *node)
                             infer_expression_pointer_level(arg->expr, analyzer);
                         VarType actual_type =
                             infer_expression_type(arg->expr, analyzer);
-                        if (actual_pl > 0 && actual_type != NONE &&
-                            (actual_pl != param->desc.pointer_level ||
-                             actual_type != param->desc.type))
+                        TypeModifiers actual_mods = {0};
+                        bool known = actual_type != NONE &&
+                                     infer_storage_modifiers(
+                                         arg->expr, analyzer, &actual_mods);
+                        char error_msg[MAX_BUFFER_LEN];
+                        error_msg[0] = '\0';
+                        if (actual_pl > 0 && !known)
                         {
-                            char error_msg[MAX_BUFFER_LEN];
-                            snprintf(error_msg, sizeof(error_msg),
-                                     "'%s' argument %d: expected a pointer to "
-                                     "%s (level %d), got a pointer to %s "
-                                     "(level %d)",
-                                     func_name.data, arg_index,
-                                     vartype_to_string(param->desc.type),
-                                     param->desc.pointer_level,
-                                     vartype_to_string(actual_type), actual_pl);
+                            snprintf(
+                                error_msg, sizeof(error_msg),
+                                "'%s' argument %d: cannot determine "
+                                "what this pointer points to, so it "
+                                "cannot be checked against a pointer "
+                                "to %s%s",
+                                func_name.data, arg_index,
+                                storage_modifier_prefix(param->desc.modifiers),
+                                vartype_to_string(param->desc.type));
+                        }
+                        else if (actual_pl > 0 &&
+                                 (actual_pl != param->desc.pointer_level ||
+                                  actual_type != param->desc.type ||
+                                  !same_storage_modifiers(
+                                      actual_mods, param->desc.modifiers)))
+                        {
+                            snprintf(
+                                error_msg, sizeof(error_msg),
+                                "'%s' argument %d: expected a pointer to "
+                                "%s%s (level %d), got a pointer to %s%s "
+                                "(level %d)",
+                                func_name.data, arg_index,
+                                storage_modifier_prefix(param->desc.modifiers),
+                                vartype_to_string(param->desc.type),
+                                param->desc.pointer_level,
+                                storage_modifier_prefix(actual_mods),
+                                vartype_to_string(actual_type), actual_pl);
+                        }
+                        if (error_msg[0])
+                        {
                             add_semantic_error(
                                 analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
                                 STRING_LITERAL(error_msg),
@@ -3172,6 +3323,36 @@ static bool semantic_name_is_const(SemanticAnalyzer *analyzer,
     return var && var->desc.modifiers.is_const;
 }
 
+/* The lvalue an address expression points into, when that address is
+   computed from the lvalue itself rather than read out of a pointer
+   variable: an array that decays (`xs`), an explicit `&lv`, or either of
+   those inside pointer arithmetic, to any depth (`xs + 1 + 0`, `2 + xs -
+   1`). Pointer arithmetic keeps exactly one address operand -- the other
+   is an integer -- so the walk follows whichever side yields one.
+
+   Returns NULL for an address that comes from a pointer variable, a call,
+   or anything else: those are writes through a pointer, which #381
+   deliberately does not const-trace. */
+static ASTNode *address_source_lvalue(ASTNode *expr, SemanticAnalyzer *analyzer)
+{
+    if (!expr)
+        return NULL;
+    if (array_expression_rank(expr, analyzer))
+        return expr;
+    if (expr->type == NODE_UNARY_OPERATION &&
+        expr->data.unary.op == OP_ADDRESS_OF)
+        return expr->data.unary.operand;
+    if (expr->type == NODE_OPERATION &&
+        (expr->data.op.op == OP_PLUS || expr->data.op.op == OP_MINUS))
+    {
+        ASTNode *found = address_source_lvalue(expr->data.op.left, analyzer);
+        if (!found && expr->data.op.op == OP_PLUS)
+            found = address_source_lvalue(expr->data.op.right, analyzer);
+        return found;
+    }
+    return NULL;
+}
+
 void semantic_visit_assignment(Visitor *self, ASTNode *node)
 {
     SemanticAnalyzer *analyzer = (SemanticAnalyzer *)self;
@@ -3386,6 +3567,7 @@ void add_symbol(SemanticAnalyzer *analyzer, const String name, VarType type,
     entry->is_function = is_function;
     entry->is_array = is_array;
     entry->array_rank = 0;
+    entry->modifiers = (TypeModifiers){0};
     entry->return_type = return_type;
     entry->return_pointer_level = return_pointer_level;
     entry->line_number = line_number;
@@ -3584,9 +3766,14 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
                 /* add_symbol() prepends, so the head is the entry just
                    added (unless allocation failed). */
                 SymbolEntry *added = analyzer->symbol_table;
-                if (node->is_array && added && added->name.data &&
+                if (added && added->name.data &&
                     strcmp(added->name.data, var_name.data) == 0)
-                    added->array_rank = node->array_dimensions.num_dimensions;
+                {
+                    added->modifiers = node->modifiers;
+                    if (node->is_array)
+                        added->array_rank =
+                            node->array_dimensions.num_dimensions;
+                }
             }
         }
         if (node->data.op.right)
@@ -3643,6 +3830,10 @@ void collect_declarations(SemanticAnalyzer *analyzer, ASTNode *node)
                                param->desc.pointer_level, false, false, NONE, 0,
                                node->line_number > 0 ? node->line_number : 1,
                                param->desc.struct_name, false);
+                    SymbolEntry *added = analyzer->symbol_table;
+                    if (added && added->name.data &&
+                        strcmp(added->name.data, param->name.data) == 0)
+                        added->modifiers = param->desc.modifiers;
                 }
                 param = param->next;
             }
@@ -3974,27 +4165,17 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
             node->data.op.left->type == NODE_UNARY_OPERATION &&
             node->data.op.left->data.unary.op == OP_DEREFERENCE)
         {
-            /* `*xs = v` and `*(xs + i) = v` write the array directly --
-               the same write as `xs[i] = v`, so a deadass array is refused
-               with the same error (#375/#381). Checked here, before the
-               operand decays: afterwards the target is a dereferenced
-               pointer, and writes through a pointer are deliberately not
-               const-traced. */
+            /* `*xs = v`, `*(xs + i) = v`, `*(xs + i + j) = v` and
+               `*&xs[i] = v` all write the array directly -- the same write
+               as `xs[i] = v`, so a deadass array is refused with the same
+               error (#375/#381). The array is found structurally
+               (address_source_lvalue()), not by matching a list of shapes,
+               so no amount of extra arithmetic gets past it. Checked here,
+               before the operand decays: afterwards the target is a
+               dereferenced pointer, and writes through a pointer VARIABLE
+               are deliberately not const-traced. */
             ASTNode *operand = node->data.op.left->data.unary.operand;
-            ASTNode *written = NULL;
-            if (array_expression_rank(operand, analyzer))
-                written = operand;
-            else if (operand && operand->type == NODE_OPERATION &&
-                     (operand->data.op.op == OP_PLUS ||
-                      operand->data.op.op == OP_MINUS))
-            {
-                if (array_expression_rank(operand->data.op.left, analyzer))
-                    written = operand->data.op.left;
-                else if (operand->data.op.op == OP_PLUS &&
-                         array_expression_rank(operand->data.op.right,
-                                               analyzer))
-                    written = operand->data.op.right;
-            }
+            ASTNode *written = address_source_lvalue(operand, analyzer);
             String root_name = {0};
             if (written &&
                 semantic_lvalue_root_name(analyzer, written, &root_name) &&
@@ -4795,8 +4976,49 @@ void semantic_analyze_with_scope_tracking(SemanticAnalyzer *analyzer,
                 /* `bussin xs;` from a pointer-returning function returns
                    the address of xs's first element, as in C (#389). */
                 if (current_func->return_desc.pointer_level > 0)
+                {
+                    /* ...unless xs is one of this call's own locals: its
+                       storage is freed when the call returns, so every
+                       use of the result reads freed memory (C compilers
+                       warn: -Wreturn-local-addr). Decay is what makes
+                       this spelling possible, so it is refused here,
+                       where the shape is visible. A `salty` (static)
+                       local outlives the call and is fine. */
+                    ASTNode *src =
+                        address_source_lvalue(node->data.op.left, analyzer);
+                    String root_name = {0};
+                    SymbolEntry *root = NULL;
+                    if (src && array_expression_rank(src, analyzer) &&
+                        semantic_lvalue_root_name(analyzer, src, &root_name))
+                        root = find_symbol(analyzer, root_name);
+                    if (root && !root->is_function &&
+                        !root->modifiers.is_static &&
+                        root->function_name.data &&
+                        analyzer->current_function_name.data &&
+                        strcmp(root->function_name.data,
+                               analyzer->current_function_name.data) == 0)
+                    {
+                        char error_msg[MAX_BUFFER_LEN];
+                        snprintf(error_msg, sizeof(error_msg),
+                                 "'%s' returns an address inside local "
+                                 "variable '%s', which is freed when the "
+                                 "function returns -- make it `salty` "
+                                 "(static), or have the caller pass the "
+                                 "array in",
+                                 analyzer->current_function_name.data,
+                                 root_name.data);
+                        /* create_return_node() records no line; the
+                           returned expression's node does. */
+                        int line = node->data.op.left->line_number > 0
+                                       ? node->data.op.left->line_number
+                                       : node->line_number;
+                        add_semantic_error(
+                            analyzer, SEMANTIC_ERROR_TYPE_MISMATCH,
+                            STRING_LITERAL(error_msg), line > 0 ? line : 1);
+                    }
                     decay_array_operand(analyzer, node->data.op.left,
                                         node->line_number);
+                }
                 propagate_contextual_call_type(
                     node->data.op.left, current_func->return_desc.type,
                     current_func->return_desc.pointer_level);
@@ -5410,6 +5632,7 @@ bool add_semantic_variable(SemanticAnalyzer *analyzer, const String name,
     entry->is_function = false;
     entry->is_array = false;
     entry->array_rank = 0;
+    entry->modifiers = (TypeModifiers){0};
     entry->return_type = NONE;
     entry->return_pointer_level = 0;
     entry->scope_depth = analyzer->scope_depth;

@@ -42,7 +42,10 @@ rizz sum3(rizz a[3]) {
 
 🚽 The callee sees a pointer, so maxxing(a) is a pointer's size, not the
 🚽 caller's array size. Compared against a pointer variable's size rather
-🚽 than printed: a pointer is 8 bytes natively but 4 on wasm32.
+🚽 than printed: a pointer is 8 bytes natively but 4 on wasm32. Only the
+🚽 native run discriminates "bound as a pointer" from "bound as a scalar
+🚽 rizz": on wasm32 a pointer and a rizz are both 4 bytes, so this prints 1
+🚽 either way there.
 cap param_is_pointer_sized(rizz a[]) {
     rizz *probe = a;
     bussin maxxing(a) == maxxing(probe);

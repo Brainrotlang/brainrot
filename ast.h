@@ -664,6 +664,7 @@ bool set_short_variable(const String name, short value, TypeModifiers mods);
 bool set_float_variable(const String name, float value, TypeModifiers mods);
 bool set_double_variable(const String name, double value, TypeModifiers mods);
 TypeModifiers get_variable_modifiers(const String name);
+TypeModifiers get_expression_modifiers(ASTNode *node);
 void reset_modifiers(void);
 TypeModifiers get_current_modifiers(void);
 Variable *get_variable(const String name);
