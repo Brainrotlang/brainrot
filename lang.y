@@ -455,6 +455,7 @@ static void register_anonymous_aggregate_typedef(String alias_name,
 %type <array_dims> dimensions_or_unsized
 %type <array> multi_dimension_access
 %type <declarator> declarator
+%type <declarator> param_declarator
 %type <declarator> typedef_name_declarator
 %type <declarator> typedef_declarator
 %type <strval> name_token
@@ -1099,7 +1100,7 @@ params
     ;
 
 param_list
-    : optional_modifiers type declarator
+    : optional_modifiers type param_declarator
         {
             /* Round-21 review, finding #3 -- a named by-value (pointer_
                level == 0) void parameter is nonsense (an empty params
@@ -1120,7 +1121,7 @@ param_list
             $$ = create_parameter_ex($3.name, $2, $3.pointer_level, NULL, get_current_modifiers());
             SAFE_FREE($3.name);
         }
-    | param_list COMMA optional_modifiers type declarator
+    | param_list COMMA optional_modifiers type param_declarator
         {
             if ($4 == VAR_VOID && $5.pointer_level == 0)
             {
@@ -1219,7 +1220,7 @@ param_list
             if (!$$)
                 YYABORT;
         }
-    | optional_modifiers alias_type declarator
+    | optional_modifiers alias_type param_declarator
         {
             int pointer_level = $2.pointer_level + $3.pointer_level;
             if ($2.type == VAR_VOID && pointer_level == 0)
@@ -1235,7 +1236,7 @@ param_list
             $$ = create_alias_parameter($3.name, $2, $3.pointer_level, NULL);
             SAFE_FREE($3.name);
         }
-    | param_list COMMA optional_modifiers alias_type declarator
+    | param_list COMMA optional_modifiers alias_type param_declarator
         {
             int pointer_level = $4.pointer_level + $5.pointer_level;
             if ($4.type == VAR_VOID && pointer_level == 0)
@@ -1283,21 +1284,21 @@ param_list
             $$ = create_alias_parameter($5.name, $4, $5.pointer_level, $1);
             SAFE_FREE($5.name);
         }
-    | optional_modifiers struct_or_union name_token declarator
+    | optional_modifiers struct_or_union name_token param_declarator
         {
             $$ = create_parameter_ex($4.name, VAR_STRUCT, $4.pointer_level, NULL, get_current_modifiers());
             $$->desc.struct_name = ARENA_STRDUP($3);
             SAFE_FREE($3);
             SAFE_FREE($4.name);
         }
-    | param_list COMMA optional_modifiers struct_or_union name_token declarator
+    | param_list COMMA optional_modifiers struct_or_union name_token param_declarator
         {
             $$ = create_parameter_ex($6.name, VAR_STRUCT, $6.pointer_level, $1, get_current_modifiers());
             $$->desc.struct_name = ARENA_STRDUP($5);
             SAFE_FREE($5);
             SAFE_FREE($6.name);
         }
-    | optional_modifiers ENUM name_token declarator
+    | optional_modifiers ENUM name_token param_declarator
         {
             if (!get_enum_def($3))
             {
@@ -1312,7 +1313,7 @@ param_list
             SAFE_FREE($3);
             SAFE_FREE($4.name);
         }
-    | param_list COMMA optional_modifiers ENUM name_token declarator
+    | param_list COMMA optional_modifiers ENUM name_token param_declarator
         {
             if (!get_enum_def($5))
             {
@@ -1341,6 +1342,27 @@ declarator:
         {
             $$.name = $2;
             $$.pointer_level = $1;
+        }
+    ;
+
+/* A parameter declared as an array -- `rizz a[]` or `rizz a[N]` -- is a
+   pointer, exactly as C adjusts it (#389): the caller's array decays to the
+   address of its first element and the callee indexes it as a[i]. N, as
+   in C, documents intent and is not checked; a pointer carries no extent.
+   Only one dimension: `rizz m[][C]` would be a pointer to an array of C
+   ints, a type this language cannot spell. */
+param_declarator:
+      declarator
+        { $$ = $1; }
+    | declarator LBRACKET RBRACKET
+        {
+            $$ = $1;
+            $$.pointer_level++;
+        }
+    | declarator LBRACKET INT_LITERAL RBRACKET
+        {
+            $$ = $1;
+            $$.pointer_level++;
         }
     ;
 
@@ -2101,6 +2123,12 @@ assignment_target:
             { $$ = $1; }
     | TIMES assignment_target %prec UMINUS
         { $$ = create_unary_operation_node(OP_DEREFERENCE, $2); }
+    /* `*(p + i) = v` -- a write through a computed address. The read form
+       `*(p + i)` was already an expression; without this the matching
+       store was a syntax error, so a callee handed `&arr[0]` could read
+       the caller's array but not write it (#389). */
+    | TIMES LPAREN expression RPAREN %prec UMINUS
+        { $$ = create_unary_operation_node(OP_DEREFERENCE, $3); }
     ;
 
 multi_dimension_access:

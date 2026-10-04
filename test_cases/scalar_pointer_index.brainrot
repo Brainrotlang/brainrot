@@ -1,0 +1,134 @@
+🚽 Test case: issue #389 -- indexing a SCALAR pointer (`p[i]`) and storing
+🚽 through a computed address (`*(p + i) = v`). Both failed before:
+🚽
+🚽   p[1] = 99;        Error: Variable 'p' is not an array
+🚽   *(p + 1) = 99;    Error: syntax error, unexpected EQUALS
+🚽
+🚽 which left the documented "pass an array via a pointer parameter"
+🚽 workaround half-working: a callee handed `&xs[0]` could read the caller's
+🚽 array through `*(p + i)` but could not index it, and could only write it
+🚽 through a temporary (`rizz *q = p + i; *q = v;`). Struct pointers have
+🚽 had `p[i]` since #311; this is the scalar counterpart.
+🚽
+🚽 ── Why every type reads PAST index 0 ─────────────────────────────────
+🚽 p[0] is the pointer itself whatever the stride is, so it proves
+🚽 nothing. Each type below is read at index 1 or 2, and the element sizes
+🚽 are all different -- yap 1, smol 2, rizz/chad 4, gigachad/thicc 8, and a
+🚽 `rizz **` element is a pointer's width -- so striding any of them by
+🚽 the wrong size lands on a neighbour (or between two) and prints a wrong
+🚽 value.
+🚽
+🚽 ── The thicc case ────────────────────────────────────────────────────
+🚽 A `thicc rizz *` PARAMETER used to lose its `thicc` modifier when it
+🚽 was bound (enter_function_scope() copied type and pointer_level, not
+🚽 modifiers), so `p[1]` strode 4 bytes and read the upper half of t[0]:
+🚽 0 instead of 5000000000. thicc, not giga: giga is C long, which is only
+🚽 32 bits on wasm32 (#177), where 5000000000 does not fit at all. 64-bit
+🚽 stores and `p[i]` vs `*(p + i)` agreement are covered by
+🚽 pointer_width_consistency.brainrot.
+
+rizz bump(rizz *p) {
+    p[1] = 99;
+    *(p + 0) = p[1] + 1;
+    bussin p[0] + p[1];
+}
+
+skibidi fill(rizz *p, rizz n) {
+    flex (rizz i = 0; i < n; i = i + 1) {
+        p[i] = i * 10;
+    }
+}
+
+skibidi fill_via_deref(rizz *p, rizz n) {
+    flex (rizz i = 0; i < n; i = i + 1) {
+        *(p + i) = p[i] + 1;
+    }
+}
+
+skibidi set_floats(chad *f, gigachad *d) {
+    f[2] = 2.5;
+    d[2] = d[1] * 4.0;
+}
+
+skibidi set_small(yap *c, smol *s, cap *b, nonut rizz *u) {
+    c[2] = 'Z';
+    s[2] = 300;
+    b[1] = W;
+    u[1] = 4000000000;
+}
+
+skibidi show_thicc(thicc rizz *p) {
+    yapping("thicc: %lld %lld", p[1], p[2]);
+}
+
+rizz twice(rizz n) {
+    bussin n * 2;
+}
+
+skibidi main {
+    rizz xs[3] = {1, 2, 3};
+    chad fs[3] = {0.5, 1.5, 0.0};
+    gigachad ds[3] = {0.25, 0.75, 0.0};
+    yap cs[3];
+    smol ss[3] = {1, 2, 3};
+    cap bs[2] = {L, L};
+    nonut rizz us[2] = {1, 2};
+    thicc rizz ts[3] = {1, 5000000000, 3};
+
+    🚽 A braced initializer is not supported for a yap array.
+    cs[0] = 'a';
+    cs[1] = 'b';
+    cs[2] = 'c';
+
+    🚽 The issue's reproduction: p[i] and *(p + i), read and written,
+    🚽 through a parameter -- the caller's own array changes.
+    yapping("bump: %d", bump(&xs[0]));
+    yapping("caller sees: %d %d %d", xs[0], xs[1], xs[2]);
+
+    🚽 A helper walking the whole array, then again via *(p + i) = p[i].
+    fill(&xs[0], 3);
+    yapping("fill: %d %d %d", xs[0], xs[1], xs[2]);
+    fill_via_deref(&xs[0], 3);
+    yapping("fill_via_deref: %d %d %d", xs[0], xs[1], xs[2]);
+
+    🚽 Every scalar element width.
+    set_floats(&fs[0], &ds[0]);
+    yapping("chad: %.1f %.1f %.1f", fs[0], fs[1], fs[2]);
+    yapping("gigachad: %.2f %.2f %.2f", ds[0], ds[1], ds[2]);
+    set_small(&cs[0], &ss[0], &bs[0], &us[0]);
+    yapping("yap: %c%c%c", cs[0], cs[1], cs[2]);
+    yapping("smol: %d %d %d", ss[0], ss[1], ss[2]);
+    yapping("cap: %d %d", bs[0], bs[1]);
+    yapping("nonut: %u %u", us[0], us[1]);
+    show_thicc(&ts[0]);
+
+    🚽 A LOCAL pointer, not just a parameter; a pointer moved into the
+    🚽 middle of the array indexes relative to where it points, so a
+    🚽 negative index is fine (and, as in C, not bounds-checked).
+    rizz ys[4] = {10, 20, 30, 40};
+    rizz *mid = &ys[0] + 2;
+    mid[-1] = 21;
+    yapping("relative: %d %d %d %d", mid[-2], mid[-1], mid[0], mid[1]);
+
+    🚽 p[i] as an ordinary value: a user-call argument, arithmetic, a
+    🚽 condition, an initializer, and sizeof (never evaluated).
+    rizz *p = &ys[0];
+    rizz copied = p[3];
+    yapping("value: %d %d %d", twice(p[1]), p[2] - p[0], copied);
+    edgy (p[1] > p[0]) {
+        yapping("condition: ok");
+    }
+    gigachad *dp = &ds[0];
+    yapping("sizeof: %zu %zu", maxxing(p[0]), maxxing(dp[0]));
+
+    🚽 A multi-level pointer: pp[i] is itself a pointer, indexed one
+    🚽 level at a time.
+    rizz a = 1;
+    rizz b = 2;
+    rizz *ptrs[2] = {&a, &b};
+    rizz **pp = &ptrs[0];
+    rizz *second = pp[1];
+    second[0] = 50;
+    yapping("multi-level: %d %d", a, b);
+    bussin 0;
+}

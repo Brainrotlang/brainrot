@@ -1,0 +1,46 @@
+🚽 Test case: issue #389 review -- returning a local array through decay.
+🚽
+🚽 `bussin xs;` from a pointer-returning function decays to `&xs[0]`. When
+🚽 xs is the function's own local, its storage is freed as the call
+🚽 returns, so every use of the result reads freed memory -- under ASan, a
+🚽 heap-use-after-free in the interpreter itself. C compilers diagnose it
+🚽 (-Wreturn-local-addr); decay is what makes this spelling possible here,
+🚽 so it is refused at the decay site, for the array itself, arithmetic on
+🚽 it, and an array field of a local struct.
+🚽
+🚽 Still accepted, and checked by array_decay.brainrot / the passing
+🚽 functions below: a `salty` (static) local, which outlives the call, and
+🚽 an array reached through a pointer parameter, which is the caller's.
+
+gang Box {
+    rizz vals[3];
+};
+
+rizz *local_array() {
+    rizz xs[3] = {1, 2, 3};
+    bussin xs;
+}
+
+rizz *local_array_plus() {
+    rizz xs[3] = {1, 2, 3};
+    bussin xs + 1;
+}
+
+rizz *local_struct_field() {
+    gang Box b;
+    bussin b.vals;
+}
+
+rizz *static_array() {
+    salty rizz keep[3] = {4, 5, 6};
+    bussin keep;
+}
+
+rizz *through_pointer(gang Box *bp) {
+    bussin bp.vals;
+}
+
+skibidi main {
+    yapping("side effect");
+    bussin 0;
+}

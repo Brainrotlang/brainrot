@@ -677,6 +677,7 @@ bool set_short_variable(const String name, short value, TypeModifiers mods);
 bool set_float_variable(const String name, float value, TypeModifiers mods);
 bool set_double_variable(const String name, double value, TypeModifiers mods);
 TypeModifiers get_variable_modifiers(const String name);
+TypeModifiers get_expression_modifiers(ASTNode *node);
 void reset_modifiers(void);
 TypeModifiers get_current_modifiers(void);
 Variable *get_variable(const String name);
@@ -805,6 +806,8 @@ size_t handle_sizeof(ASTNode *node);
 size_t get_type_size(String name);
 size_t get_type_size_for_descriptor(VarType type, int pointer_level,
                                     TypeModifiers mods);
+bool is_indexable_scalar_pointer(VarType type, int pointer_level,
+                                 bool is_array);
 void *handle_function_call(ASTNode *node);
 ASTNode *create_multi_array_declaration_node(String name,
                                              const int dimensions[],
@@ -819,6 +822,7 @@ ASTNode *create_multi_array_access_node(String name, ASTNode *indices[],
 ASTNode *create_struct_field_array_access_node(ASTNode *base,
                                                ASTNode *indices[],
                                                int num_indices);
+void decay_array_node_in_place(ASTNode *node);
 
 /* User-defined functions */
 Function *create_function(String name, VarType return_type, Parameter *params,
