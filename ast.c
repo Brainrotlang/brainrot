@@ -2324,9 +2324,26 @@ ASTNode *arena_alloc_astnode(void)
     return node;
 }
 
+/* An integer literal's width and signedness come from its value, as in C
+   (C11 6.4.4.1): a decimal literal is int if it fits, long long otherwise
+   (create_long_node() below), and never unsigned -- there is no suffix.
+   current_modifiers is the enclosing declaration's parser state, so a
+   literal in `thicc rizz t = a * 2;` must not inherit its thicc: that made
+   expression_is_long() report the `2` as 64-bit and the same `a * 2`
+   compute differently in an initializer than in an assignment (#371). */
+static TypeModifiers literal_modifiers(void)
+{
+    TypeModifiers mods = current_modifiers;
+    mods.is_long = false;
+    mods.is_long_long = false;
+    mods.is_signed = false;
+    mods.is_unsigned = false;
+    return mods;
+}
+
 ASTNode *create_int_node(int value)
 {
-    ASTNode *node = create_node(NODE_INT, VAR_INT, current_modifiers);
+    ASTNode *node = create_node(NODE_INT, VAR_INT, literal_modifiers());
     SET_DATA_INT(node, value);
     return node;
 }
@@ -2338,7 +2355,7 @@ ASTNode *create_int_node(int value)
    truncated to int (#282). */
 ASTNode *create_long_node(long long value)
 {
-    TypeModifiers mods = current_modifiers;
+    TypeModifiers mods = literal_modifiers();
     mods.is_long_long = true;
     ASTNode *node = create_node(NODE_INT, VAR_INT, mods);
     node->data.llvalue = value;
@@ -3234,13 +3251,20 @@ static bool is_int_comparison_op(OperatorType op)
            op == OP_EQ || op == OP_NE;
 }
 
+static bool is_int_family_type(VarType type)
+{
+    return type == VAR_INT || type == VAR_SHORT || type == VAR_CHAR ||
+           type == VAR_BOOL || type == VAR_ENUM;
+}
+
 static bool compute_expression_is_unsigned(ASTNode *node);
 
 /* Whether the binary operation `node` (arithmetic or a comparison) is
    carried out in unsigned int: C's usual arithmetic conversions make it so
-   when either operand is unsigned, unless the other is 64-bit (a giga/
-   thicc operand makes it a signed long instead). For arithmetic this is
-   also the result's signedness; a comparison's result is a plain int.
+   when either operand is unsigned and both are integers, unless the other
+   is 64-bit (a giga/thicc operand makes it a signed long instead) -- a
+   float/double operand makes it a floating operation. For arithmetic this
+   is also the result's signedness; a comparison's result is a plain int.
 
    Memoized on the node like check_and_mark_identifier()'s symbol check:
    signedness follows from declarations, so it cannot change between
@@ -3254,6 +3278,8 @@ static bool operation_is_unsigned(ASTNode *node)
             (is_int_arithmetic_op(op) || is_int_comparison_op(op)) &&
             get_expression_pointer_level(node->data.op.left) == 0 &&
             get_expression_pointer_level(node->data.op.right) == 0 &&
+            is_int_family_type(get_expression_type(node->data.op.left)) &&
+            is_int_family_type(get_expression_type(node->data.op.right)) &&
             !expression_is_long(node->data.op.left) &&
             !expression_is_long(node->data.op.right) &&
             (expression_is_unsigned(node->data.op.left) ||
@@ -3271,9 +3297,8 @@ static bool operation_is_unsigned(ASTNode *node)
    widens it must ask this to know the bits are unsigned. Never true for a
    64-bit expression, so callers need not also ask expression_is_long().
 
-   A literal is never unsigned -- there is no `u` suffix, and the
-   modifiers create_int_node() stamps on it are the parser's state at the
-   time, not the literal's type. Memoized on the node (see
+   A literal is never unsigned -- there is no `u` suffix (see
+   literal_modifiers()). Memoized on the node (see
    operation_is_unsigned()). */
 bool expression_is_unsigned(ASTNode *node)
 {
@@ -5777,8 +5802,15 @@ long long evaluate_expression_long(ASTNode *node)
     }
     case NODE_OPERATION:
     {
-        if (get_expression_type(node) == VAR_BOOL)
+        VarType op_type = get_expression_type(node);
+        if (op_type == VAR_BOOL)
             return evaluate_expression_bool(node) ? 1 : 0;
+        /* A floating operation (`a + 0.5`) is computed in floating point and
+           converted, as C converts it to long long -- not re-evaluated
+           operand by operand as integers, which reported "Cannot use double
+           in integer context" and dropped the fraction's operand (#371). */
+        if (op_type == VAR_FLOAT || op_type == VAR_DOUBLE)
+            return (long long)evaluate_expression_double(node);
         if (get_expression_pointer_level(node) > 0)
         {
             yyerror("Cannot use pointer in integer context");

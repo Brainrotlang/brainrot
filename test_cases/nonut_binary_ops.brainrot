@@ -78,6 +78,17 @@ skibidi main {
     yapping("thicc: %d %lld %lld", a > t, a + t, (z - 1) + t);
     yapping("float: %.1f", a + 0.5);
 
+    🚽 The same two as a thicc INITIALIZER, where the parser used to stamp
+    🚽 the declaration's thicc onto the literal 2, so `a * 2` skipped the
+    🚽 unsigned 32-bit wrap there (6000000000) but not in an assignment.
+    🚽 A literal's width comes from its value. And `a + 0.5` is a double
+    🚽 operation converted to thicc, not unsigned int arithmetic.
+    thicc rizz wrapped = a * 2;
+    thicc rizz assigned = 0;
+    assigned = a * 2;
+    thicc rizz from_double = a + 0.5;
+    yapping("thicc-init: %lld %lld %lld", wrapped, assigned, from_double);
+
     🚽 A loop condition, the shape most programs hit first.
     nonut rizz i = 3000000000;
     rizz count = 0;
