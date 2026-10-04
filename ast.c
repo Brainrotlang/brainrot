@@ -2052,7 +2052,7 @@ void *evaluate_multi_array_access(ASTNode *node)
        extent, so no bounds check -- with the stride taken from the
        pointee's descriptor, as pointer_arith_scale() does for `p + i`.
        Unlike that function this reads the Variable's own modifiers rather
-       than the node's, which is what makes a `giga rizz *` stride 8.
+       than the node's, which is what makes a `thicc rizz *` stride 8.
 
        A single index only: `pp[i][j]` would need the first index's result
        re-read as a pointer, which this one-node address computation does
@@ -9242,9 +9242,10 @@ bool enter_function_scope(Function *func, ArgumentList *args)
             if (bound)
             {
                 bound->desc.pointer_level = curr_param->desc.pointer_level;
-                /* The pointee's width modifiers (`giga rizz *p`, `nonut
-                   rizz *p`) decide the stride of `p[i]` (#389) -- dropping
-                   them strode a 64-bit pointee by sizeof(int). */
+                /* The pointee's width modifiers (`thicc rizz *p`, `giga
+                   rizz *p`, `nonut rizz *p`) decide the stride of `p[i]`
+                   (#389) -- dropping them strode an 8-byte pointee by
+                   sizeof(int). */
                 bound->desc.modifiers = mods;
                 /* A pointer-to-struct/union parameter (`gang Foo *pp`)
                    needs its tag copied too, same as the by-value VAR_STRUCT

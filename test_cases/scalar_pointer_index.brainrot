@@ -13,18 +13,20 @@
 🚽 ── Why every type reads PAST index 0 ─────────────────────────────────
 🚽 p[0] is the pointer itself whatever the stride is, so it proves
 🚽 nothing. Each type below is read at index 1 or 2, and the element sizes
-🚽 are all different -- yap 1, smol 2, rizz/chad 4, gigachad/giga 8, and a
+🚽 are all different -- yap 1, smol 2, rizz/chad 4, gigachad/thicc 8, and a
 🚽 `rizz **` element is a pointer's width -- so striding any of them by
 🚽 the wrong size lands on a neighbour (or between two) and prints a wrong
 🚽 value.
 🚽
-🚽 ── The giga case ─────────────────────────────────────────────────────
-🚽 A `giga rizz *` PARAMETER used to lose its `giga` modifier when it was
-🚽 bound (enter_function_scope() copied type and pointer_level, not
-🚽 modifiers), so `p[1]` strode 4 bytes and read the upper half of g[0]:
-🚽 0 instead of 5000000000. Only READ here: storing a 64-bit value into a
-🚽 giga element truncates to 32 bits even for a plain array (`g[1] = ...`),
-🚽 a separate pre-existing bug this change does not touch.
+🚽 ── The thicc case ────────────────────────────────────────────────────
+🚽 A `thicc rizz *` PARAMETER used to lose its `thicc` modifier when it
+🚽 was bound (enter_function_scope() copied type and pointer_level, not
+🚽 modifiers), so `p[1]` strode 4 bytes and read the upper half of t[0]:
+🚽 0 instead of 5000000000. thicc, not giga: giga is C long, which is only
+🚽 32 bits on wasm32 (#177), where 5000000000 does not fit at all. Only
+🚽 READ here: storing a 64-bit value into a thicc element truncates to 32
+🚽 bits even for a plain array (`t[1] = ...`), a separate pre-existing bug
+🚽 this change does not touch.
 
 rizz bump(rizz *p) {
     p[1] = 99;
@@ -56,8 +58,8 @@ skibidi set_small(yap *c, smol *s, cap *b, nonut rizz *u) {
     u[1] = 4000000000;
 }
 
-skibidi show_giga(giga rizz *p) {
-    yapping("giga: %ld %ld", p[1], p[2]);
+skibidi show_thicc(thicc rizz *p) {
+    yapping("thicc: %lld %lld", p[1], p[2]);
 }
 
 rizz twice(rizz n) {
@@ -72,7 +74,7 @@ skibidi main {
     smol ss[3] = {1, 2, 3};
     cap bs[2] = {L, L};
     nonut rizz us[2] = {1, 2};
-    giga rizz gs[3] = {1, 5000000000, 3};
+    thicc rizz ts[3] = {1, 5000000000, 3};
 
     🚽 A braced initializer is not supported for a yap array.
     cs[0] = 'a';
@@ -99,7 +101,7 @@ skibidi main {
     yapping("smol: %d %d %d", ss[0], ss[1], ss[2]);
     yapping("cap: %d %d", bs[0], bs[1]);
     yapping("nonut: %u %u", us[0], us[1]);
-    show_giga(&gs[0]);
+    show_thicc(&ts[0]);
 
     🚽 A LOCAL pointer, not just a parameter; a pointer moved into the
     🚽 middle of the array indexes relative to where it points, so a

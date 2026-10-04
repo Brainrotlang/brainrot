@@ -41,9 +41,11 @@ rizz sum3(rizz a[3]) {
 }
 
 🚽 The callee sees a pointer, so maxxing(a) is a pointer's size, not the
-🚽 caller's array size.
-rizz param_size(rizz a[]) {
-    bussin maxxing(a);
+🚽 caller's array size. Compared against a pointer variable's size rather
+🚽 than printed: a pointer is 8 bytes natively but 4 on wasm32.
+cap param_is_pointer_sized(rizz a[]) {
+    rizz *probe = a;
+    bussin maxxing(a) == maxxing(probe);
 }
 
 skibidi bump_all(gang E pool[], rizz n) {
@@ -72,7 +74,7 @@ skibidi main {
     fill(xs, 3);
     yapping("fill: %d %d %d", xs[0], xs[1], xs[2]);
     yapping("sum: %d sum3: %d", sum(xs, 3), sum3(xs));
-    yapping("sizes: %zu %d", maxxing(xs), param_size(xs));
+    yapping("sizes: %zu %d", maxxing(xs), param_is_pointer_sized(xs));
 
     🚽 As an initializer and an assigned value.
     rizz *p = xs;
