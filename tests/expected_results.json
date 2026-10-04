@@ -460,5 +460,7 @@
     "const_struct_pointer_member_write": "55\n77\n",
     "semantic_error_const_array_no_side_effect": "Error: Cannot modify const variable at line 8",
     "semantic_error_const_struct_member_no_side_effect": "Error: Cannot modify const variable at line 17\nError: Cannot modify const variable at line 16",
-    "format_bare_percent": "A\nB\nC\nD\nE\nF\nG\nok"
+    "format_bare_percent": "A\nB\nC\nD\nE\nF\nG\nok",
+    "assignment_expression": "chain: a=5 b=5\ninit: b=6 c=6\nsub: b=7 d=8\nfor: i=3 j=6\ntriple: 11 11 11\nedgy: b=0\ngoon: cnt=0 loops=2\nfloat-to-int: i=3 f=3.70\nint-division: f=3.00\nsmol: 4464 4464\nthicc: 1 5000000000\ndecl-thicc: 8000000000 8000000000\ndecl-element: 1 5 5\nindex-side-effect: x=5 k=1 arr=5 0\nindex-call: y=8 m=1 arr0=8\nfloat-element: 2.5 2.5\nfield: 4 4\npointer: n=7 7 7\npointer-init: 1\nrant: hi hi\nyap: b b\ncap: 1\nnative-arg: 9\nafter: b=9\nuser-arg: 12 b=6\nconverted-arg: 1.50 f=3.00\nreturn: 8 g=8",
+    "assignment_expression_const_fail": "Error: Cannot modify const variable at line 12\nError: Cannot modify const variable at line 11"
 }

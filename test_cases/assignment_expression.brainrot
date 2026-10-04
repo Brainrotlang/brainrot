@@ -1,0 +1,142 @@
+🚽 Test case: issue #374 -- an assignment used as an EXPRESSION. As in C,
+🚽 `b = 5` performs the write and yields the value stored, so it can be
+🚽 chained (`a = b = 5`) or nested (`(b = 5) + 1`). Before, no value
+🚽 evaluator handled an assignment node: the inner write was skipped (or
+🚽 its value read as 0) and "Invalid integer expression" was printed.
+🚽
+🚽 The value is the TARGET's value after the write, converted to the
+🚽 target's type -- `smol s; (s = 70000)` is 4464, not 70000 -- and a
+🚽 target with side effects (`arr[k++]`, `arr[bump(&m)]`) is evaluated
+🚽 exactly once: the value is read back from the address that was written.
+
+gang Pt {
+    rizz x;
+    rizz y;
+};
+
+rizz bump(rizz *k) {
+    *k = *k + 1;
+    bussin *k - 1;
+}
+
+rizz store(rizz *p, rizz v) {
+    bussin *p = v * 2;
+}
+
+rizz twice(rizz v) {
+    bussin v * 2;
+}
+
+chad half(chad v) {
+    bussin v / 2.0;
+}
+
+skibidi main {
+    🚽 The issue's reproductions.
+    rizz a;
+    rizz b;
+    a = b = 5;
+    yapping("chain: a=%d b=%d", a, b);
+    rizz c = (b = 6);
+    yapping("init: b=%d c=%d", b, c);
+    rizz d = (b = 7) + 1;
+    yapping("sub: b=%d d=%d", b, d);
+    rizz i;
+    rizz j;
+    flex (i = j = 0; i < 3; i = i + 1) {
+        j = j + 2;
+    }
+    yapping("for: i=%d j=%d", i, j);
+
+    🚽 Right-associative: all three are set.
+    rizz a1;
+    rizz a2;
+    rizz a3;
+    a1 = a2 = a3 = 11;
+    yapping("triple: %d %d %d", a1, a2, a3);
+
+    🚽 As a condition, in both `edgy` and `goon`.
+    edgy ((b = 0) == 0) {
+        yapping("edgy: b=%d", b);
+    }
+    rizz cnt = 3;
+    rizz loops = 0;
+    goon ((cnt = cnt - 1) > 0) {
+        loops = loops + 1;
+    }
+    yapping("goon: cnt=%d loops=%d", cnt, loops);
+
+    🚽 The value has the target's type.
+    rizz ii;
+    chad ff;
+    ii = ff = 3.7;
+    yapping("float-to-int: i=%d f=%.2f", ii, ff);
+    ff = (ii = 7) / 2;
+    yapping("int-division: f=%.2f", ff);
+    smol s;
+    rizz r = (s = 70000);
+    yapping("smol: %d %d", r, s);
+    thicc rizz t;
+    cap big = (t = 5000000000) > 4000000000;
+    yapping("thicc: %d %lld", big, t);
+
+    🚽 Nested in a DECLARATION's initializer, the inner assignment is
+    🚽 reduced first by the parser. It used to take the declaration's
+    🚽 pending thicc, leaving `u` a 32-bit rizz (3705032704) and making the
+    🚽 write to the rizz element ra[1] an 8-byte store into a 4-byte slot.
+    thicc rizz u = (t = 8000000000);
+    yapping("decl-thicc: %lld %lld", u, t);
+    rizz ra[2] = {1, 2};
+    thicc rizz v = (ra[1] = 5);
+    yapping("decl-element: %d %d %lld", ra[0], ra[1], v);
+
+    🚽 Targets that are not a plain variable -- each evaluated once.
+    rizz arr[3] = {0, 0, 0};
+    rizz k = 0;
+    rizz x = arr[k++] = 5;
+    yapping("index-side-effect: x=%d k=%d arr=%d %d", x, k, arr[0], arr[1]);
+    rizz m = 0;
+    rizz y = arr[bump(&m)] = 8;
+    yapping("index-call: y=%d m=%d arr0=%d", y, m, arr[0]);
+    chad fa[2] = {0.0, 0.0};
+    chad fv = (fa[1] = 2.5);
+    yapping("float-element: %.1f %.1f", fv, fa[1]);
+    gang Pt p;
+    gang Pt q;
+    p.x = q.y = 4;
+    yapping("field: %d %d", p.x, q.y);
+    rizz n = 1;
+    rizz z = 0;
+    rizz *pa = &z;
+    rizz *pb = &z;
+    pa = pb = &n;
+    *pa = *pb = 7;
+    yapping("pointer: n=%d %d %d", n, *pa, *pb);
+    rizz *pc = (pb = &z);
+    yapping("pointer-init: %d", pc == &z);
+
+    🚽 Other types, and other value contexts: a native argument, a user
+    🚽 call argument (converted to the parameter), a return value.
+    rant s1;
+    rant s2;
+    s1 = s2 = "hi";
+    yapping("rant: %s %s", s1, s2);
+    yap ch = 'a';
+    yap ch2 = (ch = 'b');
+    yapping("yap: %c %c", ch, ch2);
+    cap flag;
+    edgy (flag = W) {
+        yapping("cap: %d", flag);
+    }
+    yapping("native-arg: %d", b = 9);
+    yapping("after: b=%d", b);
+    rizz tw = twice(b = 6);
+    yapping("user-arg: %d b=%d", tw, b);
+    chad f = 0.0;
+    chad hv = half(f = 3);
+    yapping("converted-arg: %.2f f=%.2f", hv, f);
+    rizz g = 0;
+    rizz got = store(&g, 4);
+    yapping("return: %d g=%d", got, g);
+    bussin 0;
+}

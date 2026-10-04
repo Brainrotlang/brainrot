@@ -1,0 +1,14 @@
+🚽 Test case: issue #374 x #375 -- an assignment used as an expression is
+🚽 still an assignment: writing a deadass variable inside one is refused
+🚽 during semantic analysis, exactly as the statement form is. The
+🚽 yapping() before it proves nothing ran (the harness compares stdout
+🚽 when it is non-empty).
+
+skibidi main {
+    deadass rizz cx = 1;
+    rizz a;
+    yapping("side effect");
+    a = (cx = 5);
+    a = cx = 6;
+    bussin 0;
+}

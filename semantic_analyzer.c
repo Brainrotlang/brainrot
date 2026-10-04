@@ -372,6 +372,10 @@ int infer_expression_pointer_level(ASTNode *node, SemanticAnalyzer *analyzer)
 
     switch (node->type)
     {
+    case NODE_ASSIGNMENT:
+        /* `p = q = &x`: an assignment expression has its target's type
+           (#374). */
+        return infer_expression_pointer_level(node->data.op.left, analyzer);
     case NODE_IDENTIFIER:
     {
         SymbolEntry *symbol = find_symbol(analyzer, node->data.name);
@@ -833,6 +837,10 @@ VarType infer_expression_type(ASTNode *node, SemanticAnalyzer *analyzer)
 
     switch (node->type)
     {
+    case NODE_ASSIGNMENT:
+        /* `a = b = 5`: an assignment expression has its target's type
+           (#374). */
+        return infer_expression_type(node->data.op.left, analyzer);
     case NODE_INT:
         return VAR_INT;
     case NODE_SHORT:

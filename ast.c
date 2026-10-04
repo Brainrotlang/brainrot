@@ -325,6 +325,21 @@ static void packed_long_store(void *addr, long long value, TypeModifiers mods)
         *(long *)addr = (long)value; /* is_long: platform long width */
 }
 
+/* Where an assignment wrote, and through which descriptor -- see
+   execute_assignment_slot(). */
+typedef struct
+{
+    ASTNode *target;
+    void *address;
+    VarType type;
+    int pointer_level;
+    TypeModifiers mods;
+} AssignedSlot;
+static AssignedSlot execute_assignment_slot(ASTNode *node);
+static long long assigned_slot_long(const AssignedSlot *slot);
+static double assigned_slot_double(const AssignedSlot *slot);
+static uintptr_t assigned_slot_pointer(const AssignedSlot *slot);
+
 // Symbol table functions
 bool set_variable(const String name, void *value, VarType type,
                   TypeModifiers mods)
@@ -2439,9 +2454,17 @@ ASTNode *create_assignment_node(String name, ASTNode *expr)
 
 ASTNode *create_assignment_target_node(ASTNode *target, ASTNode *expr)
 {
+    /* No modifiers of its own, and it must not take the parser's pending
+       ones: those belong to a declaration still being parsed. Bison reduces
+       an assignment nested in an initializer -- `thicc rizz v = (ra[1] =
+       5);` (#374) -- before the declaration, so get_current_modifiers()
+       here handed the declaration's thicc to this node (an 8-byte store
+       into a 4-byte rizz element) and reset it, leaving `v` a 32-bit
+       rizz. A statement-level assignment already got empty modifiers,
+       since they are reset after every declaration. */
     ASTNode *node = create_node(NODE_ASSIGNMENT,
                                 target ? target->var_type : current_var_type,
-                                get_current_modifiers());
+                                (TypeModifiers){0});
     node->pointer_level = target ? target->pointer_level : 0;
     SET_DATA_OP(node, target, expr, OP_ASSIGN);
     return node;
@@ -2737,6 +2760,9 @@ int get_expression_pointer_level(ASTNode *node)
 
     switch (node->type)
     {
+    case NODE_ASSIGNMENT:
+        /* An assignment expression has its target's type (#374). */
+        return get_expression_pointer_level(node->data.op.left);
     case NODE_IDENTIFIER:
     {
         Variable *var = get_variable(node->data.name);
@@ -2862,6 +2888,9 @@ VarType get_expression_type(ASTNode *node)
 
     switch (node->type)
     {
+    case NODE_ASSIGNMENT:
+        /* An assignment expression has its target's type (#374). */
+        return get_expression_type(node->data.op.left);
     case NODE_INT:
         return VAR_INT;
     case NODE_SHORT:
@@ -3041,6 +3070,8 @@ bool expression_is_long(ASTNode *node)
         return false;
     switch (node->type)
     {
+    case NODE_ASSIGNMENT:
+        return expression_is_long(node->data.op.left);
     case NODE_INT:
         return node->modifiers.is_long || node->modifiers.is_long_long;
     case NODE_IDENTIFIER:
@@ -3234,6 +3265,9 @@ static VarType infer_runtime_expression_type_noeval(ASTNode *expr)
 
     switch (expr->type)
     {
+    case NODE_ASSIGNMENT:
+        /* An assignment expression has its target's type (#374). */
+        return infer_runtime_expression_type_noeval(expr->data.op.left);
     case NODE_INT:
         return VAR_INT;
     case NODE_SHORT:
@@ -3972,6 +4006,12 @@ uintptr_t evaluate_expression_pointer(ASTNode *node)
 
     switch (node->type)
     {
+    case NODE_ASSIGNMENT:
+    {
+        /* `p = q = &x` (#374). */
+        AssignedSlot slot = execute_assignment_slot(node);
+        return slot.target ? assigned_slot_pointer(&slot) : (uintptr_t)0;
+    }
     case NODE_IDENTIFIER:
     {
         Variable *var = get_variable(node->data.name);
@@ -4791,6 +4831,11 @@ float evaluate_expression_float(ASTNode *node)
 
     switch (node->type)
     {
+    case NODE_ASSIGNMENT:
+    {
+        AssignedSlot slot = execute_assignment_slot(node);
+        return slot.target ? (float)assigned_slot_double(&slot) : 0.0f;
+    }
     case NODE_ARRAY_ACCESS:
     {
         if (get_expression_pointer_level(node) > 0)
@@ -4944,6 +4989,11 @@ double evaluate_expression_double(ASTNode *node)
 
     switch (node->type)
     {
+    case NODE_ASSIGNMENT:
+    {
+        AssignedSlot slot = execute_assignment_slot(node);
+        return slot.target ? assigned_slot_double(&slot) : 0.0;
+    }
     case NODE_ARRAY_ACCESS:
     {
         if (get_expression_pointer_level(node) > 0)
@@ -5321,6 +5371,17 @@ String evaluate_expression_string(ASTNode *node)
 
     switch (node->type)
     {
+    case NODE_ASSIGNMENT:
+    {
+        /* `s = t = "x"` (#374). Only a rant variable can be read back as a
+           string -- this evaluator has no array or struct-field case for
+           any other expression either. */
+        AssignedSlot slot = execute_assignment_slot(node);
+        if (slot.target && slot.target->type == NODE_IDENTIFIER)
+            return evaluate_expression_string(slot.target);
+        yyerror("Invalid string expression");
+        return (String){.data = NULL, .len = 0};
+    }
     case NODE_STRING_LITERAL:
     case NODE_STRING:
         return safe_strdup(&node->data.strvalue);
@@ -5507,6 +5568,11 @@ long long evaluate_expression_long(ASTNode *node)
 
     switch (node->type)
     {
+    case NODE_ASSIGNMENT:
+    {
+        AssignedSlot slot = execute_assignment_slot(node);
+        return slot.target ? assigned_slot_long(&slot) : 0;
+    }
     case NODE_INT:
         return (node->modifiers.is_long || node->modifiers.is_long_long)
                    ? node->data.llvalue
@@ -5718,6 +5784,11 @@ short evaluate_expression_short(ASTNode *node)
 
     switch (node->type)
     {
+    case NODE_ASSIGNMENT:
+    {
+        AssignedSlot slot = execute_assignment_slot(node);
+        return slot.target ? (short)assigned_slot_long(&slot) : 0;
+    }
     case NODE_INT:
         return (short)node->data.ivalue;
     case NODE_BOOLEAN:
@@ -5902,6 +5973,13 @@ int evaluate_expression_int(ASTNode *node)
 
     switch (node->type)
     {
+    case NODE_ASSIGNMENT:
+    {
+        /* `a = b = 5`, `(b = 5) + 1` (#374): perform the write, then
+           yield the assigned value. */
+        AssignedSlot slot = execute_assignment_slot(node);
+        return slot.target ? (int)assigned_slot_long(&slot) : 0;
+    }
     case NODE_INT:
         return node->data.ivalue;
     case NODE_BOOLEAN:
@@ -6380,6 +6458,18 @@ bool evaluate_expression_bool(ASTNode *node)
 
     switch (node->type)
     {
+    case NODE_ASSIGNMENT:
+    {
+        /* `edgy ((n = next()) != 0)` and friends (#374). */
+        AssignedSlot slot = execute_assignment_slot(node);
+        if (!slot.target)
+            return false;
+        if (slot.pointer_level > 0)
+            return assigned_slot_pointer(&slot) != (uintptr_t)0;
+        if (slot.type == VAR_FLOAT || slot.type == VAR_DOUBLE)
+            return assigned_slot_double(&slot) != 0.0;
+        return assigned_slot_long(&slot) != 0;
+    }
     case NODE_INT:
         return (bool)node->data.ivalue;
     case NODE_SHORT:
@@ -6797,6 +6887,10 @@ bool is_expression(ASTNode *node, VarType type)
         // For operations, check if the result type matches the target type
         return get_expression_type(node) == type;
     }
+    case NODE_ASSIGNMENT:
+        /* `yapping("%d", b = 5)`: an assignment expression has its
+           target's type (#374), which get_expression_type() reports. */
+        return get_expression_type(node) == type;
     case NODE_UNARY_OPERATION:
         /* Previously uncased, falling to the default: below --
            `node->type == VART_TO_NODET(type)` can never be true for a
@@ -6923,10 +7017,20 @@ int evaluate_expression(ASTNode *node)
 
 void execute_assignment(ASTNode *node)
 {
+    (void)execute_assignment_slot(node);
+}
+
+/* Performs the assignment `node` and returns where it wrote, with the
+   descriptor it wrote through -- so an assignment used as an expression
+   (#374) can read back exactly the value stored, converted to the target's
+   type as C requires, without evaluating the target a second time. */
+static AssignedSlot execute_assignment_slot(ASTNode *node)
+{
+    AssignedSlot slot = {0};
     if (node->type != NODE_ASSIGNMENT)
     {
         yyerror("Expected assignment node");
-        return;
+        return slot;
     }
 
     ASTNode *target = node->data.op.left;
@@ -6946,7 +7050,7 @@ void execute_assignment(ASTNode *node)
         if (!var)
         {
             yyerror("Assignment to undefined variable");
-            return;
+            return slot;
         }
         target_type = var->desc.type;
         target_pointer_level = var->desc.pointer_level;
@@ -6968,6 +7072,52 @@ void execute_assignment(ASTNode *node)
     void *address = evaluate_lvalue_address(target);
     write_value_to_address(address, target_type, target_pointer_level,
                            value_node, mods, packed_storage);
+
+    slot.target = target;
+    slot.address = address;
+    slot.type = target_type;
+    slot.pointer_level = target_pointer_level;
+    slot.mods = mods;
+    return slot;
+}
+
+/* The value of an assignment expression (#374): the target's value after
+   the write. A plain variable is simply re-read -- naming it has no side
+   effects, and its own evaluators know its storage. Any other target
+   (`arr[i++]`, `*f()`, `s.f`) is read back from the address the write
+   used, through the same descriptor, so its subexpressions run once. */
+static long long assigned_slot_long(const AssignedSlot *slot)
+{
+    if (slot->target->type == NODE_IDENTIFIER)
+        return expression_is_long(slot->target)
+                   ? evaluate_expression_long(slot->target)
+                   : (long long)evaluate_expression_int(slot->target);
+    if (!slot->address)
+        return 0;
+    if (slot->pointer_level > 0)
+        return (long long)*(const uintptr_t *)slot->address;
+    if (slot->type == VAR_INT &&
+        (slot->mods.is_long || slot->mods.is_long_long))
+        return packed_long_load(slot->address, slot->mods);
+    return (long long)numeric_load(slot->address, slot->type);
+}
+
+static double assigned_slot_double(const AssignedSlot *slot)
+{
+    if (slot->target->type == NODE_IDENTIFIER)
+        return evaluate_expression_double(slot->target);
+    if (!slot->address)
+        return 0.0;
+    if (slot->type == VAR_FLOAT || slot->type == VAR_DOUBLE)
+        return numeric_load(slot->address, slot->type);
+    return (double)assigned_slot_long(slot);
+}
+
+static uintptr_t assigned_slot_pointer(const AssignedSlot *slot)
+{
+    if (slot->target->type == NODE_IDENTIFIER)
+        return evaluate_expression_pointer(slot->target);
+    return slot->address ? *(const uintptr_t *)slot->address : (uintptr_t)0;
 }
 
 /* Does ast_accept()'s own walk compute this expression's value?
