@@ -460,5 +460,6 @@
     "const_struct_pointer_member_write": "55\n77\n",
     "semantic_error_const_array_no_side_effect": "Error: Cannot modify const variable at line 8",
     "semantic_error_const_struct_member_no_side_effect": "Error: Cannot modify const variable at line 17\nError: Cannot modify const variable at line 16",
-    "format_bare_percent": "A\nB\nC\nD\nE\nF\nG\nok"
+    "format_bare_percent": "A\nB\nC\nD\nE\nF\nG\nok",
+    "nonut_binary_ops": "big\ndiv: 1500000000\nmod: 4\ncmp: 1 1 0 0 1 0\nneg-one: 0\nnested: 1 1 1\nnegate: 1\nintmin: 0 2147483648\nparam: 1 1500000000\narray: 1 2000000000\nderef: 1 1000000000\nfield: 1 1000000000 1 1000000000\nthicc: 1 3000000005 4294967300\nfloat: 3000000000.5\nloop: 3\nsigned: -3 -1 1"
 }

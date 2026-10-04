@@ -1,0 +1,86 @@
+🚽 Test case: issue #371 -- a nonut rizz (unsigned int) above INT_MAX was
+🚽 compared, divided and taken modulo as a NEGATIVE signed int, because
+🚽 nothing told handle_binary_operation() the operand was unsigned:
+🚽
+🚽   3000000000 > 5        printed "small"
+🚽   3000000000 / 2        printed 3647483648 (-647483648 as %u)
+🚽   3000000000 % 7        printed 0
+🚽
+🚽 Every line below follows C's usual arithmetic conversions: an int
+🚽 operation with an unsigned operand is unsigned (so `a > -1` is FALSE,
+🚽 as in C -- -1 converts to 4294967295), a comparison yields a plain int,
+🚽 and a 64-bit operand makes the operation a signed long, into which the
+🚽 unsigned value is zero-extended. thicc, not giga, for that: giga is C
+🚽 long, only 32 bits on wasm32 (#177).
+
+lit nonut rizz U;
+
+gang Box {
+    U v;
+    U arr[2];
+};
+
+skibidi param(nonut rizz x) {
+    yapping("param: %d %u", x > 5, x / 2);
+}
+
+skibidi main {
+    🚽 The issue's two reproductions.
+    nonut rizz a = 3000000000;
+    nonut rizz b = 2;
+    edgy (a > 5) {
+        yapping("big");
+    } amogus {
+        yapping("small");
+    }
+    yapping("div: %u", a / b);
+
+    🚽 Modulo and every ordering comparison; == and != were already right.
+    yapping("mod: %u", a % 7);
+    yapping("cmp: %d %d %d %d %d %d", a > 5, a >= 5, a < 5, a <= 5,
+            a == 3000000000, a != 3000000000);
+    yapping("neg-one: %d", a > -1);
+
+    🚽 The result of +, -, *, / on a nonut is itself unsigned.
+    yapping("nested: %d %d %d", (a + 1) > 5, (a * 1) / 2 > 1000000000,
+            (a / 2) > 1000000000);
+    yapping("negate: %d", -a > 0);
+
+    🚽 0x80000000 / 0xFFFFFFFF is a well-defined unsigned division (0), not
+    🚽 the "most negative rizz divided by -1" overflow of the signed case.
+    nonut rizz m = 2147483648;
+    nonut rizz all = 4294967295;
+    yapping("intmin: %u %u", m / all, m % all);
+
+    🚽 Every place an unsigned operand comes from.
+    param(a);
+    nonut rizz arr[2] = {4000000000, 7};
+    yapping("array: %d %u", arr[0] > 5, arr[0] / 2);
+    nonut rizz *p = &a;
+    yapping("deref: %d %u", *p > 5, *p / 3);
+    gang Box bx;
+    bx.v = 4000000000;
+    bx.arr[1] = 4000000000;
+    yapping("field: %d %u %d %u", bx.v > 5, bx.v / 4, bx.arr[1] > 5,
+            bx.arr[1] / 4);
+
+    🚽 Widening: into a 64-bit operation (zero-extended), and into float.
+    thicc rizz t = 5;
+    nonut rizz z = 0;
+    yapping("thicc: %d %lld %lld", a > t, a + t, (z - 1) + t);
+    yapping("float: %.1f", a + 0.5);
+
+    🚽 A loop condition, the shape most programs hit first.
+    nonut rizz i = 3000000000;
+    rizz count = 0;
+    goon (i > 2999999997) {
+        i = i - 1;
+        count = count + 1;
+    }
+    yapping("loop: %d", count);
+
+    🚽 Signed rizz is untouched.
+    rizz s = -7;
+    yapping("signed: %d %d %d", s / 2, s % 3, s < 5);
+    bussin 0;
+}
