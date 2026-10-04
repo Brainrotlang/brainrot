@@ -3102,49 +3102,197 @@ static bool desc_is_unsigned_int(VarType type, TypeModifiers mods)
            !mods.is_long_long;
 }
 
-/* Whether an integer expression has C type `unsigned int` -- a 32-bit nonut
-   rizz (#371). The signedness companion of expression_is_long():
-   get_expression_type() reports nonut rizz as plain VAR_INT and its value is
-   stored in the same int slot, so every evaluator that compares, divides or
-   widens it must ask this to know the bits are unsigned. Follows C's usual
-   arithmetic conversions: an arithmetic operation is unsigned if either
-   operand is, unless the other is 64-bit (a giga/thicc operand makes it a
-   signed long instead); a comparison or logical operation is a plain int.
-
-   A literal is never unsigned -- there is no `u` suffix, and the
-   modifiers create_int_node() stamps on it are the parser's state at the
-   time, not the literal's type. */
-bool expression_is_unsigned(ASTNode *node)
+/* The declared descriptor of a value-denoting expression -- a variable, an
+   array element, a struct field, a call, or anything reached through a
+   pointer -- read from declarations alone, never evaluating anything.
+   Dereferencing is one rule rather than a list of shapes: `*E` is E's
+   descriptor one pointer level down, whether E is `p`, `p + i`, `*pp` or
+   `&x`, and `p ± i` keeps p's descriptor. Returns false when the
+   expression has no declared descriptor (a literal, an arithmetic result). */
+static bool static_value_descriptor(ASTNode *node, VarType *type,
+                                    int *pointer_level, TypeModifiers *mods)
 {
     if (!node)
-        return false;
-    if (get_expression_pointer_level(node) > 0)
         return false;
     switch (node->type)
     {
     case NODE_IDENTIFIER:
     {
         Variable *var = get_variable(node->data.name);
-        return var != NULL &&
-               desc_is_unsigned_int(var->desc.type, var->desc.modifiers);
-    }
-    case NODE_OPERATION:
-        switch (node->data.op.op)
-        {
-        case OP_PLUS:
-        case OP_MINUS:
-        case OP_TIMES:
-        case OP_DIVIDE:
-        case OP_MOD:
-            if (expression_is_long(node->data.op.left) ||
-                expression_is_long(node->data.op.right))
-                return false;
-            return expression_is_unsigned(node->data.op.left) ||
-                   expression_is_unsigned(node->data.op.right);
-        default:
+        if (var == NULL || var->desc.is_array)
             return false;
+        *type = var->desc.type;
+        *pointer_level = var->desc.pointer_level;
+        *mods = var->desc.modifiers;
+        return true;
+    }
+    case NODE_ARRAY_ACCESS:
+    {
+        /* From the array variable (or array field, for `s.arr[i]`), not the
+           node: like expression_is_long() notes, it is built at parse
+           time. Indexing a pointer is *(p + i), one level down. */
+        if (node->data.array.base != NULL)
+            return node->data.array.base->type == NODE_STRUCT_ACCESS &&
+                   static_value_descriptor(node->data.array.base, type,
+                                           pointer_level, mods);
+        Variable *var = node->data.array.name.data
+                            ? get_variable(node->data.array.name)
+                            : NULL;
+        if (var == NULL)
+            return false;
+        *type = var->desc.type;
+        *pointer_level = var->desc.pointer_level;
+        *mods = var->desc.modifiers;
+        if (!var->desc.is_array)
+        {
+            if (*pointer_level <= 0)
+                return false;
+            (*pointer_level)--;
         }
+        return true;
+    }
+    case NODE_STRUCT_ACCESS:
+    {
+        /* An array field (`s.arr`) reports its element's descriptor, which
+           is what `s.arr[i]` above asks for. */
+        StructDef *def = NULL;
+        void *base = NULL;
+        StructField *fld = NULL;
+        if (!resolve_struct_access(node, &def, &base, &fld, false))
+            fld = static_struct_field(node);
+        if (fld == NULL)
+            return false;
+        *type = fld->desc.type;
+        *pointer_level = fld->desc.pointer_level;
+        *mods = fld->desc.modifiers;
+        return true;
+    }
+    case NODE_FUNC_CALL:
+    {
+        /* A user function's declared return. Its modifiers are always
+           empty today -- create_function() does not record them (nor can
+           the grammar spell a nonut or giga return type) -- so a call
+           never reads as unsigned yet; this is where it will once they
+           are carried. */
+        Function *fn = get_function(node->data.func_call.function_name);
+        if (fn == NULL)
+            return false;
+        *type = fn->return_desc.type;
+        *pointer_level = fn->return_desc.pointer_level;
+        *mods = fn->return_desc.modifiers;
+        return true;
+    }
     case NODE_UNARY_OPERATION:
+        if (node->data.unary.op == OP_DEREFERENCE)
+        {
+            if (!static_value_descriptor(node->data.unary.operand, type,
+                                         pointer_level, mods) ||
+                *pointer_level <= 0)
+                return false;
+            (*pointer_level)--;
+            return true;
+        }
+        if (node->data.unary.op == OP_ADDRESS_OF)
+        {
+            if (!static_value_descriptor(node->data.unary.operand, type,
+                                         pointer_level, mods))
+                return false;
+            (*pointer_level)++;
+            return true;
+        }
+        return false;
+    case NODE_OPERATION:
+    {
+        /* Pointer arithmetic: the result points where its pointer operand
+           does. */
+        if (node->data.op.op != OP_PLUS && node->data.op.op != OP_MINUS)
+            return false;
+        ASTNode *ptr =
+            get_expression_pointer_level(node->data.op.left) > 0
+                ? node->data.op.left
+            : node->data.op.op == OP_PLUS &&
+                    get_expression_pointer_level(node->data.op.right) > 0
+                ? node->data.op.right
+                : NULL;
+        return ptr != NULL &&
+               static_value_descriptor(ptr, type, pointer_level, mods);
+    }
+    default:
+        return false;
+    }
+}
+
+static bool is_int_arithmetic_op(OperatorType op)
+{
+    return op == OP_PLUS || op == OP_MINUS || op == OP_TIMES ||
+           op == OP_DIVIDE || op == OP_MOD;
+}
+
+static bool is_int_comparison_op(OperatorType op)
+{
+    return op == OP_LT || op == OP_GT || op == OP_LE || op == OP_GE ||
+           op == OP_EQ || op == OP_NE;
+}
+
+static bool compute_expression_is_unsigned(ASTNode *node);
+
+/* Whether the binary operation `node` (arithmetic or a comparison) is
+   carried out in unsigned int: C's usual arithmetic conversions make it so
+   when either operand is unsigned, unless the other is 64-bit (a giga/
+   thicc operand makes it a signed long instead). For arithmetic this is
+   also the result's signedness; a comparison's result is a plain int.
+
+   Memoized on the node like check_and_mark_identifier()'s symbol check:
+   signedness follows from declarations, so it cannot change between
+   evaluations, and every int operation asks. */
+static bool operation_is_unsigned(ASTNode *node)
+{
+    if (node->signedness_memo == SIGNEDNESS_UNKNOWN)
+    {
+        OperatorType op = node->data.op.op;
+        bool is_unsigned =
+            (is_int_arithmetic_op(op) || is_int_comparison_op(op)) &&
+            get_expression_pointer_level(node->data.op.left) == 0 &&
+            get_expression_pointer_level(node->data.op.right) == 0 &&
+            !expression_is_long(node->data.op.left) &&
+            !expression_is_long(node->data.op.right) &&
+            (expression_is_unsigned(node->data.op.left) ||
+             expression_is_unsigned(node->data.op.right));
+        node->signedness_memo =
+            is_unsigned ? SIGNEDNESS_UNSIGNED : SIGNEDNESS_SIGNED;
+    }
+    return node->signedness_memo == SIGNEDNESS_UNSIGNED;
+}
+
+/* Whether an integer expression has C type `unsigned int` -- a 32-bit nonut
+   rizz (#371). The signedness companion of expression_is_long():
+   get_expression_type() reports nonut rizz as plain VAR_INT and its value is
+   stored in the same int slot, so every evaluator that compares, divides or
+   widens it must ask this to know the bits are unsigned. Never true for a
+   64-bit expression, so callers need not also ask expression_is_long().
+
+   A literal is never unsigned -- there is no `u` suffix, and the
+   modifiers create_int_node() stamps on it are the parser's state at the
+   time, not the literal's type. Memoized on the node (see
+   operation_is_unsigned()). */
+bool expression_is_unsigned(ASTNode *node)
+{
+    if (!node)
+        return false;
+    if (node->type == NODE_OPERATION)
+        return is_int_arithmetic_op(node->data.op.op) &&
+               operation_is_unsigned(node);
+    if (node->signedness_memo == SIGNEDNESS_UNKNOWN)
+        node->signedness_memo = compute_expression_is_unsigned(node)
+                                    ? SIGNEDNESS_UNSIGNED
+                                    : SIGNEDNESS_SIGNED;
+    return node->signedness_memo == SIGNEDNESS_UNSIGNED;
+}
+
+static bool compute_expression_is_unsigned(ASTNode *node)
+{
+    if (node->type == NODE_UNARY_OPERATION)
+    {
         switch (node->data.unary.op)
         {
         case OP_NEG:
@@ -3153,56 +3301,15 @@ bool expression_is_unsigned(ASTNode *node)
         case OP_POST_INC:
         case OP_POST_DEC:
             return expression_is_unsigned(node->data.unary.operand);
-        case OP_DEREFERENCE:
-        {
-            /* `*p` on a `nonut rizz *p`: the pointee's modifiers live on
-               the pointer variable's own descriptor. */
-            ASTNode *operand = node->data.unary.operand;
-            if (!operand || operand->type != NODE_IDENTIFIER)
-                return false;
-            Variable *var = get_variable(operand->data.name);
-            return var != NULL && var->desc.pointer_level == 1 &&
-                   desc_is_unsigned_int(var->desc.type, var->desc.modifiers);
-        }
         default:
-            return false;
+            break;
         }
-    case NODE_ARRAY_ACCESS:
-    {
-        /* The element's signedness comes from the array variable (or the
-           array field, for `s.arr[i]`), not from the node: like
-           expression_is_long() notes, it is built at parse time. */
-        ASTNode *base = node->data.array.base;
-        if (base != NULL)
-            return base->type == NODE_STRUCT_ACCESS &&
-                   expression_is_unsigned(base);
-        Variable *var = node->data.array.name.data
-                            ? get_variable(node->data.array.name)
-                            : NULL;
-        return var != NULL &&
-               desc_is_unsigned_int(var->desc.type, var->desc.modifiers);
     }
-    case NODE_FUNC_CALL:
-    {
-        Function *fn = get_function(node->data.func_call.function_name);
-        return fn != NULL && desc_is_unsigned_int(fn->return_desc.type,
-                                                  fn->return_desc.modifiers);
-    }
-    case NODE_STRUCT_ACCESS:
-    {
-        /* An array field (`s.arr`) reports its element's descriptor, which
-           is what `s.arr[i]` (NODE_ARRAY_ACCESS above) asks for. */
-        StructDef *def = NULL;
-        void *base = NULL;
-        StructField *fld = NULL;
-        if (!resolve_struct_access(node, &def, &base, &fld, false))
-            fld = static_struct_field(node);
-        return fld != NULL && fld->desc.pointer_level == 0 &&
-               desc_is_unsigned_int(fld->desc.type, fld->desc.modifiers);
-    }
-    default:
-        return false;
-    }
+    VarType type = NONE;
+    int pointer_level = 0;
+    TypeModifiers mods = {0};
+    return static_value_descriptor(node, &type, &pointer_level, &mods) &&
+           pointer_level == 0 && desc_is_unsigned_int(type, mods);
 }
 
 static StructDef *get_struct_def_for_expression(ASTNode *expr)
@@ -3614,13 +3721,9 @@ void *handle_binary_operation(ASTNode *node)
     /* C's usual arithmetic conversions (#371): a nonut rizz operand makes
        an int operation unsigned. +, -, * and == / != produce the same bits
        either way; division, modulo and the ordering comparisons do not, so
-       those arms below branch on this. A 64-bit operand would make the
-       operation a signed long instead, which is not computed here. */
-    bool is_unsigned = promoted_type == VAR_INT &&
-                       !expression_is_long(node->data.op.left) &&
-                       !expression_is_long(node->data.op.right) &&
-                       (expression_is_unsigned(node->data.op.left) ||
-                        expression_is_unsigned(node->data.op.right));
+       those arms below branch on this. Memoized on the node, so this is a
+       field read after the first evaluation. */
+    bool is_unsigned = promoted_type == VAR_INT && operation_is_unsigned(node);
 
     void *result = NULL;
 
@@ -5638,7 +5741,7 @@ long long evaluate_expression_long(ASTNode *node)
        by zero-extension, as C converts unsigned int to long (#371). Its
        own arithmetic stays 32-bit, so `u - 1` on 0 is 4294967295 here,
        not -1. */
-    if (!expression_is_long(node) && expression_is_unsigned(node))
+    if (expression_is_unsigned(node))
         return (long long)(unsigned int)evaluate_expression_int(node);
 
     switch (node->type)

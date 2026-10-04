@@ -58,6 +58,14 @@ skibidi main {
     yapping("array: %d %u", arr[0] > 5, arr[0] / 2);
     nonut rizz *p = &a;
     yapping("deref: %d %u", *p > 5, *p / 3);
+
+    🚽 Reading through ANY pointer expression, not just a bare `*p`: a
+    🚽 dereference is the pointee of whatever pointer it is applied to.
+    nonut rizz *q = &arr[0];
+    nonut rizz **pp = &q;
+    nonut rizz *ptrs[2] = {&arr[1], &arr[0]};
+    yapping("through: %d %u %d %u %d %u", *(q + 0) > 5, *(0 + q) / 2,
+            **pp > 5, **pp / 4, *ptrs[1] > 5, *(&arr[0]) / 8);
     gang Box bx;
     bx.v = 4000000000;
     bx.arr[1] = 4000000000;
@@ -79,8 +87,13 @@ skibidi main {
     }
     yapping("loop: %d", count);
 
-    🚽 Signed rizz is untouched.
+    🚽 Signed rizz is untouched -- including a signed modulo stored into a
+    🚽 nonut: -7 % 3 is -1, which converts to 4294967295 (the old check
+    🚽 read the declaration's nonut off the % node and computed an unsigned
+    🚽 modulo of the signed operand instead).
     rizz s = -7;
     yapping("signed: %d %d %d", s / 2, s % 3, s < 5);
+    nonut rizz r = s % 3;
+    yapping("signed-mod: %u", r);
     bussin 0;
 }
