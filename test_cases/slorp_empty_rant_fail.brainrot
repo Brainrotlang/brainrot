@@ -1,0 +1,10 @@
+🚽 Regression for #377: slorp into an empty rant must error gracefully and
+🚽 never write out of bounds. The runtime passes the real len (0) through to
+🚽 input_string(), which must reject the read with INPUT_BUFFER_OVERFLOW
+🚽 instead of fabricating capacity and scribbling past the allocation.
+skibidi main {
+    rant s = "";
+    slorp(s);
+    yapping("got: %s", s);
+    bussin 0;
+}
