@@ -1,0 +1,110 @@
+🚽 Test case: issue #371 -- a nonut rizz (unsigned int) above INT_MAX was
+🚽 compared, divided and taken modulo as a NEGATIVE signed int, because
+🚽 nothing told handle_binary_operation() the operand was unsigned:
+🚽
+🚽   3000000000 > 5        printed "small"
+🚽   3000000000 / 2        printed 3647483648 (-647483648 as %u)
+🚽   3000000000 % 7        printed 0
+🚽
+🚽 Every line below follows C's usual arithmetic conversions: an int
+🚽 operation with an unsigned operand is unsigned (so `a > -1` is FALSE,
+🚽 as in C -- -1 converts to 4294967295), a comparison yields a plain int,
+🚽 and a 64-bit operand makes the operation a signed long, into which the
+🚽 unsigned value is zero-extended. thicc, not giga, for that: giga is C
+🚽 long, only 32 bits on wasm32 (#177).
+
+lit nonut rizz U;
+
+gang Box {
+    U v;
+    U arr[2];
+};
+
+skibidi param(nonut rizz x) {
+    yapping("param: %d %u", x > 5, x / 2);
+}
+
+skibidi main {
+    🚽 The issue's two reproductions.
+    nonut rizz a = 3000000000;
+    nonut rizz b = 2;
+    edgy (a > 5) {
+        yapping("big");
+    } amogus {
+        yapping("small");
+    }
+    yapping("div: %u", a / b);
+
+    🚽 Modulo and every ordering comparison; == and != were already right.
+    yapping("mod: %u", a % 7);
+    yapping("cmp: %d %d %d %d %d %d", a > 5, a >= 5, a < 5, a <= 5,
+            a == 3000000000, a != 3000000000);
+    yapping("neg-one: %d", a > -1);
+
+    🚽 The result of +, -, *, / on a nonut is itself unsigned.
+    yapping("nested: %d %d %d", (a + 1) > 5, (a * 1) / 2 > 1000000000,
+            (a / 2) > 1000000000);
+    yapping("negate: %d", -a > 0);
+
+    🚽 0x80000000 / 0xFFFFFFFF is a well-defined unsigned division (0), not
+    🚽 the "most negative rizz divided by -1" overflow of the signed case.
+    nonut rizz m = 2147483648;
+    nonut rizz all = 4294967295;
+    yapping("intmin: %u %u", m / all, m % all);
+
+    🚽 Every place an unsigned operand comes from.
+    param(a);
+    nonut rizz arr[2] = {4000000000, 7};
+    yapping("array: %d %u", arr[0] > 5, arr[0] / 2);
+    nonut rizz *p = &a;
+    yapping("deref: %d %u", *p > 5, *p / 3);
+
+    🚽 Reading through ANY pointer expression, not just a bare `*p`: a
+    🚽 dereference is the pointee of whatever pointer it is applied to.
+    nonut rizz *q = &arr[0];
+    nonut rizz **pp = &q;
+    nonut rizz *ptrs[2] = {&arr[1], &arr[0]};
+    yapping("through: %d %u %d %u %d %u", *(q + 0) > 5, *(0 + q) / 2,
+            **pp > 5, **pp / 4, *ptrs[1] > 5, *(&arr[0]) / 8);
+    gang Box bx;
+    bx.v = 4000000000;
+    bx.arr[1] = 4000000000;
+    yapping("field: %d %u %d %u", bx.v > 5, bx.v / 4, bx.arr[1] > 5,
+            bx.arr[1] / 4);
+
+    🚽 Widening: into a 64-bit operation (zero-extended), and into float.
+    thicc rizz t = 5;
+    nonut rizz z = 0;
+    yapping("thicc: %d %lld %lld", a > t, a + t, (z - 1) + t);
+    yapping("float: %.1f", a + 0.5);
+
+    🚽 The same two as a thicc INITIALIZER, where the parser used to stamp
+    🚽 the declaration's thicc onto the literal 2, so `a * 2` skipped the
+    🚽 unsigned 32-bit wrap there (6000000000) but not in an assignment.
+    🚽 A literal's width comes from its value. And `a + 0.5` is a double
+    🚽 operation converted to thicc, not unsigned int arithmetic.
+    thicc rizz wrapped = a * 2;
+    thicc rizz assigned = 0;
+    assigned = a * 2;
+    thicc rizz from_double = a + 0.5;
+    yapping("thicc-init: %lld %lld %lld", wrapped, assigned, from_double);
+
+    🚽 A loop condition, the shape most programs hit first.
+    nonut rizz i = 3000000000;
+    rizz count = 0;
+    goon (i > 2999999997) {
+        i = i - 1;
+        count = count + 1;
+    }
+    yapping("loop: %d", count);
+
+    🚽 Signed rizz is untouched -- including a signed modulo stored into a
+    🚽 nonut: -7 % 3 is -1, which converts to 4294967295 (the old check
+    🚽 read the declaration's nonut off the % node and computed an unsigned
+    🚽 modulo of the signed operand instead).
+    rizz s = -7;
+    yapping("signed: %d %d %d", s / 2, s % 3, s < 5);
+    nonut rizz r = s % 3;
+    yapping("signed-mod: %u", r);
+    bussin 0;
+}
