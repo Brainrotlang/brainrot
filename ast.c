@@ -3842,14 +3842,23 @@ static VarType get_native_call_static_type(ASTNode *node)
     return stdrot_type_to_vartype(entry->return_type.type);
 }
 
-/* An int-typed operand's value widened for a float/double operation --
-   through unsigned int for a nonut rizz (#371), so 3000000000 + 0.5 is
-   3000000000.5 rather than the signed reinterpretation. */
+/* Preserve the integer operand's width before widening (#372), and its
+   unsigned interpretation for a nonut rizz (#371). */
 static double int_operand_as_double(ASTNode *expr)
 {
+    if (expression_is_long(expr))
+        return (double)evaluate_expression_long(expr);
     int value = evaluate_expression_int(expr);
     return expression_is_unsigned(expr) ? (double)(unsigned int)value
                                         : (double)value;
+}
+
+static float int_operand_as_float(ASTNode *expr)
+{
+    /* int64 -> double -> float can round twice at a float halfway point. */
+    if (expression_is_long(expr))
+        return (float)evaluate_expression_long(expr);
+    return (float)int_operand_as_double(expr);
 }
 
 void *handle_binary_operation(ASTNode *node)
@@ -3908,11 +3917,11 @@ void *handle_binary_operation(ASTNode *node)
         right_value = SAFE_MALLOC(float);
         *(float *)left_value =
             (left_type == VAR_INT)
-                ? (float)int_operand_as_double(node->data.op.left)
+                ? int_operand_as_float(node->data.op.left)
                 : evaluate_expression_float(node->data.op.left);
         *(float *)right_value =
             (right_type == VAR_INT)
-                ? (float)int_operand_as_double(node->data.op.right)
+                ? int_operand_as_float(node->data.op.right)
                 : evaluate_expression_float(node->data.op.right);
         break;
 
@@ -5309,6 +5318,12 @@ float evaluate_expression_float(ASTNode *node)
     if (!node)
         return 0.0f;
 
+    /* Integer expressions must be evaluated at their own width before
+       conversion. The type guard keeps mixed floating operations floating;
+       expression_is_long() excludes pointers and does not evaluate operands. */
+    if (get_expression_type(node) == VAR_INT && expression_is_long(node))
+        return (float)evaluate_expression_long(node);
+
     switch (node->type)
     {
     case NODE_ARRAY_ACCESS:
@@ -5461,6 +5476,10 @@ double evaluate_expression_double(ASTNode *node)
 {
     if (!node)
         return 0.0L;
+
+    /* As above, do not read a giga/thicc through a 32-bit value slot. */
+    if (get_expression_type(node) == VAR_INT && expression_is_long(node))
+        return (double)evaluate_expression_long(node);
 
     switch (node->type)
     {
