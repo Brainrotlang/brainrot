@@ -1,0 +1,8 @@
+🚽 Even a tiny line cannot fit a capacity-0 rant, so slorp must reject it
+🚽 gracefully too (edge case).
+skibidi main {
+    rant s = "";
+    slorp(s);
+    yapping("got: %s", s);
+    bussin 0;
+}
