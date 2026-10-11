@@ -1,0 +1,11 @@
+🚽 Regression for #379: baka's formatter has the same %% bug.
+🚽 baka writes to stderr; the test harness checks stderr when stdout is
+🚽 empty, so this fixture produces no stdout. The grammar gives baka a
+🚽 single expression -- no format args -- so only the no-args %% case
+🚽 is reachable from Brainrot source.
+
+skibidi main {
+    baka("err 100%%");
+    baka(" err%%");
+    bussin 0;
+}

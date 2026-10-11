@@ -1,0 +1,39 @@
+🚽 Regression for #379: %% must emit a single literal % regardless of
+🚽 whether format arguments remain, and must not consume an argument.
+
+skibidi main {
+    🚽 %% with no arguments at all
+    yapping("100%%");
+
+    🚽 %% after all arguments consumed
+    yapping("value %d and %%", 5);
+
+    🚽 %% mixed: arg, literal percent, then another arg
+    yapping("%d%% of %d", 50, 100);
+
+    🚽 multiple %% in one format, no args
+    yapping("a%%b%%c");
+
+    🚽 %% at start and end of format string
+    yapping("%%start");
+    yapping("end%%");
+
+    🚽 yappin (no trailing newline) -- same formatter path
+    yappin("no-newline 100%%");
+    yapping("");
+
+    🚽 yapto shares the same formatter (stdrot_format_to_stream, #379
+    🚽 names it too): write %% to a file, read it back.
+    SAUCE *w = crackopen("/tmp/brainrot_pct_escape.txt", "w");
+    yapto(w, "yapto 100%%\n");
+    yapto(w, "yapto %d and %%\n", 9);
+    peaceout(w);
+    SAUCE *r = crackopen("/tmp/brainrot_pct_escape.txt", "r");
+    goon (!itsjoever(r)) {
+        rant line = skim(r);
+        yapping("%s", line);
+    }
+    peaceout(r);
+
+    bussin 0;
+}
