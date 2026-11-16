@@ -103,6 +103,17 @@ skibidi main {
     gigachad nd = (nu = 3000000000);
     yapping("nonut-double: %.1f", nd);
 
+    🚽 A floating target read back in an integer context converts its
+    🚽 double value -- above INT_MAX too, for a variable and an element --
+    🚽 rather than squeezing it through an int (that gave -2147483648).
+    gigachad wg = 0.0;
+    thicc rizz wv = (wg = 5000000000.5);
+    gigachad wga[1] = {0.0};
+    thicc rizz we = (wga[0] = 5000000000.5);
+    chad wf = 0.0;
+    thicc rizz wfv = (wf = 3000000000.0);
+    yapping("float-target-to-thicc: %lld %lld %lld", wv, we, wfv);
+
     🚽 Targets that are not a plain variable -- each evaluated once.
     rizz arr[3] = {0, 0, 0};
     rizz k = 0;

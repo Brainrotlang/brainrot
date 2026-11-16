@@ -7652,6 +7652,15 @@ static AssignedSlot execute_assignment_slot(ASTNode *node)
    used, through the same descriptor, so its subexpressions run once. */
 static long long assigned_slot_long(const AssignedSlot *slot)
 {
+    /* A floating target's value is a double, converted to the integer
+       context as C converts it -- `thicc rizz t = (g = 5000000000.5);` is
+       5000000000. Read by the target's type, not its node shape: a plain
+       variable re-read through evaluate_expression_int() would squeeze
+       the double into an int first. assigned_slot_double() only calls
+       back here for a non-floating target, so this cannot recurse. */
+    if (slot->pointer_level == 0 &&
+        (slot->type == VAR_FLOAT || slot->type == VAR_DOUBLE))
+        return (long long)assigned_slot_double(slot);
     /* A 32-bit nonut target widens by zero-extension, as C converts
        unsigned int (#371): `thicc rizz t = (u = 3000000000);`. */
     bool is_unsigned_int = slot->pointer_level == 0 && slot->type == VAR_INT &&
