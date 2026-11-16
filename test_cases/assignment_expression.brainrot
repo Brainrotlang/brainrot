@@ -90,6 +90,19 @@ skibidi main {
     thicc rizz v = (ra[1] = 5);
     yapping("decl-element: %d %d %lld", ra[0], ra[1], v);
 
+    🚽 A nonut target keeps its signedness (#371): the assignment's value
+    🚽 is unsigned int, so it zero-extends into thicc and compares and
+    🚽 divides unsigned -- for a variable and for an element alike.
+    nonut rizz nu = 0;
+    thicc rizz nt = (nu = 3000000000);
+    yapping("nonut: %lld %d %u %d", nt, (nu = 3000000000) > 5,
+            (nu = 3000000000) / 2, nu > 5);
+    nonut rizz nua[2] = {0, 0};
+    thicc rizz nte = (nua[1] = 4000000000);
+    yapping("nonut-element: %lld %d", nte, (nua[0] = 3000000000) > 5);
+    gigachad nd = (nu = 3000000000);
+    yapping("nonut-double: %.1f", nd);
+
     🚽 Targets that are not a plain variable -- each evaluated once.
     rizz arr[3] = {0, 0, 0};
     rizz k = 0;

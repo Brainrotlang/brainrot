@@ -3305,6 +3305,12 @@ static bool static_value_descriptor(ASTNode *node, VarType *type,
         return false;
     switch (node->type)
     {
+    case NODE_ASSIGNMENT:
+        /* An assignment expression has its target's type (#374) --
+           signedness included, so `(u = 3000000000) > 5` on a nonut u is an
+           unsigned comparison. */
+        return static_value_descriptor(node->data.op.left, type, pointer_level,
+                                       mods);
     case NODE_IDENTIFIER:
     {
         Variable *var = get_variable(node->data.name);
@@ -7433,14 +7439,13 @@ bool is_expression(ASTNode *node, VarType type)
         return false;
     }
     case NODE_OPERATION:
+    /* `yapping("%d", b = 5)`: an assignment expression has its target's
+       type (#374), which get_expression_type() reports. */
+    case NODE_ASSIGNMENT:
     {
         // For operations, check if the result type matches the target type
         return get_expression_type(node) == type;
     }
-    case NODE_ASSIGNMENT:
-        /* `yapping("%d", b = 5)`: an assignment expression has its
-           target's type (#374), which get_expression_type() reports. */
-        return get_expression_type(node) == type;
     case NODE_UNARY_OPERATION:
         /* Previously uncased, falling to the default: below --
            `node->type == VART_TO_NODET(type)` can never be true for a
@@ -7647,10 +7652,19 @@ static AssignedSlot execute_assignment_slot(ASTNode *node)
    used, through the same descriptor, so its subexpressions run once. */
 static long long assigned_slot_long(const AssignedSlot *slot)
 {
+    /* A 32-bit nonut target widens by zero-extension, as C converts
+       unsigned int (#371): `thicc rizz t = (u = 3000000000);`. */
+    bool is_unsigned_int = slot->pointer_level == 0 && slot->type == VAR_INT &&
+                           slot->mods.is_unsigned && !slot->mods.is_long &&
+                           !slot->mods.is_long_long;
     if (slot->target->type == NODE_IDENTIFIER)
-        return expression_is_long(slot->target)
-                   ? evaluate_expression_long(slot->target)
-                   : (long long)evaluate_expression_int(slot->target);
+    {
+        if (expression_is_long(slot->target))
+            return evaluate_expression_long(slot->target);
+        int value = evaluate_expression_int(slot->target);
+        return is_unsigned_int ? (long long)(unsigned int)value
+                               : (long long)value;
+    }
     if (!slot->address)
         return 0;
     if (slot->pointer_level > 0)
@@ -7658,18 +7672,18 @@ static long long assigned_slot_long(const AssignedSlot *slot)
     if (slot->type == VAR_INT &&
         (slot->mods.is_long || slot->mods.is_long_long))
         return packed_long_load(slot->address, slot->mods);
+    if (is_unsigned_int)
+        return (long long)*(const unsigned int *)slot->address;
     return (long long)numeric_load(slot->address, slot->type);
 }
 
 static double assigned_slot_double(const AssignedSlot *slot)
 {
+    if (slot->type != VAR_FLOAT && slot->type != VAR_DOUBLE)
+        return (double)assigned_slot_long(slot);
     if (slot->target->type == NODE_IDENTIFIER)
         return evaluate_expression_double(slot->target);
-    if (!slot->address)
-        return 0.0;
-    if (slot->type == VAR_FLOAT || slot->type == VAR_DOUBLE)
-        return numeric_load(slot->address, slot->type);
-    return (double)assigned_slot_long(slot);
+    return slot->address ? numeric_load(slot->address, slot->type) : 0.0;
 }
 
 static uintptr_t assigned_slot_pointer(const AssignedSlot *slot)
