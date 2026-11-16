@@ -41,7 +41,8 @@ the ❌ rows in the README keyword table, like `gyatt`/enum or `chungus`/union).
 12. **Build and test**: `make && make test && make valgrind`. All three must
     pass — the build uses `-Werror -fsanitize=address,undefined`. Also run
     `make format-check` (or `make format` to fix) — CI's `lint` job blocks on
-    any diff.
+    any diff — and `make cppcheck` + `make tidy`, which CI's `static-analysis`
+    job runs and blocks on.
 13. **Open the PR using `.github/PULL_REQUEST_TEMPLATE.md`**: fill in every
     section (Description, Related Issue, Type of Change, Checklist) — don't
     submit a bare description.

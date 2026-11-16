@@ -1,0 +1,34 @@
+rizz next_factor(rizz *calls) {
+    *calls = *calls + 1;
+    bussin 2;
+}
+
+skibidi main {
+    rizz calls = 0;
+    thicc rizz values[2] = {5000000000, 6000000000};
+    thicc rizz *p = &values[0];
+    gigachad d = values[0];
+    chad f = values[1];
+    yapping("%.0f %.0f", d, f);
+    d = *p;
+    f = *(p + 1);
+    yapping("%.0f %.0f", d, f);
+
+    🚽 Integer expressions must be evaluated once, including their effects.
+    d = values[0] * next_factor(&calls);
+    f = next_factor(&calls) * values[0];
+    yapping("%.0f %.0f %d", d, f, calls);
+    d = (values[0] + next_factor(&calls)) + 0.5;
+    chad half = 0.5;
+    f = half * (values[0] * next_factor(&calls));
+    yapping("%.1f %.0f %d", d, f, calls);
+    rizz index = 0;
+    d = values[index++];
+    f = values[index++];
+    yapping("%.0f %.0f %d", d, f, index);
+    thicc rizz value = 5000000000;
+    d = value++;
+    gigachad after = ++value;
+    yapping("%.0f %.0f %lld", d, after, value);
+    bussin 0;
+}

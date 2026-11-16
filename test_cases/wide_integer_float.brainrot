@@ -1,0 +1,49 @@
+skibidi main {
+    giga rizz a = 5000000000;
+    thicc rizz b = 0 - 5000000000;
+    gigachad d = a;
+    chad f = a;
+    yapping("%.0f %.0f", d, f);
+    d = b;
+    f = b;
+    yapping("%.0f %.0f", d, f);
+
+    gigachad two_d = 2.0;
+    chad two_f = 2.0;
+    yapping("%.0f %.0f", a * two_d, two_d * a);
+    yapping("%.0f %.0f", b * two_f, two_f * b);
+    yapping("%.1f %.1f", a + 0.5, 0.5 + b);
+    yapping("%.1f %.1f", a / two_d, two_d - b);
+    yapping("%d %d %d %d", a > two_d, two_d < a, b < two_f, two_f > b);
+
+    d = a + 3;
+    f = b * 2;
+    yapping("%.0f %.0f", d, f);
+    d = 5000000000;
+    f = 5000000000;
+    yapping("%.0f %.0f", d, f);
+    d = -a;
+    f = -b;
+    yapping("%.0f %.0f", d, f);
+
+    thicc rizz zero = 0;
+    thicc rizz edge = 2147483648;
+    thicc rizz high = 4294967296;
+    yapping("%.0f %.0f %.0f", zero + two_d, edge + two_d, high + two_d);
+    thicc rizz minimum = 0 - 9223372036854775807 - 1;
+    d = minimum;
+    f = minimum;
+    yapping("%.0f %.0f", d, f);
+
+    🚽 Above a float halfway point: converting via double would round twice.
+    thicc rizz halfway = 4611686293305294849;
+    chad zero_f = 0.0;
+    f = halfway;
+    yapping("%.0f %.0f %.0f", f, halfway + zero_f, zero_f + halfway);
+
+    🚽 Retain the existing unsigned-32 conversion and mixed-fraction paths.
+    nonut rizz u = 3000000000;
+    yapping("%.1f %.1f", u + 0.5, 0.5 + u);
+    yapping("%.1f", (a + 0.5) + two_d);
+    bussin 0;
+}
