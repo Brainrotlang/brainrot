@@ -14,7 +14,8 @@ merge" / "what's missing before I open a PR."
    changed hunk, not just the summary.
 2. **Check it builds clean**: `make clean && make`. The project uses
    `-Wall -Wextra -Wpedantic -Werror -fsanitize=address,undefined` — any
-   warning is a blocking issue, not a nit.
+   warning is a blocking issue, not a nit. `make cppcheck` and `make tidy`
+   (CI's `static-analysis` job) must be clean too.
 3. **Check it's tested**: `make test && make valgrind`. If the change touches
    `lang.l`/`lang.y`/`ast.c`/`semantic_analyzer.c`/`interpreter.c`/`stdrot/*`
    and no `test_cases/*.brainrot` + `tests/expected_results.json` entry was

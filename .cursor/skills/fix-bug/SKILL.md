@@ -12,12 +12,15 @@ error, a Valgrind leak, or a failing pytest case for a `.brainrot` program.
 
 1. **Reproduce minimally.** Write or reduce a `.brainrot` snippet that triggers
    the bug; run it directly: `./brainrot repro.brainrot`. Compare against a
-   `git stash`-clean build if unsure whether it's a regression.
+   clean build of `main` in a separate `git worktree` if unsure whether it's a
+   regression (that leaves your working tree untouched).
 2. **Reproduce under sanitizers/Valgrind first** if the symptom is a
    crash/garbage output — the project's `CFLAGS` already build with
    `-fsanitize=address,undefined`, so a plain `make && ./brainrot repro.brainrot`
-   often surfaces the exact line. For leaks specifically, use
-   `valgrind --leak-check=full --track-origins=yes ./brainrot repro.brainrot`.
+   often surfaces the exact line. For leaks specifically, use valgrind on the
+   non-sanitized binary, since valgrind cannot run an ASan build:
+   `make brainrot-valgrind`, then
+   `valgrind --leak-check=full --track-origins=yes ./brainrot-valgrind repro.brainrot`.
 3. **Locate the layer**: use the error/stack trace to figure out whether the
    bug is in lexing (`lang.l`), grammar (`lang.y`), AST construction (`ast.c`),
    semantic checks (`semantic_analyzer.c`), or execution
@@ -33,7 +36,8 @@ error, a Valgrind leak, or a failing pytest case for a `.brainrot` program.
    expected output to `tests/expected_results.json` so it can't regress silently.
 6. **Verify the full suite still passes**: `make test && make valgrind`. Fixing
    one bug must not reintroduce another — the whole point of these two gates.
-   Also run `make format-check` — CI's `lint` job blocks on any diff.
+   Also run `make format-check` (CI's `lint` job) and `make cppcheck` +
+   `make tidy` (CI's `static-analysis` job) — both block on any finding.
 7. **Open the PR using `.github/PULL_REQUEST_TEMPLATE.md`**: fill in every
    section (Description, Related Issue, Type of Change, Checklist) — don't
    submit a bare description.
