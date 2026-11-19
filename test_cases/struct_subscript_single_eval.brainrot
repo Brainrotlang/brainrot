@@ -1,0 +1,133 @@
+🚽 Test case: issue #398 -- the subscript of a struct member access runs
+🚽 exactly once. `ss[idx(&c)].v` used to call idx() 2x for an int read, 3x for
+🚽 a store, 5x for a double read and 7x for an assignment expression, because
+🚽 every type query made before the access (get_expression_type(),
+🚽 expression_is_long(), ...) resolved the member through real storage and so
+🚽 evaluated the index again. A plain `arr[idx(&c)]` was already single.
+🚽
+🚽 Each case below resets the counter, runs one access, and prints how many
+🚽 times the index expression ran next to the value that came out.
+gang S {
+    rizz v;
+    gigachad d;
+    chad f;
+};
+
+gang Inner {
+    rizz leaf;
+};
+
+gang Mid {
+    gang Inner in[2];
+};
+
+gang Pool {
+    gang S es[3];
+    rizz tag;
+};
+
+rizz idx(rizz *c) {
+    *c = *c + 1;
+    bussin 0;
+}
+
+rizz pick(rizz *c, rizz i) {
+    *c = *c + 1;
+    bussin i;
+}
+
+rizz identity(rizz x) {
+    bussin x;
+}
+
+skibidi main {
+    rizz c = 0;
+    gang S ss[2];
+
+    🚽 The issue's cases, one access each.
+    ss[idx(&c)].v = 5;
+    yapping("store: %d", c);
+
+    c = 0;
+    rizz x = ss[idx(&c)].v;
+    yapping("int read: %d x=%d", c, x);
+
+    c = 0;
+    gigachad d = ss[idx(&c)].v;
+    yapping("double read: %d d=%.1f", c, d);
+
+    c = 0;
+    gigachad e = (ss[idx(&c)].v = 7);
+    yapping("assign expr: %d e=%.1f v=%d", c, e, ss[0].v);
+
+    🚽 A float and a double field, read and written.
+    c = 0;
+    ss[idx(&c)].f = 1.5;
+    ss[idx(&c)].d = 2.5;
+    yapping("float/double store: %d", c);
+    c = 0;
+    chad fr = ss[idx(&c)].f;
+    gigachad dr = ss[idx(&c)].d;
+    yapping("float/double read: %d %.1f %.1f", c, fr, dr);
+
+    🚽 Other places an expression can sit: a call argument, a
+    🚽 print argument, a condition, a statement of its own.
+    c = 0;
+    rizz twice = identity(ss[idx(&c)].v);
+    yapping("call arg: %d twice=%d", c, twice);
+
+    c = 0;
+    yapping("print arg: %d", ss[idx(&c)].v);
+    yapping("print arg count: %d", c);
+
+    c = 0;
+    edgy (ss[idx(&c)].v == 7) {
+        yapping("condition: %d", c);
+    }
+
+    c = 0;
+    ss[idx(&c)].v;
+    yapping("bare statement: %d", c);
+
+    🚽 An index with a side effect that is not a call.
+    rizz i = 0;
+    ss[i++].v = 11;
+    yapping("post-increment: i=%d v0=%d v1=%d", i, ss[0].v, ss[1].v);
+    i = 0;
+    rizz y = ss[i++].v;
+    yapping("post-increment read: i=%d y=%d", i, y);
+
+    🚽 The value of the index still picks the element.
+    c = 0;
+    ss[pick(&c, 1)].v = 22;
+    rizz z = ss[pick(&c, 1)].v;
+    yapping("element 1: calls=%d v0=%d v1=%d z=%d", c, ss[0].v, ss[1].v, z);
+
+    🚽 An element of a struct-typed array field, and a nested one.
+    gang Pool pool;
+    c = 0;
+    pool.es[pick(&c, 2)].v = 33;
+    rizz pv = pool.es[pick(&c, 2)].v;
+    yapping("array field: calls=%d pv=%d", c, pv);
+
+    gang Mid m;
+    c = 0;
+    m.in[pick(&c, 1)].leaf = 44;
+    rizz ml = m.in[pick(&c, 1)].leaf;
+    yapping("nested field: calls=%d ml=%d", c, ml);
+
+    🚽 A struct pointer indexed like an array.
+    gang S *p = &ss[0];
+    c = 0;
+    rizz pr = p[pick(&c, 1)].v;
+    yapping("pointer read: calls=%d pr=%d", c, pr);
+    p[pick(&c, 1)].v = 55;
+    yapping("pointer store: calls=%d v1=%d", c, ss[1].v);
+
+    🚽 The control: a plain array element.
+    c = 0;
+    rizz arr[2] = {0, 0};
+    gigachad f2 = arr[idx(&c)];
+    yapping("array read: %d", c);
+    bussin 0;
+}
