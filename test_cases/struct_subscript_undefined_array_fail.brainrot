@@ -1,0 +1,13 @@
+🚽 Test case: issue #398 -- a member access whose array name was never
+🚽 declared still reports the undefined name. The access is no longer run a
+🚽 second time by the declaration's pre-visit, so resolve_struct_access()
+🚽 is the one that has to say so.
+gang S {
+    rizz v;
+};
+
+skibidi main {
+    gang S ss[2];
+    rizz x = nosuch[0].v;
+    bussin 0;
+}

@@ -477,5 +477,7 @@
     "wide_integer_float": "5000000000 5000000000\n-5000000000 -5000000000\n10000000000 10000000000\n-10000000000 -10000000000\n5000000000.5 -4999999999.5\n2500000000.0 5000000002.0\n1 1 1 1\n5000000003 -10000000000\n5000000000 5000000000\n-5000000000 5000000000\n2 2147483650 4294967298\n-9223372036854775808 -9223372036854775808\n4611686568183201792 4611686568183201792 4611686568183201792\n3000000000.5 3000000000.5\n5000000002.5",
     "wide_integer_float_loads": "5000000000 6000000000\n5000000000 6000000000\n10000000000 10000000000 2\n5000000002.5 5000000000 4\n5000000000 6000000000 2\n5000000000 5000000002 5000000002",
     "format_percent_escape": "100%\nvalue 5 and %\n50% of 100\na%b%c\n%start\nend%\nno-newline 100%\nyapto 100%\nyapto 9 and %\n",
-    "format_percent_escape_baka": "err 100% err%"
+    "format_percent_escape_baka": "err 100% err%",
+    "struct_subscript_single_eval": "store: 1\nint read: 1 x=5\ndouble read: 1 d=5.0\nassign expr: 1 e=7.0 v=7\nfloat/double store: 2\nfloat/double read: 2 1.5 2.5\ncall arg: 1 twice=7\nprint arg: 7\nprint arg count: 1\ncondition: 1\nbare statement: 1\npost-increment: i=1 v0=11 v1=0\npost-increment read: i=1 y=11\nelement 1: calls=2 v0=11 v1=22 z=22\narray field: calls=2 pv=33\nnested field: calls=2 ml=44\npointer read: calls=1 pr=22\npointer store: calls=2 v1=55\narray read: 1",
+    "struct_subscript_undefined_array_fail": "Error: Variable 'nosuch' is not defined at line 13"
 }

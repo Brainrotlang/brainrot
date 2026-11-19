@@ -55,6 +55,8 @@ extern const char *vartype_to_string(VarType type);
 extern int yylineno;
 static int get_function_return_pointer_level(const String name);
 static StructDef *get_struct_def_for_expression(ASTNode *expr);
+static StructField *struct_access_probe_field(ASTNode *node);
+static StructField *declared_struct_field(ASTNode *node);
 String evaluate_expression_string(ASTNode *node);
 
 /* ── Native-call memo cache ──────────────────────────────────────────────
@@ -1172,7 +1174,20 @@ bool resolve_struct_access(ASTNode *node, StructDef **def_out, void **base_out,
         if (!var || var->desc.type != VAR_STRUCT)
         {
             if (report_errors)
-                yyerror("Member access on a non-struct/union array element");
+            {
+                /* The declaration pre-visit used to hit the undefined name
+                   first and say so; it no longer runs this access twice. */
+                char msg[MAX_BUFFER_LEN];
+                if (!var)
+                    snprintf(msg, sizeof(msg),
+                             "Variable '%.100s' is not defined",
+                             obj->data.array.name.data);
+                else
+                    snprintf(msg, sizeof(msg),
+                             "Member access on a non-struct/union array "
+                             "element");
+                yyerror(msg);
+            }
             return false;
         }
 
@@ -2992,16 +3007,11 @@ int get_expression_pointer_level(ASTNode *node)
         }
     case NODE_STRUCT_ACCESS:
     {
-        StructDef *def = NULL;
-        void *base = NULL;
-        StructField *fld = NULL;
-        if (!resolve_struct_access(node, &def, &base, &fld, false))
-        {
-            /* Declared types answer a call base; nothing here may run it. */
-            fld = static_struct_field(node);
-            if (!fld)
-                return node->pointer_level;
-        }
+        /* Declared types answer a call base or an index expression;
+           nothing here may run either. */
+        StructField *fld = struct_access_probe_field(node);
+        if (!fld)
+            return node->pointer_level;
         return fld->desc.pointer_level;
     }
     default:
@@ -3182,16 +3192,9 @@ VarType get_expression_type(ASTNode *node)
     }
     case NODE_STRUCT_ACCESS:
     {
-        StructDef *def = NULL;
-        void *base = NULL;
-        StructField *fld = NULL;
-        if (!resolve_struct_access(node, &def, &base, &fld, false))
-        {
-            /* Declared types answer a call base; nothing here may run it. */
-            fld = static_struct_field(node);
-            if (!fld)
-                return node->var_type;
-        }
+        StructField *fld = struct_access_probe_field(node);
+        if (!fld)
+            return node->var_type;
         return fld->desc.type;
     }
     default:
@@ -3268,14 +3271,7 @@ bool expression_is_long(ASTNode *node)
     }
     case NODE_STRUCT_ACCESS:
     {
-        StructDef *def = NULL;
-        void *base = NULL;
-        StructField *fld = NULL;
-        if (resolve_struct_access(node, &def, &base, &fld, false))
-            return fld->desc.type == VAR_INT &&
-                   (fld->desc.modifiers.is_long ||
-                    fld->desc.modifiers.is_long_long);
-        fld = static_struct_field(node);
+        StructField *fld = struct_access_probe_field(node);
         return fld != NULL && fld->desc.type == VAR_INT &&
                (fld->desc.modifiers.is_long ||
                 fld->desc.modifiers.is_long_long);
@@ -3350,11 +3346,7 @@ static bool static_value_descriptor(ASTNode *node, VarType *type,
     {
         /* An array field (`s.arr`) reports its element's descriptor, which
            is what `s.arr[i]` above asks for. */
-        StructDef *def = NULL;
-        void *base = NULL;
-        StructField *fld = NULL;
-        if (!resolve_struct_access(node, &def, &base, &fld, false))
-            fld = static_struct_field(node);
+        StructField *fld = struct_access_probe_field(node);
         if (fld == NULL)
             return false;
         *type = fld->desc.type;
@@ -3553,20 +3545,14 @@ static StructDef *get_struct_def_for_expression(ASTNode *expr)
     }
     case NODE_STRUCT_ACCESS:
     {
-        StructDef *def = NULL;
-        void *base = NULL;
-        StructField *fld = NULL;
-        if (!resolve_struct_access(expr, &def, &base, &fld, false))
-        {
-            /* The sixth site, and the one that needs a LAYOUT rather than a
-               VarType. Once infer_runtime_expression_type_noeval() learned
-               to report VAR_STRUCT for `f().inner`, handle_sizeof()'s
-               "type is not statically known" gate started passing -- and
-               then failed here instead with "Invalid type in sizeof",
-               because the storage walk still found nothing to take a
-               definition from. Declared types have it. */
-            fld = static_struct_field(expr);
-        }
+        /* The sixth site, and the one that needs a LAYOUT rather than a
+           VarType. Once infer_runtime_expression_type_noeval() learned
+           to report VAR_STRUCT for `f().inner`, handle_sizeof()'s
+           "type is not statically known" gate started passing -- and
+           then failed here instead with "Invalid type in sizeof",
+           because the storage walk still found nothing to take a
+           definition from. Declared types have it. */
+        StructField *fld = struct_access_probe_field(expr);
         if (fld && fld->desc.type == VAR_STRUCT && fld->desc.struct_name.data)
             return get_struct_def(fld->desc.struct_name);
         return NULL;
@@ -3738,19 +3724,13 @@ static VarType infer_runtime_expression_type_noeval(ASTNode *expr)
     }
     case NODE_STRUCT_ACCESS:
     {
-        StructDef *def = NULL;
-        void *base = NULL;
-        StructField *fld = NULL;
-        if (!resolve_struct_access(expr, &def, &base, &fld, false))
-        {
-            /* Declared types answer a call base. This function exists
-               specifically to type an expression WITHOUT evaluating it --
-               maxxing()'s operand is never run -- so a static answer is the
-               only kind allowed here, and it is available. */
-            fld = static_struct_field(expr);
-            if (!fld)
-                return NONE;
-        }
+        /* Declared types answer a call base. This function exists
+           specifically to type an expression WITHOUT evaluating it --
+           maxxing()'s operand is never run -- so a static answer is the
+           only kind allowed here, and it is available. */
+        StructField *fld = struct_access_probe_field(expr);
+        if (!fld)
+            return NONE;
         return fld->desc.type;
     }
     default:
@@ -4390,6 +4370,23 @@ static StructField *declared_struct_field(ASTNode *node)
                 (obj->type == NODE_ARRAY_ACCESS && !obj->data.array.base)))
     {
         parent = get_struct_def_for_expression(obj);
+        if (!parent && obj->type == NODE_ARRAY_ACCESS)
+        {
+            /* `p[i].x` where p is a struct pointer, not an array: the
+               layout is the pointee's, whatever i evaluates to. */
+            Variable *var = get_variable(obj->data.array.name);
+            if (var && !var->desc.is_array && var->desc.type == VAR_STRUCT &&
+                var->desc.pointer_level == 1 && var->desc.struct_name.data)
+                parent = get_struct_def(var->desc.struct_name);
+        }
+    }
+    else if (obj && obj->type == NODE_ARRAY_ACCESS)
+    {
+        /* `s.arr[i].x`, an element of a struct-typed array field. */
+        StructField *arr = declared_struct_field(obj->data.array.base);
+        if (arr && arr->desc.is_array && arr->desc.type == VAR_STRUCT &&
+            arr->desc.pointer_level == 0 && arr->desc.struct_name.data)
+            parent = get_struct_def(arr->desc.struct_name);
     }
     else if (obj && obj->type == NODE_STRUCT_ACCESS)
     {
@@ -4406,6 +4403,23 @@ static StructField *declared_struct_field(ASTNode *node)
     return parent
                ? find_struct_field(parent, node->data.struct_access.member_name)
                : NULL;
+}
+
+/* The field a member access names, for the type queries (get_expression_
+   type() and the rest). Declared types first: a runtime walk evaluates
+   every index expression on the way, so `ss[idx()].v` ran idx() once per
+   query before the access itself ran it again (#398). The walk stays as the
+   fallback for a shape the declarations cannot name. */
+static StructField *struct_access_probe_field(ASTNode *node)
+{
+    StructField *fld = declared_struct_field(node);
+    if (fld)
+        return fld;
+    StructDef *def = NULL;
+    void *base = NULL;
+    if (resolve_struct_access(node, &def, &base, &fld, false))
+        return fld;
+    return static_struct_field(node);
 }
 
 /* The width/sign modifiers (`giga`, `thicc`, `nonut`, ...) of the value
@@ -4458,14 +4472,7 @@ TypeModifiers get_expression_modifiers(ASTNode *node)
            must not call idx() once more to learn v's width. The runtime
            resolution is only a fallback for a field the static walk
            cannot name. */
-        StructField *fld = declared_struct_field(node);
-        if (!fld)
-        {
-            StructDef *def = NULL;
-            void *base = NULL;
-            if (!resolve_struct_access(node, &def, &base, &fld, false))
-                fld = NULL;
-        }
+        StructField *fld = struct_access_probe_field(node);
         return fld ? fld->desc.modifiers : node->modifiers;
     }
     case NODE_UNARY_OPERATION:
@@ -7512,20 +7519,14 @@ bool is_expression(ASTNode *node, VarType type)
     }
     case NODE_STRUCT_ACCESS:
     {
-        StructDef *def = NULL;
-        void *base = NULL;
-        StructField *fld = NULL;
-        if (!resolve_struct_access(node, &def, &base, &fld, false))
-        {
-            /* A call base has no storage to walk, and this probe must not
-               run the call to make some. Declared types answer it. Without
-               this the field reported no type at all and
-               ast_expr_to_stdrot_value() fell through to STDROT_INT, so a
-               chad field printed with %f came out as an integer. */
-            fld = static_struct_field(node);
-            if (!fld)
-                return false;
-        }
+        /* A call base has no storage to walk, and this probe must not
+           run the call to make some. Declared types answer it. Without
+           this the field reported no type at all and
+           ast_expr_to_stdrot_value() fell through to STDROT_INT, so a
+           chad field printed with %f came out as an integer. */
+        StructField *fld = struct_access_probe_field(node);
+        if (!fld)
+            return false;
         return fld->desc.type == type;
     }
     default:
@@ -7750,6 +7751,9 @@ bool ast_accept_evaluates_expression(const ASTNode *node)
                                the write */
     case NODE_SIZEOF:       /* interpreter_visit_sizeof */
         return true;
+    case NODE_STRUCT_ACCESS: /* ast_accept walks the object, so `ss[f()].v`
+                                runs f() unless the object is a call */
+        return ast_accept_evaluates_expression(node->data.struct_access.object);
     case NODE_UNARY_OPERATION: /* only the increments; OP_NEG and friends
                                   are inspected, not computed */
     {
